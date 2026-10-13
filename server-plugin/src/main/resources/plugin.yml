@@ -1,0 +1,13 @@
+name: TabletopCraftAR
+version: '${version}'
+main: dev.tabletopcraft.ar.TabletopPlugin
+api-version: '1.21'
+description: Streams a tabletop region to an AR headset and drives a giant avatar from headset poses.
+commands:
+  tabletop:
+    description: Tabletop AR controls
+    usage: /tabletop <status|setorigin [x y z]|avatar <spawn|remove|status|here>|reload>
+    permission: tabletop.admin
+permissions:
+  tabletop.admin:
+    default: op

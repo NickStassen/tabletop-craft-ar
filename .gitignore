@@ -1,0 +1,17 @@
+# Build outputs
+server-plugin/build/
+server-plugin/.gradle/
+quest-app/Tests~/bin/
+quest-app/Tests~/obj/
+# Local test server: never commit the Paper jar, eula.txt or worlds
+tools/run/
+eula.txt
+*.jar
+!server-plugin/gradle/wrapper/gradle-wrapper.jar
+node_modules/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.venv/
+# User-supplied game assets
+*.zip

@@ -1,0 +1,21 @@
+{
+ "v": 1,
+ "type": "player_positions",
+ "seq": 4,
+ "t": 1760370001050,
+ "players": [
+  {
+   "uuid": "0f1e",
+   "name": "Alex",
+   "pos": [
+    112.5,
+    64.0,
+    -30.25
+   ],
+   "yaw": 135.0,
+   "pitch": 10.0,
+   "sneaking": false,
+   "skin": "https://textures.minecraft.net/texture/"
+  }
+ ]
+}

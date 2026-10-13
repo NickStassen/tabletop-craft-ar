@@ -1,0 +1,24 @@
+{
+ "v": 1,
+ "type": "block_update",
+ "seq": 3,
+ "t": 1760370001000,
+ "snapshot_id": 7,
+ "palette_add": [
+  "minecraft:torch"
+ ],
+ "changes": [
+  [
+   5,
+   12,
+   7,
+   4
+  ],
+  [
+   6,
+   12,
+   7,
+   0
+  ]
+ ]
+}

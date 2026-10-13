@@ -1,0 +1,10 @@
+{
+ "v": 1,
+ "type": "error",
+ "seq": 10,
+ "t": 1760370003100,
+ "code": "region_too_large",
+ "message": "dims 128x384x128 exceed max 64x384x64",
+ "ref_seq": 1,
+ "fatal": false
+}

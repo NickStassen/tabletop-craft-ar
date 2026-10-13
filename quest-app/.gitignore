@@ -1,0 +1,18 @@
+Library/
+Temp/
+Obj/
+Build/
+Builds/
+Logs/
+UserSettings/
+MemoryCaptures/
+*.apk
+*.aab
+*.csproj
+*.sln
+.vs/
+.idea/
+# Never commit game assets: resource packs / client jars are user-supplied.
+*.zip
+*.jar
+!Tests~/Tests.csproj

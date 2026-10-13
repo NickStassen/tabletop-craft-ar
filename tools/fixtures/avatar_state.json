@@ -1,0 +1,12 @@
+{
+ "v": 1,
+ "type": "avatar_state",
+ "seq": 5,
+ "t": 1760370000300,
+ "enabled": true,
+ "entity_uuid": "9a",
+ "scale": 16.0,
+ "world_height_blocks": 28.8,
+ "skin_resolved": true,
+ "note": "scale clamped from 175.0 to 16.0"
+}

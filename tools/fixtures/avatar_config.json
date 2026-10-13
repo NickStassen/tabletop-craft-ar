@@ -1,0 +1,14 @@
+{
+ "v": 1,
+ "type": "avatar_config",
+ "seq": 2,
+ "t": 1760370000200,
+ "enabled": true,
+ "skin_player": "PlayerName",
+ "skin_url": null,
+ "model": "wide",
+ "block_size_m": 0.01,
+ "max_scale": 16.0,
+ "show_hands": true,
+ "name_tag": "Tabletop Giant"
+}

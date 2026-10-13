@@ -1,0 +1,6 @@
+{
+  "name": "tabletop-second-player",
+  "private": true,
+  "description": "mineflayer bot used as a second Java player in the end-to-end test",
+  "dependencies": { "mineflayer": "^4.39.0", "vec3": "^0.1.10" }
+}

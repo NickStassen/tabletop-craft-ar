@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <LangVersion>9.0</LangVersion>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="*.cs" />
+    <Compile Include="../Assets/Scripts/Net/Json.cs;../Assets/Scripts/Net/Protocol.cs;../Assets/Scripts/Net/LinkClient.cs" />
+    <Compile Include="../Assets/Scripts/World/WorldModel.cs;../Assets/Scripts/World/BlockRules.cs;../Assets/Scripts/World/GreedyMesher.cs" />
+  </ItemGroup>
+</Project>

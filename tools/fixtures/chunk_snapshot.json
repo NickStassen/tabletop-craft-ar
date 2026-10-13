@@ -1,0 +1,38 @@
+{
+ "v": 1,
+ "type": "chunk_snapshot",
+ "seq": 2,
+ "t": 1760370000150,
+ "snapshot_id": 7,
+ "world": "world",
+ "origin": [
+  100,
+  60,
+  -40
+ ],
+ "dims": [
+  32,
+  64,
+  32
+ ],
+ "order": "yzx",
+ "palette": [
+  "minecraft:air",
+  "minecraft:stone",
+  "minecraft:grass_block[snowy=false]",
+  "minecraft:oak_log[axis=y]"
+ ],
+ "encoding": "rle_palette_v1",
+ "data": [
+  0,
+  40960,
+  1,
+  20480,
+  2,
+  1024,
+  0,
+  3072
+ ],
+ "biomes": null,
+ "light": null
+}

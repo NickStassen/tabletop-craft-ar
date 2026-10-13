@@ -1,0 +1,34 @@
+# TabletopCraftAR plugin configuration. See docs/PROTOCOL.md.
+bind:
+  host: 0.0.0.0
+  port: 8765
+  path: /tabletop
+auth:
+  # Shared secret the headset sends in hello. Empty = auth disabled (LAN dev only).
+  token: ""
+region:
+  # Default region sent after welcome. Origin is the min (north-west, bottom) corner.
+  world: world
+  origin: { x: 0, y: 60, z: 0 }
+  dims: { x: 32, y: 64, z: 32 }
+stream:
+  # Full diff of every subscribed region every N ticks; catches /fill, /setblock, WorldEdit.
+  safety-diff-ticks: 20
+  # player_positions every N ticks (2 = 10 Hz).
+  players-every-ticks: 2
+  # Players within region XZ bounds + this margin are sent.
+  players-margin: 16
+avatar:
+  # Real metres per block on the table; the Quest overrides it with avatar_config.
+  block-size-m: 0.01
+  max-scale: 16.0
+  user-height-m: 1.75
+  skin-player: ""
+  interpolation-ticks: 2
+  # Spawn the giant when poses arrive even if no avatar_config was sent.
+  spawn-on-first-pose: true
+  despawn-after-disconnect-ms: 10000
+debug:
+  # Broadcast avatar_state with a "debug" object (entity positions) every 10 ticks.
+  avatar-state: false
+  log-poses: false

@@ -1,0 +1,28 @@
+# CLAUDE.md: agent briefing for tabletop-craft-ar
+
+Read this, then `README.md`, `docs/PROTOCOL.md` (normative), `docs/ARCHITECTURE.md`, `docs/TESTING.md` and `docs/QUEST_SETUP.md`. `docs/PLAN.md` has the phases and `docs/RESEARCH.md` the sources.
+
+## What this is
+A Paper plugin streams a box of blocks, player positions and block changes over a JSON WebSocket to a Quest 3 Unity passthrough app, which renders it as a table-top miniature. The Quest sends head and hand poses back at about 30 Hz, and the plugin drives a giant avatar (Mannequin with the SCALE attribute + two ItemDisplay hands) that Java players see. The Quest has no game account and never speaks the game protocol.
+
+## Current state (read carefully)
+- **server-plugin/** works end to end on a headless Paper 1.21.11 (Java 21). Unit tests: `./gradlew build`. Full stack: `tools/e2e.sh` (downloads Paper, offline mode, fake Quest + mineflayer bot). Results are in `docs/TESTING.md`.
+- **quest-app/** has **never been opened in Unity or run on a headset.** The engine-free scripts (Json, Protocol, LinkClient, WorldModel, BlockRules, GreedyMesher) compile and pass tests under .NET 8 in `quest-app/Tests~` (`dotnet run`, add `-- --live ws://host:8765/tabletop` for a live session). Everything touching Meta XR, MRUK, TextMesh, shaders or `Texture2DArray` is unverified. Expect compile errors on first open; fixing them with minimal changes is job #1.
+- Pins: Paper **1.21.11** (26.x needs Java 25), Java-WebSocket **1.6.0** (shaded to `dev.tabletopcraft.ar.libs.websocket`), Unity **6000.0.84f1**, Meta XR Core + MRUK **85.0.0** (same as ironman-quest3-hud). Don't bump to make errors go away.
+- The scene is built in code: **TabletopCraft > Create Scene** (`Assets/Scripts/Editor/TabletopSceneBuilder.cs`). Fix the builder instead of hand-editing scene files.
+
+## Protocol rules
+- `docs/PROTOCOL.md` is the contract for the plugin, Quest app and tools. A breaking change bumps the version and adds a changelog entry. Golden examples are in `tools/fixtures/`; Java (`FixtureTest`) and Python tests read them.
+- Frames: tabletop frame is right-handed, metres, axes parallel to the world, origin at the region's local (0,0,0) corner. Unity conversion is `p=[ux,uy,-uz]`, `q=[-qx,-qy,qz,qw]` (PoseSender/TabletopPose). Mesh vertices are mirrored on Z and triangles re-wound in TabletopRenderer.
+- Known gaps vs the spec are listed in `docs/TESTING.md` under "Spec deviations".
+
+## How to debug
+- Server: `/tabletop status`, `/tabletop avatar status` (logs `AVATAR_STATE` / `AVATAR_ENTITY`). Set `debug.avatar-state: true` to stream entity positions to clients.
+- Quest: `adb logcat -s Unity | grep Tabletop`. The status text under your view shows LINK, RTT, WORLD, PACK, TABLE and POSES.
+
+## Repo rules
+- **This repo will be public.** No personal details: no employers or jobs, family or relationships, events, health, money, home location, hostnames or schedule. Keep docs strictly technical, and keep IPs and usernames in examples generic.
+- Default branch **master**. Small conventional commits (`feat(plugin):`, `fix(quest):`, `docs:`). Never force-push or rewrite history.
+- Never commit `eula.txt`, server jars, worlds, resource packs, client jars, APKs or Unity's generated folders (`Library/`, `Temp/`, `Builds/`, `UserSettings/`).
+- Cross-link with real links: [ironman-quest3-hud](https://github.com/NickStassen/ironman-quest3-hud) (Unity/Meta XR setup, Quest networking notes) and the idea file [VR-7](https://github.com/NickStassen/ideas/blob/master/vr/07-minecraft-ar-tabletop.md).
+- When something is verified on a headset, update the Status table in `README.md`.
