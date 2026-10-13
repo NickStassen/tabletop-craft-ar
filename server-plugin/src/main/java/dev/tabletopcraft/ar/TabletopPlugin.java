@@ -33,8 +33,10 @@ public final class TabletopPlugin extends JavaPlugin {
     private record PoseSet(Session s, Pose head, Pose left, Pose right, long seq) {}
     private final AtomicReference<PoseSet> latestPose = new AtomicReference<>();
     private BukkitTask tickTask;
-    private final Set<Long> tickets = new HashSet<>();
-    private String ticketWorld;
+    private Map<String, Set<Long>> ticketed = Map.of();   // world name -> chunk keys holding our plugin ticket
+    private Set<Long> giantChunks = Set.of();             // chunks of the giant's last applied pose (ticketed)
+    private String giantWorld;
+    private final Set<Long> giantLoading = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private boolean dirty;
     private long tickCount;
     private Session avatarOwner;
@@ -103,6 +105,7 @@ public final class TabletopPlugin extends JavaPlugin {
         if (dirty || tickCount % safety == 0) { dirty = false; diffAll(); }
         if (tickCount % Math.max(1, getConfig().getInt("stream.players-every-ticks", 2)) == 0) sendPlayers();
         if (tickCount % 20 == 0) timeouts();
+        if (tickCount % 10 == 0) updateTickets();   // follow the giant
         if (tickCount % 10 == 0 && getConfig().getBoolean("debug.avatar-state", false) && avatar.spawned()) broadcast(avatar.state(true));
     }
 
@@ -415,28 +418,62 @@ public final class TabletopPlugin extends JavaPlugin {
         double[] hp = ps.head().toWorld(r.ox(), r.oy(), r.oz(), bs);
         double[] lp = ps.left() == null ? null : ps.left().toWorld(r.ox(), r.oy(), r.oz(), bs);
         double[] rp = ps.right() == null ? null : ps.right().toWorld(r.ox(), r.oy(), r.oz(), bs);
+        // Never move the giant into an unloaded chunk: that deletes its non-persistent entities on the spot. Load
+        // the target chunks asynchronously (no main-thread stall), hold the giant meanwhile, then ticket and move.
+        Set<Long> targets = new HashSet<>();
+        for (double[] p : new double[][] { hp, lp, rp })
+            if (p != null) targets.add(chunkKey((int) Math.floor(p[0]) >> 4, (int) Math.floor(p[2]) >> 4));
+        boolean loaded = true;
+        for (long k : targets) {
+            int cx = (int) k, cz = (int) (k >> 32);
+            if (w.isChunkLoaded(cx, cz)) continue;
+            loaded = false;
+            if (giantLoading.add(k)) w.getChunkAtAsync(cx, cz).whenComplete((c, err) -> giantLoading.remove(k));
+        }
+        if (!loaded) return;
+        if (!targets.equals(giantChunks) || !w.getName().equals(giantWorld)) { giantChunks = targets; giantWorld = w.getName(); updateTickets(); }
         avatar.apply(w, hp, ps.head(), lp, ps.left(), rp, ps.right(), ps.seq());
         if (getConfig().getBoolean("debug.log-poses", false))
             getLogger().info(String.format("pose seq=%d head=%.2f,%.2f,%.2f yaw=%.1f", ps.seq(), hp[0], hp[1], hp[2], ps.head().yawDeg()));
     }
 
     // ---------- chunk tickets ----------
+    /**
+     * Keeps the regions' chunks loaded, plus the chunks the giant is in: its entities are non-persistent, so when
+     * it walks out of the region (the head maps there when you step back from the table) into a chunk no player
+     * keeps loaded, the chunk unloads and deletes them (26.x has no spawn chunks). applyPose only moves it into
+     * loaded chunks. Plugin tickets aren't counted, so this diffs the wanted set against what's ticketed.
+     */
     private void updateTickets() {
-        releaseTickets();
+        Map<String, Set<Long>> want = new HashMap<>();
         Set<RegionSpec> regions = new HashSet<>();
         regions.add(defaultRegion());
         for (Session s : ready()) regions.add(s.region);
         for (RegionSpec r : regions) {
-            World w = Bukkit.getWorld(r.world());
-            if (w == null) continue;
+            Set<Long> keys = want.computeIfAbsent(r.world(), k -> new HashSet<>());
             for (int cx = r.ox() >> 4; cx <= (r.ox() + r.sx() - 1) >> 4; cx++)
-                for (int cz = r.oz() >> 4; cz <= (r.oz() + r.sz() - 1) >> 4; cz++) {
-                    w.addPluginChunkTicket(cx, cz, this);
-                }
+                for (int cz = r.oz() >> 4; cz <= (r.oz() + r.sz() - 1) >> 4; cz++) keys.add(chunkKey(cx, cz));
         }
+        if (giantWorld != null && avatar.spawned()) want.computeIfAbsent(giantWorld, k -> new HashSet<>()).addAll(giantChunks);
+        if (want.equals(ticketed)) return;
+        Set<String> worlds = new HashSet<>(want.keySet());
+        worlds.addAll(ticketed.keySet());
+        for (String name : worlds) {
+            World w = Bukkit.getWorld(name);
+            if (w == null) continue;
+            Set<Long> had = ticketed.getOrDefault(name, Set.of()), keep = want.getOrDefault(name, Set.of());
+            for (long k : had) if (!keep.contains(k)) w.removePluginChunkTicket((int) k, (int) (k >> 32), this);
+            for (long k : keep) if (!had.contains(k)) w.addPluginChunkTicket((int) k, (int) (k >> 32), this);
+        }
+        ticketed = want;
     }
 
-    private void releaseTickets() { for (World w : Bukkit.getWorlds()) w.removePluginChunkTickets(this); }
+    private static long chunkKey(int cx, int cz) { return (cx & 0xffffffffL) | ((long) cz << 32); }
+
+    private void releaseTickets() {
+        for (World w : Bukkit.getWorlds()) w.removePluginChunkTickets(this);
+        ticketed = Map.of();
+    }
 
     // ---------- commands ----------
     @Override
