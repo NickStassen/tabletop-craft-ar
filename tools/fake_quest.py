@@ -18,7 +18,7 @@ import time
 
 import websockets
 
-from tabletop_protocol import Envelope, WorldMirror, scripted_pose, validate
+from tabletop_protocol import Envelope, WorldMirror, parse_region, scripted_pose, validate
 
 
 async def run(a: argparse.Namespace) -> dict:
@@ -37,6 +37,10 @@ async def run(a: argparse.Namespace) -> dict:
             if a.subscribe:
                 ox, oy, oz, dx, dy, dz = (int(v) for v in a.subscribe.split(","))
                 await ws.send(json.dumps(env.wrap("subscribe", world="world", origin=[ox, oy, oz], dims=[dx, dy, dz])))
+            if a.query is not None:
+                await ws.send(json.dumps(env.wrap("region_query", **({"player": a.query} if a.query else {}))))
+            if a.region:
+                await ws.send(json.dumps(env.wrap("region_request", world="world", **parse_region(a.region))))
             if a.avatar:
                 await ws.send(json.dumps(env.wrap("avatar_config", enabled=True, block_size_m=a.block_size, max_scale=16.0,
                                                   show_hands=True, skin_player=a.skin or None, name_tag="Tabletop Giant")))
@@ -76,9 +80,14 @@ async def run(a: argparse.Namespace) -> dict:
                     welcomed.set()
                 elif t == "chunk_snapshot":
                     mirror.apply_snapshot(m)
-                    st["snapshot"] = {"id": m["snapshot_id"], "origin": m["origin"], "dims": m["dims"], "bytes": len(raw),
+                    st["snapshot"] = {"server_timing": m.get("server_timing"),
+                                      "id": m["snapshot_id"], "origin": m["origin"], "dims": m["dims"], "bytes": len(raw),
                                       "palette": len(m["palette"]), "runs": len(m["data"]) // 2,
                                       "at_ms": round((time.monotonic() - t0) * 1000)}
+                elif t == "region_changed":
+                    st.setdefault("region_changes", []).append({k: m[k] for k in ("origin", "dims", "by_session")})
+                elif t == "region_info":
+                    st["region_info"] = {"region": m["region"], "players": m["players"], "limits": m["limits"]}
                 elif t == "block_update":
                     if mirror.apply_block_update(m):
                         for x, y, z, p in m["changes"][:20]:
@@ -135,6 +144,8 @@ def main() -> int:
     ap.add_argument("--block-size", type=float, default=0.01)
     ap.add_argument("--skin", default="")
     ap.add_argument("--subscribe", help="ox,oy,oz,dx,dy,dz")
+    ap.add_argument("--region", help="region_request: ox,oy,oz,dx,dy,dz or c:cx,cy,cz,dx,dy,dz[,y_origin]")
+    ap.add_argument("--query", nargs="?", const="", help="send region_query (optionally for one player name)")
     ap.add_argument("--expect", action="append", default=[], help="x,y,z=minecraft:block (world coords)")
     ap.add_argument("--expect-count", action="append", default=[], help="minecraft:block=N in the region")
     ap.add_argument("--report")

@@ -10,7 +10,7 @@ public final class Palette {
     private final Map<String, Integer> ids = new HashMap<>();
     private final List<String> states = new ArrayList<>();
 
-    public int id(String state) {
+    public synchronized int id(String state) {
         Integer id = ids.get(state);
         if (id != null) return id;
         int n = states.size();
@@ -19,7 +19,7 @@ public final class Palette {
         return n;
     }
 
-    public String state(int id) { return states.get(id); }
-    public List<String> states() { return List.copyOf(states); }
-    public int size() { return states.size(); }
+    public synchronized String state(int id) { return states.get(id); }
+    public synchronized List<String> states() { return List.copyOf(states); }
+    public synchronized int size() { return states.size(); }
 }

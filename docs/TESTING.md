@@ -110,3 +110,17 @@ ALL PASS
 - The 64 KiB inbound limit is checked on the decoded text length.
 - `avatar_state` carries an extra `debug` object (entity positions) when `debug.avatar-state: true`. v1 peers ignore unknown fields.
 - `avatar_state` also goes out when the avatar auto-spawns on the first pose (`avatar.spawn-on-first-pose`, a convenience for clients that never send `avatar_config`).
+
+## Region resize e2e (tools/region_e2e.py, flat world, async reader)
+
+| dims | bytes | runs | server read ms (async walk) | main-thread snapshot ms | request→snapshot ms | client decode ms |
+|---|---|---|---|---|---|---|
+| 16x64x16 | 456 | 7 | 3.2 | 0.17 | 191 | 0.2 |
+| 32x64x32 | 463 | 7 | 7.6 | – | 194 | 1.1 |
+| 64x64x64 | 466 | 7 | 25.9 | 0.53 | 197 | 4.6 |
+| 128x64x128 | 545 | 11 | 157.2 | 1.70 | 292 | 18.1 |
+
+- Requests over the cap (256², 129, 128x384x128) are rejected with `region_too_large`.
+- The two clients' grids mirror each other exactly.
+- The per-session diff walk now runs off the main thread too (before, a sync read of 128x64x128 blocked the main thread for 164 ms).
+- Snapshot bytes on a flat world are tiny. Real terrain will be much larger, and that hasn't been measured yet.

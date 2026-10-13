@@ -4,7 +4,7 @@ import pathlib
 
 import pytest
 
-from tabletop_protocol import Envelope, WorldMirror, decode_rle, scripted_pose, validate
+from tabletop_protocol import Envelope, WorldMirror, decode_rle, parse_region, scripted_pose, validate
 
 FIX = pathlib.Path(__file__).parent / "fixtures"
 
@@ -50,3 +50,11 @@ def test_envelope_and_pose():
     validate(e.wrap("pose", **scripted_pose(1.0)))
     q = scripted_pose(0.7)["head"]["q"]
     assert math.isclose(sum(c * c for c in q), 1.0)
+
+
+def test_parse_region_forms():
+    assert parse_region("0,-64,0,16,64,16") == {"origin": [0, -64, 0], "dims": [16, 64, 16]}
+    c = parse_region("c:0.5,70,-3,32,64,32,-64")
+    assert c == {"center": [0.5, 70.0, -3.0], "size": [32, 64, 32], "y_origin": -64}
+    with pytest.raises(ValueError):
+        parse_region("1,2,3")

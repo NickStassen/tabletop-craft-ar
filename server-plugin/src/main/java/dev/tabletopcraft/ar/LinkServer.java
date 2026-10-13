@@ -99,6 +99,14 @@ public final class LinkServer extends WebSocketServer {
                     if (head == null) throw new IllegalArgumentException("pose.head required");
                     plugin.offerPose(s, head, Pose.parse(m.get("left")), Pose.parse(m.get("right")), refSeq == null ? -1 : refSeq);
                 }
+                case "region_request" -> {
+                    RegionRequest q = RegionRequest.parse(m);
+                    plugin.enqueue(() -> plugin.onRegionRequest(s, q, refSeq));
+                }
+                case "region_query" -> {
+                    String player = m.has("player") && !m.get("player").isJsonNull() ? m.get("player").getAsString() : null;
+                    plugin.enqueue(() -> plugin.onRegionQuery(s, player, refSeq));
+                }
                 case "avatar_config" -> {
                     AvatarConfig cfg = AvatarConfig.parse(m);
                     plugin.enqueue(() -> plugin.onAvatarConfig(s, cfg, refSeq));

@@ -22,6 +22,10 @@ REQUIRED = {
     "pong": ["id", "echo_t"],
     "error": ["code", "message"],
     "bye": [],
+    "region_request": [],
+    "region_query": [],
+    "region_changed": ["world", "origin", "dims", "by_session"],
+    "region_info": ["region", "players", "limits"],
 }
 ERROR_CODES = {"version_mismatch", "auth_failed", "bad_message", "unknown_type", "unsupported", "region_too_large",
                "world_not_found", "bad_snapshot", "rate_limited", "skin_failed", "internal"}
@@ -115,6 +119,22 @@ class Envelope:
         self.seq = (self.seq + 1) & 0xFFFFFFFF
         m.update(payload)
         return m
+
+
+def parse_region(spec: str) -> dict:
+    """'ox,oy,oz,dx,dy,dz' -> origin+dims payload; 'c:cx,cy,cz,dx,dy,dz[,y_origin]' -> center+size payload."""
+    if spec.startswith("c:"):
+        v = [float(x) for x in spec[2:].split(",")]
+        if len(v) not in (6, 7):
+            raise ValueError("center form needs cx,cy,cz,dx,dy,dz[,y_origin]")
+        d = {"center": v[:3], "size": [int(x) for x in v[3:6]]}
+        if len(v) == 7:
+            d["y_origin"] = int(v[6])
+        return d
+    v = [int(x) for x in spec.split(",")]
+    if len(v) != 6:
+        raise ValueError("region needs ox,oy,oz,dx,dy,dz")
+    return {"origin": v[:3], "dims": v[3:]}
 
 
 def yaw_quat(theta: float) -> list[float]:

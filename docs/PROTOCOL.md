@@ -263,3 +263,12 @@ Then it closes with code 1000. When the Quest client disconnects (with or withou
 ## Changelog
 
 - **v1 (2026-10-13):** initial.
+
+## 4.13–4.16 Runtime region control (v1, additive)
+
+- `region_request` (client→server): `{"origin":[x,y,z],"dims":[dx,dy,dz]}` or `{"center":[x,y,z],"size":[dx,dy,dz],"y_origin"?:y}` (origin = center − size/2). The server checks it against `max_region` in config.yml (x, y, z, blocks, bytes). Over the cap it returns `error{code:"region_too_large", max_dims, max_blocks, max_bytes}`.
+- `region_changed` (server→all shared sessions): `{world, origin, dims, by_session, ref_seq}`, followed by a full `chunk_snapshot`. When several clients write, the last request wins.
+- `region_query` → `region_info{region, players:[{name,uuid,world,pos,yaw}], limits, ref_seq}` (used for "center on me").
+- `welcome.limits` gains `max_dims`, `max_blocks`, `max_bytes`. `chunk_snapshot` may carry `server_timing{read_ms,remap_ms,encode_ms}`, which clients ignore if they don't recognise it.
+- Growth always triggers a full re-snapshot. Incremental edge growth is deferred.
+- Changelog: v1.1 adds the messages above. v1 clients are unaffected.

@@ -32,6 +32,8 @@ public final class Session {
     private final Map<Integer, Integer> globalToLocal = new HashMap<>();
     public final Set<UUID> skinSent = new HashSet<>();
     public boolean lastPlayersNonEmpty;
+    /** True while following the server's shared region (default); false after a private subscribe. */
+    public volatile boolean shared = true;
 
     public Session(WebSocket conn) { this.conn = conn; }
 
@@ -41,6 +43,16 @@ public final class Session {
         body.addProperty("seq", seq.getAndIncrement() & 0xffffffffL);
         body.addProperty("t", System.currentTimeMillis());
         conn.send(Protocol.GSON.toJson(body));
+    }
+
+    /** Like send, returns the UTF-8 byte count sent. */
+    public int sendCounted(JsonObject body) {
+        if (!conn.isOpen()) return 0;
+        body.addProperty("seq", seq.getAndIncrement() & 0xffffffffL);
+        body.addProperty("t", System.currentTimeMillis());
+        byte[] b = Protocol.GSON.toJson(body).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        conn.send(b.length <= Protocol.MAX_OUTBOUND_BYTES ? new String(b, java.nio.charset.StandardCharsets.UTF_8) : Protocol.GSON.toJson(Protocol.error("region_too_large", "snapshot " + b.length + " bytes exceeds 4 MiB", null, false)));
+        return b.length;
     }
 
     public void resetPalette() { palette.clear(); globalToLocal.clear(); }

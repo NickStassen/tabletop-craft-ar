@@ -32,3 +32,12 @@ debug:
   # Broadcast avatar_state with a "debug" object (entity positions) every 10 ticks.
   avatar-state: false
   log-poses: false
+# Server caps for region_request / subscribe / setsize (PROTOCOL.md 4.13).
+max_region:
+  x: 128
+  y: 384
+  z: 128
+  # Max blocks in one region (dx*dy*dz).
+  blocks: 2097152
+  # Max estimated chunk_snapshot JSON size in bytes (hard frame limit is 4 MiB).
+  bytes: 4194304
