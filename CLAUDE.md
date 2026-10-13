@@ -14,6 +14,20 @@ A Paper plugin streams a box of blocks, player positions and block changes over 
 - **Area setup (v1.1):** `region_request`/`region_query` → `region_changed`/`region_info`. The region is shared by all headsets, and the last writer wins. Caps come from config.yml `max_region`. The plugin reads regions asynchronously: chunks load via getChunkAtAsync, ChunkSnapshots are taken on the main thread, and the walk runs on a worker, keeping main-thread time under 3 ms. Diffs work the same way. Quest side: `XR/AreaSetupMode.cs` (input, wireframe; unverified in Unity) drives the engine-free `World/AreaSetupState.cs` and `World/AreaMath.cs` (fit and budget; tested in Tests~). `TabletopRenderer` meshes on worker threads after prewarming the atlas on the main thread. Never call `ResourcePackAtlas.Face` for an unseen state off the main thread.
 - Tests: `tools/e2e.sh` (refuses to start if 25565/8765 are busy), `tools/region_e2e.py` (needs the e2e world), `tools/measure_regions.py OUT "c:cx,cy,cz,dx,dy,dz,y0"` and `quest-app/Tests~ dotnet run -- --measure OUT` for sizes and face counts.
 
+## First hardware session checklist
+Prereqs (human): Unity 6000.0.84f1 with Android module, Quest in Developer Mode connected over USB with debugging allowed, `pack.zip` pushed per `docs/QUEST_SETUP.md` step 12.
+Work through these in order and record what you verify in `README.md` Status and `docs/TESTING.md`:
+1. Open `quest-app/`, resolve Meta XR/MRUK 85.0.0 packages, fix compile errors with minimal changes (no version bumps). Run **TabletopCraft > Create Scene**, then build the APK.
+2. Start the plugin on Paper 1.21.11 / Java 21 on the PC. Confirm the Quest can reach port 8765 over Wi-Fi (LAN IP, firewall rule).
+3. `adb install` the APK. Watch `adb logcat -s Unity | grep Tabletop` for LINK up and the first snapshot.
+4. Confirm MRUK detects the table and the area wireframe snaps to it.
+5. Exercise area setup: resize, auto-fit, small (16x16) and max (128x96x128). Note FPS.
+6. Confirm the atlas loads from `pack.zip` (PACK in the status text). Fix grey grass/leaves (biome tint) and missing-texture fallbacks.
+7. Place and break blocks from a Java client and confirm live diffs on the table.
+8. Check the giant avatar (Mannequin + hands) tracks head and hand poses.
+9. Profile with OVR Metrics. Tune the 250k-face soft cap if needed.
+10. Enable CI: `gh auth refresh -s workflow`, then `git mv ci/github-actions-ci.yml .github/workflows/ci.yml`.
+
 ## Protocol rules
 - `docs/PROTOCOL.md` is the contract for the plugin, Quest app and tools. A breaking change bumps the version and adds a changelog entry. Golden examples are in `tools/fixtures/`; Java (`FixtureTest`) and Python tests read them.
 - Frames: tabletop frame is right-handed, metres, axes parallel to the world, origin at the region's local (0,0,0) corner. Unity conversion is `p=[ux,uy,-uz]`, `q=[-qx,-qy,qz,qw]` (PoseSender/TabletopPose). Mesh vertices are mirrored on Z and triangles re-wound in TabletopRenderer.
