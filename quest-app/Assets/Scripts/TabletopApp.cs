@@ -25,6 +25,8 @@ namespace TabletopCraft
         [Header("Scene refs (auto-found on OVRCameraRig if empty)")]
         public Transform Head, LeftHand, RightHand;
         public Material OpaqueMaterial, TransparentMaterial;
+        [Tooltip("Unlit/Color material for player capsules and area handles. Primitives default to Standard, which isn't in the build.")]
+        public Material MarkerMaterial;
 
         LinkClient _link;
         readonly WorldModel _world = new WorldModel();
@@ -62,18 +64,19 @@ namespace TabletopCraft
             _atlas.TryLoad(ResourcePackAtlas.DefaultPath);
             if (!OpaqueMaterial) OpaqueMaterial = MakeMat(false);
             if (!TransparentMaterial) TransparentMaterial = MakeMat(true);
+            if (!MarkerMaterial) MarkerMaterial = new Material(Shader.Find("Sprites/Default"));
 
             _renderer = _blocks.gameObject.AddComponent<TabletopRenderer>();
             _renderer.Model = _world; _renderer.Atlas = _atlas; _renderer.OpaqueMaterial = OpaqueMaterial; _renderer.TransparentMaterial = TransparentMaterial;
             _players = playersT.gameObject.AddComponent<PlayerMarkers>();
-            _players.Model = _world;
+            _players.Model = _world; _players.MarkerMaterial = MarkerMaterial;
 
             _placement = gameObject.AddComponent<TablePlacement>();
             _placement.Anchor = _anchor; _placement.Head = Head; _placement.RightHand = RightHand;
             _placement.OnScaleChanged = k => SetBlockSize(Mathf.Clamp(BlockSizeM * k, 0.002f, 0.1f), false);
 
             _area = gameObject.AddComponent<AreaSetupMode>();
-            _area.RegionRoot = _regionRoot; _area.RightHand = RightHand; _area.Placement = _placement;
+            _area.RegionRoot = _regionRoot; _area.RightHand = RightHand; _area.Placement = _placement; _area.MarkerMaterial = MarkerMaterial;
             _area.BlockSize = () => BlockSizeM; _area.World = () => _world;
             _area.Send = b => _link.Send(b);
             _area.ApplyBlockSize = bs => SetBlockSize(bs, false);
@@ -211,7 +214,16 @@ namespace TabletopCraft
             go.transform.SetParent(Head, false);
             go.transform.localPosition = new Vector3(0, -0.25f, 0.8f);
             _status = go.AddComponent<TextMesh>();
+            SetBuiltinFont(_status);
             _status.characterSize = 0.008f; _status.fontSize = 48; _status.anchor = TextAnchor.UpperCenter; _status.color = new Color(0.6f, 1f, 1f);
+        }
+
+        /// <summary>A TextMesh added from code has no font and draws nothing: use the built-in one (always in the player).</summary>
+        public static void SetBuiltinFont(TextMesh t)
+        {
+            var font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            t.font = font;
+            t.GetComponent<MeshRenderer>().sharedMaterial = font.material;
         }
 
         void AcquireWifiLock()

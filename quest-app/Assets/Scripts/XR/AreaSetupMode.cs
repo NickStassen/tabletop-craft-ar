@@ -29,6 +29,7 @@ namespace TabletopCraft.XR
         public Action<Dictionary<string, object>> Send;
         public Action<float> ApplyBlockSize;   // called with the fitted block size after a confirmed resize
         public bool AutoFit = true;
+        public Material MarkerMaterial;
 
         public bool Active { get; private set; }
         public readonly AreaSetupState State = new AreaSetupState();
@@ -55,7 +56,7 @@ namespace TabletopCraft.XR
                 Destroy(h.GetComponent<Collider>());
                 h.transform.SetParent(go.transform, false);
                 h.transform.localScale = Vector3.one * 0.025f;
-                h.GetComponent<Renderer>().material.color = new Color(1f, 0.8f, 0.2f);
+                h.GetComponent<Renderer>().material = new Material(MarkerMaterial) { color = new Color(1f, 0.8f, 0.2f) };
                 _handles[i] = h.transform;
             }
             go.SetActive(false);

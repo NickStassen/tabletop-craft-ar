@@ -10,6 +10,7 @@ namespace TabletopCraft.World
         public WorldModel Model;
         public float BlockSizeM = 0.01f;
         public float LerpRate = 12f;
+        public Material MarkerMaterial;
 
         sealed class Marker { public GameObject Go; public TextMesh Label; public Vector3 Target; public float Yaw; public float LastSeen; }
         readonly Dictionary<string, Marker> _markers = new Dictionary<string, Marker>();
@@ -45,11 +46,12 @@ namespace TabletopCraft.World
             Destroy(go.GetComponent<Collider>());
             go.name = "player " + name;
             go.transform.SetParent(transform, false);
-            go.GetComponent<Renderer>().material.color = new Color(1f, 0.55f, 0.1f);
+            go.GetComponent<Renderer>().material = new Material(MarkerMaterial) { color = new Color(1f, 0.55f, 0.1f) };
             var labelGo = new GameObject("label");
             labelGo.transform.SetParent(go.transform, false);
             labelGo.transform.localPosition = new Vector3(0, 1.6f, 0);
             var t = labelGo.AddComponent<TextMesh>();
+            TabletopApp.SetBuiltinFont(t);
             t.text = name; t.anchor = TextAnchor.LowerCenter; t.characterSize = 0.1f; t.fontSize = 48; t.color = Color.white;
             return new Marker { Go = go, Label = t };
         }

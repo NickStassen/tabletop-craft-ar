@@ -1,4 +1,4 @@
-// Unlit block shader: Texture2DArray layer from uv.z (layer < 0 => vertex colour only), tint from vertex colour.
+// Unlit block shader: Texture2DArray layer from uv.z (layer < 0 => vertex colour only), tint from vertex colour (sRGB).
 // Built-in render pipeline, single-pass instanced stereo friendly.
 Shader "TabletopCraft/Blocks"
 {
@@ -16,13 +16,18 @@ Shader "TabletopCraft/Blocks"
             UNITY_DECLARE_TEX2DARRAY(_Blocks);
             float _HasTex, _Cutoff;
             struct appdata { float4 vertex : POSITION; float3 normal : NORMAL; float3 uv : TEXCOORD0; fixed4 color : COLOR; UNITY_VERTEX_INPUT_INSTANCE_ID };
-            struct v2f { float4 pos : SV_POSITION; float3 uv : TEXCOORD0; fixed4 color : COLOR; float shade : TEXCOORD1; UNITY_VERTEX_OUTPUT_STEREO };
+            struct v2f { float4 pos : SV_POSITION; float3 uv : TEXCOORD0; half4 color : COLOR; UNITY_VERTEX_OUTPUT_STEREO };
             v2f vert (appdata v)
             {
                 v2f o; UNITY_SETUP_INSTANCE_ID(v); UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
-                o.pos = UnityObjectToClipPos(v.vertex); o.uv = v.uv; o.color = v.color;
+                o.pos = UnityObjectToClipPos(v.vertex); o.uv = v.uv;
                 float3 n = abs(v.normal);
-                o.shade = n.y > 0.5 ? (v.normal.y > 0 ? 1.0 : 0.5) : (n.x > 0.5 ? 0.8 : 0.65); // Minecraft-like face shading
+                float shade = n.y > 0.5 ? (v.normal.y > 0 ? 1.0 : 0.5) : (n.x > 0.5 ? 0.8 : 0.65); // Minecraft-like face shading
+                o.color = v.color; o.color.rgb *= shade;
+                // Tints, flat colours and shading are sRGB values; vertex colours aren't converted in linear colour space.
+                #ifndef UNITY_COLORSPACE_GAMMA
+                o.color.rgb = GammaToLinearSpace(o.color.rgb);
+                #endif
                 return o;
             }
             fixed4 frag (v2f i) : SV_Target
@@ -30,7 +35,6 @@ Shader "TabletopCraft/Blocks"
                 fixed4 c = i.color;
                 if (_HasTex > 0.5 && i.uv.z >= 0) c *= UNITY_SAMPLE_TEX2DARRAY(_Blocks, i.uv);
                 clip(c.a - _Cutoff);
-                c.rgb *= i.shade;
                 return c;
             }
             ENDCG
