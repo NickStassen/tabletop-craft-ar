@@ -16,7 +16,7 @@ Java players (LAN) ──game protocol──▶ Paper 1.21.11 + tabletop plugin 
 ```
 
 - **server-plugin/**: Paper plugin (Java 21, Gradle Kotlin DSL, Java-WebSocket 1.6.0 shaded). Streams a configurable box (default 32x64x32) and drives the giant.
-- **quest-app/**: Unity 6000.0.84f1 project skeleton + C# scripts (link client, protocol, greedy mesher, resource-pack atlas, MRUK table placement, pose sender, player markers). Not yet opened in a real Editor. See [docs/QUEST_SETUP.md](docs/QUEST_SETUP.md).
+- **quest-app/**: Unity 6000.0.84f1 project skeleton + C# scripts (link client, protocol, greedy mesher, resource-pack atlas, MRUK table placement, pose sender, player markers). Compiles and builds headless on Linux; not yet run on a headset. See [docs/QUEST_SETUP.md](docs/QUEST_SETUP.md).
 - **tools/**: Python fake-Quest client, protocol fixtures, the mineflayer second-player bot, and `e2e.sh`, which runs the whole server-side stack headless.
 - **docs/**: [ARCHITECTURE](docs/ARCHITECTURE.md), [PROTOCOL](docs/PROTOCOL.md) (normative wire format, v1), [PLAN](docs/PLAN.md), [RESEARCH](docs/RESEARCH.md), [TESTING](docs/TESTING.md), [QUEST_SETUP](docs/QUEST_SETUP.md).
 
@@ -27,7 +27,8 @@ Java players (LAN) ──game protocol──▶ Paper 1.21.11 + tabletop plugin 
 | Plugin: snapshot, block updates, players, subscribe, errors, timeouts | Tested end to end on a headless Paper 1.21.11 server (see [TESTING](docs/TESTING.md)) |
 | Giant avatar (Mannequin scale 16 + hands) following fake poses | Tested; a mineflayer player receives the entity spawns and movement |
 | Quest C# protocol/mesher code | Compiled and unit-tested with .NET 8 outside Unity, plus a live session against the plugin |
-| Quest app in Unity / on a headset | **Not tested yet.** Expect compile fixes on first open |
+| Quest app in Unity | Compiles and builds an APK on Linux, headless (Unity 6000.0.84f1, Meta XR 85.0.0); see [TESTING](docs/TESTING.md) section 5 |
+| Quest app on a headset | **Not tested yet** |
 
 ## Quick start (server)
 

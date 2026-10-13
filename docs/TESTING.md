@@ -94,9 +94,18 @@ live: poses sent 239, player msgs 0, block updates 0
 ALL PASS
 ```
 
+## 5. Unity build (Linux, Unity 6000.0.84f1, 2026-10-13)
+
+Headless, with `tools/patch-meta-sdk-linux.sh` and `TabletopBatch` (see QUEST_SETUP.md Part B, "Linux and command line"):
+
+- **Compile**: Assembly-CSharp and Assembly-CSharp-Editor compile with 0 errors on the first open, once the missing engine modules are in `manifest.json`. The only warning in our code is CS0618 for `OVRPassthroughLayer.overlayType`.
+- **Setup**: the scene builder threw a NullReferenceException (`MRUK.SceneSettings` is null on a component added from code); fixed. Fix All applies the usual Quest settings: API 32/34, Vulkan, linear colour, ASTC, IL2CPP ARM64, OpenXR Touch profile, and OVRManager requesting the Scene permission on startup. The scene is now saved after Fix All; before that, the OVRManager fixes were lost. A second Setup pass changes nothing else.
+- **APK**: builds in about 2 minutes clean (45 MB, `com.tabletopcraft.ar`, arm64-v8a). Its manifest has INTERNET, USE_SCENE, USE_ANCHOR_API, PASSTHROUGH required, `quest3|quest3s` and `usesCleartextTraffic=true`. Meta's `enableNSCConfig` (on by default) had added a `network_sec_config.xml` with `cleartextTrafficPermitted="false"`, which would override that, so the builder now turns it off.
+- **Build contents** (from the build log): TabletopCraft/Blocks, BlocksTransparent, Unlit/Color (Marker.mat) and Sprites/Default are compiled in. Standard is not, so `CreatePrimitive` objects now get the unlit marker material. The TextMesh font (`LegacyRuntime.ttf`) and its shader ship in the built-in "unity default resources".
+
 ## Not verified (and why)
 
-- **Anything in Unity or on the Quest**: Unity and a headset aren't available on the box. Not compiled: `TabletopApp`, `TablePlacement` (MRUK API), `PoseSender` (OVRInput), `PlayerMarkers`, `TabletopRenderer`, `ResourcePackAtlas` (Texture2D/Texture2DArray, zip parsing of real packs), `TabletopSceneBuilder`, and the shaders. Passthrough, table detection, frame rate, and Wi-Fi latency are untested.
+- **Anything on the Quest**: compiled and built (section 5), but not yet run on a headset. Passthrough, MRUK table detection, the resource-pack atlas (`System.IO.Compression` on IL2CPP, `Texture2DArray`), frame rate and Wi-Fi latency are untested.
 - **Visual check of the giant** in a real Java client (that it renders at the right size, skin, hands orientation). Verified only through entity data, logs and the mineflayer bot.
 - **Skins**: offline mode can't resolve profiles, so `skin_resolved` is false in tests. `skin_player` resolution needs an online-mode server.
 - **Paper 26.x**: not tested (needs Java 25; v1 is pinned to 1.21.11).
@@ -112,6 +121,20 @@ ALL PASS
 - `avatar_state` also goes out when the avatar auto-spawns on the first pose (`avatar.spawn-on-first-pose`, a convenience for clients that never send `avatar_config`).
 
 ## Region resize e2e (tools/region_e2e.py, flat world, async reader)
+
+The script expects more world than `e2e.sh` prepares. With the e2e server running, type these in its console first (no player is online, so force-load the area):
+
+```
+forceload add -64 -64 63 63
+fill -64 -59 -64 63 -59 63 minecraft:air
+fill -64 -60 -64 63 -60 63 minecraft:stone
+setblock 3 -59 5 minecraft:gold_block
+setblock -60 -59 60 minecraft:diamond_block
+setblock 60 -59 -60 minecraft:emerald_block
+forceload remove all
+```
+
+Re-run on 2026-10-13 after the e2e world prep: `ok: true`. All six resizes (16→32→64→128→64→16) matched both clients, the three over-cap requests were rejected, and the 128x64x128 request→snapshot took 238 ms with a 67 ms async walk.
 
 | dims | bytes | runs | server read ms (async walk) | main-thread snapshot ms | request→snapshot ms | client decode ms |
 |---|---|---|---|---|---|---|

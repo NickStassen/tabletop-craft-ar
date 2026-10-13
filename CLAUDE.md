@@ -7,7 +7,7 @@ A Paper plugin streams a box of blocks, player positions and block changes over 
 
 ## Current state (read carefully)
 - **server-plugin/** works end to end on a headless Paper 1.21.11 (Java 21). Unit tests: `./gradlew build`. Full stack: `tools/e2e.sh` (downloads Paper, offline mode, fake Quest + mineflayer bot). Results are in `docs/TESTING.md`.
-- **quest-app/** has **never been opened in Unity or run on a headset.** The engine-free scripts (Json, Protocol, LinkClient, WorldModel, BlockRules, GreedyMesher) compile and pass tests under .NET 8 in `quest-app/Tests~` (`dotnet run`, add `-- --live ws://host:8765/tabletop` for a live session). Everything touching Meta XR, MRUK, TextMesh, shaders or `Texture2DArray` is unverified. Expect compile errors on first open; fixing them with minimal changes is job #1.
+- **quest-app/** compiles and builds an APK headless on Linux (`tools/patch-meta-sdk-linux.sh` first, then `TabletopBatch.Setup` / `BuildApk`; see QUEST_SETUP.md Part B "Linux and command line"), but has **not run on a headset yet**. The engine-free scripts (Json, Protocol, LinkClient, WorldModel, BlockRules, GreedyMesher) pass tests under .NET 8 in `quest-app/Tests~` (`dotnet run`, add `-- --live ws://host:8765/tabletop` for a live session). Runtime behaviour of Meta XR, MRUK, TextMesh, shaders and `Texture2DArray` is unverified.
 - Pins: Paper **1.21.11** (26.x needs Java 25), Java-WebSocket **1.6.0** (shaded to `dev.tabletopcraft.ar.libs.websocket`), Unity **6000.0.84f1**, Meta XR Core + MRUK **85.0.0** (same as ironman-quest3-hud). Don't bump to make errors go away.
 - The scene is built in code: **TabletopCraft > Create Scene** (`Assets/Scripts/Editor/TabletopSceneBuilder.cs`). Fix the builder instead of hand-editing scene files.
 
@@ -18,7 +18,7 @@ A Paper plugin streams a box of blocks, player positions and block changes over 
 Prereqs (human): Unity 6000.0.84f1 with Android module, Quest in Developer Mode connected over USB with debugging allowed, and the vanilla game installed for that version on this PC.
 Work through these in order and record what you verify in `README.md` Status and `docs/TESTING.md`:
 0. Push textures: find the client jar (Windows: `%APPDATA%\\.minecraft\\versions\\1.21.11\\1.21.11.jar`; if missing, ask the human to launch 1.21.11 once in the launcher). Copy it to a temp `pack.zip`, then `adb shell mkdir -p /sdcard/Android/data/com.tabletopcraft.ar/files/` and `adb push pack.zip` there (re-push after a fresh install if the folder was wiped). Never commit the jar or pack.zip.
-1. Open `quest-app/`, resolve Meta XR/MRUK 85.0.0 packages, fix compile errors with minimal changes (no version bumps). Run **TabletopCraft > Create Scene**, then build the APK.
+1. Open `quest-app/`, resolve Meta XR/MRUK 85.0.0 packages, fix compile errors with minimal changes (no version bumps). Run **TabletopCraft > Create Scene**, then build the APK. (Done on Linux 2026-10-13, headless: see TESTING.md section 5.)
 2. Start the plugin on Paper 1.21.11 / Java 21 on the PC. Confirm the Quest can reach port 8765 over Wi-Fi (LAN IP, firewall rule).
 3. `adb install` the APK. Watch `adb logcat -s Unity | grep Tabletop` for LINK up and the first snapshot.
 4. Confirm MRUK detects the table and the area wireframe snaps to it.
