@@ -124,3 +124,46 @@ ALL PASS
 - The two clients' grids mirror each other exactly.
 - The per-session diff walk now runs off the main thread too (before, a sync read of 128x64x128 blocked the main thread for 164 ms).
 - Snapshot bytes on a flat world are tiny. Real terrain will be much larger, and that hasn't been measured yet.
+
+## Real terrain (normal world, seed 12345, centred on 0,0; `tools/measure_regions.py` + `Tests~ --measure`)
+
+These are the second runs, with chunks already generated. On the first run, chunk generation added up to 750 ms of `chunk_load` for the 128² request; that work happens off the main thread. In every run, main-thread time per resize (`snapshot_main_ms` in REGION_SET) stayed under 3 ms.
+
+| region (x×y×z, y range) | snapshot bytes | palette | RLE runs | server walk (async) | request→snapshot | client decode (Python) |
+|---|---|---|---|---|---|---|
+| 32×96×32 (y 32..128) | 16 KB | 29 | 3,277 | 25 ms | 188 ms | 4 ms |
+| 64×96×64 (y 32..128) | 64 KB | 41 | 13,838 | 69 ms | 263 ms | 11 ms |
+| 128×96×128 (y 32..128) | 234 KB | 53 | 51,606 | 289 ms | 465 ms | 29 ms |
+| 128×128×128 (y 0..128) | 728 KB | 139 | 153,960 | 416 ms | 657 ms | 41 ms |
+| 32×384×32 (full height) | 100 KB | 102 | 20,497 | 68 ms | 197 ms | 9 ms |
+| 64×384×64 (full height) | 407 KB | 148 | 81,752 | 291 ms | 449 ms | 26 ms |
+
+Greedy-mesher output for the same snapshots: the real `GreedyMesher.cs`, flat-colour face keys, run on the x86 box.
+
+| region | greedy quads | special quads (cross/slab/etc.) | total vertices | triangles | worst section | full mesh time (box) | `AreaMath.Estimate` |
+|---|---|---|---|---|---|---|---|
+| 32×96×32 | 2,343 | 526 | 11.5k | 5.7k | 480 quads | 16 ms | 3.6k |
+| 64×96×64 | 9,320 | 3,476 | 51k | 26k | 959 | 64 ms | 14.3k |
+| 128×96×128 | 32,993 | 13,318 | 185k | 93k | 1,268 | 254 ms | 57k |
+| 128×128×128 | 68,093 | 14,816 | 332k | 166k | 1,268 | 510 ms | 76k |
+| 32×384×32 | 10,909 | 1,408 | 49k | 25k | 954 | 66 ms | 14k |
+| 64×384×64 | 39,394 | 7,242 | 187k | 93k | 998 | 262 ms | 56k |
+
+With a resource pack, faces only merge when they share a texture, so expect more quads than the flat-colour counts above (my guess: 1.2–1.5×; not measured).
+
+### Quest 3 capacity guidance (ESTIMATES, not measured on a headset)
+
+- **Estimator** (`AreaMath.Estimate`, used for the soft cap): about 3.5 faces per column for a 96-block surface band, plus 0.035 faces per block below that band (caves). It overestimates every case above except 128×128×128, which it underestimates by about 9%.
+- **Default soft cap:** 250k faces = 1M vertices / 500k triangles. This assumes the scene is only the unlit block shader at 72 Hz. The headset shows a warning above the cap; holding B overrides it.
+- **Recommended sizes:**
+  - **64×96×64**: comfortable everywhere (about 13k faces).
+  - **128×96×128**: the recommended maximum for normal play (about 47k faces measured, about 60–70k with textures).
+  - **128×128×128 / 64×384×64**: fine for rendering (about 85–100k faces). Snapshots are 0.4–0.7 MB.
+  - **128×384×128** (full height): estimated at about 220k faces / 890k vertices. That is near the cap, and it is over the server's default `max_blocks` (2,097,152), so the server operator would have to raise it.
+- **Meshing on the headset:** the box meshes about 1 ms per 16³ section. Assuming the Quest's mobile CPU is 3–5× slower (estimate), a 128×96×128 re-mesh is about 1–1.5 s spread across 3 worker threads. The main thread only uploads meshes, within a 3 ms per-frame budget.
+
+## C# client tests (`cd quest-app/Tests~ && dotnet run`)
+
+- **33/33 PASS.** This adds tests for `AreaMath` (block-size fit, clamping, the estimate, soft cap and override, clamping to server caps), `AreaSetupState` (centre on origin/player, resize clamps, request matches the fixture, warn/override), and `region_info`/`region_too_large` fixture parsing.
+- **`--live`** against the real-terrain server: all checks PASS, including the area-setup resize. The live test uses the same `AreaSetupState`: it requests +16 x/z, which the server's `max_blocks` limit clamps to 80×327×80, and gets back `region_changed` from its own session plus a snapshot with the new dims.
+- **`tools/e2e.sh`:** re-run after the async reader change and PASS. The block_update check found 0/65536 cells differing between the live and fresh snapshots, error paths returned the expected codes, and the avatar entities spawned. The earlier hang was caused by a stray test server still holding ports 25565/8765. The script now checks those ports before it starts and exits with an error if either is in use.

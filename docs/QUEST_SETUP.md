@@ -67,6 +67,30 @@ Don't commit or redistribute the jar or pack.
 
 Headset controls: **A** (right) = re-place the world at the right controller; hold **both grips** and move the right hand = drag/rotate; **right thumbstick up/down** = scale the miniature (also changes the giant's mapping).
 
+## Part G: setting up a play area in the headset
+
+The server picks the starting region (config.yml `region`). You can change it from the headset at any time. The new area is shared: every connected headset switches to it, and the last request wins.
+
+1. Press **Y** (left controller) to enter area setup. A cyan wireframe box shows the area you're about to request, drawn at the current scale relative to the terrain on the table. The status panel shows its size, how many blocks it contains, the estimated face/vertex count, and the block size it would use.
+2. Choose where the area is centred, using **X** (left) to cycle through these modes:
+   - **CurrentOrigin**: the area currently shown.
+   - **Player**: an online player. Push the **right stick left/right** to step through players; their feet end up about a third of the way up the box.
+   - **Coordinates**: hold the **right grip** and move the controller to nudge the box by whole blocks (vertical moves shift it up or down).
+3. Size the area:
+   - **Left stick**: width (left/right) and depth (up/down), in 8-block steps.
+   - **Right stick up/down**: height, in 16-block steps.
+   - Or point at one of the yellow handle spheres (+X face, +Z face, top) and hold the **right trigger** to drag that face. The box grows symmetrically around its centre.
+
+   Sizes are clamped to the server's limits (by default 128×384×128 and at most 2,097,152 blocks).
+4. Block size: **auto-fit** is on by default. It sets block size = min(table width/X, table depth/Z) × 0.95, so the area fills the table detected by MRUK; without a detected table it assumes a 0.8 × 0.6 m table. Click the **right stick** to switch to keeping your manual scale; outside setup, the right stick still scales the model.
+5. Press **A** to confirm. The server answers with `region_changed` and a new snapshot, and the terrain reloads in the background ("N sections pending" in the status panel). Tap **B** to cancel.
+6. If the estimate is over the headset budget (about 250k faces by default), the box turns red and A won't confirm. **Hold B for 1 s** to override the warning. If the server rejects the request (`region_too_large`), the panel shows the server's limits.
+
+Recommended sizes (estimates; see TESTING.md "Real terrain"):
+- 64×96×64 is a comfortable area to start with.
+- 128×96×128 is the recommended maximum for normal terrain.
+- Taller areas work, but snapshots and load times grow.
+
 ## Logs
 
 ```
