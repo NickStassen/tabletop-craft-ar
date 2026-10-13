@@ -75,7 +75,7 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 ```json
 {"v":1,"type":"welcome","seq":0,"t":1760370000012,
  "protocol":1,"server":"tabletop-plugin","server_version":"0.1.0",
- "mc_version":"1.21.11","session":"6f1c…",
+ "mc_version":"26.3","session":"6f1c…",
  "world":"world",
  "region":{"origin":[100,60,-40],"dims":[32,64,32]},
  "limits":{"max_dims":[64,384,64],"pose_hz_max":60,"player_hz":10},

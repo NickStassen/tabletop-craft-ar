@@ -8,8 +8,8 @@ Related: idea file [VR-7](https://github.com/NickStassen/ideas/blob/master/vr/07
 
 ```
  Java players (LAN) ──MC protocol──▶ ┌────────────────────────────┐
-                                    │ Paper server 1.21.11       │
-                                    │  └ tabletop plugin (Java21)│
+                                    │ Paper server 26.3          │
+                                    │  └ tabletop plugin (Java25)│
                                     │     ├ RegionExporter        │
                                     │     ├ BlockChangeTracker    │
                                     │     ├ PlayerBroadcaster     │
@@ -31,16 +31,16 @@ The Quest has no Minecraft account and never speaks the game protocol in v1.
 
 | thing | pin | why |
 |---|---|---|
-| Server | **Paper 1.21.11** (latest build) | Last line that runs on **Java 21**. Paper 26.x needs Java 25 (RESEARCH §1.5). It has Mannequin (1.21.9+) and display entities. |
-| Plugin build | Gradle (Kotlin DSL), Java toolchain 21, `io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT` (compileOnly), Shadow plugin | |
+| Server | **Paper 26.3** (build 181, stable) | Current release; needs **Java 25** (RESEARCH §1.5). It has Mannequin (1.21.9+) and display entities. v1 was first built and tested on Paper 1.21.11, the last Java 21 line. |
+| Plugin build | Gradle 9.8.0 wrapper (Kotlin DSL), Java toolchain 25, `io.papermc.paper:paper-api:26.3.build.181-stable` (compileOnly), Shadow 9.6.1 | Gradle 8.14 can't run on Java 25, so a single JDK 25 builds and runs everything. |
 | WebSocket server | `org.java-websocket:Java-WebSocket:1.6.0`, shaded and relocated to `<pkg>.libs.websocket` | |
 | JSON | Gson, already on Paper's classpath (compileOnly). Don't shade it. | |
-| Second player bot | mineflayer (latest), `version: "1.21.11"` | |
+| Second player bot | mineflayer 4.39.0, `version: "26.1"` | mineflayer supports game versions up to 26.1, so the e2e test server adds ViaVersion + ViaBackwards 5.12.0 (test only). The bot sends `tick_end` each tick, which 26.x requires before the next movement packet. |
 | Unity | 6000.0.84f1, same as the HUD repo | proven on the dev PC |
 | Meta XR | Core SDK + MRUK at the **same version as the HUD repo (85.0.0)** first; bump only if a needed API is missing | known-good setup |
 | C# WebSocket | `System.Net.WebSockets.ClientWebSocket` (built into .NET under IL2CPP) behind an `ILinkTransport` interface. NativeWebSocket is the fallback. | no extra package |
 
-Upgrade path: moving to Paper 26.x is a one-line API bump plus a Java 25 toolchain, and nothing in the protocol changes.
+Upgrade path: the move from Paper 1.21.11 to 26.3 was the API bump, a Java 25 toolchain and Gradle 9.8.0 / Shadow 9.6.1. No plugin source or protocol changes were needed.
 
 ## 3. Server plugin
 

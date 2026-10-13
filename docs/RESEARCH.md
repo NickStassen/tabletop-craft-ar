@@ -32,6 +32,7 @@ Confidence in the recommendation: **M-H**.
 ### 1.5 Paper version and Java
 - Paper's current release is 26.3 (build 178, 2026-10-12). **Minecraft 26.1+ and Paper 26.1+ need Java 25.** Paper 1.21.11 (build 132, 2026-05-11) is the latest line on Java 21. **H.** [Paper downloads](https://papermc.io/downloads/paper), [Paper 26.1 news](https://papermc.io/news/26-1), [Paper Java install docs](https://docs.papermc.io/misc/java-install/), [Paper 1.21.11 news](https://papermc.io/news/1-21-11), [mcjars index](https://mcjars.com/paper).
 - → **This contradicts the "Java 21" brief if the goal is the latest server.** Decision: pin 1.21.11 + Java 21 for v1, which matches the brief, and note that the Java client must join with 1.21.11 (or via ViaVersion). Moving to 26.x later is cheap.
+- **Update (2026-10-13):** the pin moved to Paper 26.3 (build 181, stable) + Java 25, and Java clients now join with 26.3. The plugin needed no source changes: paper-api `26.3.build.181-stable` (the new version scheme), `api-version: '26.3'`, and Gradle 9.8.0 + Shadow 9.6.1, because Gradle 8.14 can't run on Java 25.
 - Also from the 1.21.11 news: starting with 26.x, Paper ships unobfuscated, and version strings no longer start with `1.`. **H.**
 
 ### 1.6 WebSocket inside a plugin
@@ -63,7 +64,7 @@ Confidence in the recommendation: **M-H**.
 ## 5. Open risks
 1. **The Mannequin scale attribute is unverified.** If it doesn't apply, fall back to a giant ItemDisplay head plus hands (Phase 3 tests this). *M impact.*
 2. **The scale cap of 16 means about a 29-block giant** vs about 175 blocks for "true" scale at 1 cm/block. The avatar is visibly smaller than the real head-height mapping implies; consider a larger `block_size_m` or a display rig. *Design.*
-3. **Version skew:** the server is pinned to 1.21.11 while the current game is 26.3. Java clients must pick 1.21.11 in the launcher. *Low.*
+3. **Version skew** (resolved): the server was pinned to 1.21.11 while the current game is 26.3. It now runs 26.3, so Java clients use the launcher's latest release. mineflayer, used by the e2e bot, supports game versions only up to 26.1. *Low.*
 4. **MRUK needs Space Setup**, and a table may not be labeled. Manual placement is the fallback. *Low.*
 5. **Pinned MRUK 85 vs current 205:** newer docs may describe APIs missing in 85. *Low-M.*
 6. **ClientWebSocket on IL2CPP** stripping/TLS quirks. Plaintext `ws://` on LAN avoids the TLS issue; keep NativeWebSocket ready. *M.*

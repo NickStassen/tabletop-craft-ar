@@ -4,16 +4,17 @@ Versions follow [ironman-quest3-hud's SETUP.md](https://github.com/NickStassen/i
 
 ## Part A: run the server (Windows)
 
-1. **JDK 21**: install Eclipse Temurin 21 (MSI from adoptium.net, tick "Set JAVA_HOME" and "Add to PATH"). Check in a new terminal: `java -version` shows 21.
-2. **Paper 1.21.11**: make a folder such as `C:\mc\tabletop`. Download the latest 1.21.11 build from https://papermc.io/downloads/paper (pick version 1.21.11), save it as `paper.jar` there.
+1. **JDK 25**: install Eclipse Temurin 25 (MSI from adoptium.net, tick "Set JAVA_HOME" and "Add to PATH"). Check in a new terminal: `java -version` shows 25. Paper 26.x and the plugin build both need it.
+2. **Paper 26.3**: make a folder such as `C:\mc\tabletop`. Download the latest 26.3 build from https://papermc.io/downloads/paper (pick version 26.3; the plugin is built against build 181), save it as `paper.jar` there.
 3. **Plugin**: in the repo, `cd server-plugin` and run `gradlew.bat build` (or grab the `tabletop-plugin` artifact from the latest GitHub Actions run). Copy `build\libs\tabletop-craft-ar-plugin-0.1.0.jar` into `C:\mc\tabletop\plugins\`.
 4. **First start**: in `C:\mc\tabletop`, run `java -Xmx4G -jar paper.jar --nogui`. It stops and asks you to accept the EULA: read https://aka.ms/MinecraftEULA, set `eula=true` in `eula.txt`, start again. Wait for `Done (...)! ` and `[TabletopCraftAR] Link listening on ws://0.0.0.0:8765/tabletop`.
+   **Whitelist**: a new 26.x server has `white-list=true` in `server.properties`, so every Java player not on the list is rejected, including you on `localhost`. On a LAN test server, stop the server, set `white-list=false` and start it again, or run `whitelist add <name>` in the console for each player.
 5. **Firewall**: allow Java through Windows Defender Firewall on **Private** networks when prompted, or open the ports explicitly in an admin PowerShell:
    `New-NetFirewallRule -DisplayName "tabletop ws" -Direction Inbound -Protocol TCP -LocalPort 8765 -Action Allow -Profile Private`
    `New-NetFirewallRule -DisplayName "mc 25565" -Direction Inbound -Protocol TCP -LocalPort 25565 -Action Allow -Profile Private`
    Make sure the PC's Wi-Fi/Ethernet network profile is **Private**, and that the router has AP/client isolation **off**.
 6. **PC IP**: `ipconfig` and note the IPv4 address of the LAN adapter, e.g. `192.168.1.50`.
-7. **Pick the region**: join the server from the Java launcher (**version 1.21.11**, multiplayer, `localhost`). In the server console: `op <yourname>`. Stand at the north-west bottom corner of what you want on the table and run `/tabletop setorigin`, then `/tabletop setsize 32 64 32` (or smaller to start, e.g. `32 32 32`). `/tabletop status` confirms.
+7. **Pick the region**: join the server from the Java launcher (**version 26.3**, the "Latest release", multiplayer, `localhost`). In the server console: `op <yourname>`. Stand at the north-west bottom corner of what you want on the table and run `/tabletop setorigin`, then `/tabletop setsize 32 64 32` (or smaller to start, e.g. `32 32 32`). `/tabletop status` confirms.
 8. **Smoke test without the headset** (optional): `pip install -r tools/requirements.txt`, then `python tools/fake_quest.py --url ws://127.0.0.1:8765/tabletop --avatar -v --duration 15`. In game you should see the giant circling the middle of the region.
 
 ## Part B: Unity project
@@ -44,7 +45,7 @@ adb install -r quest-app/Builds/TabletopCraftAR.apk
 adb shell am start -n com.tabletopcraft.ar/com.unity3d.player.UnityPlayerGameActivity
 ```
 
-On Linux, Fix All logs an `ArgumentException: Invalid path` from the Meta XR Simulator download. The Simulator doesn't exist for Linux, so ignore it. The server side works on Linux unchanged (JDK 21, `./gradlew build`). On a firewalled box, open TCP 8765 to the LAN (e.g. `sudo ufw allow from 192.168.1.0/24 to any port 8765 proto tcp`).
+On Linux, Fix All logs an `ArgumentException: Invalid path` from the Meta XR Simulator download. The Simulator doesn't exist for Linux, so ignore it. The server side works on Linux unchanged (JDK 25, `./gradlew build`). On a firewalled box, open TCP 8765 to the LAN (e.g. `sudo ufw allow from 192.168.1.0/24 to any port 8765 proto tcp`).
 
 ## Part C: headset
 
@@ -73,14 +74,14 @@ Then relaunch the app. Alternatively set **ServerUrl** on the TabletopApp compon
 
 Without a pack the app uses flat colours. To use textures you already own:
 
-1. Copy your client jar, e.g. `%APPDATA%\.minecraft\versions\1.21.11\1.21.11.jar`, or any Java resource pack `.zip`, to a temp folder and rename it `pack.zip` (a jar is a zip).
+1. Copy your client jar, e.g. `%APPDATA%\.minecraft\versions\26.3\26.3.jar` (Linux: `~/.minecraft/versions/26.3/26.3.jar`), or any Java resource pack `.zip`, to a temp folder and rename it `pack.zip` (a jar is a zip). The atlas loader was checked offline against the 26.3 jar; on the headset it's still untested.
 2. `adb push pack.zip /sdcard/Android/data/com.tabletopcraft.ar/files/pack.zip`, then restart the app. The status text shows `PACK yes`.
 
 Don't commit or redistribute the jar or pack.
 
 ## Part F: test with a second Java player
 
-1. On another PC on the same LAN (or a second launcher profile on the same PC), start Minecraft **1.21.11** -> Multiplayer -> Direct Connection -> `192.168.1.50`.
+1. On another PC on the same LAN (or a second launcher profile on the same PC), start Minecraft **26.3** -> Multiplayer -> Direct Connection -> `192.168.1.50`. The player must be whitelisted, or `white-list=false` (Part A step 4).
 2. Walk around inside the region: an orange capsule with your name moves on the table. Break and place blocks: the miniature updates within a second (events are applied next tick, a full diff runs every second).
 3. Look up from inside the region: the giant (up to 28.8 blocks tall, scale 16) follows the headset user's head; the two white blocks follow the controllers or hands. Its head sits exactly where the headset is above the table, so lean in close to the table to bring it down to the terrain.
 
