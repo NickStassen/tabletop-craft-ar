@@ -271,4 +271,5 @@ Then it closes with code 1000. When the Quest client disconnects (with or withou
 - `region_query` → `region_info{region, players:[{name,uuid,world,pos,yaw}], limits, ref_seq}` (used for "center on me").
 - `welcome.limits` gains `max_dims`, `max_blocks`, `max_bytes`. `chunk_snapshot` may carry `server_timing{read_ms,remap_ms,encode_ms}`, which clients ignore if they don't recognise it.
 - Growth always triggers a full re-snapshot. Incremental edge growth is deferred.
+- Fixtures: `tools/fixtures/region_request.json`, `region_query.json`, `region_changed.json`, `region_info.json`, `error_region_too_large.json` (also parsed by the C# tests).
 - Changelog: v1.1 adds the messages above. v1 clients are unaffected.

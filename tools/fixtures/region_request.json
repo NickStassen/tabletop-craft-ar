@@ -1,0 +1,10 @@
+{
+ "v": 1,
+ "type": "region_request",
+ "seq": 7,
+ "t": 1760370001000,
+ "world": "world",
+ "center": [12.5, 70.0, -40.5],
+ "size": [64, 96, 64],
+ "y_origin": 32
+}

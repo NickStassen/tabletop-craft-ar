@@ -1,0 +1,11 @@
+{
+ "v": 1,
+ "type": "region_changed",
+ "seq": 40,
+ "t": 1760370001300,
+ "world": "world",
+ "origin": [-20, 32, -73],
+ "dims": [64, 96, 64],
+ "by_session": "a24830b3",
+ "ref_seq": 7
+}

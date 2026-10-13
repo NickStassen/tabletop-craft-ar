@@ -23,10 +23,12 @@
  },
  "limits": {
   "max_dims": [
-   64,
+   128,
    384,
-   64
+   128
   ],
+  "max_blocks": 2097152,
+  "max_bytes": 4194304,
   "pose_hz_max": 60,
   "player_hz": 10
  },
