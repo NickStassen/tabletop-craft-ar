@@ -7,6 +7,10 @@ cd "$(dirname "$0")"
 ROOT=$(cd .. && pwd)
 RUN=run/server
 mkdir -p "$RUN/plugins/TabletopCraftAR"
+# Preflight: a stray server on 25565/8765 makes this script hang waiting on the wrong server.
+for port in 25565 8765; do
+  if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then echo "port $port already in use; stop the other server first" >&2; exit 2; fi
+done
 UA="tabletop-craft-ar-e2e/0.1"
 if [ ! -f "$RUN/paper.jar" ]; then
   url=$(curl -s -A "$UA" https://fill.papermc.io/v3/projects/paper/versions/1.21.11/builds/latest | python3 -c "import json,sys;print(json.load(sys.stdin)['downloads']['server:default']['url'])")
