@@ -28,6 +28,8 @@ import java.util.List;
 public final class GiantAvatar {
     public static final String TAG = "tabletop_avatar";
     public static final double EYE_HEIGHT = 1.62;
+    /** Upper bound of the SCALE attribute. */
+    static final double SCALE_ATTRIBUTE_MAX = 16.0;
 
     // Config (main thread).
     public boolean enabled;
@@ -77,8 +79,7 @@ public final class GiantAvatar {
             if (nameTag != null && !nameTag.isBlank()) { m.customName(Component.text(nameTag)); m.setCustomNameVisible(true); }
         });
         AttributeInstance attr = body.getAttribute(Attribute.SCALE);
-        double attrMax = 16.0;
-        scale = computeScale(attrMax);
+        scale = computeScale(SCALE_ATTRIBUTE_MAX);
         if (attr != null) attr.setBaseValue(scale);
         if (showHands) {
             left = hand(w, at);
@@ -98,6 +99,14 @@ public final class GiantAvatar {
             d.setViewRange(4.0f);
             d.setTransformation(new Transformation(new Vector3f(), new Quaternionf(), new Vector3f(s, s, s), new Quaternionf()));
         });
+    }
+
+    /** Re-applies the scale after a block size or max_scale change; the hands pick it up with the next pose. */
+    public void rescale() {
+        if (!spawned()) return;
+        scale = computeScale(SCALE_ATTRIBUTE_MAX);
+        AttributeInstance attr = body.getAttribute(Attribute.SCALE);
+        if (attr != null) attr.setBaseValue(scale);
     }
 
     public void remove() {

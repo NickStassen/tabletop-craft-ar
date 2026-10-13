@@ -371,6 +371,12 @@ public final class TabletopPlugin extends JavaPlugin {
 
     // ---------- avatar ----------
     void onAvatarConfig(Session s, AvatarConfig c, Long refSeq) {
+        // Block size / max_scale changes (the headset sends them while scaling) only rescale the spawned giant;
+        // new entities are needed only when its appearance changes.
+        boolean looks = (c.skinPlayer() != null && !c.skinPlayer().equals(avatar.skinPlayer))
+            || (c.model() != null && !c.model().equals(avatar.model))
+            || (c.showHands() != null && c.showHands() != avatar.showHands)
+            || (c.nameTagPresent() && !java.util.Objects.equals(c.nameTag(), avatar.nameTag));
         if (c.skinPlayer() != null) avatar.skinPlayer = c.skinPlayer();
         if (c.model() != null) avatar.model = c.model();
         if (c.blockSizeM() != null) avatar.blockSizeM = c.blockSizeM();
@@ -378,11 +384,11 @@ public final class TabletopPlugin extends JavaPlugin {
         if (c.showHands() != null) avatar.showHands = c.showHands();
         if (c.nameTagPresent()) avatar.nameTag = c.nameTag();
         if (c.skinUrl() != null) send(s, Protocol.error("unsupported", "skin_url is not implemented in v0.1; use skin_player", refSeq, false));
-        boolean respawn = avatar.spawned();
         if (c.enabled() != null) avatar.enabled = c.enabled();
         avatarOwner = s; avatarOwnerGoneMs = -1;
         if (!avatar.enabled) avatar.remove();
-        else if (respawn || !avatar.spawned()) spawnAvatarAtAnchor();
+        else if (looks || !avatar.spawned()) spawnAvatarAtAnchor();
+        else avatar.rescale();
         send(s, avatar.state(getConfig().getBoolean("debug.avatar-state", false)));
     }
 
