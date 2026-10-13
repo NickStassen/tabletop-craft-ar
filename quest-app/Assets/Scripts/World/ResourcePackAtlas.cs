@@ -80,14 +80,16 @@ namespace TabletopCraft.World
             {
                 var mj = Model(cur);
                 if (mj == null) break;
-                if (mj.O("textures") is Dictionary<string, object> t) foreach (var kv in t) if (!textures.ContainsKey(kv.Key)) textures[kv.Key] = kv.Value as string;
+                if (mj.O("textures") is Dictionary<string, object> t) foreach (var kv in t) if (!textures.ContainsKey(kv.Key)) textures[kv.Key] = TextureRef(kv.Value);
                 if (elements == null && mj.A("elements") is List<object> el) elements = el;
                 cur = mj.S("parent");
             }
             if (elements == null || elements.Count == 0)
             {
-                // Item-like/cross models (flowers): use "cross"/"texture"/"all" for every face.
-                string tex = Lookup(textures, "#cross") ?? Lookup(textures, "#all") ?? Lookup(textures, "#texture");
+                // Item-like/cross models (flowers): use "cross"/"texture"/"all" for every face. Fluid models only name
+                // their still texture as "particle".
+                string tex = Lookup(textures, "#cross") ?? Lookup(textures, "#all") ?? Lookup(textures, "#texture")
+                             ?? (path == "water" || path == "lava" ? Lookup(textures, "#particle") : null);
                 if (tex != null) for (int i = 0; i < 6; i++) faces[i] = Key(tex, false, state);
                 return;
             }
@@ -101,6 +103,9 @@ namespace TabletopCraft.World
                 if (tex != null) faces[i] = Key(tex, f.ContainsKey("tintindex"), state);
             }
         }
+
+        /// <summary>A model texture is a path string, or (26.x) an object like {"sprite": "block/glass", "force_translucent": true}.</summary>
+        static string TextureRef(object v) => v as string ?? (v as Dictionary<string, object>)?.S("sprite");
 
         static bool Matches(string props, string key)
         {
