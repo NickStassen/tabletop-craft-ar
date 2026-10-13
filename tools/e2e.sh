@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# End-to-end test on a Linux box: Paper 1.21.11 headless (offline mode, TEST ONLY) + plugin + fake Quest +
-# mineflayer second player. Needs: JDK 21 on PATH, Node 18+, Python 3.11+ with `pip install -r tools/requirements.txt`.
-# Accepting the EULA here is for local testing only; eula.txt and the server jar live in tools/run/ (git-ignored).
+# End-to-end test on a Linux box: Paper 26.3 headless (offline mode, TEST ONLY) + plugin + fake Quest +
+# mineflayer second player. Needs: JDK 25 on PATH (Paper 26.x and the plugin build both require Java 25), Node 18+,
+# Python 3.11+ with `pip install -r tools/requirements.txt`.
+# mineflayer only speaks up to 26.1, so the TEST server also gets ViaVersion + ViaBackwards (pinned, sha512-checked);
+# the plugin itself never needs them.
+# Accepting the EULA here is for local testing only; eula.txt, the server and Via jars live in tools/run/ (git-ignored).
 set -euo pipefail
 cd "$(dirname "$0")"
 ROOT=$(cd .. && pwd)
@@ -11,25 +14,49 @@ mkdir -p "$RUN/plugins/TabletopCraftAR"
 for port in 25565 8765; do
   if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then echo "port $port already in use; stop the other server first" >&2; exit 2; fi
 done
+# Paper 26.x refuses to start on Java < 25, and this script would then wait forever for "Done (".
+jv=$(java -XshowSettings:properties -version 2>&1 | sed -n 's/^ *java.specification.version = //p')
+if [ "${jv%%.*}" -lt 25 ] 2>/dev/null || [ -z "$jv" ]; then echo "java on PATH is ${jv:-missing}; Paper 26.x needs JDK 25 (set JAVA_HOME and PATH)" >&2; exit 2; fi
 UA="tabletop-craft-ar-e2e/0.1"
-if [ ! -f "$RUN/paper.jar" ]; then
-  url=$(curl -s -A "$UA" https://fill.papermc.io/v3/projects/paper/versions/1.21.11/builds/latest | python3 -c "import json,sys;print(json.load(sys.stdin)['downloads']['server:default']['url'])")
-  curl -sL -A "$UA" -o "$RUN/paper.jar" "$url"
+MC=26.3      # Paper / Minecraft version; the jar is named after it, so changing this re-downloads
+VIA=5.12.0   # ViaVersion + ViaBackwards release (Modrinth) that supports 26.3
+PAPER="paper-$MC.jar"
+# fetch URL ALGO HASH DEST: download, then verify before the jar can ever run.
+fetch() {
+  curl -sfL -A "$UA" -o "$4.part" "$1"
+  echo "$3  $4.part" | "${2}sum" -c --quiet - || { echo "$2 mismatch for $1" >&2; rm -f "$4.part"; exit 3; }
+  mv "$4.part" "$4"
+}
+if [ ! -f "$RUN/$PAPER" ]; then
+  rm -f "$RUN"/paper*.jar
+  read -r url sha < <(curl -sf -A "$UA" "https://fill.papermc.io/v3/projects/paper/versions/$MC/builds/latest" |
+    python3 -c "import json,sys;d=json.load(sys.stdin)['downloads']['server:default'];print(d['url'],d['checksums']['sha256'])") || { echo "Paper $MC lookup failed" >&2; exit 3; }
+  fetch "$url" sha256 "$sha" "$RUN/$PAPER"
 fi
+for via in ViaVersion ViaBackwards; do
+  if [ ! -f "$RUN/plugins/$via-$VIA.jar" ]; then
+    rm -f "$RUN/plugins/$via"-*.jar
+    read -r url sha < <(curl -sf -A "$UA" "https://api.modrinth.com/v2/project/${via,,}/version/$VIA" |
+      python3 -c "import json,sys;f=[f for f in json.load(sys.stdin)['files'] if f['primary']][0];print(f['url'],f['hashes']['sha512'])") || { echo "$via $VIA lookup failed" >&2; exit 3; }
+    fetch "$url" sha512 "$sha" "$RUN/plugins/$via-$VIA.jar"
+  fi
+done
 (cd "$ROOT/server-plugin" && ./gradlew -q build)
 cp "$ROOT"/server-plugin/build/libs/tabletop-craft-ar-plugin-*.jar "$RUN/plugins/"
 sed 's/avatar-state: false/avatar-state: true/' "$ROOT/server-plugin/src/main/resources/config.yml" > "$RUN/plugins/TabletopCraftAR/config.yml"
 echo "eula=true" > "$RUN/eula.txt"
 cat > "$RUN/server.properties" <<'PROPS'
 online-mode=false
+white-list=false
 level-type=minecraft\:flat
+generator-settings={"layers"\:[{"block"\:"minecraft\:bedrock","height"\:1},{"block"\:"minecraft\:dirt","height"\:2},{"block"\:"minecraft\:grass_block","height"\:1}],"biome"\:"minecraft\:plains"}
 generate-structures=false
 spawn-protection=0
 spawn-monsters=false
 view-distance=6
 PROPS
 rm -f "$RUN/stdin.fifo"; mkfifo "$RUN/stdin.fifo"
-(cd "$RUN" && tail -f stdin.fifo | java -Xmx2G -jar paper.jar --nogui > server.log 2>&1) &
+(cd "$RUN" && tail -f stdin.fifo | java -Xmx2G -jar "$PAPER" --nogui > server.log 2>&1) &
 SERVER=$!
 c() { echo "$*" > "$RUN/stdin.fifo"; sleep 0.5; }
 until grep -q "Done (" "$RUN/server.log" 2>/dev/null; do sleep 1; done

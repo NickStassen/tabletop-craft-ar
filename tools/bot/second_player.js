@@ -1,9 +1,14 @@
 // Usage: node second_player.js  (env: MC_HOST, MC_PORT, BOT_MS). Paper must be in offline mode (test only).
 // Second Java player (offline auth): walks across the region and logs entity spawns near the giant.
+// mineflayer speaks at most 26.1, so it joins the 26.3 test server as a 26.1 client through ViaBackwards (see e2e.sh).
 const mineflayer = require('mineflayer');
-const bot = mineflayer.createBot({ host: process.env.MC_HOST || '127.0.0.1', port: Number(process.env.MC_PORT || 25565), username: 'TestWalker', auth: 'offline', version: '1.21.11' });
+const bot = mineflayer.createBot({ host: process.env.MC_HOST || '127.0.0.1', port: Number(process.env.MC_PORT || 25565), username: 'TestWalker', auth: 'offline', version: '26.1' });
 const seen = {};
 const log = (...a) => console.log(new Date().toISOString(), ...a);
+// A 26.x server allows one position packet per client tick and only a client tick_end resets that, so without
+// it the second position update gets the bot kicked (invalid_player_movement). mineflayer 4.39 never sends it.
+// Like the vanilla client, end each tick after its movement packet (physicsTick fires just before that packet).
+bot.on('physicsTick', () => process.nextTick(() => bot._client.state === 'play' && bot._client.write('tick_end', {})));
 bot.on('spawn', async () => {
   log('SPAWN', bot.entity.position.toString());
   log('waiting for console tp');
