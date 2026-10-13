@@ -3,6 +3,7 @@
 // Resolution: blockstates/<name>.json -> first/matching variant model -> models/... parent chain -> element face
 // textures ("#var" resolved recursively) -> textures/<path>.png. Animated strips use the first frame.
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
@@ -21,7 +22,8 @@ namespace TabletopCraft.World
         ZipArchive _zip;
         readonly Dictionary<string, int> _layers = new Dictionary<string, int>();       // texture path -> layer
         readonly List<Color32[]> _pixels = new List<Color32[]>();
-        readonly Dictionary<string, FaceKey[]> _faceCache = new Dictionary<string, FaceKey[]>();
+        // Workers read it while the main thread prewarms new palette entries (only the main thread adds).
+        readonly ConcurrentDictionary<string, FaceKey[]> _faceCache = new ConcurrentDictionary<string, FaceKey[]>();
         readonly Dictionary<string, Dictionary<string, object>> _models = new Dictionary<string, Dictionary<string, object>>();
         bool _arrayDirty;
         static readonly string[] DirNames = { "west", "east", "down", "up", "north", "south" };

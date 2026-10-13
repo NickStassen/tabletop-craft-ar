@@ -40,6 +40,7 @@ namespace TabletopCraft
         string _session;
         TextMesh _status;
         float _nextPing; int _pingId; long _rttMs = -1;
+        float _avatarConfigAt = -1;   // send avatar_config once scaling settles, not every frame
         string _lastError = "";
         AndroidJavaObject _wifiLock;
 
@@ -122,7 +123,7 @@ namespace TabletopCraft
             _blocks.localScale = Vector3.one * bs;
             _players.BlockSizeM = bs;
             RecenterRegion();
-            if (_link != null && _link.Connected) _link.Send(Protocol.AvatarConfig(true, bs, SkinPlayer, true, "Tabletop Giant"));
+            _avatarConfigAt = Time.unscaledTime + 0.3f;
         }
 
         /// <summary>Put the region centre on the anchor: RegionRoot local = (-dx/2, 0, +dz/2) * bs (Z mirrored).</summary>
@@ -137,6 +138,11 @@ namespace TabletopCraft
             int budget = 50;
             while (budget-- > 0 && _link.Inbound.TryDequeue(out var m)) Handle(m);
             if (_link.Connected && Time.unscaledTime > _nextPing) { _nextPing = Time.unscaledTime + 2f; _link.Send(Protocol.Ping(_pingId++)); }
+            if (_avatarConfigAt >= 0 && Time.unscaledTime >= _avatarConfigAt)
+            {
+                _avatarConfigAt = -1;   // while disconnected, welcome sends the current block size anyway
+                if (_link.Connected) _link.Send(Protocol.AvatarConfig(true, BlockSizeM, SkinPlayer, true, "Tabletop Giant"));
+            }
             if (_status)
                 _status.text = $"LINK {(_link.Connected ? "OK" : _link.Status)}  RTT {(_rttMs < 0 ? "-" : _rttMs + "ms")}\n" +
                                $"WORLD {(_world.Loaded ? $"{_world.Dims.x}x{_world.Dims.y}x{_world.Dims.z} @ {_world.Origin}" : "-")}  PACK {(_atlas.HasPack ? "yes" : "flat")}\n" +

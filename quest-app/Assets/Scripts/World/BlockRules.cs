@@ -1,4 +1,5 @@
 // Classifies block-state strings for the v1 mesher and provides a no-assets flat colour table.
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -8,7 +9,9 @@ namespace TabletopCraft.World
 
     public static class BlockRules
     {
-        static readonly Dictionary<string, BlockShape> Cache = new Dictionary<string, BlockShape>();
+        // Filled from the meshing worker threads, so it must be concurrent (a plain Dictionary corrupted under
+        // parallel inserts and threw NullReferenceException in the first meshing batch on the headset).
+        static readonly ConcurrentDictionary<string, BlockShape> Cache = new ConcurrentDictionary<string, BlockShape>();
 
         public static string Name(string state) { int i = state.IndexOf('['); return i < 0 ? state : state.Substring(0, i); }
         public static string Path(string state) { var n = Name(state); int c = n.IndexOf(':'); return c < 0 ? n : n.Substring(c + 1); }

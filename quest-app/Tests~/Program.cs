@@ -67,6 +67,13 @@ static class Program
         GreedyMesher.BuildSpecials(flower, new Vector3Int(0, 0, 0), new Flat(), m);
         Check(before == 0 && m.Verts.Count == 8, "poppy -> cross quads only");
 
+        // TabletopRenderer meshes on worker threads, which fill BlockRules' shape cache on first use. A plain
+        // Dictionary there threw NullReferenceException in the first meshing batch on the headset.
+        var fresh = Enumerable.Range(0, 20000).Select(i => "minecraft:race_test_" + i).ToArray();
+        bool raced = false;
+        try { System.Threading.Tasks.Parallel.ForEach(fresh, st => BlockRules.Shape(st)); } catch (Exception) { raced = true; }
+        Check(!raced && fresh.All(st => BlockRules.Shape(st) == BlockShape.Cube), "BlockRules.Shape safe under parallel first use");
+
         // Pose conversion (PROTOCOL.md section 3): Unity identity looks +Z (Unity forward) -> tabletop -Z (north).
         var tp = TabletopPose.FromUnityLocal(new Vector3(0.1f, 0.5f, 0.2f), new Quaternion(0.1f, 0.2f, 0.3f, 0.927f));
         Check(tp.p.x == 0.1f && tp.p.z == -0.2f && tp.q.x == -0.1f && tp.q.y == -0.2f && tp.q.z == 0.3f, "unity -> tabletop frame mapping");
