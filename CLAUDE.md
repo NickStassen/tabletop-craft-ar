@@ -15,8 +15,9 @@ A Paper plugin streams a box of blocks, player positions and block changes over 
 - Tests: `tools/e2e.sh` (refuses to start if 25565/8765 are busy), `tools/region_e2e.py` (needs the e2e world), `tools/measure_regions.py OUT "c:cx,cy,cz,dx,dy,dz,y0"` and `quest-app/Tests~ dotnet run -- --measure OUT` for sizes and face counts.
 
 ## First hardware session checklist
-Prereqs (human): Unity 6000.0.84f1 with Android module, Quest in Developer Mode connected over USB with debugging allowed, `pack.zip` pushed per `docs/QUEST_SETUP.md` step 12.
+Prereqs (human): Unity 6000.0.84f1 with Android module, Quest in Developer Mode connected over USB with debugging allowed, and the vanilla game installed for that version on this PC.
 Work through these in order and record what you verify in `README.md` Status and `docs/TESTING.md`:
+0. Push textures: find the client jar (Windows: `%APPDATA%\\.minecraft\\versions\\1.21.11\\1.21.11.jar`; if missing, ask the human to launch 1.21.11 once in the launcher). Copy it to a temp `pack.zip`, then `adb shell mkdir -p /sdcard/Android/data/com.tabletopcraft.ar/files/` and `adb push pack.zip` there (re-push after a fresh install if the folder was wiped). Never commit the jar or pack.zip.
 1. Open `quest-app/`, resolve Meta XR/MRUK 85.0.0 packages, fix compile errors with minimal changes (no version bumps). Run **TabletopCraft > Create Scene**, then build the APK.
 2. Start the plugin on Paper 1.21.11 / Java 21 on the PC. Confirm the Quest can reach port 8765 over Wi-Fi (LAN IP, firewall rule).
 3. `adb install` the APK. Watch `adb logcat -s Unity | grep Tabletop` for LINK up and the first snapshot.
