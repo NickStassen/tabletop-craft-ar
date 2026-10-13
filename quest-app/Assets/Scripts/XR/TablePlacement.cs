@@ -15,6 +15,10 @@ namespace TabletopCraft.XR
         public float FallbackAfterSeconds = 6f;
         public System.Action<float> OnScaleChanged; // multiplier applied to block size
         public string Status = "waiting for scene";
+        /// <summary>Usable table top in metres (x = width along the anchor's X, y = depth along Z). Default when no TABLE.</summary>
+        public Vector2 TableSize = new Vector2(0.8f, 0.6f);
+        /// <summary>Set by AreaSetupMode: the controllers belong to area setup, so placement/scale input is ignored.</summary>
+        public bool Suspended;
 
         bool _placed;
         Vector3 _grabOffset; float _grabYaw, _anchorYaw0; bool _grabbing;
@@ -44,11 +48,13 @@ namespace TabletopCraft.XR
             Vector3 centre = best.transform.position;
             if (best.PlaneRect.HasValue) centre = best.transform.TransformPoint(best.PlaneRect.Value.center);
             else if (best.VolumeBounds.HasValue) { var b = best.VolumeBounds.Value; centre = best.transform.TransformPoint(new Vector3(b.center.x, b.center.y, b.max.z)); }
+            if (best.PlaneRect.HasValue) TableSize = best.PlaneRect.Value.size;
+            else if (best.VolumeBounds.HasValue) TableSize = new Vector2(best.VolumeBounds.Value.size.x, best.VolumeBounds.Value.size.y);
             Vector3 up = best.PlaneRect.HasValue ? best.transform.forward : Vector3.up;
             if (Vector3.Dot(up, Vector3.up) < 0) up = -up;
             Vector3 fwd = Vector3.ProjectOnPlane(Head.forward, up).normalized;
             Place(centre, Quaternion.LookRotation(fwd.sqrMagnitude > 0.01f ? fwd : Vector3.forward, up));
-            Status = $"placed on table {bestD:F2} m away";
+            Status = $"placed on table {bestD:F2} m away ({TableSize.x:F2} x {TableSize.y:F2} m)";
         }
 
         void PlaceInFront(string why)
@@ -64,6 +70,7 @@ namespace TabletopCraft.XR
 
         void Update()
         {
+            if (Suspended) return;
             if (OVRInput.GetDown(OVRInput.Button.One, OVRInput.Controller.RTouch) && RightHand != null)
             {
                 Vector3 fwd = Vector3.ProjectOnPlane(Head.forward, Vector3.up).normalized;

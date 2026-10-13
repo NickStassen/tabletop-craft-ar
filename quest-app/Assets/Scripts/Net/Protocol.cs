@@ -30,6 +30,33 @@ namespace TabletopCraft.Net
             ["skin_player"] = string.IsNullOrEmpty(skinPlayer) ? null : skinPlayer, ["show_hands"] = showHands, ["name_tag"] = nameTag,
         };
 
+        /// <summary>region_request, centre form (PROTOCOL.md 4.13). origin = centre - size/2; y_origin pins the bottom.</summary>
+        public static Dictionary<string, object> RegionRequest(string world, Vector3 center, Vector3Int size, int? yOrigin)
+        {
+            var d = new Dictionary<string, object>
+            {
+                ["type"] = "region_request", ["world"] = world,
+                ["center"] = new List<object> { Math.Round(center.x, 2), Math.Round(center.y, 2), Math.Round(center.z, 2) },
+                ["size"] = new List<object> { size.x, size.y, size.z },
+            };
+            if (yOrigin.HasValue) d["y_origin"] = yOrigin.Value;
+            return d;
+        }
+
+        /// <summary>region_request, origin form.</summary>
+        public static Dictionary<string, object> RegionRequest(string world, Vector3Int origin, Vector3Int dims) => new Dictionary<string, object>
+        {
+            ["type"] = "region_request", ["world"] = world,
+            ["origin"] = new List<object> { origin.x, origin.y, origin.z }, ["dims"] = new List<object> { dims.x, dims.y, dims.z },
+        };
+
+        public static Dictionary<string, object> RegionQuery(string player = null)
+        {
+            var d = new Dictionary<string, object> { ["type"] = "region_query" };
+            if (!string.IsNullOrEmpty(player)) d["player"] = player;
+            return d;
+        }
+
         public static Dictionary<string, object> Ping(int id) => new Dictionary<string, object> { ["type"] = "ping", ["id"] = id };
         public static Dictionary<string, object> Bye(string reason) => new Dictionary<string, object> { ["type"] = "bye", ["reason"] = reason };
 
@@ -109,5 +136,45 @@ namespace TabletopCraft.Net
         public Vector3 Pos; // world coords (feet)
         public float Yaw, Pitch;
         public bool Sneaking;
+    }
+
+    /// <summary>Server limits from welcome.limits, region_info.limits or a region_too_large error.</summary>
+    public struct RegionLimits
+    {
+        public int MaxX, MaxY, MaxZ; public long MaxBlocks, MaxBytes;
+        public static RegionLimits Default => new RegionLimits { MaxX = 128, MaxY = 384, MaxZ = 128, MaxBlocks = 2097152, MaxBytes = 4194304 };
+        public static RegionLimits From(Dictionary<string, object> o, RegionLimits fallback)
+        {
+            if (o == null) return fallback;
+            var r = fallback;
+            if (o.A("max_dims") is List<object> md && md.Count == 3) { var v = Json.Doubles(md); r.MaxX = (int)v[0]; r.MaxY = (int)v[1]; r.MaxZ = (int)v[2]; }
+            if (o.ContainsKey("max_blocks")) r.MaxBlocks = (long)o.D("max_blocks");
+            if (o.ContainsKey("max_bytes")) r.MaxBytes = (long)o.D("max_bytes");
+            return r;
+        }
+    }
+
+    public struct RegionPlayer { public string Name, Uuid, World; public Vector3 Pos; public float Yaw; }
+
+    /// <summary>region_info (PROTOCOL.md 4.15).</summary>
+    public sealed class RegionInfo
+    {
+        public string World; public Vector3Int Origin, Dims; public RegionLimits Limits;
+        public readonly List<RegionPlayer> Players = new List<RegionPlayer>();
+        public static RegionInfo From(Dictionary<string, object> m)
+        {
+            var r = new RegionInfo();
+            var reg = m.O("region");
+            r.World = reg.S("world");
+            var o = Json.Doubles(reg.A("origin")); var d = Json.Doubles(reg.A("dims"));
+            r.Origin = new Vector3Int((int)o[0], (int)o[1], (int)o[2]); r.Dims = new Vector3Int((int)d[0], (int)d[1], (int)d[2]);
+            r.Limits = RegionLimits.From(m.O("limits"), RegionLimits.Default);
+            foreach (var x in m.A("players") ?? new List<object>())
+            {
+                var p = (Dictionary<string, object>)x; var pos = Json.Doubles(p.A("pos"));
+                r.Players.Add(new RegionPlayer { Name = p.S("name"), Uuid = p.S("uuid"), World = p.S("world"), Pos = new Vector3((float)pos[0], (float)pos[1], (float)pos[2]), Yaw = (float)p.D("yaw") });
+            }
+            return r;
+        }
     }
 }

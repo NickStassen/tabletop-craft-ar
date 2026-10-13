@@ -34,6 +34,8 @@ namespace TabletopCraft
         PlayerMarkers _players;
         PoseSender _poses;
         TablePlacement _placement;
+        AreaSetupMode _area;
+        string _session;
         TextMesh _status;
         float _nextPing; int _pingId; long _rttMs = -1;
         string _lastError = "";
@@ -69,6 +71,12 @@ namespace TabletopCraft
             _placement = gameObject.AddComponent<TablePlacement>();
             _placement.Anchor = _anchor; _placement.Head = Head; _placement.RightHand = RightHand;
             _placement.OnScaleChanged = k => SetBlockSize(Mathf.Clamp(BlockSizeM * k, 0.002f, 0.1f), false);
+
+            _area = gameObject.AddComponent<AreaSetupMode>();
+            _area.RegionRoot = _regionRoot; _area.RightHand = RightHand; _area.Placement = _placement;
+            _area.BlockSize = () => BlockSizeM; _area.World = () => _world;
+            _area.Send = b => _link.Send(b);
+            _area.ApplyBlockSize = bs => SetBlockSize(bs, false);
 
             _link = new LinkClient(ServerUrl, Token);
             _link.Start();
@@ -129,7 +137,9 @@ namespace TabletopCraft
             if (_status)
                 _status.text = $"LINK {(_link.Connected ? "OK" : _link.Status)}  RTT {(_rttMs < 0 ? "-" : _rttMs + "ms")}\n" +
                                $"WORLD {(_world.Loaded ? $"{_world.Dims.x}x{_world.Dims.y}x{_world.Dims.z} @ {_world.Origin}" : "-")}  PACK {(_atlas.HasPack ? "yes" : "flat")}\n" +
-                               $"TABLE {_placement.Status}\nPOSES {(_poses ? _poses.Sent : 0)}  {_lastError}";
+                               $"TABLE {_placement.Status}\nPOSES {(_poses ? _poses.Sent : 0)}  MESH {_renderer.Quads / 1000}k faces" +
+                               (_renderer.Pending > 0 ? $" ({_renderer.Pending} sections pending)" : "") + $"  {_lastError}\n" +
+                               (_area.Active ? _area.Status : (_area.Status.Length > 0 ? _area.Status : "Y (left) = set up area"));
         }
 
         void Handle(Dictionary<string, object> m)
@@ -138,7 +148,16 @@ namespace TabletopCraft
             {
                 case "welcome":
                     Debug.Log($"[Tabletop] welcome from {m.S("server")} {m.S("server_version")} mc {m.S("mc_version")}");
+                    _session = m.S("session");
+                    _area.State.Limits = RegionLimits.From(m.O("limits"), RegionLimits.Default);
                     _link.Send(Protocol.AvatarConfig(true, BlockSizeM, SkinPlayer, true, "Tabletop Giant"));
+                    break;
+                case "region_info":
+                    _area.OnRegionInfo(RegionInfo.From(m));
+                    break;
+                case "region_changed":
+                    // A snapshot of the new region follows; just note who changed it (shared region, last writer wins).
+                    _area.OnRegionChanged(m, m.S("by_session") == _session);
                     break;
                 case "chunk_snapshot":
                     try
@@ -179,6 +198,7 @@ namespace TabletopCraft
                     break;
                 case "error":
                     _lastError = $"{m.S("code")}: {m.S("message")}";
+                    _area.OnError(m);
                     Debug.LogWarning("[Tabletop] server error " + _lastError);
                     break;
             }
