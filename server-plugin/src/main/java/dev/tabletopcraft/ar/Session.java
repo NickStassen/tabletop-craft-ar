@@ -28,6 +28,7 @@ public final class Session {
     public RegionSpec region;
     public int snapshotId;
     public int[] lastGrid;                 // global palette ids, as last sent
+    // The session palette and its map are used only on the outbound executor thread (message order).
     public final List<String> palette = new ArrayList<>();
     private final Map<Integer, Integer> globalToLocal = new HashMap<>();
     public final Set<UUID> skinSent = new HashSet<>();
@@ -67,12 +68,18 @@ public final class Session {
         if (!conn.isOpen()) return 0;
         body.addProperty("seq", seq.getAndIncrement() & 0xffffffffL);
         body.addProperty("t", System.currentTimeMillis());
-        byte[] b = Protocol.GSON.toJson(body).getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        conn.send(b.length <= Protocol.MAX_OUTBOUND_BYTES ? new String(b, java.nio.charset.StandardCharsets.UTF_8) : Protocol.GSON.toJson(Protocol.error("region_too_large", "snapshot " + b.length + " bytes exceeds 4 MiB", null, false)));
-        return b.length;
+        String json = Protocol.GSON.toJson(body);
+        int n = json.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+        if (n <= Protocol.MAX_OUTBOUND_BYTES) conn.send(json);
+        // Too big for one frame: tell the client (with a proper envelope). Clients with "sections_v1" never get here.
+        else send(Protocol.error("region_too_large", "snapshot " + n + " bytes exceeds the 4 MiB frame limit (smaller region, or a client with sections_v1)", null, false));
+        return n;
     }
 
-    public void resetPalette() { palette.clear(); globalToLocal.clear(); }
+    /** Palette size, readable from any thread (the palette itself belongs to the outbound executor thread). */
+    public volatile int paletteSize;
+
+    public void resetPalette() { palette.clear(); globalToLocal.clear(); paletteSize = 0; }
 
     /** Returns the session palette index for a global id, appending to palette (and to added) if new. */
     public int localIndex(int globalId, Palette global, List<String> added) {
@@ -81,6 +88,7 @@ public final class Session {
         int idx = palette.size();
         String s = global.state(globalId);
         palette.add(s);
+        paletteSize = palette.size();
         globalToLocal.put(globalId, idx);
         if (added != null) added.add(s);
         return idx;

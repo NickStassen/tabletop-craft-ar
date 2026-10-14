@@ -56,8 +56,9 @@ public final class TabletopPlugin extends JavaPlugin {
 
     private void start() {
         var c = getConfig();
-        caps = new RegionCaps(c.getInt("max_region.x", 128), c.getInt("max_region.y", 384), c.getInt("max_region.z", 128),
-            c.getLong("max_region.blocks", 1L << 21), c.getLong("max_region.bytes", 4L * 1024 * 1024));
+        RegionCaps d0 = RegionCaps.DEFAULT;
+        caps = new RegionCaps(c.getInt("max_region.x", d0.maxX()), c.getInt("max_region.y", d0.maxY()), c.getInt("max_region.z", d0.maxZ()),
+            c.getLong("max_region.blocks", d0.maxBlocks()), c.getLong("max_region.bytes", d0.maxBytes()));
         avatar.blockSizeM = c.getDouble("avatar.block-size-m", 0.01);
         avatar.maxScale = c.getDouble("avatar.max-scale", 16.0);
         avatar.userHeightM = c.getDouble("avatar.user-height-m", 1.75);
@@ -195,35 +196,38 @@ public final class TabletopPlugin extends JavaPlugin {
         int[] oldGrid = s.lastGrid;
         int baseId = s.snapshotId;
         // A delta keeps the session palette (base indices stay valid); cap its growth with an occasional full snapshot.
-        int[] shift = sectioned && !forceFull && oldGrid != null && s.palette.size() < 4096 ? SectionCodec.deltaShift(s.gridRegion, r) : null;
+        int[] shift = sectioned && !forceFull && oldGrid != null && s.paletteSize < 4096 ? SectionCodec.deltaShift(s.gridRegion, r) : null;
         s.lastGrid = grid;
         s.gridRegion = r;
         s.snapshotId++;
         s.rememberRegion(s.snapshotId, r);
-        Palette pal = reader.palette();
-        if (shift == null) {
-            s.resetPalette();
-            int air = pal.id("minecraft:air");
-            boolean hasAir = false;
-            for (int g : grid) if (g == air) { hasAir = true; break; }
-            if (hasAir) s.localIndex(air, pal, null); // index 0 = air when present
-        }
-        int[] map = new int[pal.size()];
-        java.util.Arrays.fill(map, -1);
-        int[] local = new int[grid.length];
-        for (int i = 0; i < grid.length; i++) {
-            int g = grid[i];
-            int l = g < map.length ? map[g] : -1;
-            if (l < 0) { l = s.localIndex(g, pal, null); if (g < map.length) map[g] = l; }
-            local[i] = l;
-        }
-        List<String> palette = List.copyOf(s.palette);
         int id = s.snapshotId;
         int[] margin = s.shared ? sharedMargin.clone() : new int[3];
         long maxMsg = Math.max(64 * 1024, getConfig().getLong("stream.max-message-bytes", 1L << 20));
-        // Encode + serialize off the main thread; the outbound executor keeps message order.
-        long remapNs = System.nanoTime() - t0;
+        long mainNs = System.nanoTime() - t0;
+        // Palette remap, encode and serialize run on the outbound executor: it's one thread in message order, so the
+        // session palette (also extended by block_update, see applyDiff) always matches what the client has seen.
         if (outbound != null) outbound.execute(() -> {
+            long m0 = System.nanoTime();
+            Palette pal = reader.palette();
+            if (shift == null) {
+                s.resetPalette();
+                int air = pal.id("minecraft:air");
+                boolean hasAir = false;
+                for (int g : grid) if (g == air) { hasAir = true; break; }
+                if (hasAir) s.localIndex(air, pal, null); // index 0 = air when present
+            }
+            int[] map = new int[pal.size()];
+            java.util.Arrays.fill(map, -1);
+            int[] local = new int[grid.length];
+            for (int i = 0; i < grid.length; i++) {
+                int g = grid[i];
+                int l = g < map.length ? map[g] : -1;
+                if (l < 0) { l = s.localIndex(g, pal, null); if (g < map.length) map[g] = l; }
+                local[i] = l;
+            }
+            List<String> palette = List.copyOf(s.palette);
+            long remapNs = System.nanoTime() - m0 + mainNs;
             long e0 = System.nanoTime();
             JsonObject timing = new JsonObject();
             timing.addProperty("read_ms", Math.round(readNs / 1e4) / 100.0);
@@ -319,19 +323,21 @@ public final class TabletopPlugin extends JavaPlugin {
             if (s.state != Session.State.READY || !r.equals(s.region) || s.snapshotId != e.getValue() || s.lastGrid == null || s.lastGrid != base.get(s)) continue;
             int[] idx = changes.get(s.lastGrid);
             if (idx == null) continue;
-            List<int[]> changed = new ArrayList<>(idx.length);
-            for (int i : idx) changed.add(new int[] { i, g[i] });
+            if (idx.length == 0) { s.lastGrid = g; continue; }
+            // Many changes: a snapshot instead (a sectioned client gets only the changed sections, against lastGrid).
+            if (idx.length > 4096) { sendSnapshot(s, g); continue; }
             s.lastGrid = g;
-            if (changed.isEmpty()) continue;
-            if (changed.size() > 4096) { sendSnapshot(s, g); continue; }
-            List<String> added = new ArrayList<>();
-            List<Protocol.Change> out = new ArrayList<>();
-            for (int[] c : changed) {
-                int i = c[0];
-                int lx = i % r.sx(), lz = (i / r.sx()) % r.sz(), ly = i / (r.sx() * r.sz());
-                out.add(new Protocol.Change(lx, ly, lz, s.localIndex(c[1], reader.palette(), added)));
-            }
-            send(s, Protocol.blockUpdate(s.snapshotId, added, out));
+            int snap = s.snapshotId;
+            // Palette indices are assigned on the outbound thread, in message order with snapshots (see sendSnapshot).
+            if (outbound != null) outbound.execute(() -> {
+                List<String> added = new ArrayList<>();
+                List<Protocol.Change> out = new ArrayList<>(idx.length);
+                for (int i : idx) {
+                    int lx = i % r.sx(), lz = (i / r.sx()) % r.sz(), ly = i / (r.sx() * r.sz());
+                    out.add(new Protocol.Change(lx, ly, lz, s.localIndex(g[i], reader.palette(), added)));
+                }
+                s.send(Protocol.blockUpdate(snap, added, out));
+            });
         }
     }
 

@@ -121,6 +121,8 @@ static class Program
 
         fails += NavTests.Run(Fixture);   // navigation, streaming, clip caps (Tests~/NavTests.cs)
 
+        int navMeasIdx = Array.IndexOf(args, "--measure-nav");
+        if (navMeasIdx >= 0) { NavTests.MeasureNav(args[navMeasIdx + 1]); return 0; }
         int measIdx = Array.IndexOf(args, "--measure");
         if (measIdx >= 0) { Measure(args[measIdx + 1]); return 0; }
 

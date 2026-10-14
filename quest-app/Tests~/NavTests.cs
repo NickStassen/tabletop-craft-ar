@@ -101,6 +101,13 @@ static class NavTests
         Check(a.RequestMargin == new Vector3Int(0, 16, 8), $"area: margin shrinks to fit the caps ({a.RequestMargin})");
         a.Size = new Vector3Int(64, 96, 64); a.MinY = 24;
         Check(a.RequestMargin.y == 8, "area: margin stops at the build height");
+        // Section-mesh (draw call) soft cap, calibrated on seed 12345: 160x128x160 had 328 non-empty sections, 224x128x224 had 706.
+        a.MinY = int.MinValue; a.Size = new Vector3Int(128, 96, 128); a.OverrideBudget = false;
+        Check(a.EstimatedMeshes == 400 && a.Blocker() == null, $"area: 128x96x128 window (+margin) is within the budgets ({a.EstimatedMeshes} meshes, {a.Estimate})");
+        a.Size = new Vector3Int(192, 96, 192);
+        Check(a.EstimatedMeshes == 784 && a.Blocker() != null && a.Blocker().Contains("section meshes"), $"area: 192 window warns about draw calls ({a.Blocker()})");
+        a.OverrideBudget = true;
+        Check(a.Blocker() == null, "area: hold B overrides the section budget too");
     }
 
     static WorldModel Terrain(Vector3Int origin, Vector3Int dims, string[] palette, Func<int, int, int, string> f, int id = 1)
@@ -212,6 +219,80 @@ static class NavTests
         var built = Protocol.RegionRequest("world", new Vector3Int(16, 60, 0), new Vector3Int(32, 16, 16), new Vector3Int(8, 0, 0));
         Check(Json.Write(built.A("view_margin")) == Json.Write(req.A("view_margin")) && Json.Write(built.A("origin")) == Json.Write(req.A("origin")), "region_request with view_margin matches the fixture");
         Check(Protocol.Hello("").A("caps").Contains(SectionedSnapshot.Cap), "hello advertises sections_v1");
+    }
+
+    /// <summary>Faces merge only within one block's texture class (top / bottom / side), like a resource pack would.</summary>
+    sealed class TexLike : IFaceSource
+    {
+        public FaceKey Face(string s, int d) =>
+            new FaceKey { Layer = (BlockRules.Path(s) + (d == 3 ? "#top" : d == 2 ? "#bottom" : "#side")).GetHashCode() & 0x7fffffff, Color = new Color32(255, 255, 255, 255) };
+    }
+
+    /// <summary>
+    /// dotnet run -- --measure-nav DIR: for each rle_palette_v1 snapshot in DIR (tools/nav_e2e.py --save, or
+    /// measure_regions.py): decode time, quads with flat colours and with texture-like keys, non-empty sections (draw
+    /// calls), single-thread mesh time, the re-key compare for a one-section shift, and the six clip caps.
+    /// </summary>
+    public static void MeasureNav(string dir)
+    {
+        foreach (var f in System.IO.Directory.GetFiles(dir, "*.json").OrderBy(x => x))
+        {
+            var msg = Json.Parse(System.IO.File.ReadAllText(f)) as Dictionary<string, object>;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var snap = ChunkSnapshot.From(msg);
+            double decodeMs = sw.Elapsed.TotalMilliseconds;
+            var w = new WorldModel(); w.ApplySnapshot(snap); w.DirtySections.Clear();
+            var n = w.SectionCount;
+            var mesh = new MeshData();
+            long flat = 0, tex = 0, active = 0, maxSec = 0; double worst = 0;
+            sw.Restart();
+            for (int x = 0; x < n.x; x++) for (int y = 0; y < n.y; y++) for (int z = 0; z < n.z; z++)
+            {
+                double t0 = sw.Elapsed.TotalMilliseconds;
+                var k = new Vector3Int(x, y, z);
+                GreedyMesher.Build(w, k, new Flat(), mesh); GreedyMesher.BuildSpecials(w, k, new Flat(), mesh);
+                long q = mesh.Verts.Count / 4;
+                flat += q; if (q > 0) active++; maxSec = Math.Max(maxSec, q);
+                worst = Math.Max(worst, sw.Elapsed.TotalMilliseconds - t0);
+            }
+            double meshMs = sw.Elapsed.TotalMilliseconds;
+            for (int x = 0; x < n.x; x++) for (int y = 0; y < n.y; y++) for (int z = 0; z < n.z; z++)
+            {
+                var k = new Vector3Int(x, y, z);
+                GreedyMesher.Build(w, k, new TexLike(), mesh); GreedyMesher.BuildSpecials(w, k, new TexLike(), mesh);
+                tex += mesh.Verts.Count / 4;
+            }
+            // Re-key compare for a one-section shift in +X (worst case: a full snapshot from a v1 server).
+            var d = w.Dims;
+            var shifted = new ushort[w.Grid.Length];
+            for (int y = 0; y < d.y; y++) for (int z = 0; z < d.z; z++)
+                Array.Copy(w.Grid, (y * d.z + z) * d.x + 16, shifted, (y * d.z + z) * d.x, d.x - 16);
+            var next = new ChunkSnapshot { SnapshotId = w.SnapshotId + 1, World = w.World, Origin = new Vector3Int(w.Origin.x + 16, w.Origin.y, w.Origin.z), Dims = d, Palette = w.Palette.ToArray(), Grid = shifted };
+            sw.Restart();
+            var plan = SectionPlan.Compute(w, next, new HashSet<Vector3Int>(), null);
+            double planMs = sw.Elapsed.TotalMilliseconds;
+            // Clip caps for the window inside the view margin.
+            var vm = msg.A("view_margin"); var m = vm != null ? Json.Ints(vm) : new[] { 0, 0, 0 };
+            var pal = w.Palette; var keys = new FaceKey[pal.Count * 6]; var caps = new bool[pal.Count];
+            for (int i = 0; i < pal.Count; i++)
+            {
+                var shape = BlockRules.Shape(pal[i]); caps[i] = CapMesher.Caps(shape);
+                for (int fc = 0; fc < 6; fc++) { keys[i * 6 + fc] = new TexLike().Face(pal[i], fc); keys[i * 6 + fc].Transparent |= shape != BlockShape.Cube; }
+            }
+            sw.Restart();
+            long capQuads = 0;
+            for (int fc = 0; fc < 6; fc++)
+            {
+                int axis = fc / 2;
+                CapMesher.Build(w, fc, CapMesher.Slice(fc, m[axis], d[axis] - m[axis]), keys, caps, mesh);
+                capQuads += mesh.Verts.Count / 4;
+            }
+            double capMs = sw.Elapsed.TotalMilliseconds;
+            var est = AreaMath.Estimate(d.x, d.y, d.z);
+            Console.WriteLine($"MEASURE_NAV {d.x}x{d.y}x{d.z} margin={m[0]} sections={n.x * n.y * n.z} non_empty={active} quads_flat={flat} quads_texlike={tex} " +
+                              $"verts_texlike={tex * 4} max_section_quads={maxSec} decode_ms={decodeMs:F0} mesh_ms_1thread={meshMs:F0} worst_section_ms={worst:F1} " +
+                              $"rekey_plan_ms={planMs:F0} kept={plan.Kept} cap_quads={capQuads} caps_ms={capMs:F1} estimate={est.Quads}");
+        }
     }
 
     static void CapTests()

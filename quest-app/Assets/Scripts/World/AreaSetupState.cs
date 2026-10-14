@@ -107,7 +107,9 @@ namespace TabletopCraft.World
 
         /// <summary>Everything in the request gets meshed (the margin too: it slides into view), so estimate that.</summary>
         public MeshEstimate Estimate { get { var d = RequestDims; return AreaMath.Estimate(d.x, d.y, d.z); } }
-        public bool OverBudget => AreaMath.OverBudget(Estimate, QuadBudget, OverrideBudget);
+        public long SectionBudget = AreaMath.DefaultSectionBudget;
+        public long EstimatedMeshes { get { var d = RequestDims; return AreaMath.EstimateMeshes(d.x, d.y, d.z); } }
+        public bool OverBudget => AreaMath.OverBudget(Estimate, QuadBudget, OverrideBudget) || (!OverrideBudget && EstimatedMeshes > SectionBudget);
         public long Blocks => (long)Size.x * Size.y * Size.z;
 
         /// <summary>Why confirming is blocked, or null when the request can be sent.</summary>
@@ -115,6 +117,8 @@ namespace TabletopCraft.World
         {
             if (Size.x > Limits.MaxX || Size.y > Limits.MaxY || Size.z > Limits.MaxZ || Blocks > Limits.MaxBlocks)
                 return $"over server limit {Limits.MaxX}x{Limits.MaxY}x{Limits.MaxZ} / {Limits.MaxBlocks} blocks";
+            if (OverBudget && EstimatedMeshes > SectionBudget)
+                return $"~{EstimatedMeshes} section meshes is over the headset budget (~{SectionBudget} draw calls). Hold B to override";
             if (OverBudget) return $"{Estimate} is over the headset budget (~{QuadBudget / 1000}k faces). Hold B to override";
             return null;
         }

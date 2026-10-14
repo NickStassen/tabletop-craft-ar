@@ -38,11 +38,14 @@ debug:
   avatar-state: false
   log-poses: false
 # Server caps for region_request / subscribe / setsize (PROTOCOL.md 4.13).
+# Sized for a 256-block visible box plus the headset's 16-block view margin (docs/TESTING.md "Navigation and bigger
+# areas": a 288x160x288 region reads in ~170 ms off the main thread and pans in ~0.4 MB deltas).
 max_region:
-  x: 128
+  x: 288
   y: 384
-  z: 128
-  # Max blocks in one region (dx*dy*dz).
-  blocks: 2097152
-  # Max estimated chunk_snapshot JSON size in bytes (hard frame limit is 4 MiB).
-  bytes: 4194304
+  z: 288
+  # Max blocks in one region (dx*dy*dz). 16M ids are 64 MB per copy on the server.
+  blocks: 16777216
+  # Max estimated snapshot JSON size in bytes, all parts together. One message is at most 4 MiB, so a client
+  # without "sections_v1" gets region_too_large for anything bigger than that.
+  bytes: 33554432
