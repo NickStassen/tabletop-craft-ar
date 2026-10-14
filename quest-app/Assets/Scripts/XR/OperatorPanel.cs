@@ -5,8 +5,9 @@
 //
 //   X (left)                  tap: open / close; hold 0.6 s: open Chat with the input focused
 //   Menu button (left)        while the panel is open: close it (the block menu opens instead); X does the reverse
-//   Right ray on the panel    hover; the trigger clicks, the right stick scrolls, the stick click accepts the first
-//                             suggestion; block editing, gliding, turning and scaling pause meanwhile
+//   Right ray on the panel    hover; the trigger clicks (tabs, buttons, keys of the on-panel keyboard), the right stick
+//                             scrolls, the stick click accepts the first suggestion; block editing, gliding, turning and
+//                             scaling pause meanwhile. The keyboard's enter sends the chat line, runs the command or kicks.
 //
 // "@ pointer" and the Here/Bolt buttons use the block the right controller last aimed at (BlockEditMode's target,
 // remembered while the ray is on the panel). Commands go out with LinkClient.SendTracked so their results match.
@@ -313,6 +314,13 @@ namespace TabletopCraft.XR
                         _b.Tri(L(cx - s, cy - dir * s * 0.6f, -0.0003f), L(cx + s, cy - dir * s * 0.6f, -0.0003f), L(cx, cy + dir * s * 0.8f, -0.0003f), Arrow);
                         break;
                     }
+                    case PanelPart.Key:
+                    {
+                        // The shared keyboard (World/KeyboardModel.cs): shift lit while on, enter as the accent, as in the block menu.
+                        Box(_b, it.R, hover ? Hover : it.Active || it.Index == KeyboardModel.KeyEnter ? Active : Slot, 0, 0.0012f);
+                        Label("key" + it.Index, it.Label, it.R.CX, it.R.CY, it.Label.Length > 1 ? 0.0016f : 0.0021f, TextAnchor.MiddleCenter, TextMain);
+                        break;
+                    }
                     case PanelPart.PlayerRow:
                     case PanelPart.Rule:
                     {
@@ -347,8 +355,6 @@ namespace TabletopCraft.XR
                 bool empty = text.Length == 0;
                 Label("field", empty ? prefix + ph : prefix + shown + "_", Lo.Field.X + 0.003f, Lo.Field.CY, 0.0015f, TextAnchor.MiddleLeft, empty ? TextDim : TextMain);
             }
-            if (Lo.Keyboard.H > 0 && !Model.HasKeyboard)
-                Label("kbd", "(keyboard: arrives with the shared panel keyboard)", Lo.Keyboard.CX, Lo.Keyboard.CY, 0.0013f, TextAnchor.MiddleCenter, TextDim);
             string note = Model.Note.Length > 0 ? Model.Note : HintLine();
             Label("note", Short(note, 110), Lo.Note.X + 0.002f, Lo.Note.CY, 0.00125f, TextAnchor.MiddleLeft, Model.Note.Length > 0 ? TextNote : TextDim);
             if (Model.CapturesRight)

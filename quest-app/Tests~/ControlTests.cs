@@ -22,6 +22,91 @@ static class ControlTests
         Chat(check, fixture);
         ConsoleTests(check, fixture);
         Panel(check, fixture);
+        Keys(check, fixture);
+    }
+
+    /// <summary>Types text on the panel's keyboard the way a user would: letters, shift for capitals, ?123 for digits and symbols.</summary>
+    static PanelAction TypeKeys(OperatorPanelModel p, string text, double now)
+    {
+        var last = default(PanelAction);
+        foreach (char ch in text)
+        {
+            var kb = p.ActiveKeys;
+            if (ch == ' ') { last = p.Key(KeyboardModel.KeySpace, now); continue; }
+            int letter = KeyboardModel.Letters.IndexOf(char.ToLowerInvariant(ch));
+            int symbol = KeyboardModel.Symbols.IndexOf(ch);
+            if (letter >= 0)
+            {
+                if (kb.SymbolsLayer) p.Key(KeyboardModel.KeyLayer, now);
+                if (char.IsUpper(ch) && kb.Shift == ShiftState.Off) p.Key(KeyboardModel.KeyShift, now);
+                last = p.Key(letter, now);
+            }
+            else if (symbol >= 0)
+            {
+                if (!kb.SymbolsLayer) p.Key(KeyboardModel.KeyLayer, now);
+                last = p.Key(KeyboardModel.KeySymbol0 + symbol, now);
+            }
+            else throw new ArgumentException("no key for " + ch);
+        }
+        return last;
+    }
+
+    static void Keys(Action<bool, string> check, Func<string, string> fixture)
+    {
+        var p = new OperatorPanelModel { Connected = true };
+        p.OnWelcome(ControlWelcome.From(Fx(fixture, "welcome_control")), null);
+        p.SetOpen(true);
+        p.OnPlayers(PlayersInfo.From(Fx(fixture, "players_info")));
+        p.SetTab(OpTab.Chat);
+        var L = p.Layout();
+        var keys = L.Items.Where(i => i.Part == PanelPart.Key).ToList();
+        check(keys.Count == 26 + 6 && keys.All(k => k.R.Y >= L.Keyboard.Y - 1e-5f && k.R.Y + k.R.H <= L.Keyboard.Y + L.Keyboard.H + 1e-5f) &&
+              keys.First(k => k.Index == KeyboardModel.KeyEnter).Label == "send", "keys: the Chat tab lays out the shared keyboard (enter = send)");
+        TypeKeys(p, "Hi giant", 0);
+        check(p.ChatInput == "Hi giant", $"keys: shift makes one capital, then lower case ({p.ChatInput})");
+        p.Key(KeyboardModel.KeyDelete, 0);
+        check(p.ChatInput == "Hi gian", "keys: delete");
+        TypeKeys(p, "t!", 0);
+        var sent = p.Key(KeyboardModel.KeyEnter, 0);
+        check(sent.Kind == PanelActionKind.Chat && sent.Line == "Hi giant!" && p.ChatInput == "", "keys: enter sends the chat line");
+
+        p.SetTab(OpTab.Console);
+        check(p.Layout().Items.Any(i => i.Part == PanelPart.Key && i.Index == KeyboardModel.KeyEnter && i.Label == "run"), "keys: the Console's enter says run");
+        TypeKeys(p, "tp @a ~ ~1 ~", 1);
+        check(p.Console.Input == "tp @a ~ ~1 ~" && p.ConsoleKeys.SymbolsLayer, $"keys: ?123 types @ ~ and digits ({p.Console.Input})");
+        check(p.Console.CompletionDue(1.2) == "tp @a ~ ~1 ~", "keys: typing asks for completions after 150 ms");
+        p.Key(KeyboardModel.KeyClear, 2);
+        TypeKeys(p, "time set day", 2);
+        var run = p.Key(KeyboardModel.KeyEnter, 2);
+        check(run.Kind == PanelActionKind.Command && run.Line == "time set day" && p.Console.Input == "" && p.Console.History.Last() == "time set day",
+              "keys: enter runs the command and remembers it");
+        check(p.Console.HistoryUp() && p.FocusText == "time set day", "keys: history fills the field the keyboard types into");
+        p.Key(KeyboardModel.KeyDelete, 3);
+        check(p.Console.Input == "time set da", "keys: delete edits a recalled line");
+
+        // Clicking keys goes through Click like any other item.
+        var L2 = p.Layout();
+        p.Point(new PanelHit(PanelPart.Key, KeyboardModel.KeyClear), true);
+        p.Click(L2, 4);
+        check(p.Console.Input == "", "keys: a clicked key (clear) acts");
+
+        p.SetTab(OpTab.Players);
+        check(!p.Layout().Items.Any(i => i.Part == PanelPart.Key), "keys: no keyboard on Players until kick asks for a reason");
+        var L3 = p.Layout();
+        p.Point(new PanelHit(PanelPart.PlayerRow, 0), true); p.Click(L3, 5);
+        L3 = p.Layout();
+        p.Point(new PanelHit(PanelPart.Button, OperatorPanelModel.BtnKick), true); p.Click(L3, 5);
+        check(p.Layout().Items.Any(i => i.Part == PanelPart.Key && i.Index == KeyboardModel.KeyEnter && i.Label == "kick"), "keys: kick shows the keyboard (enter = kick)");
+        TypeKeys(p, "spam", 6);
+        var kick = p.Key(KeyboardModel.KeyEnter, 6);
+        check(kick.Kind == PanelActionKind.Command && kick.Line == "kick Alex spam", $"keys: enter kicks with the typed reason ({kick.Line})");
+        p.SetTab(OpTab.Server);
+        check(p.ActiveKeys == null && !p.Layout().Items.Any(i => i.Part == PanelPart.Key), "keys: no keyboard on Server");
+        var max = new OperatorPanelModel { Connected = true };
+        max.OnWelcome(new ControlWelcome { Chat = true, ChatSend = true, ChatMaxLen = 5, Commands = true, Status = true }, null);
+        max.SetOpen(true);
+        TypeKeys(max, "abcdefgh", 0);
+        check(max.ChatInput == "abcde", "keys: max_len from welcome caps the field");
     }
 
     static void Fixtures(Action<bool, string> check, Func<string, string> fixture)

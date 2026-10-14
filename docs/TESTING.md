@@ -784,14 +784,14 @@ Unity 6000.0.84f1 batch compile clean (no warnings in Assets), ShaderCheck 80 va
 
 | Suite | Result |
 |---|---|
-| Plugin JUnit (`./gradlew build`) | 100 tests, 0 failures. New: `CommandPolicyTest` 9 (namespaces, aliases, every `execute`/`return run` split including a player named "run", nesting limit, allow list, unknown roots, the token bucket's burst), `ChatTextTest` 5 (name and text sanitising, MiniMessage tags typed on the headset stay literal, the gold prefix, red feedback as errors), `ControlFixtureTest` 8 (every new fixture rebuilt with the plugin's builders and parsers) |
-| Python (`pytest -q`, `ruff check .`) | 109 passed, ruff clean: the 17 new fixtures validate, plus 21 tests for kinds, suggestions applied from `start`, `ref_seq` pairing and 15 malformed variants |
-| Tests~ (`dotnet run -- --jar … --entity-models …`) | ALL PASS, 629 checks; 90 new in `ControlTests.cs`: fixtures through `Net/ControlProtocol.cs`, `ChatLog` (formatting, 200-line ring, wrist lines fading after 10 s, wrap, our own echo by session), `ChatBubbles` (uuid only, 3 per player, 6 s + 0.05 s/char), `ConsoleModel` (history up/down and its JSON, 100 kept, completion debounce, stale replies dropped, chips from `start`, grouped output), `OperatorPanelModel` (every tab inside the panel without overlaps and hit tests round-trip, templates, greyed buttons without `command_v1`, pointer checks, kick with a reason, tap/hold X, stick scrolling) |
-| Unity 6000.0.84f1 headless compile | clean (no errors, no warnings in `Assets/`) |
+| Plugin JUnit (`./gradlew build`) | 109 tests after merging 0.3.1, 0 failures. New: `CommandPolicyTest` 9 (namespaces, aliases, every `execute`/`return run` split including a player named "run", nesting limit, allow list, unknown roots, the token bucket's burst), `ChatTextTest` 5 (name and text sanitising, MiniMessage tags typed on the headset stay literal, the gold prefix, red feedback as errors), `ControlFixtureTest` 8 (every new fixture rebuilt with the plugin's builders and parsers) |
+| Python (`pytest -q`, `ruff check .`) | 118 passed after merging 0.3.1, ruff clean: the 17 new fixtures validate, plus 21 tests for kinds, suggestions applied from `start`, `ref_seq` pairing and 15 malformed variants |
+| Tests~ (`dotnet run -- --jar … --entity-models …`) | ALL PASS, 735 checks after merging 0.3.1; 106 new in `ControlTests.cs`: fixtures through `Net/ControlProtocol.cs`, `ChatLog` (formatting, 200-line ring, wrist lines fading after 10 s, wrap, our own echo by session), `ChatBubbles` (uuid only, 3 per player, 6 s + 0.05 s/char), `ConsoleModel` (history up/down and its JSON, 100 kept, completion debounce, stale replies dropped, chips from `start`, grouped output), `OperatorPanelModel` (every tab inside the panel without overlaps and hit tests round-trip, templates, greyed buttons without `command_v1`, pointer checks, kick with a reason, tap/hold X, stick scrolling), and 16 typing through the shared `KeyboardModel` (shift, ?123 symbols, delete, clear, enter = send/run/kick, `max_len`, history recalled into the field) |
+| Unity 6000.0.84f1 headless compile, `ShaderCheck` | clean (no errors, no warnings in `Assets/`); 80 shader variants, 0 errors |
 
 ### Live server (own Paper 26.3, seed 12345, `auth.token` set, ViaVersion/ViaBackwards 5.12.0 for the bot)
 
-`tools/control_check.py --url ws://127.0.0.1:8811/tabletop --token … --mc-port 25611 --console tools/run/talk/stdin.fifo`: **50/50 PASS**, three runs in a row:
+`tools/control_check.py --url ws://127.0.0.1:8811/tabletop --token … --mc-port 25611 --console tools/run/talk/stdin.fifo`: **50/50 PASS**, three runs in a row, and again after merging 0.3.1:
 - caps: a wrong token gets `auth_failed`; the headset gets `chat_v1`, `command_v1`, `status_v1`, `welcome.chat.name` `TalkCheck` (from `operator_name` "Talk Check!") and the quick buttons; a headset that didn't ask for `command_v1` gets `command_denied`.
 - commands: `time set day` → `Set minecraft:overworld to time marker minecraft:day` (26.x feedback); `/minecraft:time set noon`; `time sett` → `ok:false`, `Incorrect argument for command at position 5: time <--[HERE]` (unwrapped from the `CommandException` that `dispatchCommand` throws for this sender); an unknown command; `stop`, `minecraft:stop`, `execute as @a run stop`, `execute as run run stop`, `op`, `whitelist off` all `command_denied`; a newline and 300 characters `bad_message`.
 - `at`: `setblock ~ ~ ~ minecraft:gold_block` at a pointed block lands exactly there (`execute if block x y z` passes), `~ ~ ~` is that block, `summon … ~ ~1 ~` puts the entity on top of it, an unknown world is `world_not_found`. Plugin commands run through `execute … run` too (`execute in minecraft:overworld positioned 0 70 0 run tabletop status` worked in the first probe).
@@ -802,11 +802,11 @@ Unity 6000.0.84f1 batch compile clean (no warnings in Assets), ShaderCheck 80 va
 
 `Tests~ --live-control ws://127.0.0.1:8811/tabletop TOKEN`: 8/8 PASS with the app's own `LinkClient.SendTracked`, `ConsoleModel`, `OperatorPanelModel` and `ChatLog` (result matched by seq, denied root, chips `advance_time,advance_weather`, world/players/status parsed, the chat echo marked as ours).
 
-Main thread: commands median 0.85 ms (26 commands; the first `time set day` 22 ms while classes load); a `server_status` build 0.19 ms (`/tabletop status` prints the average). The command round trip on localhost was 72 ms including the check's pacing.
+Main thread (before the merge): commands median 0.85 ms (26 commands; the first `time set day` 22 ms while classes load); a `server_status` build 0.19 ms (`/tabletop status` prints the average). The command round trip on localhost was 72 ms including the check's pacing.
 
 ### Not verified (needs the headset)
 
-The panel's look and reach beside the left hand, X tap/hold and the ≡/X switch, the right ray, trigger, stick scroll and stick-click Tab on the panel, the wrist lines' placement and fade, bubbles over player figures at different table scales, the toasts for joins and deaths, `history.json` surviving an app restart, and the on-panel keyboard (it arrives with the shared `KeyboardModel` from 0.3.1).
+The panel's look and reach beside the left hand, X tap/hold and the ≡/X switch, the right ray, trigger, stick scroll and stick-click Tab on the panel, the wrist lines' placement and fade, bubbles over player figures at different table scales, the toasts for joins and deaths, `history.json` surviving an app restart, and typing on the panel keyboard.
 
 ### Known gaps
 

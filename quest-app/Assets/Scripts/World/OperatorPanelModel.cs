@@ -11,8 +11,8 @@
 //   Server   TPS, MSPT, memory, players, per-world chunks/entities/time/weather, tick state (server_status)
 //
 // Every button that runs a command is a template on top of the console path (World/OperatorCommands below); without
-// command_v1 they are greyed and say "needs auth.token". Text fields are plain strings here; the panel's on-screen
-// keyboard (KeyboardModel) types into the focused one.
+// command_v1 they are greyed and say "needs auth.token". The focused field (chat line, command line or kick reason)
+// is typed on the shared on-panel keyboard (World/KeyboardModel.cs: shift, ?123, delete, clear, enter); Enter sends.
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -103,7 +103,7 @@ namespace TabletopCraft.World
         // Layout (metres): as wide as the block menu, 24 mm buttons, 11.5 mm text rows.
         public const float Margin = 0.008f, Gap = 0.004f, TabH = 0.024f, LineH = 0.0115f, FieldH = 0.022f, ButtonH = 0.024f, KeyH = 0.024f,
                            NoteH = 0.016f, ScrollW = 0.022f, RowH = 0.022f, LabelW = 0.052f;
-        public const int ChatRows = 11, ConsoleRows = 8, PlayerRows = 6, RuleRows = 6, ServerRows = 15, KeyboardRows = 4;
+        public const int ChatRows = 11, ConsoleRows = 8, PlayerRows = 6, RuleRows = 6, ServerRows = 15, KeyboardRows = KeyboardModel.Rows;
         public const double HoldSeconds = 0.6, QueryEvery = 1.0;
         public static readonly string[] TabNames = { "Chat", "Console", "Players", "World", "Server" };
 
@@ -123,8 +123,12 @@ namespace TabletopCraft.World
         public bool Connected;
         /// <summary>"@ x y z" of the block the right controller last aimed at, or null (set by the app every frame).</summary>
         public string PointerLabel;
-        /// <summary>A keyboard is drawn in the reserved block (after the shared KeyboardModel is wired).</summary>
-        public bool HasKeyboard;
+        /// <summary>The on-panel keyboards (World/KeyboardModel.cs), one per field so each keeps its shift/?123 mode.</summary>
+        public readonly KeyboardModel ChatKeys = new KeyboardModel { MaxLength = ControlProtocol.MaxLen, EnterLabel = "send" };
+        public readonly KeyboardModel ConsoleKeys = new KeyboardModel { MaxLength = ControlProtocol.MaxLen, EnterLabel = "run" };
+        public readonly KeyboardModel KickKeys = new KeyboardModel { MaxLength = 100, EnterLabel = "kick" };
+        /// <summary>The keyboard of the focused field, or null (no field on this tab).</summary>
+        public KeyboardModel ActiveKeys => Focus == Field.Chat ? ChatKeys : Focus == Field.Console ? ConsoleKeys : Focus == Field.Kick ? KickKeys : null;
 
         public string ChatInput { get; private set; } = "";
         public string KickReason { get; private set; } = "";
@@ -163,6 +167,7 @@ namespace TabletopCraft.World
         {
             if (t == Tab) return false;
             Tab = t; KickTarget = null; _nextQuery = 0; Note = "";
+            ActiveKeys?.ResetMode();
             Version++;
             return true;
         }
@@ -189,7 +194,27 @@ namespace TabletopCraft.World
             _xDownAt = -1;
         }
 
-        // ---------- typing (the keyboard calls these) ----------
+        // ---------- typing ----------
+        /// <summary>
+        /// A key of the panel keyboard: the focused field's text goes through KeyboardModel.Press (shift, ?123, delete,
+        /// clear), and enter sends what the field holds (Enter).
+        /// </summary>
+        public PanelAction Key(int key, double now)
+        {
+            var kb = ActiveKeys;
+            if (kb == null) return default;
+            kb.MaxLength = FocusMaxLen;
+            kb.SetText(FocusText);
+            var r = kb.Press(key);
+            switch (r)
+            {
+                case KeyResult.Enter: return Enter(now);
+                case KeyResult.Text: Type(kb.Text, now); return new PanelAction { Kind = PanelActionKind.Typed };
+                case KeyResult.Mode: Version++; return new PanelAction { Kind = PanelActionKind.Typed };
+                default: return default;
+            }
+        }
+
         /// <summary>Replaces the focused field's text (the keyboard's text after a key press).</summary>
         public void Type(string text, double now)
         {
@@ -247,6 +272,7 @@ namespace TabletopCraft.World
         {
             Welcome = w ?? new ControlWelcome();
             Console.MaxLen = Welcome.CommandMaxLen;
+            ChatKeys.MaxLength = Welcome.ChatMaxLen; ConsoleKeys.MaxLength = Welcome.CommandMaxLen;
             Console.SetQuick(Welcome.Quick, localQuick);
             Version++;
         }
@@ -316,6 +342,7 @@ namespace TabletopCraft.World
                     KickTarget = null; Version++;
                     return new PanelAction { Kind = PanelActionKind.Selected };
                 }
+                case PanelPart.Key: return Key(item.Index, now);
                 case PanelPart.Cancel: KickTarget = null; KickReason = ""; Version++; return new PanelAction { Kind = PanelActionKind.Toggled };
                 case PanelPart.Button: return Button(item.Index);
                 case PanelPart.Rule:
@@ -380,7 +407,7 @@ namespace TabletopCraft.World
             if (id == BtnKick)
             {
                 if (OperatorCommands.SafeName(p) == null) return Refuse("no player selected");
-                KickTarget = p; KickReason = ""; Note = "kick " + p + ": type a reason, enter kicks"; Version++;
+                KickTarget = p; KickReason = ""; KickKeys.ResetMode(); Note = "kick " + p + ": type a reason, enter kicks"; Version++;
                 return new PanelAction { Kind = PanelActionKind.Toggled };
             }
             return default;
@@ -597,10 +624,15 @@ namespace TabletopCraft.World
             return y + ButtonH + Gap;
         }
 
-        /// <summary>The keyboard's block: reserved below the field (drawn and hit-tested by the shared KeyboardModel).</summary>
+        /// <summary>The focused field's keyboard below it (KeyboardModel's 4 rows as Key items).</summary>
         float KeyboardBlock(PanelLayout L, float y, float inner)
         {
             L.Keyboard = new MenuRect(Margin, y, inner, KeyboardRows * KeyH);
+            var kb = ActiveKeys;
+            if (kb != null)
+                foreach (var k in kb.Layout(Margin, y, inner, KeyH))
+                    L.Items.Add(new PanelItem { Part = PanelPart.Key, Index = k.Index, R = k.R, Label = k.Label, Enabled = true,
+                                                Active = k.Index == KeyboardModel.KeyShift && kb.Shift != ShiftState.Off });
             return y + KeyboardRows * KeyH + Gap;
         }
 

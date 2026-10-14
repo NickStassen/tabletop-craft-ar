@@ -1,7 +1,7 @@
 // A reusable on-panel keyboard, engine-free (Tests~): the text being typed, the shift and ?123 layers, and the key
 // layout as MenuItems in panel space. A panel shows it by drawing MenuPart.Key items (XR/BlockMenu.cs does) and calls
-// Press with the hovered key's Index. Used by the block menu's Search tab and the Info tab's Server field; meant to be
-// reused for chat and commands later.
+// Press with the hovered key's Index. Used by the block menu's Search tab and the Info tab's Server field, and by the
+// operator panel's chat line, command line and kick reason (World/OperatorPanelModel.cs).
 //
 //   Letters (abc):  q w e r t y u i o p / a s d f g h j k l / shift z x c v b n m del / ?123 space clear enter
 //   Symbols (?123): 1 2 3 4 5 6 7 8 9 0 / / : . , - _ @ # ~ ^ / [ ] { } = + * ! ? " ' del / ABC space clear enter
