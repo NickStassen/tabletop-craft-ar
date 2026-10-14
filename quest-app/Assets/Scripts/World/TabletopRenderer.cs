@@ -60,6 +60,7 @@ namespace TabletopCraft.World
 
         void Update()
         {
+            Atlas?.Animate(Time.unscaledTimeAsDouble);   // animated textures: 20 game ticks/s, one layer copy per frame change
             if (Model == null || !Model.Loaded) return;
             Upload();
             if (Model.DirtySections.Count == 0 || _inFlight >= MaxJobsInFlight) return;

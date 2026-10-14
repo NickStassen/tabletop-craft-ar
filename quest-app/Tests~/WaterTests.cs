@@ -1,7 +1,10 @@
-// Fluids/waterlogging (FluidMesher) tests, and --measure-fluids DIR for saved snapshots.
+// Fluids/waterlogging (FluidMesher) and texture animation (TextureAnimation) tests. The animation tests read the
+// user's own client jar: pass --jar PATH or set TABLETOP_CLIENT_JAR (default ~/.minecraft/versions/26.3/26.3.jar);
+// they are skipped when it isn't there. Nothing from the jar is copied into the repo.
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using TabletopCraft.World;
 using UnityEngine;
@@ -132,6 +135,7 @@ static class WaterTests
         m = Mesh(World(16, 5, 16, (x, y, z) => y < 4 ? 1 : 0, "minecraft:air", water));
         check(Quads(m, 1).Count == 10, $"16x4x16 ocean: greedy-merged to 10 quads (got {Quads(m, 1).Count})");
 
+        Animations(check, args);
     }
 
     /// <summary>--measure-fluids DIR: fluid quads and FluidMesher time per saved chunk_snapshot (tools/measure_regions.py).</summary>
@@ -165,6 +169,84 @@ static class WaterTests
             }
             Console.WriteLine($"FLUIDS {Path.GetFileNameWithoutExtension(f)} sections={n.x * n.y * n.z} with_water={fluidSections} total_quads={total} water_quads={water} " +
                               $"fluid_mesh_ms={fluidMs:F0} worst_section_ms={worst:F2}");
+        }
+    }
+
+    static void Animations(Action<bool, string> check, string[] args)
+    {
+        // Engine-free schedule rules (no jar needed).
+        var a = TextureAnimation.Parse("{\"animation\":{\"frametime\":3,\"frames\":[2,{\"index\":0,\"time\":5},7,1]}}", 16, 64);
+        check(a != null && a.ImageFrames == 4 && a.Frames.Length == 3 && a.Frames[1].Time == 5 && a.CycleTicks == 11, "mcmeta: frames list with {index,time}, bad index dropped");
+        a.At(0, out int f0, out _, out _); a.At(3, out int f1, out _, out _); a.At(8, out int f2, out _, out _); a.At(11, out int f3, out _, out _);
+        check(f0 == 2 && f1 == 0 && f2 == 1 && f3 == 2, "mcmeta: frame schedule wraps");
+        check(TextureAnimation.Parse("{\"texture\":{\"mipmap_strategy\":\"mean\"}}", 16, 16) == null && TextureAnimation.Parse("{\"animation\":{}}", 16, 16) == null,
+              "mcmeta: no animation section / single frame -> static");
+        var g = TextureAnimation.Parse("{\"animation\":{\"width\":8,\"height\":8}}", 16, 16);
+        g.Origin(3, out int ox, out int oy);
+        check(g.ImageFrames == 4 && g.Columns == 2 && ox == 8 && oy == 8, "mcmeta: explicit width/height grid");
+
+        string jar = null;
+        int ji = Array.IndexOf(args, "--jar");
+        if (ji >= 0 && ji + 1 < args.Length) jar = args[ji + 1];
+        jar = jar ?? Environment.GetEnvironmentVariable("TABLETOP_CLIENT_JAR")
+                  ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".minecraft", "versions", "26.3", "26.3.jar");
+        if (!File.Exists(jar)) { Console.WriteLine("SKIP mcmeta tests against the client jar (pass --jar PATH or set TABLETOP_CLIENT_JAR)"); return; }
+
+        using (var zip = ZipFile.OpenRead(jar))
+        {
+            TextureAnimation Load(string name)
+            {
+                string png = $"assets/minecraft/textures/block/{name}.png";
+                byte[] head = new byte[24];
+                using (var s = zip.GetEntry(png).Open()) { int n = 0; while (n < 24) { int r = s.Read(head, n, 24 - n); if (r <= 0) break; n += r; } }
+                TextureAnimation.PngSize(head, out int w, out int h);
+                using (var r = new StreamReader(zip.GetEntry(png + ".mcmeta").Open())) return TextureAnimation.Parse(r.ReadToEnd(), w, h);
+            }
+            var ws = Load("water_still");
+            check(ws != null && ws.ImageFrames == 32 && ws.Frames.Length == 32 && ws.Frames.All(x => x.Time == 2) && ws.CycleTicks == 64 && !ws.Interpolate,
+                  $"jar water_still: 32 frames x 2 ticks (cycle {ws?.CycleTicks} ticks = {ws?.CycleTicks / 20.0:F1} s)");
+            ws.At(0, out int w0, out _, out _); ws.At(2, out int w1, out _, out _); ws.At(63, out int w31, out _, out _); ws.At(64, out int wWrap, out _, out _);
+            check(w0 == 0 && w1 == 1 && w31 == 31 && wWrap == 0, "jar water_still: frame advances every 2 ticks and wraps");
+            var kelp = Load("kelp");
+            check(kelp != null && kelp.ImageFrames == 20 && kelp.Frames.Length == 20 && kelp.Frames[0].Time == 2 && kelp.CycleTicks == 40, $"jar kelp: 20 frames x 2 ticks");
+            var pr = Load("prismarine");
+            check(pr != null && pr.ImageFrames == 4 && pr.Frames.Length == 22 && pr.Frames.All(x => x.Time == 300) && pr.Interpolate && pr.CycleTicks == 6600,
+                  "jar prismarine: 22-step sequence over 4 frames, 300 ticks each, interpolated");
+            pr.At(150, out int pf, out int pn, out float pb);
+            check(pf == 0 && pn == 1 && Math.Abs(pb - 0.5f) < 1e-6, "jar prismarine: halfway blend toward the next frame");
+            var lava = Load("lava_still");
+            check(lava != null && lava.ImageFrames == 20 && lava.Frames.Length == 38 && lava.CycleTicks == 76, "jar lava_still: 38-step ping-pong over 20 frames");
+
+            // Every animated block texture parses; worst-case GPU copies per second if all were on screen at once
+            // (what ResourcePackAtlas.Animate would issue: one copy per frame change, interpolated ones per 1/255 step).
+            var all = new List<TextureAnimation>();
+            int metas = 0, animated = 0;
+            foreach (var e in zip.Entries.Where(x => x.FullName.StartsWith("assets/minecraft/textures/block/") && x.FullName.EndsWith(".png.mcmeta")))
+            {
+                metas++;
+                string json; using (var r = new StreamReader(e.Open())) json = r.ReadToEnd();
+                if (!json.Contains("\"animation\"")) continue;
+                animated++;
+                var t = Load(e.Name.Substring(0, e.Name.Length - ".png.mcmeta".Length));
+                if (t != null) all.Add(t);
+            }
+            const int ticks = 20 * 60;
+            long changes = 0;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            foreach (var t in all)
+            {
+                int lf = -1, ln = -1, lb = -1;
+                for (long tick = 0; tick < ticks; tick++)
+                {
+                    t.At(tick, out int f, out int n, out float b);
+                    int bb = (int)(b * 255f);
+                    if (f != lf || bb != lb || (bb != 0 && n != ln)) { changes++; lf = f; ln = n; lb = bb; }
+                }
+            }
+            double usPerTick = sw.Elapsed.TotalMilliseconds * 1000.0 / ticks;
+            check(animated > 40 && all.Count == animated, $"jar: {all.Count}/{animated} animated block textures parse ({metas} mcmeta files)");
+            Console.WriteLine($"ANIM {all.Count} animated block textures: worst case {changes / 60.0:F0} layer copies/s if all are in view; " +
+                              $"schedule {usPerTick:F1} us per tick for all of them");
         }
     }
 }
