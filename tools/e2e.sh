@@ -56,7 +56,8 @@ spawn-monsters=false
 view-distance=6
 PROPS
 rm -f "$RUN/stdin.fifo"; mkfifo "$RUN/stdin.fifo"
-(cd "$RUN" && tail -f stdin.fifo | java -Xmx2G -jar "$PAPER" --nogui > server.log 2>&1) &
+# --pid: the console feeder exits with this script, so cleanup never needs a pattern kill (which hit other servers).
+(cd "$RUN" && tail --pid=$$ -f stdin.fifo | java -Xmx2G -jar "$PAPER" --nogui > server.log 2>&1) &
 SERVER=$!
 c() { echo "$*" > "$RUN/stdin.fifo"; sleep 0.5; }
 until grep -q "Done (" "$RUN/server.log" 2>/dev/null; do sleep 1; done
@@ -89,6 +90,6 @@ SERVER_FIFO="$RUN/stdin.fifo" python3 consistency_check.py | tee run/consistency
 python3 error_paths.py | tee run/errors.out
 grep -E "ENTITY_SPAWN|PLACED|SUMMARY" run/bot.out || true
 grep -E "AVATAR_" "$RUN/server.log" | tail -4 || true
-c stop; sleep 5; kill $SERVER 2>/dev/null || true; pkill -f "tail -f stdin.fifo" || true
+c stop; sleep 5; kill $SERVER 2>/dev/null || true
 echo "fake_quest exit code: $RC (report: tools/run/fake_report.json)"
 exit $RC
