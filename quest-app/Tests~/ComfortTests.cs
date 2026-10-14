@@ -35,6 +35,42 @@ static class ComfortTests
         Orientation(check);
         int i = Array.IndexOf(args, "--discover");
         if (i >= 0 && i + 1 < args.Length) LiveDiscover(check, int.Parse(args[i + 1]));
+        i = Array.IndexOf(args, "--live-link");
+        if (i >= 0 && i + 1 < args.Length) LiveLink(check, args[i + 1]);
+        i = Array.IndexOf(args, "--live-token");
+        if (i >= 0 && i + 1 < args.Length) LiveToken(check, args[i + 1]);
+    }
+
+    /// <summary>
+    /// A real plugin goes silent (freeze it with kill -STOP after LINK_UP, resume with kill -CONT after ~10 s): the
+    /// client must notice within DeadSeconds, keep retrying, and get a new welcome once the server is back.
+    /// </summary>
+    static void LiveLink(Action<bool, string> check, string url)
+    {
+        var c = new LinkClient(url, "");
+        c.Start();
+        bool up = Until(() => c.Connected && c.RttMs >= 0, 10000);
+        Console.WriteLine($"LINK_UP {up} rtt {c.RttMs} ms");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        bool dead = Until(() => c.DeadAborts >= 1, 40000);
+        double deadAt = sw.Elapsed.TotalSeconds;
+        Console.WriteLine($"LINK_DEAD {dead} after {deadAt:F1} s: {c.Status}; rtt {c.RttMs}");
+        bool back = Until(() => c.Welcomes >= 2 && c.Connected, 60000);
+        check(up && dead && c.RttMs >= -1 && back, $"live link: frozen server noticed ({c.DeadAborts} aborts), reconnected after it came back ({c.Welcomes} welcomes, {sw.Elapsed.TotalSeconds:F1} s)");
+        c.Shutdown("test", 500, Protocol.AvatarConfig(false, 0.01f, "", true, "Tabletop Giant"));
+    }
+
+    /// <summary>A plugin with auth.token set and a client with the wrong one: close 4003, no retries.</summary>
+    static void LiveToken(Action<bool, string> check, string url)
+    {
+        var c = new LinkClient(url, "definitely-wrong");
+        c.Start();
+        bool fatal = Until(() => c.FatalCode != 0, 8000);
+        Thread.Sleep(3000);
+        check(fatal && c.FatalCode == 4003 && c.Welcomes == 0, $"live token: wrong token -> {c.FatalCode} ({c.Status}), not retrying");
+        int n = 0; while (c.Inbound.TryDequeue(out var m)) if (m.S("type") == "error" && m.S("code") == "auth_failed") n++;
+        check(n == 1, "live token: exactly one auth_failed error queued (the toast)");
+        c.Shutdown("test", 50);
     }
 
     // ---------- keyboard ----------

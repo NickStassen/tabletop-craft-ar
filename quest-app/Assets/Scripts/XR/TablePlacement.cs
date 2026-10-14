@@ -47,6 +47,7 @@ namespace TabletopCraft.XR
 
         Vector3 _grabOffset; float _grabYaw, _anchorYaw0; bool _grabbing;
         float _hapticOff = -1;
+        bool _wasSuspended;
 
         IEnumerator Start()
         {
@@ -139,8 +140,10 @@ namespace TabletopCraft.XR
             float now = Time.unscaledTime;
             if (_hapticOff >= 0 && now >= _hapticOff) { _hapticOff = -1; OVRInput.SetControllerVibration(0, 0, OVRInput.Controller.RTouch); }
             bool aDown = OVRInput.Get(OVRInput.Button.One, OVRInput.Controller.RTouch);
-            // Area setup's A (confirm) and A pressed on the menu never re-place the table, even if still held afterwards.
-            var ev = HoldA.Update(aDown, now, Suspended || (ABlocked != null && ABlocked()));
+            // Area setup's A (confirm; setup may have ended earlier this frame) and A pressed on the menu never re-place
+            // the table, even if still held afterwards.
+            var ev = HoldA.Update(aDown, now, Suspended || _wasSuspended || (ABlocked != null && ABlocked()));
+            _wasSuspended = Suspended;
             if (Suspended) return;
             if (ev == HoldButton.Event.Pressed) Haptic(0.12f, 0.03f);
             else if (ev == HoldButton.Event.Fired && RightHand != null)
