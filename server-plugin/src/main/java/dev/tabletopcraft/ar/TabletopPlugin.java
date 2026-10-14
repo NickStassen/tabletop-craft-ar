@@ -258,7 +258,9 @@ public final class TabletopPlugin extends JavaPlugin {
         java.util.Set<RegionSpec> regions = new java.util.HashSet<>();
         for (Session s : ready()) if (s.lastGrid != null) regions.add(s.region);
         for (RegionSpec r : regions) {
-            if (!diffInFlight.add(r)) continue;
+            // A diff of this region is still reading: stay dirty so a change made since it started goes out right after
+            // it, not with the next light recheck or safety diff (headset edits measured 350 ms instead of 150 ms).
+            if (!diffInFlight.add(r)) { dirty = true; continue; }
             Map<Session, Integer> gen = new HashMap<>();
             int extras = 0; // read light/biomes if any session on this region wants them (a re-snapshot may need biomes)
             for (Session s : ready()) if (r.equals(s.region) && s.lastGrid != null) { gen.put(s, s.snapshotId); extras |= s.readExtras(); }
