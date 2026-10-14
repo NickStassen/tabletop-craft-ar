@@ -1,0 +1,128 @@
+{
+ "v": 1,
+ "type": "entities",
+ "seq": 5,
+ "t": 1760370001050,
+ "full": true,
+ "entities": [
+  {
+   "id": 101,
+   "type": "minecraft:oak_boat",
+   "uuid": "3c1e7f0a-0000-4000-8000-000000000101",
+   "pos": [
+    112.5,
+    62.53,
+    -30.25
+   ],
+   "yaw": 90.0,
+   "pitch": 0.0,
+   "passengers": [
+    7,
+    102
+   ],
+   "size": [
+    1.38,
+    0.56
+   ]
+  },
+  {
+   "id": 102,
+   "type": "minecraft:pig",
+   "uuid": "3c1e7f0a-0000-4000-8000-000000000102",
+   "pos": [
+    112.1,
+    62.6,
+    -30.25
+   ],
+   "yaw": 80.0,
+   "pitch": 0.0,
+   "body_yaw": 90.0,
+   "vehicle": 101,
+   "size": [
+    0.45,
+    0.45
+   ],
+   "baby": true,
+   "variant": "temperate"
+  },
+  {
+   "id": 103,
+   "type": "minecraft:sheep",
+   "uuid": "3c1e7f0a-0000-4000-8000-000000000103",
+   "pos": [
+    105.3,
+    64.0,
+    -35.5
+   ],
+   "yaw": 10.0,
+   "pitch": 0.0,
+   "body_yaw": 10.0,
+   "on_ground": true,
+   "size": [
+    0.9,
+    1.3
+   ],
+   "color": "light_blue"
+  },
+  {
+   "id": 104,
+   "type": "minecraft:zombie",
+   "uuid": "3c1e7f0a-0000-4000-8000-000000000104",
+   "pos": [
+    108.7,
+    64.0,
+    -28.0
+   ],
+   "yaw": -45.0,
+   "pitch": 12.5,
+   "body_yaw": -40.0,
+   "on_ground": true,
+   "size": [
+    0.6,
+    1.95
+   ],
+   "equipment": {
+    "main_hand": "minecraft:iron_sword",
+    "head": "minecraft:leather_helmet"
+   }
+  },
+  {
+   "id": 105,
+   "type": "minecraft:item",
+   "uuid": "3c1e7f0a-0000-4000-8000-000000000105",
+   "pos": [
+    110.42,
+    64.0,
+    -33.9
+   ],
+   "yaw": 0.0,
+   "pitch": 0.0,
+   "on_ground": true,
+   "size": [
+    0.25,
+    0.25
+   ],
+   "item": "minecraft:diamond",
+   "count": 3
+  },
+  {
+   "id": 106,
+   "type": "minecraft:item_frame",
+   "uuid": "3c1e7f0a-0000-4000-8000-000000000106",
+   "pos": [
+    104.5,
+    65.5,
+    -36.97
+   ],
+   "yaw": 180.0,
+   "pitch": 0.0,
+   "size": [
+    0.75,
+    0.75
+   ],
+   "item": "minecraft:compass",
+   "facing": "north",
+   "rotation": 2
+  }
+ ]
+}

@@ -55,6 +55,14 @@ public final class Session {
     /** Opted into light_v1 / biomes_v1 in hello.caps (and enabled in config); PROTOCOL.md 4.4.1. */
     public volatile boolean wantsLight, wantsBiomes;
     public byte[] lastLight;               // packed light, as last sent (main thread), null without light_v1
+    // Entities (PROTOCOL.md 4.21, entities_v1): what this client holds, for deltas (main thread), and bytes sent.
+    public volatile boolean wantsEntities;
+    public final Map<Integer, EntityState> entitiesSent = new HashMap<>();
+    public RegionSpec entitiesRegion;      // region the held set belongs to; a change triggers a full list
+    public final java.util.concurrent.atomic.AtomicLong entityBytes = new java.util.concurrent.atomic.AtomicLong();
+    // Actions (PROTOCOL.md 4.22, actions_v1): swings, digging, breaks, places, damage inside the region.
+    public volatile boolean wantsActions;
+    public final java.util.concurrent.atomic.AtomicLong actionBytes = new java.util.concurrent.atomic.AtomicLong();
     public BiomeGrid lastBiomes;           // biomes of the last snapshot (for a resend after bad_snapshot), null without biomes_v1
     /** Granted edit_v1 in welcome.caps (block_edit, PROTOCOL.md 4.20); its rate limit, set together with it. */
     public volatile boolean canEdit;

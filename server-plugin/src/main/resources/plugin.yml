@@ -6,7 +6,7 @@ description: Streams a tabletop region to an AR headset and drives a giant avata
 commands:
   tabletop:
     description: Tabletop AR controls
-    usage: /tabletop <status|setorigin [x y z]|avatar <spawn|remove|status|here>|reload>
+    usage: /tabletop <status|setorigin [x y z]|avatar <spawn|remove|status|here>|entities|reload>
     permission: tabletop.admin
 permissions:
   tabletop.admin:

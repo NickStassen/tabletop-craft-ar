@@ -28,6 +28,8 @@ REQUIRED = {
     "region_query": [],
     "region_changed": ["world", "origin", "dims", "by_session"],
     "region_info": ["region", "players", "limits"],
+    "entities": ["full", "entities"],
+    "actions": ["actions"],
     "block_edit": ["op", "pos"],
 }
 ERROR_CODES = {"version_mismatch", "auth_failed", "bad_message", "unknown_type", "unsupported", "region_too_large",
@@ -35,6 +37,13 @@ ERROR_CODES = {"version_mismatch", "auth_failed", "bad_message", "unknown_type",
                "edit_denied", "out_of_region", "bad_state"}   # the last three: block_edit (PROTOCOL.md 4.20)
 # Optional snapshot extras a client can ask for in hello.caps (PROTOCOL.md 4.4.1).
 CAP_LIGHT, CAP_BIOMES = "light_v1", "biomes_v1"
+# Non-player entities in "entities" messages (PROTOCOL.md 4.21).
+CAP_ENTITIES = "entities_v1"
+# Swings, digging, block breaks/places and damage in "actions" messages (PROTOCOL.md 4.22).
+CAP_ACTIONS = "actions_v1"
+ACTION_KINDS = {"swing", "dig", "break", "place", "hurt"}
+EQUIPMENT_SLOTS = {"main_hand", "off_hand", "head", "chest", "legs", "feet", "body", "saddle"}
+PLAYER_POSES = {"standing", "sneaking", "swimming", "sleeping", "gliding", "riding", "spin_attack", "dying"}
 # Block editing from the headset (PROTOCOL.md 4.20): block_edit, granted in welcome.caps.
 CAP_EDIT = "edit_v1"
 FACES = ("west", "east", "down", "up", "north", "south")
@@ -67,8 +76,42 @@ def validate(msg: dict) -> None:
         for p in msg["players"]:
             if p.get("skin_model") not in (None, "wide", "slim"):
                 raise ValueError(f"player_positions skin_model must be wide or slim, got {p['skin_model']}")
+            if p.get("pose") not in (None, *PLAYER_POSES):
+                raise ValueError(f"player_positions pose {p['pose']} is not one of {sorted(PLAYER_POSES)}")
+            _check_equipment(p.get("equipment"))
+    if t == "entities":
+        for e in msg["entities"]:
+            if not isinstance(e.get("id"), int):
+                raise ValueError(f"entities entry without an int id: {e}")
+            if msg["full"] and ("type" not in e or "pos" not in e):
+                raise ValueError(f"full entities entry {e['id']} needs type and pos")
+            if "pos" in e and len(e["pos"]) != 3:
+                raise ValueError(f"entities entry {e['id']} pos must have 3 numbers")
+            _check_equipment(e.get("equipment"))
+        if not all(isinstance(i, int) for i in msg.get("removed") or []):
+            raise ValueError("entities removed must be a list of ids")
+    if t == "actions":
+        for a in msg["actions"]:
+            k = a.get("kind")
+            if k not in ACTION_KINDS:
+                raise ValueError(f"unknown action kind {k}")
+            if k in ("swing", "hurt") and not isinstance(a.get("id"), int):
+                raise ValueError(f"{k} action needs an entity id")
+            if k == "swing" and a.get("hand") not in ("main", "off"):
+                raise ValueError("swing hand must be main or off")
+            if k in ("dig", "break", "place") and (len(a.get("pos") or []) != 3 or not all(isinstance(v, int) for v in a["pos"])):
+                raise ValueError(f"{k} action needs an integer block pos")
+            if k == "dig" and not -1 <= a.get("stage", -2) <= 9:
+                raise ValueError("dig stage must be -1..9")
+            if k in ("break", "place") and not isinstance(a.get("block"), str):
+                raise ValueError(f"{k} action needs a block state")
     if t == "block_edit":
         validate_block_edit(msg)
+
+
+def _check_equipment(eq: dict | None) -> None:
+    if eq is not None and not set(eq) <= EQUIPMENT_SLOTS:
+        raise ValueError(f"unknown equipment slots {sorted(set(eq) - EQUIPMENT_SLOTS)}")
 
 
 def validate_block_edit(msg: dict) -> None:
@@ -359,3 +402,32 @@ def scripted_pose(t: float, center=(0.16, 0.0, 0.16), radius: float = 0.10, heig
         "left": {"p": [round(hx - 0.05, 4), height - 0.12 + sway, round(hz, 4)], "q": q, "tracked": True},
         "right": {"p": [round(hx + 0.05, 4), height - 0.12 - sway, round(hz, 4)], "q": q, "tracked": True},
     }
+
+
+class EntityMirror:
+    """Client-side copy of the entities in the region (PROTOCOL.md 4.21): full lists replace it, deltas merge."""
+
+    def __init__(self) -> None:
+        self.entities: dict[int, dict] = {}
+        self.messages = 0
+        self.fulls = 0
+
+    def apply(self, msg: dict) -> None:
+        self.messages += 1
+        if msg["full"]:
+            self.fulls += 1
+            self.entities = {}
+        for e in msg["entities"]:
+            cur = self.entities.get(e["id"])
+            if cur is None:
+                if "type" not in e:
+                    raise ValueError(f"delta for unknown entity {e['id']}")
+                self.entities[e["id"]] = dict(e)
+            else:
+                for k, v in e.items():   # present fields replace; null/false/[] clear
+                    cur[k] = v
+        for i in msg.get("removed") or []:
+            self.entities.pop(i, None)
+
+    def of_type(self, type_: str) -> list[dict]:
+        return [e for e in self.entities.values() if e["type"] == type_]

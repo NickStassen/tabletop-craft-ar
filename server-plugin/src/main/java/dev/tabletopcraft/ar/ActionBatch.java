@@ -1,0 +1,111 @@
+package dev.tabletopcraft.ar;
+
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * One tick's worth of actions (PROTOCOL.md 4.22): arm swings, digging progress, block breaks and places, hurt entities.
+ * Repeats within a tick collapse (the latest dig stage per block, one swing per entity and hand, one hurt per entity),
+ * at most {@link #MAX} survive, and each session gets the ones inside its region. Pure (no Bukkit).
+ */
+public final class ActionBatch {
+    public static final int MAX = 128;
+    /** Blocks around the region an entity action may come from (players are listed up to 16 blocks out, others 2). */
+    public static final int PLAYER_MARGIN = 16, ENTITY_MARGIN = 2;
+
+    /** Where an action happened (world block coords) and how far outside a region it still counts. */
+    public record Action(String world, double x, double y, double z, int margin, JsonObject json) {}
+
+    private final Map<String, Action> actions = new LinkedHashMap<>();
+    private int dropped;
+
+    public boolean isEmpty() { return actions.isEmpty(); }
+    public int size() { return actions.size(); }
+    public int dropped() { return dropped; }
+    public void clear() { actions.clear(); dropped = 0; }
+
+    private void put(String key, Action a) {
+        if (!actions.containsKey(key) && actions.size() >= MAX) { dropped++; return; }
+        actions.remove(key);   // re-insert: the latest of a repeated action keeps its place at the end
+        actions.put(key, a);
+    }
+
+    public void swing(String world, double x, double y, double z, int id, boolean offHand, boolean player) {
+        JsonObject o = kind("swing");
+        o.addProperty("id", id);
+        o.addProperty("hand", offHand ? "off" : "main");
+        put("swing:" + id + (offHand ? ":off" : ":main"), new Action(world, x, y, z, player ? PLAYER_MARGIN : ENTITY_MARGIN, o));
+    }
+
+    /** Digging progress 0..9 at a block, or -1 to clear it; {@code by} is the digging entity's id (or null). */
+    public void dig(String world, int x, int y, int z, int stage, Integer by) {
+        JsonObject o = kind("dig");
+        o.add("pos", Protocol.ints(x, y, z));
+        o.addProperty("stage", Math.max(-1, Math.min(9, stage)));
+        if (by != null) o.addProperty("id", by);
+        put("dig:" + x + "," + y + "," + z, new Action(world, x, y, z, 0, o));
+    }
+
+    /** A block broken (by a player or an explosion): clients burst its particles and clear any dig overlay there. */
+    public void breakBlock(String world, int x, int y, int z, String state, Integer by) {
+        actions.remove("dig:" + x + "," + y + "," + z);   // the break clears the cracks anyway
+        JsonObject o = kind("break");
+        o.add("pos", Protocol.ints(x, y, z));
+        o.addProperty("block", state);
+        if (by != null) o.addProperty("id", by);
+        put("break:" + x + "," + y + "," + z, new Action(world, x, y, z, 0, o));
+    }
+
+    public void place(String world, int x, int y, int z, String state, Integer by) {
+        JsonObject o = kind("place");
+        o.add("pos", Protocol.ints(x, y, z));
+        o.addProperty("block", state);
+        if (by != null) o.addProperty("id", by);
+        put("place:" + x + "," + y + "," + z, new Action(world, x, y, z, 0, o));
+    }
+
+    /** An entity (or player) took damage: clients flash it red; crit adds the critical-hit sparks. */
+    public void hurt(String world, double x, double y, double z, int id, boolean crit, boolean player) {
+        String key = "hurt:" + id;
+        Action old = actions.get(key);
+        JsonObject o = kind("hurt");
+        o.addProperty("id", id);
+        if (crit || (old != null && old.json().has("crit"))) o.addProperty("crit", true);
+        put(key, new Action(world, x, y, z, player ? PLAYER_MARGIN : ENTITY_MARGIN, o));
+    }
+
+    /** The actions inside a region (its box grown by each action's margin; y without margin for blocks), in order. */
+    public JsonArray forRegion(RegionSpec r) {
+        JsonArray a = new JsonArray();
+        for (Action x : actions.values()) {
+            if (!x.world().equals(r.world())) continue;
+            int m = x.margin();
+            boolean in = x.x() >= r.ox() - m && x.x() < r.ox() + r.sx() + m && x.z() >= r.oz() - m && x.z() < r.oz() + r.sz() + m
+                && x.y() >= r.oy() - Math.min(m, ENTITY_MARGIN) && x.y() < r.oy() + r.sy() + Math.min(m, ENTITY_MARGIN);
+            if (in) a.add(x.json().deepCopy());
+        }
+        return a;
+    }
+
+    /** The message for one region, or null when nothing happened there. */
+    public JsonObject message(RegionSpec r) {
+        JsonArray a = forRegion(r);
+        if (a.isEmpty()) return null;
+        JsonObject o = Protocol.body("actions");
+        o.add("actions", a);
+        return o;
+    }
+
+    public List<Action> all() { return new ArrayList<>(actions.values()); }
+
+    private static JsonObject kind(String k) {
+        JsonObject o = new JsonObject();
+        o.addProperty("kind", k);
+        return o;
+    }
+}

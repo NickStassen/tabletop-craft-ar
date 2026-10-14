@@ -5,9 +5,12 @@ import pathlib
 import pytest
 
 from tabletop_protocol import (
+    CAP_ACTIONS,
     CAP_BIOMES,
     CAP_EDIT,
+    CAP_ENTITIES,
     CAP_LIGHT,
+    EntityMirror,
     Envelope,
     WorldMirror,
     block_edit,
@@ -162,6 +165,48 @@ def test_caps_in_hello_and_welcome_fixtures():
     assert json.loads((FIX / "welcome.json").read_text())["caps"] == [CAP_LIGHT, CAP_BIOMES]
 
 
+def test_entities_full_then_delta():
+    m = EntityMirror()
+    m.apply(json.loads((FIX / "entities.json").read_text()))
+    assert len(m.entities) == 6 and m.fulls == 1
+    boat = m.of_type("minecraft:oak_boat")[0]
+    pig = m.entities[102]
+    assert boat["passengers"] == [7, 102] and pig["vehicle"] == 101 and pig["baby"]
+    assert m.entities[105]["item"] == "minecraft:diamond" and m.entities[105]["count"] == 3
+    assert m.entities[104]["equipment"]["head"] == "minecraft:leather_helmet"
+    m.apply(json.loads((FIX / "entities_delta.json").read_text()))
+    assert 105 not in m.entities                                 # removed (picked up)
+    assert m.entities[101]["pos"] == [113.0, 62.53, -30.25] and m.entities[101]["yaw"] == 95.0
+    assert m.entities[101]["passengers"] == [7, 102]             # unchanged fields are kept
+    assert m.entities[104]["equipment"] == {"main_hand": "minecraft:iron_sword"}   # replaced whole
+    m.apply({"full": True, "entities": []})
+    assert m.entities == {}
+
+
+def test_entities_validation():
+    msg = json.loads((FIX / "entities.json").read_text())
+    del msg["entities"][0]["type"]
+    with pytest.raises(ValueError):
+        validate(msg)   # a full entry needs a type
+    d = json.loads((FIX / "entities_delta.json").read_text())
+    d["entities"][2]["equipment"] = {"hat": "minecraft:carved_pumpkin"}
+    with pytest.raises(ValueError):
+        validate(d)
+    with pytest.raises(ValueError):
+        EntityMirror().apply({"full": False, "entities": [{"id": 9, "pos": [0, 0, 0]}]})
+
+
+def test_player_positions_riding_extras():
+    msg = json.loads((FIX / "player_positions_riding.json").read_text())
+    p = msg["players"][0]
+    assert p["vehicle"] == 101 and p["pose"] == "riding" and p["id"] == 7
+    assert p["equipment"]["main_hand"] == "minecraft:diamond_sword"
+    p["pose"] = "flying"
+    with pytest.raises(ValueError):
+        validate(msg)
+    assert CAP_ENTITIES == "entities_v1"
+
+
 def test_sections_with_light_and_biomes():
     """sections_v1 + light_v1/biomes_v1: per-section light, biomes on part 0, deltas keep the base light."""
     m = WorldMirror()
@@ -175,6 +220,17 @@ def test_sections_with_light_and_biomes():
     no_light = dict(full, sections=[{"s": [0, 0, 0], "data": [1, 256, 0, 768]}])
     with pytest.raises(ValueError):
         WorldMirror().apply_snapshot(no_light)   # light announced but a section has none
+
+
+def test_actions_fixture_and_validation():
+    msg = json.loads((FIX / "actions.json").read_text())
+    kinds = [a["kind"] for a in msg["actions"]]
+    assert kinds == ["swing", "dig", "break", "place", "hurt", "swing"] and CAP_ACTIONS == "actions_v1"
+    for bad in ({"kind": "wave", "id": 1}, {"kind": "dig", "pos": [1, 2, 3], "stage": 10},
+                {"kind": "swing", "id": 7, "hand": "left"}, {"kind": "break", "pos": [1.5, 2, 3], "block": "minecraft:stone"}):
+        m = dict(msg, actions=[bad])
+        with pytest.raises(ValueError):
+            validate(m)
 
 
 def test_block_edit_fixtures_and_builder():

@@ -102,6 +102,10 @@ public final class Protocol {
 
     /** Optional per-session features a client opts into via hello.caps (PROTOCOL.md 4.4.1). */
     public static final String CAP_LIGHT = "light_v1", CAP_BIOMES = "biomes_v1";
+    /** Non-player entities in an "entities" message (PROTOCOL.md 4.21). */
+    public static final String CAP_ENTITIES = "entities_v1";
+    /** Swings, digging, block breaks/places and damage in an "actions" message (PROTOCOL.md 4.22). */
+    public static final String CAP_ACTIONS = "actions_v1";
     /** Block editing from the headset (block_edit, PROTOCOL.md 4.20). */
     public static final String CAP_EDIT = "edit_v1";
 

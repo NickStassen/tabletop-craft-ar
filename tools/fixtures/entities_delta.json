@@ -1,0 +1,37 @@
+{
+ "v": 1,
+ "type": "entities",
+ "seq": 6,
+ "t": 1760370001150,
+ "full": false,
+ "entities": [
+  {
+   "id": 101,
+   "pos": [
+    113.0,
+    62.53,
+    -30.25
+   ],
+   "yaw": 95.0
+  },
+  {
+   "id": 102,
+   "pos": [
+    112.6,
+    62.6,
+    -30.25
+   ],
+   "yaw": 85.0,
+   "body_yaw": 95.0
+  },
+  {
+   "id": 104,
+   "equipment": {
+    "main_hand": "minecraft:iron_sword"
+   }
+  }
+ ],
+ "removed": [
+  105
+ ]
+}

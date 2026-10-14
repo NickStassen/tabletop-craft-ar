@@ -1,0 +1,31 @@
+{
+ "v": 1,
+ "type": "player_positions",
+ "seq": 7,
+ "t": 1760370001050,
+ "players": [
+  {
+   "uuid": "0f1e",
+   "name": "Alex",
+   "pos": [
+    112.9,
+    62.98,
+    -30.25
+   ],
+   "yaw": 100.0,
+   "pitch": 5.0,
+   "sneaking": false,
+   "id": 7,
+   "vehicle": 101,
+   "pose": "riding",
+   "equipment": {
+    "main_hand": "minecraft:diamond_sword",
+    "off_hand": "minecraft:torch",
+    "head": "minecraft:iron_helmet",
+    "chest": "minecraft:diamond_chestplate",
+    "legs": "minecraft:leather_leggings",
+    "feet": "minecraft:golden_boots"
+   }
+  }
+ ]
+}

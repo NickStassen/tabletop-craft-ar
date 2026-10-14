@@ -62,6 +62,8 @@ public final class TabletopPlugin extends JavaPlugin {
     private volatile boolean lightOn = true, biomesOn = true;
     private long lightRecheckTick = -1;
     static final int LIGHT_RECHECK_TICKS = 4, MAX_LIGHT_CHANGES = 16384;
+    private final EntityStreamer entities = new EntityStreamer(this);   // entities_v1 (PROTOCOL.md 4.21)
+    private final ActionListener actions = new ActionListener(this);    // actions_v1 (PROTOCOL.md 4.22)
     // Block editing from the headset (block_edit, PROTOCOL.md 4.20), config section "edit". Read on websocket threads.
     private volatile boolean editEnabled = true, editRequireToken, editTokenSet, editPhysics = true;
     private volatile int editRate = 20;
@@ -70,6 +72,7 @@ public final class TabletopPlugin extends JavaPlugin {
     @Override public void onEnable() {
         saveDefaultConfig();
         getServer().getPluginManager().registerEvents(new BlockListener(this), this);
+        getServer().getPluginManager().registerEvents(actions, this);
         start();
     }
 
@@ -95,6 +98,8 @@ public final class TabletopPlugin extends JavaPlugin {
         avatar.smoothing = c.getDouble("avatar.smoothing", 0.5);
         lightOn = c.getBoolean("stream.light", true);
         biomesOn = c.getBoolean("stream.biomes", true);
+        entities.configure(c.getBoolean("entities.enabled", true), c.getInt("entities.max", 256), c.getInt("entities.margin", 2));
+        actions.enabled = c.getBoolean("actions.enabled", true);
         editEnabled = c.getBoolean("edit.enabled", true);
         editRequireToken = c.getBoolean("edit.require-token", false);
         editTokenSet = !c.getString("auth.token", "").isEmpty();
@@ -129,7 +134,13 @@ public final class TabletopPlugin extends JavaPlugin {
     void offerPose(Session s, Pose h, Pose l, Pose r, long seq, int snapshotId) { latestPose.set(new PoseSet(s, h, l, r, seq, snapshotId)); }
     boolean lightEnabled() { return lightOn; }
     boolean biomesEnabled() { return biomesOn; }
+    boolean entitiesEnabled() { return entities.enabled; }
+    boolean actionsEnabled() { return actions.enabled; }
     private void send(Session s, JsonObject body) { if (outbound != null && !outbound.isShutdown()) outbound.execute(() -> s.send(body)); }
+    /** Like send, adding the UTF-8 size to a counter (entities bytes/s). */
+    void sendCounting(Session s, JsonObject body, java.util.concurrent.atomic.AtomicLong bytes, java.util.concurrent.atomic.AtomicLong total) {
+        if (outbound != null && !outbound.isShutdown()) outbound.execute(() -> { int n = s.sendCounted(body); bytes.addAndGet(n); total.addAndGet(n); });
+    }
 
     void markDirty(String world, int x, int y, int z) {
         if (link == null) return;
@@ -160,7 +171,8 @@ public final class TabletopPlugin extends JavaPlugin {
             dirty = false;
             diffAll();
         }
-        if (tickCount % Math.max(1, getConfig().getInt("stream.players-every-ticks", 2)) == 0) sendPlayers();
+        if (tickCount % Math.max(1, getConfig().getInt("stream.players-every-ticks", 2)) == 0) { sendPlayers(); entities.tick(ready()); }
+        actions.flush(ready());   // swings, digging, breaks, damage of this tick (PROTOCOL.md 4.22)
         if (tickCount % 20 == 0) timeouts();
         if (tickCount % 10 == 0) updateTickets();   // follow the giant
         // A headset gliding across the world changes the region every second or so: save the config at most every 5 s.
@@ -203,6 +215,8 @@ public final class TabletopPlugin extends JavaPlugin {
         if (s.wantsLight) sc.add(Protocol.CAP_LIGHT);
         if (s.wantsBiomes) sc.add(Protocol.CAP_BIOMES);
         if (sectionsFor(s)) sc.add(SectionCodec.ENCODING);
+        if (s.wantsEntities) sc.add(Protocol.CAP_ENTITIES);   // entities (PROTOCOL.md 4.21)
+        if (s.wantsActions) sc.add(Protocol.CAP_ACTIONS);     // actions (PROTOCOL.md 4.22)
         sc.add("view_margin");
         sc.add("pose_snapshot_id");
         if (s.canEdit) sc.add(Protocol.CAP_EDIT);   // block editing (PROTOCOL.md 4.20)
@@ -478,6 +492,7 @@ public final class TabletopPlugin extends JavaPlugin {
                     // Additive (PROTOCOL.md 4.6): arm width from the textures payload's metadata.
                     if (skin != null) e.addProperty("skin_model", SkinLookup.model(textures.getSkinModel() == PlayerTextures.SkinModel.SLIM));
                 }
+                EntitySampler.playerExtras(e, p);   // additive (PROTOCOL.md 4.6): id, vehicle, pose, equipment
                 arr.add(e);
             }
             if (arr.isEmpty() && !s.lastPlayersNonEmpty) continue;
@@ -938,6 +953,7 @@ public final class TabletopPlugin extends JavaPlugin {
                     }
                 }
             }
+            case "entities" -> sender.sendMessage("[tabletop] " + entities.lastStats + "; actions messages=" + actions.sent + " bytes=" + actions.bytes.get() + " dropped=" + actions.dropped);
             case "reload" -> { reloadConfig(); stop(); start(); sender.sendMessage("[tabletop] reloaded"); }
             default -> { return false; }
         }
@@ -953,7 +969,7 @@ public final class TabletopPlugin extends JavaPlugin {
 
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
-        if (args.length == 1) return List.of("status", "setorigin", "setsize", "avatar", "reload");
+        if (args.length == 1) return List.of("status", "setorigin", "setsize", "avatar", "entities", "reload");
         if (args.length == 2 && args[0].equalsIgnoreCase("avatar")) return List.of("status", "spawn", "remove", "blocksize", "placement", "skin");
         if (args.length == 3 && args[0].equalsIgnoreCase("avatar") && args[1].equalsIgnoreCase("placement")) return List.of("floating", "ground", "exact");
         return List.of();

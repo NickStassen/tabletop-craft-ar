@@ -1,0 +1,14 @@
+{
+ "v": 1,
+ "type": "actions",
+ "seq": 8,
+ "t": 1760370001100,
+ "actions": [
+  {"kind": "swing", "id": 7, "hand": "main"},
+  {"kind": "dig", "pos": [105, 63, -36], "stage": 4, "id": 7},
+  {"kind": "break", "pos": [106, 63, -36], "block": "minecraft:stone", "id": 7},
+  {"kind": "place", "pos": [104, 64, -36], "block": "minecraft:oak_planks", "id": 7},
+  {"kind": "hurt", "id": 104, "crit": true},
+  {"kind": "swing", "id": 104, "hand": "main"}
+ ]
+}

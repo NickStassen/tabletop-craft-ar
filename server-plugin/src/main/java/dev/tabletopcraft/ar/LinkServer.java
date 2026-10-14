@@ -163,6 +163,8 @@ public final class LinkServer extends WebSocketServer {
                 String c = e.getAsString();
                 if (c.equals(Protocol.CAP_LIGHT)) s.wantsLight = plugin.lightEnabled();
                 else if (c.equals(Protocol.CAP_BIOMES)) s.wantsBiomes = plugin.biomesEnabled();
+                else if (c.equals(Protocol.CAP_ENTITIES)) s.wantsEntities = plugin.entitiesEnabled();
+                else if (c.equals(Protocol.CAP_ACTIONS)) s.wantsActions = plugin.actionsEnabled();
                 else if (c.equals(Protocol.CAP_EDIT) && plugin.editAllowed()) { s.editLimiter = new EditLimiter(plugin.editRate()); s.canEdit = true; }
             }
         s.state = Session.State.READY;

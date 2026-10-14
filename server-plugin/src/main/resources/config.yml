@@ -27,6 +27,19 @@ stream:
   # PROTOCOL.md 4.4.1). Clients without those caps never pay the bytes. Set false to never send them.
   light: true
   biomes: true
+# Non-player entities (boats, minecarts, mobs, dropped items, item frames...) for clients that ask for them in
+# hello.caps (entities_v1, PROTOCOL.md 4.21), sent with player_positions as deltas. Players are always in
+# player_positions; the giant's own entities are never sent.
+entities:
+  enabled: true
+  # Max entities per region; the ones nearest the region centre win.
+  max: 256
+  # Entities inside the region box grown by this many blocks are sent.
+  margin: 2
+# Actions for clients that ask for them (actions_v1, PROTOCOL.md 4.22): arm swings, digging cracks, block break and
+# place particles, red damage flashes. One message per tick with what happened inside the client's region.
+actions:
+  enabled: true
 avatar:
   # Real metres per block on the table; the Quest overrides it with avatar_config.
   block-size-m: 0.01
