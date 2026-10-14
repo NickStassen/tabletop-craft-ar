@@ -50,6 +50,7 @@ namespace TabletopCraft.EditorTools
         /// </summary>
         public static void BuildApk()
         {
+            ApplyVersion();
             var options = new BuildPlayerOptions
             {
                 scenes = EditorBuildSettings.scenes.Where(s => s.enabled).Select(s => s.path).ToArray(),
@@ -88,6 +89,18 @@ namespace TabletopCraft.EditorTools
         }
 
         /// <summary>Same as ticking OpenXR in Project Settings > XR Plug-in Management for the given platform.</summary>
+        /// <summary>App version from the repo's VERSION file (shared with the plugin): bundleVersion "0.X.Y" and a
+        /// monotonically increasing versionCode X*10000 + Y*100 for Android.</summary>
+        static void ApplyVersion()
+        {
+            string v = File.ReadAllText(Path.Combine("..", "VERSION")).Trim();
+            var parts = v.Split('.').Select(int.Parse).ToArray();
+            PlayerSettings.bundleVersion = v;
+            PlayerSettings.Android.bundleVersionCode = parts[0] * 1000000 + parts[1] * 10000 + (parts.Length > 2 ? parts[2] : 0) * 100;
+            AssetDatabase.SaveAssets();
+            Debug.Log($"[Tabletop] version {v} (code {PlayerSettings.Android.bundleVersionCode})");
+        }
+
         static void EnableOpenXrLoader(BuildTargetGroup group)
         {
             if (!EditorBuildSettings.TryGetConfigObject(XRGeneralSettings.k_SettingsKey, out XRGeneralSettingsPerBuildTarget perTarget) || perTarget == null)

@@ -1,4 +1,6 @@
-# PROTOCOL.md — Tabletop link protocol, version 1
+# PROTOCOL.md — Tabletop link protocol, v0.1.0
+
+The project version (repo `VERSION` file) versions the plugin, the Quest app and this protocol together. Before 1.0 there is no backwards compatibility: plugin, app and tools of the same version go together. The wire field `v` stays `1`.
 
 Status: **v1, normative.** The server plugin (`server-plugin/`), the Quest app (`quest-app/`) and the fake client (`tools/`) must all implement exactly this. Any breaking change bumps `PROTOCOL_VERSION` and is recorded in the changelog at the bottom.
 

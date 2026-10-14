@@ -54,6 +54,13 @@ Work through these in order and record what you verify in `README.md` Status and
   - The project is versioned 0.X: plugin `version` in build.gradle.kts, the app's `bundleVersion`, and the version line in PROTOCOL.md, all kept equal.
   - Bump the minor version for each new feature set and add a changelog entry.
   - Backwards compatibility is NOT required before 1.0: old capability flags and compatibility paths may be removed or replaced freely; plugin, app and tools just have to match.
+- **Releases:** one `VERSION` file at the repo root is the single source: Gradle reads it for the plugin, and `TabletopBatch.BuildApk` sets the app's `bundleVersion` and versionCode from it. To release a feature set:
+  1. bump `VERSION` (0.X.0; patch for fixes);
+  2. update the PROTOCOL.md header and its changelog;
+  3. commit `release: v0.X.0`;
+  4. tag `v0.X.0`;
+  5. `gh release create v0.X.0` with notes (what's new, what was verified on the headset, known gaps), attaching the plugin jar and the APK.
+  Never attach the client jar, pack.zip or entity_models.json.
 - `docs/PROTOCOL.md` is the contract for the plugin, Quest app and tools. Golden examples are in `tools/fixtures/`; Java (`FixtureTest`) and Python tests read them.
 - Frames: tabletop frame is right-handed, metres, axes parallel to the world, origin at the region's local (0,0,0) corner. Unity conversion is `p=[ux,uy,-uz]`, `q=[-qx,-qy,qz,qw]` (PoseSender/TabletopPose). Mesh vertices are mirrored on Z and triangles re-wound in TabletopRenderer.
 - Known gaps vs the spec are listed in `docs/TESTING.md` under "Spec deviations".

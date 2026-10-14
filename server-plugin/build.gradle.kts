@@ -4,7 +4,8 @@ plugins {
 }
 
 group = "dev.tabletopcraft"
-version = "0.1.0"
+// Single source of truth for the project version (pre-1.0: 0.X, see CLAUDE.md "Releases").
+version = rootDir.resolve("../VERSION").readText().trim()
 
 java { toolchain { languageVersion.set(JavaLanguageVersion.of(25)) } }
 
