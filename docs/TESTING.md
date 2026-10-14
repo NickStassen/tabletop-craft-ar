@@ -532,7 +532,7 @@ What changed:
 - `FluidMesher` and `MeshData.WaterBack` hold the reversed inside copies of water faces, and `TabletopRenderer.Underwater` turns that third submesh on.
 - The design and the edge-case decisions are in ARCHITECTURE.md §4 under "Eye in a fluid".
 
-**Tests** (`Tests~/EyeTests.cs`; `dotnet run -- --jar <26.3 jar>`: 204 checks, all PASS):
+**Tests** (`Tests~/EyeTests.cs`; `dotnet run -- --jar <26.3 jar>`: 275 checks with master's nav tests merged, all PASS):
 - Medium:
   - The lower cell of a two-high water column is water up to y 1. The surface cell ends at 1 + 8/9, exactly at the surface is air, and 1e-4 below it is water.
   - A lone source cell is 8/9 high.
@@ -557,11 +557,14 @@ What changed:
   - One water cell gives 6 outside faces and 6 reversed copies with their own vertices, wound to face into the water, never in the transparent list. The 8/9 surface is among them.
   - Lava has none.
   - A merged 16×4×16 ocean has a copy for each of its 10 quads.
+- Nav's window caps:
+  - Kelp, waterlogged models and bubble columns are cut as water; cubes as themselves; plants and air not at all.
+  - A water cut over a kelp cell merges into one quad with an inside copy.
 - **Real terrain** (the seed-12345 snapshots from the water section, `--measure-fluids`): the 128×96×128 ocean region has 4,097 water quads, so 4,097 inside copies. That is about 16k extra vertices (+11%) in memory, drawn only while the eye is in water. Fluid meshing still takes 17 ms for all 384 sections (Release, x86).
 
 **Unity:**
 - The C# compile check is clean.
-- The four changed shaders were compiled through `ShaderData.Pass.CompileVariant` for Android Vulkan and GLES3, with and without `STEREO_INSTANCING_ON`/`INSTANCING_ON`: 32 vertex/fragment variants, 0 errors. A temporary editor script did this and was not committed.
+- The four changed shaders were compiled through `ShaderData.Pass.CompileVariant` for Android Vulkan and GLES3, with and without `STEREO_INSTANCING_ON`/`INSTANCING_ON`: 32 vertex/fragment variants, 0 errors. This was repeated after merging nav's clip volume into the same shaders. A temporary editor script did this and was not committed.
 
 **Needs the headset:**
 - Whether the overlay box really tints the passthrough underlay. This depends on how the compositor uses the eye buffer's alpha: premultiplied output is assumed.

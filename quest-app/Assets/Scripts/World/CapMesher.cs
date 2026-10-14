@@ -14,6 +14,12 @@ namespace TabletopCraft.World
         /// <summary>Shapes that fill their whole block and therefore get a cap where the window cuts them.</summary>
         public static bool Caps(BlockShape s) => s == BlockShape.Cube || s == BlockShape.TransparentCube || s == BlockShape.Fluid;
 
+        /// <summary>[water] The state a palette state is cut as, or null for no cap. Cells holding water or lava that aren't
+        /// cubes (waterlogged models, kelp, seagrass, bubble columns, the fluids themselves) are cut as that fluid, as
+        /// FluidMesher draws them, so the water cut has no holes around plants.</summary>
+        public static string CapState(string state, BlockShape shape) =>
+            shape == BlockShape.Cube || shape == BlockShape.TransparentCube ? state : FluidRules.FaceState(state) ?? (Caps(shape) ? state : null);
+
         [ThreadStatic] static FaceKey[] _mask;
         [ThreadStatic] static bool[] _has;
 
@@ -44,7 +50,8 @@ namespace TabletopCraft.World
                     var key = keys[id * 6 + face];
                     // Biome tint per cell (BlockShading.Tint), folded into the key so merging respects it. No light or
                     // AO: the cut reads like a daylight cross-section, like the region's own open-sky edges.
-                    if (key.Tint != TintKind.None) { key.Color = BlockShading.Tint(w, key, p.x, p.y, p.z); key.Tint = TintKind.None; }
+                    // [water] Water keeps its tint kind (colour already folded in): Emit gives it inside faces.
+                    if (key.Tint != TintKind.None) { key.Color = BlockShading.Tint(w, key, p.x, p.y, p.z); if (key.Tint != TintKind.Water) key.Tint = TintKind.None; }
                     mask[k] = key;
                 }
             for (int v = 0; v < nv; v++)
@@ -79,6 +86,16 @@ namespace TabletopCraft.World
             // Same winding rule as GreedyMesher.EmitQuad (right-handed, CCW seen from outside); the uploader flips it after mirroring Z.
             if (positive) { tris.Add(start); tris.Add(start + 1); tris.Add(start + 2); tris.Add(start); tris.Add(start + 2); tris.Add(start + 3); }
             else { tris.Add(start); tris.Add(start + 2); tris.Add(start + 1); tris.Add(start); tris.Add(start + 3); tris.Add(start + 2); }
+            // [water] A water cut seen from inside the water (an aquarium wall): reversed copy with own vertices in
+            // MeshData.WaterBack, drawn only while the eye is under water (ClipCaps.Underwater), as FluidMesher does.
+            if (key.Tint == TintKind.Water)
+            {
+                int b = m.Verts.Count;
+                for (int i = 0; i < 4; i++) { m.Verts.Add(m.Verts[start + i]); m.Uvs.Add(m.Uvs[start + i]); m.Colors.Add(m.Colors[start + i]); }
+                var wb = m.WaterBack;
+                if (positive) { wb.Add(b); wb.Add(b + 2); wb.Add(b + 1); wb.Add(b); wb.Add(b + 3); wb.Add(b + 2); }
+                else { wb.Add(b); wb.Add(b + 1); wb.Add(b + 2); wb.Add(b); wb.Add(b + 2); wb.Add(b + 3); }
+            }
         }
 
         /// <summary>

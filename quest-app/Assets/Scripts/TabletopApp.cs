@@ -100,6 +100,7 @@ namespace TabletopCraft
             _nav.Anchor = _anchor; _nav.RegionRoot = _regionRoot; _nav.Head = Head; _nav.Renderer = _renderer; _nav.Caps = _caps;
             _nav.BlockSize = () => BlockSizeM; _nav.Suspended = () => _area.Active; _nav.Send = b => _link.Send(b);
             _area.Nav = _nav.State;
+            eye.Caps = _caps;   // water cuts of the visible window get inside faces too (EyeEffects.cs)
 
             _link = new LinkClient(ServerUrl, Token);
             _link.Start();

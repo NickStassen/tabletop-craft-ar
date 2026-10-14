@@ -63,6 +63,7 @@ namespace TabletopCraft.World
                 if (_underwater == value) return;
                 _underwater = value;
                 foreach (var e in _sections.Values) e.go.GetComponent<MeshRenderer>().sharedMaterials = Materials();
+                foreach (var e in _retired) if (e.go) e.go.GetComponent<MeshRenderer>().sharedMaterials = Materials();   // old region while staging
             }
         }
 

@@ -151,5 +151,28 @@ static class EyeTests
         m.Clear();
         GreedyMesher.BuildSpecials(ocean, new Vector3Int(0, 0, 0), new Tagged(), m);
         check(m.WaterBack.Count == m.Transparent.Count, $"inside faces: the merged ocean's {m.Transparent.Count / 6} quads all have inside copies");
+
+        // Nav's window caps: cells holding water are cut as water (no holes around kelp), and water cuts get inside copies.
+        string[] pal = { "minecraft:air", "minecraft:stone", water, "minecraft:kelp_plant", "minecraft:poppy", "minecraft:lava[level=0]", stairs };
+        check(CapMesher.CapState(pal[3], BlockRules.Shape(pal[3])) == FluidRules.WaterState && CapMesher.CapState(pal[2], BlockShape.Fluid) == FluidRules.WaterState &&
+              CapMesher.CapState(pal[6], BlockShape.Model) == FluidRules.WaterState && CapMesher.CapState(pal[1], BlockShape.Cube) == pal[1] &&
+              CapMesher.CapState(pal[4], BlockShape.Cross) == null && CapMesher.CapState(pal[0], BlockShape.Air) == null &&
+              CapMesher.CapState(pal[5], BlockShape.Fluid) == FluidRules.LavaState &&
+              CapMesher.CapState("minecraft:oak_leaves[waterlogged=true]", BlockShape.TransparentCube) == "minecraft:oak_leaves[waterlogged=true]",
+              "caps: kelp/waterlogged models/bubble columns cut as water, cubes as themselves, plants and air not at all");
+        var pool = World(4, 3, 4, (x, y, z) => y == 0 ? 1 : x == 1 && z == 0 ? 3 : 2, pal);   // stone floor, water with a kelp at x=1
+        var capKeys = new FaceKey[pal.Length * 6]; var capTable = new bool[pal.Length];
+        for (int i = 0; i < pal.Length; i++)
+        {
+            string cut = CapMesher.CapState(pal[i], BlockRules.Shape(pal[i]));
+            capTable[i] = cut != null;
+            for (int fc = 0; capTable[i] && fc < 6; fc++)
+                capKeys[i * 6 + fc] = new FaceKey { Layer = cut == FluidRules.WaterState ? 1 : 0, Color = BlockRules.FlatColor(cut), Transparent = cut == FluidRules.WaterState,
+                                                    Tint = cut == FluidRules.WaterState ? TintKind.Water : TintKind.None };
+        }
+        var cm = new MeshData();
+        CapMesher.Build(pool, 4, 0, capKeys, capTable, cm);   // -Z side at z=0: stone row + 4x2 water incl. the kelp cell
+        int waterCaps = cm.Transparent.Count / 6;
+        check(waterCaps == 1 && cm.WaterBack.Count == 6 && cm.Opaque.Count == 6, $"caps: the water cut merges over the kelp cell into 1 quad with an inside copy ({waterCaps} water quads)");
     }
 }

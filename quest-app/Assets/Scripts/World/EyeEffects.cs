@@ -16,6 +16,7 @@ namespace TabletopCraft.World
         public Transform Head, Blocks;
         public WorldModel Model;
         public TabletopRenderer BlockRenderer;
+        public ClipCaps Caps;   // nav's cut sides of the visible window (their water gets inside faces too)
 
         public EyeMedium Medium => _filter.Medium;
 
@@ -23,7 +24,8 @@ namespace TabletopCraft.World
         MeshRenderer _overlay;
         Material _overlayMat;
         static readonly int FogColorId = Shader.PropertyToID("_TabletopFogColor"), FogParamsId = Shader.PropertyToID("_TabletopFogParams"),
-                            FogEyeId = Shader.PropertyToID("_TabletopFogEye"), TintId = Shader.PropertyToID("_Tint");
+                            FogEyeId = Shader.PropertyToID("_TabletopFogEye"), TintId = Shader.PropertyToID("_Tint"),
+                            ClipId = Shader.PropertyToID("_TabletopClip");
 
         void Start()
         {
@@ -45,9 +47,15 @@ namespace TabletopCraft.World
             if (!Head || !Blocks || Model == null) return;
             float mpb = Mathf.Abs(Blocks.lossyScale.x);          // metres per block
             var l = Blocks.InverseTransformPoint(Head.position);  // Unity block space, Z mirrored
-            var look = _filter.Update(Model, new Vector3(l.x, l.y, -l.z), mpb, Time.unscaledDeltaTime);
+            // Blocks outside nav's visible window are clipped away (TabletopClip.cginc; a zero matrix means no clip): an eye
+            // there is in air, whatever the loaded region holds.
+            var c = Shader.GetGlobalMatrix(ClipId).MultiplyPoint3x4(Head.position);
+            bool visible = Mathf.Max(Mathf.Abs(c.x), Mathf.Max(Mathf.Abs(c.y), Mathf.Abs(c.z))) <= 1f;
+            var look = _filter.Update(visible ? Model : null, new Vector3(l.x, l.y, -l.z), mpb, Time.unscaledDeltaTime);
             if (_filter.Changed) Debug.Log($"[Tabletop] EYE {_filter.Medium}");
-            if (BlockRenderer) BlockRenderer.Underwater = _filter.Medium == EyeMedium.Water;
+            bool under = _filter.Medium == EyeMedium.Water;
+            if (BlockRenderer) BlockRenderer.Underwater = under;
+            if (Caps) Caps.Underwater = under;
 
             float start = look.Start * mpb, end = Mathf.Max(look.End * mpb, start + 1e-4f);
             Shader.SetGlobalVector(FogColorId, Render(look.Fog, 1f));
