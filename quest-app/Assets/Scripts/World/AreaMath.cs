@@ -19,6 +19,13 @@ namespace TabletopCraft.World
         public const double SurfacePerColumn = 3.5;
         public const double CavePerBlock = 0.035;
         public const int SurfaceBand = 96;
+        /// <summary>
+        /// Extra quads from per-vertex light (BlockShading): faces with different light/AO don't merge. Measured on real
+        /// terrain (docs/TESTING.md "Lighting and biome colours"): x1.54-1.63 with smooth lighting, x1.21-1.28 flat.
+        /// 1.0 = no light data. Set from welcome.caps (light_v1) by TabletopApp.
+        /// </summary>
+        public static double LightFactor = 1.0;
+        public static double LightFactorFor(bool serverLight, bool smooth) => !serverLight ? 1.0 : smooth ? 1.6 : 1.25;
 
         /// <summary>Default soft cap (ESTIMATE for Quest 3 at 72 Hz with the unlit block shader): 250k quads = 1M vertices, 500k triangles.</summary>
         public const long DefaultQuadBudget = 250_000;
@@ -37,7 +44,7 @@ namespace TabletopCraft.World
         {
             double cols = (double)dx * dz;
             double deep = Math.Max(0, dy - SurfaceBand);
-            return new MeshEstimate { Quads = (long)Math.Ceiling(cols * SurfacePerColumn * Math.Min(dy, SurfaceBand) / SurfaceBand * 1.0 + cols * deep * CavePerBlock) };
+            return new MeshEstimate { Quads = (long)Math.Ceiling((cols * SurfacePerColumn * Math.Min(dy, SurfaceBand) / SurfaceBand * 1.0 + cols * deep * CavePerBlock) * LightFactor) };
         }
 
         /// <summary>True when the estimate exceeds the budget and the user has not chosen to override.</summary>

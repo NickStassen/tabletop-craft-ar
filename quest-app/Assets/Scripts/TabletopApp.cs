@@ -106,6 +106,8 @@ namespace TabletopCraft
                 Token = c.S("token") ?? Token;
                 BlockSizeM = (float)c.D("block_size_m", BlockSizeM);
                 SkinPlayer = c.S("skin_player") ?? SkinPlayer;
+                BlockShading.SmoothLighting = c.B("smooth_lighting", true);       // lighting look (BlockShading.cs)
+                BlockShading.Brightness = (float)c.D("brightness", 0.5);
             }
             catch (Exception e) { Debug.LogWarning("[Tabletop] bad tabletop.json: " + e.Message); }
         }
@@ -145,11 +147,16 @@ namespace TabletopCraft
             }
             if (_status)
                 _status.text = $"LINK {(_link.Connected ? "OK" : _link.Status)}  RTT {(_rttMs < 0 ? "-" : _rttMs + "ms")}\n" +
-                               $"WORLD {(_world.Loaded ? $"{_world.Dims.x}x{_world.Dims.y}x{_world.Dims.z} @ {_world.Origin}" : "-")}  PACK {(_atlas.HasPack ? "yes" : "flat")}\n" +
+                               $"WORLD {(_world.Loaded ? $"{_world.Dims.x}x{_world.Dims.y}x{_world.Dims.z} @ {_world.Origin}" : "-")}  PACK {(_atlas.HasPack ? "yes" : "flat")}  LIGHT {LightStatus()}\n" +
                                $"TABLE {_placement.Status}\nPOSES {(_poses ? _poses.Sent : 0)}  MESH {_renderer.Quads / 1000}k faces" +
                                (_renderer.Pending > 0 ? $" ({_renderer.Pending} sections pending)" : "") + $"  {_lastError}\n" +
                                (_area.Active ? _area.Status : (_area.Status.Length > 0 ? _area.Status : "Y (left) = set up area"));
         }
+
+        /// <summary>Status text: server light (smooth/flat/off), biome count and whether the pack has colour maps.</summary>
+        string LightStatus() =>
+            (_world.Light == null ? "off" : BlockShading.SmoothLighting ? "smooth" : "flat") +
+            (_world.Biomes != null ? $" BIOMES {_world.Biomes.Palette.Length}{(BiomeColors.GrassMap != null ? "" : " (no colormap)")}" : "");
 
         void Handle(Dictionary<string, object> m)
         {
@@ -159,6 +166,8 @@ namespace TabletopCraft
                     Debug.Log($"[Tabletop] welcome from {m.S("server")} {m.S("server_version")} mc {m.S("mc_version")}");
                     _session = m.S("session");
                     _area.State.Limits = RegionLimits.From(m.O("limits"), RegionLimits.Default);
+                    // Light from the server makes faces merge less: scale the area-setup face estimate (soft cap).
+                    AreaMath.LightFactor = AreaMath.LightFactorFor(m.A("caps")?.Contains(Protocol.CapLight) == true, BlockShading.SmoothLighting);
                     _link.Send(Protocol.AvatarConfig(true, BlockSizeM, SkinPlayer, true, "Tabletop Giant"));
                     break;
                 case "region_info":
@@ -175,7 +184,7 @@ namespace TabletopCraft
                         _renderer.Clear();
                         _world.ApplySnapshot(s);
                         RecenterRegion();
-                        Debug.Log($"[Tabletop] snapshot {s.SnapshotId}: {s.Dims} palette {s.Palette.Length}");
+                        Debug.Log($"[Tabletop] snapshot {s.SnapshotId}: {s.Dims} palette {s.Palette.Length} {LightStatus()}");
                     }
                     catch (Exception e)
                     {

@@ -38,6 +38,7 @@ namespace TabletopCraft.World
                 if (!File.Exists(path)) { Status = "no pack at " + path + " (flat colours)"; return false; }
                 _zip = ZipFile.OpenRead(path);
                 Status = "pack loaded: " + Path.GetFileName(path);
+                BiomeColormapLoader.Load(_zip); // grass/foliage/dry_foliage colour maps for biome tints
                 return true;
             }
             catch (Exception e) { Status = "pack error: " + e.Message; _zip = null; return false; }
@@ -143,9 +144,15 @@ namespace TabletopCraft.World
             int layer = Layer(texture);
             Color32 tint = new Color32(255, 255, 255, 255);
             string p = BlockRules.Path(state);
-            if (tinted) tint = p.Contains("leaves") || p.Contains("vine") ? FoliageTint : GrassTint;
-            if (p == "water") tint = WaterTint;
-            return new FaceKey { Layer = layer, Color = layer < 0 ? BlockRules.FlatColor(state) : tint };
+            // Tinted faces (model "tintindex") take a biome colour per block in the mesher (BlockShading); Color stays
+            // the fixed tint used when the server sends no biomes. Which colour map applies is vanilla's BlockColors.
+            var kind = TintKind.None;
+            if (tinted || p == "water" || p == "bubble_column")
+            {
+                kind = BiomeColors.BlockTint(state, out var fixedTint);
+                tint = fixedTint ?? (kind == TintKind.Water ? WaterTint : kind == TintKind.Foliage ? FoliageTint : GrassTint);
+            }
+            return new FaceKey { Layer = layer, Color = layer < 0 ? BlockRules.FlatColor(state) : tint, Tint = layer < 0 ? TintKind.None : kind };
         }
 
         int Layer(string texture)

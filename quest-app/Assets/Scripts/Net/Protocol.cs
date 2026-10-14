@@ -15,8 +15,11 @@ namespace TabletopCraft.Net
         {
             ["type"] = "hello", ["client"] = ClientName, ["client_version"] = ClientVersion,
             ["protocols"] = new List<object> { Version }, ["token"] = token ?? "",
-            ["caps"] = new List<object> { "rle_palette_v1", "avatar" },
+            ["caps"] = new List<object> { "rle_palette_v1", "avatar", CapLight, CapBiomes },
         };
+
+        /// <summary>Optional snapshot extras (PROTOCOL.md 4.4.1): per-block light and 4x4x4 biomes.</summary>
+        public const string CapLight = "light_v1", CapBiomes = "biomes_v1";
 
         public static Dictionary<string, object> Subscribe(string world, Vector3Int origin, Vector3Int dims) => new Dictionary<string, object>
         {
@@ -96,6 +99,8 @@ namespace TabletopCraft.Net
         public Vector3Int Origin, Dims;
         public string[] Palette;
         public ushort[] Grid; // yzx
+        public byte[] Light;  // optional light_v1: sky << 4 | block per cell, yzx (null = not sent)
+        public TabletopCraft.World.BiomeGrid Biomes; // optional biomes_v1 (null = not sent)
 
         public static ChunkSnapshot From(Dictionary<string, object> m)
         {
@@ -109,7 +114,29 @@ namespace TabletopCraft.Net
                 Origin = new Vector3Int(o[0], o[1], o[2]), Dims = new Vector3Int(d[0], d[1], d[2]), Palette = names,
             };
             s.Grid = DecodeRle(m.A("data"), d[0] * d[1] * d[2], names.Length);
+            s.Light = DecodeLight(m.O("light"), s.Grid.Length);
+            s.Biomes = TabletopCraft.World.BiomeGrid.From(m.O("biomes"));
             return s;
+        }
+
+        /// <summary>chunk_snapshot.light (rle_v1 pairs of packed values over the yzx grid); null when absent.</summary>
+        public static byte[] DecodeLight(Dictionary<string, object> o, int volume)
+        {
+            if (o == null) return null;
+            if (o.S("encoding") != "rle_v1") throw new FormatException("unsupported light encoding " + o.S("encoding"));
+            var data = o.A("data");
+            if (data == null || data.Count % 2 != 0) throw new FormatException("bad light data");
+            var b = new byte[volume];
+            int p = 0;
+            for (int k = 0; k < data.Count; k += 2)
+            {
+                int v = (int)(double)data[k], n = (int)(double)data[k + 1];
+                if (n < 1 || p + n > volume || v < 0 || v > 255) throw new FormatException("bad light run at " + k);
+                if (v != 0) for (int j = 0; j < n; j++) b[p + j] = (byte)v;
+                p += n;
+            }
+            if (p != volume) throw new FormatException($"light runs cover {p} of {volume}");
+            return b;
         }
 
         /// <summary>rle_palette_v1: pairs [paletteIndex, runLength]. Throws on a wrong total (caller sends bad_snapshot).</summary>

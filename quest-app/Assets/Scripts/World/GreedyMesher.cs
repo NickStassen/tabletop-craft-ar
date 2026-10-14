@@ -1,6 +1,17 @@
 // Greedy mesher for one 16^3 section (ARCHITECTURE.md section 4). Works in Minecraft region-local block
 // coordinates; TabletopRenderer converts to Unity (z mirrored). Faces merge only with an equal FaceKey
 // (texture layer + tint + colour), and UVs are in block units so a Texture2DArray with Repeat wrap tiles them.
+//
+// VERTEX COLOURS (biome tint x light x AO) come from ONE place, BlockShading (World/BlockShading.cs). Every geometry
+// path must take its colours from it so new geometry gets biome colours and lighting for free:
+//   - full cube faces (Build):          BlockShading.FaceCorners(w, key, x, y, z, dir)   -> Quad4 (smooth light + AO)
+//   - any axis-aligned quad (slabs, model elements, fluid surfaces):
+//                                       BlockShading.Quad(w, key, block, dir, p0, p1, p2, p3) -> Quad4
+//   - quads that aren't axis-aligned (cross plants, rotated elements):
+//                                       BlockShading.Flat(w, key, block)                  -> Color32 (own cell, no AO)
+// then pass the Quad4 to AddQuad / EmitQuad. key.Tint (set by the atlas from the model's tintindex) picks the biome
+// colour (grass/foliage/dry foliage/water); without server light/biome data the colours equal the old fixed look.
+// Greedy merging only joins faces whose 4 corner colours are equal and constant along the merge direction.
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -9,9 +20,10 @@ namespace TabletopCraft.World
     public struct FaceKey
     {
         public int Layer;        // Texture2DArray layer, -1 = flat colour only
-        public Color32 Color;    // tint (biome) or flat colour
+        public Color32 Color;    // fixed tint or flat colour; the fallback when no biome data (Tint != None)
         public bool Transparent;
-        public bool Equals(FaceKey o) => Layer == o.Layer && Color.r == o.Color.r && Color.g == o.Color.g && Color.b == o.Color.b && Color.a == o.Color.a && Transparent == o.Transparent;
+        public TintKind Tint;    // biome tint resolved per block by BlockShading (None = use Color)
+        public bool Equals(FaceKey o) => Layer == o.Layer && Color.r == o.Color.r && Color.g == o.Color.g && Color.b == o.Color.b && Color.a == o.Color.a && Transparent == o.Transparent && Tint == o.Tint;
     }
 
     public interface IFaceSource
@@ -42,6 +54,7 @@ namespace TabletopCraft.World
             Vector3Int size = new Vector3Int(Mathf.Min(S, w.Dims.x - b0.x), Mathf.Min(S, w.Dims.y - b0.y), Mathf.Min(S, w.Dims.z - b0.z));
             var mask = new FaceKey[S * S];
             var has = new bool[S * S];
+            var corners = new Quad4[S * S];  // per-face vertex colours from BlockShading
 
             for (int dir = 0; dir < 6; dir++)
             {
@@ -71,25 +84,29 @@ namespace TabletopCraft.World
                             }
                             mask[k] = faces.Face(st, dir);
                             mask[k].Transparent |= shape != BlockShape.Cube;
+                            corners[k] = BlockShading.FaceCorners(w, mask[k], p.x, p.y, p.z, dir);
                             has[k] = true;
                         }
-                    // Greedy merge.
+                    // Greedy merge: same key and same corner colours; along u only if the colours don't change along u
+                    // (c0 == c1, c3 == c2), along v only if they don't change along v (c0 == c3, c1 == c2).
                     for (int v = 0; v < size[va]; v++)
                         for (int u = 0; u < size[ua];)
                         {
                             int k = u + v * S;
                             if (!has[k]) { u++; continue; }
                             var key = mask[k];
+                            var col = corners[k];
                             int wdt = 1;
-                            while (u + wdt < size[ua] && has[k + wdt] && mask[k + wdt].Equals(key)) wdt++;
+                            if (Eq(col.C0, col.C1) && Eq(col.C3, col.C2))
+                                while (u + wdt < size[ua] && has[k + wdt] && mask[k + wdt].Equals(key) && Same(corners[k + wdt], col)) wdt++;
                             int hgt = 1;
-                            bool ok = true;
+                            bool ok = Eq(col.C0, col.C3) && Eq(col.C1, col.C2);
                             while (v + hgt < size[va] && ok)
                             {
-                                for (int i = 0; i < wdt; i++) { int kk = u + i + (v + hgt) * S; if (!has[kk] || !mask[kk].Equals(key)) { ok = false; break; } }
+                                for (int i = 0; i < wdt; i++) { int kk = u + i + (v + hgt) * S; if (!has[kk] || !mask[kk].Equals(key) || !Same(corners[kk], col)) { ok = false; break; } }
                                 if (ok) hgt++;
                             }
-                            EmitQuad(m, b0, axis, ua, va, dir, d, u, v, wdt, hgt, key);
+                            EmitQuad(m, b0, axis, ua, va, dir, d, u, v, wdt, hgt, key, col);
                             for (int j = 0; j < hgt; j++) for (int i = 0; i < wdt; i++) has[u + i + (v + j) * S] = false;
                             u += wdt;
                         }
@@ -97,7 +114,11 @@ namespace TabletopCraft.World
             }
         }
 
-        static void EmitQuad(MeshData m, Vector3Int b0, int axis, int ua, int va, int dir, int d, int u, int v, int w, int h, FaceKey key)
+        static bool Eq(Color32 a, Color32 b) => a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
+        static bool Same(Quad4 a, Quad4 b) => Eq(a.C0, b.C0) && Eq(a.C1, b.C1) && Eq(a.C2, b.C2) && Eq(a.C3, b.C3);
+        static int Luma(Color32 c) => c.r * 2 + c.g * 5 + c.b;
+
+        static void EmitQuad(MeshData m, Vector3Int b0, int axis, int ua, int va, int dir, int d, int u, int v, int w, int h, FaceKey key, Quad4 col)
         {
             bool positive = (dir & 1) == 1;
             float plane = d + (positive ? 1 : 0);
@@ -106,11 +127,21 @@ namespace TabletopCraft.World
             m.Verts.Add(Corner(u, v)); m.Verts.Add(Corner(u + w, v)); m.Verts.Add(Corner(u + w, v + h)); m.Verts.Add(Corner(u, v + h));
             float layer = key.Layer;
             m.Uvs.Add(new Vector3(0, 0, layer)); m.Uvs.Add(new Vector3(w, 0, layer)); m.Uvs.Add(new Vector3(w, h, layer)); m.Uvs.Add(new Vector3(0, h, layer));
-            for (int i = 0; i < 4; i++) m.Colors.Add(key.Color);
+            m.Colors.Add(col.C0); m.Colors.Add(col.C1); m.Colors.Add(col.C2); m.Colors.Add(col.C3);
             var tris = key.Transparent ? m.Transparent : m.Opaque;
             // Winding for a right-handed frame, CCW seen from outside. The renderer flips it after mirroring Z.
-            if (positive) { tris.Add(start); tris.Add(start + 1); tris.Add(start + 2); tris.Add(start); tris.Add(start + 2); tris.Add(start + 3); }
-            else { tris.Add(start); tris.Add(start + 2); tris.Add(start + 1); tris.Add(start); tris.Add(start + 3); tris.Add(start + 2); }
+            // Split along the brighter diagonal so a dark AO corner stays a corner instead of a streak across the quad.
+            bool flip = Luma(col.C1) + Luma(col.C3) > Luma(col.C0) + Luma(col.C2);
+            if (!flip)
+            {
+                if (positive) { tris.Add(start); tris.Add(start + 1); tris.Add(start + 2); tris.Add(start); tris.Add(start + 2); tris.Add(start + 3); }
+                else { tris.Add(start); tris.Add(start + 2); tris.Add(start + 1); tris.Add(start); tris.Add(start + 3); tris.Add(start + 2); }
+            }
+            else
+            {
+                if (positive) { tris.Add(start); tris.Add(start + 1); tris.Add(start + 3); tris.Add(start + 1); tris.Add(start + 2); tris.Add(start + 3); }
+                else { tris.Add(start); tris.Add(start + 3); tris.Add(start + 1); tris.Add(start + 1); tris.Add(start + 3); tris.Add(start + 2); }
+            }
         }
 
         /// <summary>Simple placeholders for non-cube shapes: crossed quads, half-height slabs.</summary>
@@ -124,36 +155,40 @@ namespace TabletopCraft.World
                     {
                         string st = w.State(w.Get(x, y, z));
                         var shape = BlockRules.Shape(st);
-                        if (shape == BlockShape.Cross) Cross(m, x, y, z, faces.Face(st, 4));
-                        else if (shape == BlockShape.Slab) Box(m, new Vector3(x, y + (st.Contains("type=top") ? 0.5f : 0), z), new Vector3(1, 0.5f, 1), faces, st);
+                        if (shape == BlockShape.Cross) Cross(m, w, x, y, z, faces.Face(st, 4));
+                        else if (shape == BlockShape.Slab) Box(m, w, new Vector3Int(x, y, z), new Vector3(x, y + (st.Contains("type=top") ? 0.5f : 0), z), new Vector3(1, 0.5f, 1), faces, st);
                     }
         }
 
-        static void Cross(MeshData m, int x, int y, int z, FaceKey key)
+        static void Cross(MeshData m, WorldModel w, int x, int y, int z, FaceKey key)
         {
             key.Transparent = true;
-            AddQuad(m, new Vector3(x, y, z), new Vector3(x + 1, y, z + 1), new Vector3(x + 1, y + 1, z + 1), new Vector3(x, y + 1, z), key, true);
-            AddQuad(m, new Vector3(x + 1, y, z), new Vector3(x, y, z + 1), new Vector3(x, y + 1, z + 1), new Vector3(x + 1, y + 1, z), key, true);
+            var c = new Quad4(BlockShading.Flat(w, key, new Vector3Int(x, y, z)));
+            AddQuad(m, new Vector3(x, y, z), new Vector3(x + 1, y, z + 1), new Vector3(x + 1, y + 1, z + 1), new Vector3(x, y + 1, z), key, true, c);
+            AddQuad(m, new Vector3(x + 1, y, z), new Vector3(x, y, z + 1), new Vector3(x, y + 1, z + 1), new Vector3(x + 1, y + 1, z), key, true, c);
         }
 
-        static void Box(MeshData m, Vector3 o, Vector3 s, IFaceSource faces, string st)
+        static void Box(MeshData m, WorldModel w, Vector3Int blk, Vector3 o, Vector3 s, IFaceSource faces, string st)
         {
             Vector3 a = o, b = o + s;
-            AddQuad(m, new Vector3(a.x, b.y, a.z), new Vector3(a.x, b.y, b.z), new Vector3(b.x, b.y, b.z), new Vector3(b.x, b.y, a.z), faces.Face(st, 3), true);
-            AddQuad(m, new Vector3(a.x, a.y, a.z), new Vector3(b.x, a.y, a.z), new Vector3(b.x, a.y, b.z), new Vector3(a.x, a.y, b.z), faces.Face(st, 2), true);
-            AddQuad(m, new Vector3(a.x, a.y, a.z), new Vector3(a.x, b.y, a.z), new Vector3(b.x, b.y, a.z), new Vector3(b.x, a.y, a.z), faces.Face(st, 4), true);
-            AddQuad(m, new Vector3(b.x, a.y, b.z), new Vector3(b.x, b.y, b.z), new Vector3(a.x, b.y, b.z), new Vector3(a.x, a.y, b.z), faces.Face(st, 5), true);
-            AddQuad(m, new Vector3(a.x, a.y, b.z), new Vector3(a.x, b.y, b.z), new Vector3(a.x, b.y, a.z), new Vector3(a.x, a.y, a.z), faces.Face(st, 0), true);
-            AddQuad(m, new Vector3(b.x, a.y, a.z), new Vector3(b.x, b.y, a.z), new Vector3(b.x, b.y, b.z), new Vector3(b.x, a.y, b.z), faces.Face(st, 1), true);
+            BoxFace(m, w, blk, 3, new Vector3(a.x, b.y, a.z), new Vector3(a.x, b.y, b.z), new Vector3(b.x, b.y, b.z), new Vector3(b.x, b.y, a.z), faces.Face(st, 3));
+            BoxFace(m, w, blk, 2, new Vector3(a.x, a.y, a.z), new Vector3(b.x, a.y, a.z), new Vector3(b.x, a.y, b.z), new Vector3(a.x, a.y, b.z), faces.Face(st, 2));
+            BoxFace(m, w, blk, 4, new Vector3(a.x, a.y, a.z), new Vector3(a.x, b.y, a.z), new Vector3(b.x, b.y, a.z), new Vector3(b.x, a.y, a.z), faces.Face(st, 4));
+            BoxFace(m, w, blk, 5, new Vector3(b.x, a.y, b.z), new Vector3(b.x, b.y, b.z), new Vector3(a.x, b.y, b.z), new Vector3(a.x, a.y, b.z), faces.Face(st, 5));
+            BoxFace(m, w, blk, 0, new Vector3(a.x, a.y, b.z), new Vector3(a.x, b.y, b.z), new Vector3(a.x, b.y, a.z), new Vector3(a.x, a.y, a.z), faces.Face(st, 0));
+            BoxFace(m, w, blk, 1, new Vector3(b.x, a.y, a.z), new Vector3(b.x, b.y, a.z), new Vector3(b.x, b.y, b.z), new Vector3(b.x, a.y, b.z), faces.Face(st, 1));
         }
 
-        static void AddQuad(MeshData m, Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, FaceKey key, bool doubleSided)
+        static void BoxFace(MeshData m, WorldModel w, Vector3Int blk, int dir, Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, FaceKey key) =>
+            AddQuad(m, p0, p1, p2, p3, key, true, BlockShading.Quad(w, key, blk, dir, p0, p1, p2, p3));
+
+        static void AddQuad(MeshData m, Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, FaceKey key, bool doubleSided, Quad4 col)
         {
             int s = m.Verts.Count;
             m.Verts.Add(p0); m.Verts.Add(p1); m.Verts.Add(p2); m.Verts.Add(p3);
             float l = key.Layer;
             m.Uvs.Add(new Vector3(0, 0, l)); m.Uvs.Add(new Vector3(1, 0, l)); m.Uvs.Add(new Vector3(1, 1, l)); m.Uvs.Add(new Vector3(0, 1, l));
-            for (int i = 0; i < 4; i++) m.Colors.Add(key.Color);
+            m.Colors.Add(col.C0); m.Colors.Add(col.C1); m.Colors.Add(col.C2); m.Colors.Add(col.C3);
             var t = key.Transparent ? m.Transparent : m.Opaque;
             t.Add(s); t.Add(s + 1); t.Add(s + 2); t.Add(s); t.Add(s + 2); t.Add(s + 3);
             if (doubleSided) { t.Add(s); t.Add(s + 2); t.Add(s + 1); t.Add(s); t.Add(s + 3); t.Add(s + 2); }
