@@ -149,6 +149,7 @@ static class Program
         if (entSceneIdx >= 0 && JarPath(args) != null && EntityModels.Loaded) EntityScene.Run(JarPath(args), args[entSceneIdx + 1]);
         else if (entSceneIdx >= 0) Console.WriteLine("SKIP --entity-scene: needs --jar and --entity-models");
         EditTests.Run(Check, Fixture);  // block editing: DDA targeting, Z mirror, optimistic edits (EditTests.cs)
+        MenuTests.Run(Check, Fixture, JarPath(args), args);   // [menu] block registry, menu model, hotbar, HUD toasts, icons (MenuTests.cs)
         EyeTests.Run(Check);            // eye in water/lava/powder snow/blocks, water inside faces (EyeTests.cs)
 
         // Block models from a real client jar / resource pack (never committed; MC_CLIENT_JAR or --jar PATH).

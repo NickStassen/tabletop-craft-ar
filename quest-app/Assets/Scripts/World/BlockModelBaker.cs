@@ -236,6 +236,20 @@ namespace TabletopCraft.World
             return Finish(quads);
         }
 
+        /// <summary>[menu] Bakes one model by id with no blockstate rotation, e.g. an item's inventory model
+        /// ("minecraft:block/oak_fence_inventory") for the block menu's icons. The state picks tints and block colours as
+        /// in Bake. Null when the model is missing or has no elements (builtin/entity items).</summary>
+        public BakedModel BakeModel(string model, string state)
+        {
+            var r = Resolve(model);
+            if (r?.Elements == null || r.Elements.Count == 0) return null;
+            _hasBlockColor = BlockColor(BlockRules.Path(state), Props(state), out _blockColor);
+            _tintKind = BiomeColors.BlockTint(state, out _);
+            var quads = new List<BakedQuad>();
+            foreach (var el in r.Elements) if (el is Dictionary<string, object> e) BakeElement(e, r, M3.Identity, false, state, quads);
+            return Finish(quads);
+        }
+
         static Dictionary<string, object> First(object v)
         {
             if (v is List<object> l) v = l.Count > 0 ? l[0] : null;   // weighted random list: vanilla picks per position; we take the first
