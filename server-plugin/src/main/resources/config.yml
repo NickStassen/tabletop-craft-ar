@@ -6,6 +6,15 @@ bind:
 auth:
   # Shared secret the headset sends in hello. Empty = auth disabled (LAN dev only).
   token: ""
+# LAN discovery (PROTOCOL.md 7): the headset's "Find servers" (block menu > Info > Server) broadcasts a small UDP probe
+# and this server answers with its name, the WebSocket port and path above, and whether a token is needed. Only
+# private, link-local and loopback addresses get an answer. Open UDP 8765 in the PC's firewall too (QUEST_SETUP Part A);
+# without it the headset falls back to scanning the LAN for TCP port 8765.
+discovery:
+  enabled: true
+  port: 8765
+  # Name shown on the headset's button. Empty = the server's MOTD (server.properties motd).
+  name: ""
 region:
   # Default region sent after welcome. Origin is the min (north-west, bottom) corner.
   world: world
@@ -16,7 +25,8 @@ stream:
   safety-diff-ticks: 20
   # player_positions every N ticks (2 = 10 Hz).
   players-every-ticks: 2
-  # Players within region XZ bounds + this margin are sent.
+  # Players within the region box + this margin (x, z and y) are sent; spectators, invisible players and players
+  # hidden by a vanish plugin (or from any other player) never are.
   players-margin: 16
   # Send chunk_snapshot as 16^3 sections (split into messages, deltas when the region moves by whole sections) to
   # clients that advertise "sections_v1" (PROTOCOL.md 4.18). false = always one rle_palette_v1 message.

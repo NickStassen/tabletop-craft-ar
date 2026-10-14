@@ -156,6 +156,7 @@ static class Program
         EditTests.Run(Check, Fixture);  // block editing: DDA targeting, Z mirror, optimistic edits (EditTests.cs)
         MenuTests.Run(Check, Fixture, JarPath(args), args);   // [menu] block registry, menu model, hotbar, HUD toasts, icons (MenuTests.cs)
         EyeTests.Run(Check);            // eye in water/lava/powder snow/blocks, water inside faces (EyeTests.cs)
+        ComfortTests.Run(Check, Fixture, args);   // [comfort] keyboard, Info tab, prefs.json, discovery, link health (ComfortTests.cs)
 
         // Block models from a real client jar / resource pack (never committed; MC_CLIENT_JAR or --jar PATH).
         string jar = JarPath(args);
@@ -580,6 +581,7 @@ static class Program
         Check(registry != null && registry.Count > 500 && registryBeforeSnapshot && registry.IsPlaceable("minecraft:diamond_block") && !registry.IsPlaceable("minecraft:fire"),
               $"live: block_registry before the first snapshot ({registry?.Count} blocks, {registry?.Variants.Count} variants, " +
               $"{string.Join(" ", registry?.CategoryIds.Select((c, i) => c + "=" + registry.ByCategory[i].Count) ?? new string[0])})");
+        if (rtt < 0) rtt = link.RttMs;   // [comfort] LinkClient pings by itself and keeps pongs out of Inbound
         Check(rtt >= 0, $"live: ping/pong rtt {rtt} ms");
         Check(avatarNote != null, $"live: avatar_state {avatarNote}");
         Console.WriteLine($"live: poses sent {posesSent}, player msgs {playerMsgs}, block updates {updates}");

@@ -57,7 +57,7 @@ Phases 0-3 were built and checked on Paper 1.21.11 / Java 21. The server pin has
 Ordered by how much each adds to the feeling of a living world on the table that you can act on.
 
 **1. World manipulation.**
-- (Done) Two-hand grab: pull the hands apart to zoom around their midpoint, twist to rotate, grab the terrain to drag it.
+- (Partly done) Two-hand grab: holding both grips drags the table and turns it with the right hand. Pulling the hands apart to zoom around their midpoint and grabbing the terrain itself aren't built yet (zoom is the right stick).
 - Follow a player: the area tracks them.
 
 **2. A living world.**
@@ -70,7 +70,7 @@ Ordered by how much each adds to the feeling of a living world on the table that
 - Hand tracking: pinch to break or place, fist to grab.
 - Depth-API occlusion, so real hands hide the terrain.
 - Working MRUK table detection; the log shows OpenXR binding warnings.
-- A persistent spatial anchor.
+- A persistent spatial anchor. (0.3.1 remembers the placement relative to the MRUK table in `prefs.json`; without a table it still starts in front of you.)
 - A diorama plinth and a soft shadow on the real table.
 - (Done, not yet tried on the headset) Status text off the view: the full status is the block menu's Info tab, events are short toasts, area setup has a small panel on the left hand, and a small HUD is optional (`show_hud`).
 

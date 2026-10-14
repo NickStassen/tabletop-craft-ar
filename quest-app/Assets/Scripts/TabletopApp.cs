@@ -3,9 +3,13 @@
 //                                                                               > Players
 //                                                                               > Entities ([entities])
 // Config file (optional): <persistentDataPath>/tabletop.json, e.g.
-//   {"server":"ws://192.168.1.50:8765/tabletop","token":"","block_size_m":0.01,"skin_player":""}
+//   {"server":"ws://192.168.1.50:8765/tabletop","token":"","skin_player":""}
 // [area] optional: "area_width": 192 (start at that width preset, block size fitted to the table),
 //   "batch_columns": 4 (sections per mesh batch side, TabletopRenderer)
+// [comfort] prefs.json next to it (World/AppPrefs.cs) remembers block size, table placement, hotbar, selected block,
+//   menu tab and Show HUD; without a saved or configured block size the area is fitted to the table. The link stops
+//   while the headset is off (giant despawned, bye) and restarts when it's back on. A setup card, an offline badge
+//   and the Info tab's Server field (keyboard, LAN discovery) cover first runs and dead links (docs/QUEST_SETUP.md).
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -48,11 +52,27 @@ namespace TabletopCraft
         BlockRegistry _registry;
         Hud _hud;
         bool _showHud;
-        readonly LinkWatch _linkWatch = new LinkWatch();
+        LinkWatch _linkWatch = new LinkWatch();
         string _lastAreaStatus = "", _lastEditResult = "";
         string _session;
-        float _nextPing; int _pingId; long _rttMs = -1;
         float _avatarConfigAt = -1;   // send avatar_config once scaling settles, not every frame
+        // [comfort] session and comfort state (World/AppPrefs.cs, World/SessionState.cs)
+        Dictionary<string, object> _config;              // tabletop.json as read
+        AppPrefs _prefs = new AppPrefs();
+        readonly PrefsSaver _saver = new PrefsSaver();
+        float _prefsAt;
+        bool _blockSizeKnown;                             // from prefs.json or tabletop.json; else fitted at the first snapshot
+        readonly LinkHealth _health = new LinkHealth();
+        readonly LoadProgress _loading = new LoadProgress();
+        float _loadingAt;
+        bool _paused, _unmounted, _assetsChecked, _announce;
+        int _discoveryPort = ServerAddress.DefaultPort;
+        System.Threading.Tasks.Task<List<FoundServer>> _finding;
+        readonly Dictionary<string, FoundServer> _found = new Dictionary<string, FoundServer>();
+        Transform _playersRoot, _entitiesRoot;
+        bool Away => _paused || _unmounted;
+        static string ConfigPath => Path.Combine(Application.persistentDataPath, ConfigFile.FileName);
+        static string PrefsPath => Path.Combine(Application.persistentDataPath, AppPrefs.FileName);
         string _lastError = "";
         AndroidJavaObject _wifiLock;
         // [nav] moving around, streaming, clip caps
@@ -73,6 +93,7 @@ namespace TabletopCraft
         void Start()
         {
             LoadConfig();
+            LoadPrefs();   // [comfort] prefs.json, and which of tabletop.json's shared keys win
             var rig = FindFirstObjectByType<OVRCameraRig>();
             if (rig != null)
             {
@@ -97,6 +118,7 @@ namespace TabletopCraft
             _renderer.Model = _world; _renderer.Atlas = _atlas; _renderer.OpaqueMaterial = OpaqueMaterial; _renderer.TransparentMaterial = TransparentMaterial;
             _players = playersT.gameObject.AddComponent<PlayerMarkers>();
             _players.Model = _world; _players.MarkerMaterial = MarkerMaterial; _players.Atlas = _atlas;
+            _playersRoot = playersT;
             // [entities] non-player entities next to the players, block actions in block space
             _entityTex = new EntityTextures { Atlas = _atlas };
             // Entity models: the user's entity_models.json next to pack.zip (generated from their own client jar). Parsed
@@ -106,6 +128,7 @@ namespace TabletopCraft
             var entitiesT = new GameObject("Entities").transform; entitiesT.SetParent(_regionRoot, false);
             _entities = entitiesT.gameObject.AddComponent<EntityRenderer>();
             _entities.Model = _world; _entities.Textures = _entityTex;
+            _entitiesRoot = entitiesT;
             _players.Textures = _entityTex; _players.Entities = _entities;
             _effects = new GameObject("Effects").AddComponent<ActionEffects>();
             _effects.transform.SetParent(_blocks, false);
@@ -118,6 +141,7 @@ namespace TabletopCraft
             _placement = gameObject.AddComponent<TablePlacement>();
             _placement.Anchor = _anchor; _placement.Head = Head; _placement.RightHand = RightHand;
             _placement.OnScaleChanged = k => SetBlockSize(Mathf.Clamp(BlockSizeM * k, 0.002f, 0.1f), false);
+            _placement.SavedTableId = _prefs.TableAnchor; _placement.SavedPose = _prefs.Table;   // [comfort] where it was last time
 
             _area = gameObject.AddComponent<AreaSetupMode>();
             _area.RegionRoot = _regionRoot; _area.RightHand = RightHand; _area.Placement = _placement; _area.MarkerMaterial = MarkerMaterial;
@@ -139,6 +163,10 @@ namespace TabletopCraft
             AreaSize.Nav = _nav.State; AreaSize.Renderer = _renderer; AreaSize.Blocked = () => _area.Active; AreaSize.Send = b => _link.Send(b);
             AreaSize.BlockSize = () => BlockSizeM; AreaSize.SetBlockSize = bs => SetBlockSize(bs, false);
             AreaSize.TableSize = () => _placement.TableSize; AreaSize.StartWidth = _areaWidth;
+            // [comfort] first run: fit the area to the table; later runs: the saved block size, kept to its footprint
+            AreaSize.TableReady = () => _placement.Settled;
+            AreaSize.StartFit = !_blockSizeKnown;
+            AreaSize.StartBlockWidth = _blockSizeKnown && _prefs.BlockSizeM.HasValue && Mathf.Approximately(_prefs.BlockSizeM.Value, BlockSizeM) ? _prefs.AreaWidth : 0;
 
             // Block editing: right trigger break, left trigger place, B pick (XR/BlockEditMode.cs, PROTOCOL.md 4.20).
             _edit = gameObject.AddComponent<BlockEditMode>();
@@ -157,8 +185,18 @@ namespace TabletopCraft
             _menu.Blocked = () => _area.Active; _menu.CanEdit = () => _edit.Editor.ServerAllows; _menu.InfoText = StatusText;
             _menu.SelectedChanged = s => _edit.Editor.Selected = s;
             _menu.Model.ShowHud = _showHud;
-            _menu.HudChanged = on => _hud.ShowHud = on;
+            _menu.HudChanged = on => { _hud.ShowHud = on; _showHud = on; };
             _edit.Picked = s => _menu.OnPicked(s);
+            // [comfort] hotbar, selection and tab from prefs.json; Reset view and the Server field (Info tab); readout
+            _menu.Model.Restore(_prefs.Hotbar, _prefs.HotbarSelected, _prefs.Selected);
+            _edit.Editor.Selected = _menu.Model.Selected;
+            _menu.Model.RestoreTab(_prefs.MenuTab);
+            _menu.ResetView = ResetView;
+            _menu.ServerFind = FindServers;
+            _menu.ServerConnect = ConnectTo;
+            _menu.Readout = Readout;
+            _placement.ABlocked = () => _menu.CapturesRight;
+            _players.InWindow = p => _nav.State.InWindow(p);
             // [menu+area] the menu's area-size row drives AreaSizeControl; the left-stick size click is off while the menu is open
             _menu.AreaPresets = AreaSize.Presets; _menu.AreaCurrent = AreaSize.Current; _menu.AreaRequest = AreaSize.Request;
             AreaSize.Blocked = () => _area.Active || _menu.Open;
@@ -167,9 +205,20 @@ namespace TabletopCraft
             _hud = gameObject.AddComponent<Hud>();
             _hud.Head = Head; _hud.LeftHand = LeftHand; _hud.StatusText = StatusText; _hud.ShowHud = _showHud;
             _hud.AreaActive = () => _area.Active; _hud.AreaText = () => _area.Status;
+            // [comfort] setup card (no link yet / refused), north marker and offline badge on the table
+            var card = gameObject.AddComponent<SetupCardView>();
+            card.Head = Head;
+            card.Visible = () => !Away && !_menu.Open && _health.ShowCard(_link.FatalCode != 0, Time.unscaledTime);
+            card.Text = () => SetupCard.Text(_link.Url, _link.Status, _link.FatalCode, _link.FatalReason, ConfigPath);
+            var markers = gameObject.AddComponent<TableMarkers>();
+            markers.Anchor = _anchor; markers.Head = Head;
+            markers.HalfSize = () => _nav.State.Loaded ? new Vector2(_nav.State.Window.x, _nav.State.Window.z) * (BlockSizeM / 2f) : Vector2.zero;
+            markers.Badge = () => !_health.Offline || Away ? null : _link.FatalCode != 0 ? "Offline: " + _link.FatalReason : "Offline: reconnecting...";
+            OVRManager.HMDUnmounted += OnUnmounted;
+            OVRManager.HMDMounted += OnMounted;
 
-            _link = new LinkClient(ServerUrl, Token);
-            _link.Start();
+            StartLink();
+            _health.NewServer(Time.unscaledTime);
             if (SendPoses)
             {
                 _poses = gameObject.AddComponent<PoseSender>();
@@ -188,18 +237,181 @@ namespace TabletopCraft
             {
                 if (!File.Exists(p)) { Debug.Log("[Tabletop] no " + p + ", using inspector defaults"); return; }
                 var c = Json.Parse(File.ReadAllText(p)) as Dictionary<string, object>;
+                _config = c;
                 ServerUrl = c.S("server") ?? ServerUrl;
                 Token = c.S("token") ?? Token;
-                BlockSizeM = (float)c.D("block_size_m", BlockSizeM);
                 SkinPlayer = c.S("skin_player") ?? SkinPlayer;
+                _discoveryPort = c.I("discovery_port", _discoveryPort);   // [comfort] the plugin's discovery.port
                 BlockShading.SmoothLighting = c.B("smooth_lighting", true);       // lighting look (BlockShading.cs)
                 BlockShading.Brightness = (float)c.D("brightness", BlockShading.Brightness);   // vanilla slider, default 1 = Bright
                 BlockShading.MinLight = (float)c.D("min_light", BlockShading.MinLight);         // brightness of light level 0
-                _showHud = c.B("show_hud", false);   // [menu] small head-locked status (also "Show HUD" in the menu's Info tab)
-                _areaWidth = c.I("area_width", 0);                                              // [area] starting width preset
+                // [menu] show_hud, [area] area_width and block_size_m are shared with prefs.json: see LoadPrefs
                 BatchRules.Columns = Math.Max(1, c.I("batch_columns", BatchRules.Columns));     // [area] sections per batch side
             }
             catch (Exception e) { Debug.LogWarning("[Tabletop] bad tabletop.json: " + e.Message); }
+        }
+
+        /// <summary>
+        /// [comfort] prefs.json (World/AppPrefs.cs). block_size_m, show_hud and area_width can be in both files: a
+        /// tabletop.json value wins when it's new or was edited since the last start; otherwise the headset's choice.
+        /// </summary>
+        void LoadPrefs()
+        {
+            try { if (File.Exists(PrefsPath)) _prefs = AppPrefs.Parse(File.ReadAllText(PrefsPath)); }
+            catch (Exception e) { Debug.LogWarning("[Tabletop] bad prefs.json, starting fresh: " + e.Message); _prefs = new AppPrefs(); }
+            object Cfg(string k) => _config != null && _config.TryGetValue(k, out var v) && (v is double || v is bool) ? v : null;
+            object Seen(string k) => _prefs.Seen.TryGetValue(k, out var v) ? v : null;
+            var bs = AppPrefs.Pick(Cfg("block_size_m"), _prefs.BlockSizeM.HasValue ? (object)(double)_prefs.BlockSizeM.Value : null, Seen("block_size_m"));
+            if (bs is double b && b > 0) { BlockSizeM = Mathf.Clamp((float)b, 0.002f, 0.1f); _blockSizeKnown = true; }
+            _showHud = AppPrefs.Pick(Cfg("show_hud"), _prefs.ShowHud, Seen("show_hud")) is bool h && h;
+            // area_width is a request ("start at this preset"): only when tabletop.json's value is new or edited.
+            var aw = Cfg("area_width");
+            _areaWidth = aw is double w && !Equals(aw, Seen("area_width")) ? (int)w : 0;
+            _prefs.SeeConfig(_config);
+            Debug.Log($"[Tabletop] prefs: block {(_blockSizeKnown ? $"{BlockSizeM * 1000:F2} mm" : "fit to the table")}, width {_prefs.AreaWidth}, " +
+                      $"table {(_prefs.Table.HasValue ? "saved" : "-")}, hotbar {(_prefs.Hotbar != null ? "saved" : "-")}, start width {_areaWidth}");
+        }
+
+        /// <summary>[comfort] What prefs.json should hold now, or null before the first area has settled.</summary>
+        string CapturePrefs()
+        {
+            if (!AreaSize.Started) return null;
+            var m = _menu.Model;
+            var p = new AppPrefs
+            {
+                BlockSizeM = BlockSizeM, AreaWidth = AreaSizing.Current(_nav.State), ShowHud = _showHud, MenuTab = m.TabId(m.Tab),
+                Hotbar = m.Hotbar.Slots(), HotbarSelected = m.Hotbar.Selected, Selected = m.Selected,
+            };
+            if (_placement.TryRelative(out var id, out var rel)) { p.TableAnchor = id; p.Table = rel; }
+            else { p.TableAnchor = _prefs.TableAnchor; p.Table = _prefs.Table; }   // no table this session: keep the old one
+            foreach (var kv in _prefs.Seen) p.Seen[kv.Key] = kv.Value;
+            return p.ToJson();
+        }
+
+        void SavePrefs(string json)
+        {
+            if (json == null) return;
+            try
+            {
+                string tmp = PrefsPath + ".tmp";
+                File.WriteAllText(tmp, json);
+                if (File.Exists(PrefsPath)) File.Delete(PrefsPath);
+                File.Move(tmp, PrefsPath);
+                _saver.Saved(json);
+            }
+            catch (Exception e) { Debug.LogWarning("[Tabletop] can't write prefs.json: " + e.Message); _saver.Saved(json); }
+        }
+
+        void FlushPrefs() => SavePrefs(_saver.Flush(CapturePrefs()));
+
+        // ---------- [comfort] the link's life: headset off/on, server changes ----------
+
+        void StartLink()
+        {
+            _link = new LinkClient(ServerUrl, Token);
+            _link.Start();
+            if (_poses) _poses.Link = _link;
+            _menu.Model.ServerUrl = ServerUrl;
+            Debug.Log($"[Tabletop] link to {ServerUrl}");
+        }
+
+        /// <summary>Despawns the giant (avatar_config enabled:false), says bye and stops; the table stays as it is.</summary>
+        void StopLink(string reason)
+        {
+            if (_link == null) return;
+            var farewell = _link.Connected ? Protocol.AvatarConfig(false, BlockSizeM, SkinPlayer, true, "Tabletop Giant") : null;
+            _link.Shutdown(reason, 400, farewell);
+        }
+
+        void OnApplicationPause(bool paused) { _paused = paused; AwayChanged(paused ? "app paused" : "app resumed"); }
+        void OnUnmounted() { _unmounted = true; AwayChanged("headset off"); }
+        void OnMounted() { _unmounted = false; AwayChanged("headset on"); }
+
+        bool _wasAway;
+        void AwayChanged(string why)
+        {
+            if (_link == null || Away == _wasAway) return;
+            _wasAway = Away;
+            Debug.Log($"[Tabletop] {why}: link {(Away ? "stopped" : "restarting")}");
+            if (Away) { FlushPrefs(); StopLink(why); }
+            else { _linkWatch = new LinkWatch(); StartLink(); }   // the badge covers the reconnect; no lost/restored toasts
+        }
+
+        /// <summary>The Info tab's Server field (or a found server): save it in tabletop.json and connect there.</summary>
+        void ConnectTo(string url)
+        {
+            if (string.IsNullOrEmpty(url)) return;
+            try
+            {
+                string old = File.Exists(ConfigPath) ? File.ReadAllText(ConfigPath) : null, text;
+                try { text = ConfigFile.WithServer(old, url); }
+                catch (FormatException)
+                {
+                    File.WriteAllText(ConfigPath + ".bak", old);
+                    text = ConfigFile.WithServer(null, url);
+                    _hud.Toast("tabletop.json was broken: the old one is tabletop.json.bak", ToastKind.Warn, 6);
+                }
+                File.WriteAllText(ConfigPath, text);
+                _config = Json.Parse(text) as Dictionary<string, object>;
+                Token = _config?.S("token") ?? Token;   // a token fixed in the file since the start counts too
+            }
+            catch (Exception e) { _hud.Toast("Can't write tabletop.json: " + e.Message, ToastKind.Error); }
+            StopLink("server changed");
+            ServerUrl = url;
+            _health.NewServer(Time.unscaledTime);
+            _linkWatch = new LinkWatch();
+            _announce = true;
+            if (!Away) StartLink();
+            string host = ServerAddress.HostOf(url);
+            _hud.Toast("Connecting to " + host + "...", ToastKind.Info);
+            if (_found.TryGetValue(url, out var f) && f.TokenNeeded && string.IsNullOrEmpty(Token))
+                _hud.Toast("This server needs a token: add \"token\" to tabletop.json", ToastKind.Warn, 6);
+        }
+
+        /// <summary>"Find servers": the LAN probe (and the /24 TCP fallback) on a worker; Update shows the result.</summary>
+        void FindServers()
+        {
+            if (_finding != null) return;
+            _menu.Model.SetFound(null, "Searching the network...");
+            int port = _discoveryPort;
+            _finding = System.Threading.Tasks.Task.Run(() => LanDiscovery.Find(port));
+        }
+
+        void FinishFinding()
+        {
+            if (_finding == null || !_finding.IsCompleted) return;
+            List<FoundServer> list = null;
+            string note;
+            if (_finding.IsFaulted) note = "Search failed: " + _finding.Exception?.GetBaseException().Message;
+            else
+            {
+                list = _finding.Result;
+                note = list.Count == 0 ? $"No server answered on port {_discoveryPort}: type the PC's address" : "";
+            }
+            _finding = null;
+            _found.Clear();
+            var buttons = new List<(string, string)>();
+            if (list != null) foreach (var f in list) { _found[f.Url] = f; buttons.Add((f.Label, f.Url)); }
+            _menu.Model.SetFound(buttons, note);
+            Debug.Log($"[Tabletop] discovery: {list?.Count ?? 0} found {note}");
+        }
+
+        /// <summary>Reset view (Info tab): north away from you, the area fitted to the table, the view in its middle.</summary>
+        void ResetView()
+        {
+            _placement.NorthUp();
+            _nav.State.Recenter();
+            _nav.Place();
+            if (_nav.State.Loaded) AreaSize.FitToTable(AreaSizing.Current(_nav.State));
+            _hud.Toast("View reset: north is the far side", ToastKind.Info);
+        }
+
+        /// <summary>The line under the small hotbar: the block under the view centre and the direction you look.</summary>
+        string Readout()
+        {
+            if (!_nav.State.Loaded || !Head) return "";
+            Vector3 f = _anchor.InverseTransformDirection(Head.forward);   // anchor-local Unity; world Z is mirrored
+            return _nav.State.Readout(f.x, -f.z);
         }
 
         static Material MakeMat(bool transparent)
@@ -241,18 +453,40 @@ namespace TabletopCraft
                 if (!fromHeld && (_snaps.Busy || _held.Count > 0) && (type == "block_update" || type == "chunk_snapshot")) { _held.Enqueue(m); continue; }
                 Handle(m);
             }
-            if (_link.Connected && Time.unscaledTime > _nextPing) { _nextPing = Time.unscaledTime + 2f; _link.Send(Protocol.Ping(_pingId++)); }
+            // (pings, the round trip and dead-link detection live in LinkClient)
             if (_avatarConfigAt >= 0 && Time.unscaledTime >= _avatarConfigAt)
             {
                 _avatarConfigAt = -1;   // while disconnected, welcome sends the current block size anyway
                 if (_link.Connected) _link.Send(Protocol.AvatarConfig(true, BlockSizeM, SkinPlayer, true, "Tabletop Giant"));
             }
             Notify();   // [menu] toasts instead of the head-locked status text
+            Comfort(Time.unscaledTime);
+        }
+
+        /// <summary>[comfort] Link health (stale figures hidden), the loading toast, the LAN search, debounced prefs.json.</summary>
+        void Comfort(float now)
+        {
+            _health.Update(_link.Connected, now);
+            bool hide = _health.HideFigures(now);
+            if (_playersRoot.gameObject.activeSelf == hide) _playersRoot.gameObject.SetActive(!hide);
+            if (_entitiesRoot.gameObject.activeSelf == hide) _entitiesRoot.gameObject.SetActive(!hide);
+            if (_loading.Active && now >= _loadingAt)
+            {
+                _loadingAt = now + 0.25f;
+                string t = _loading.Text(_renderer.Pending);
+                if (t != null) _hud.Toast(t, ToastKind.Info, t == "Area loaded" ? 1.5 : 3, "loading");
+            }
+            FinishFinding();
+            if (now >= _prefsAt)
+            {
+                _prefsAt = now + 1f;
+                SavePrefs(_saver.Offer(CapturePrefs(), now));
+            }
         }
 
         /// <summary>[menu] The full status (the block menu's Info tab, and the small HUD when "Show HUD" is on).</summary>
         string StatusText() =>
-            $"LINK {(_link.Connected ? "OK" : _link.Status)}  RTT {(_rttMs < 0 ? "-" : _rttMs + "ms")}\n" +
+            $"LINK {(_link.Connected ? "OK" : Away ? "paused (headset off)" : _link.Status)}  RTT {(_link.RttMs < 0 ? "-" : _link.RttMs + "ms")}\n" +
             $"WORLD {(_world.Loaded ? $"{_world.Dims.x}x{_world.Dims.y}x{_world.Dims.z} @ {_world.Origin}" : "-")}  PACK {(_atlas.HasPack ? "yes" : "flat")}  LIGHT {LightStatus()}\n" +
             $"TABLE {_placement.Status}\nPOSES {(_poses ? _poses.Sent : 0)}  MESH {_renderer.Quads / 1000}k faces  ENTITIES {_entities.Count}{(EntityModels.Loaded ? "" : " (boxes)")}" +
             (_renderer.Pending > 0 ? $" ({_renderer.Pending} sections pending)" : "") + $"  {_lastError}\n" +
@@ -264,7 +498,7 @@ namespace TabletopCraft
         /// <summary>[menu] Events that used to be read off the status text: link lost/restored, area results, local edit refusals.</summary>
         void Notify()
         {
-            string link = _linkWatch.Update(_link.Connected);
+            string link = _linkWatch.Update(_link.Connected || Away);   // [comfort] no "link lost" for a link we stopped ourselves
             if (link != null) _hud.Toast(link, link.StartsWith("Link lost") ? ToastKind.Warn : ToastKind.Info);
             if (!_area.Active && _area.Status != _lastAreaStatus)
             {
@@ -301,6 +535,10 @@ namespace TabletopCraft
                     // Light from the server makes faces merge less: scale the area-setup face estimate (soft cap).
                     AreaMath.LightFactor = AreaMath.LightFactorFor(m.A("caps")?.Contains(Protocol.CapLight) == true, BlockShading.SmoothLighting);
                     _link.Send(Protocol.AvatarConfig(true, BlockSizeM, SkinPlayer, true, "Tabletop Giant"));
+                    // [comfort] a new session lists its players and entities afresh (stale ones were hidden while offline)
+                    _players.Apply(new List<PlayerInfo>());
+                    _entities.Clear();
+                    if (_announce) { _announce = false; _hud.Toast("Connected to " + ServerAddress.HostOf(_link.Url), ToastKind.Info); }
                     break;
                 case "region_info":
                     _area.OnRegionInfo(RegionInfo.From(m));
@@ -310,6 +548,10 @@ namespace TabletopCraft
                 case "region_changed":
                     // A snapshot of the new region follows; just note who changed it (shared region, last writer wins).
                     _area.OnRegionChanged(m, m.S("by_session") == _session);
+                    // [comfort] the new region's limits: another world's build height before the snapshot lands (PROTOCOL.md 4.13)
+                    _nav.OnLimits(m.O("limits"));
+                    AreaSize.OnLimits(m.O("limits"));
+                    if (m.O("limits") != null) _area.State.Limits = RegionLimits.From(m.O("limits"), _area.State.Limits);
                     break;
                 case "chunk_snapshot":
                     // [nav] decoded (and compared with the current region) on a worker; ApplySnapshot runs when it's done.
@@ -334,13 +576,6 @@ namespace TabletopCraft
                         if (a.Kind == ActionKind.Swing || a.Kind == ActionKind.Hurt) { if (!_entities.Act(a)) _players.Act(a); }
                         else _effects.Apply(a);
                     }
-                    break;
-                case "pong":
-                    _rttMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - (long)m.D("echo_t");
-                    if (_pingId % 5 == 0) Debug.Log($"[Tabletop] rtt {_rttMs} ms");
-                    break;
-                case "ping":
-                    _link.Send(new Dictionary<string, object> { ["type"] = "pong", ["id"] = m.I("id"), ["echo_t"] = (long)m.D("t") });
                     break;
                 case "avatar_state":
                     Debug.Log($"[Tabletop] avatar enabled={m.B("enabled")} scale={m.D("scale")} note={m.S("note")}");
@@ -383,12 +618,25 @@ namespace TabletopCraft
             if (oldOrigin != s.Origin) _effects.OnRegionChanged();   // [entities] cracks sit at region-local positions
             _caps.ModelVersion = ++_modelVersion;
             int oldWidth = AreaSizing.Current(_nav.State);   // [area]
+            string oldWorld = _nav.State.World;
             _nav.OnSnapshot(s.World, s.Origin, s.Dims, r.ViewMargin);
             AreaSize.OnRegionApplied(oldWidth);   // [area] a new width: scale the block size to keep the footprint
+            // [comfort] "Loading area N %" for big changes (first load, a resize, a jump or another world); not for glides
+            bool big = !had || r.Plan == null || !r.Plan.Rekey || oldWidth != AreaSizing.Current(_nav.State) || oldWorld != s.World;
+            if (big) { _loading.Begin(_renderer.Pending); _loadingAt = 0; }
+            if (!_assetsChecked) { _assetsChecked = true; AssetToasts(); }
             Debug.Log($"[Tabletop] snapshot {s.SnapshotId}: {s.Dims} palette {s.Palette.Length} parts {r.Parts}" +
                       (r.Delta ? $" delta ({r.Listed} sections sent)" : "") +
                       (r.Plan.Rekey ? $" re-keyed by {r.Plan.ShiftBlocks}: {r.Plan.Mesh.Count} to mesh, {r.Plan.Kept} kept" : " full re-mesh") +
                       $" decode+plan {r.Ms:F0} ms");
+        }
+
+        /// <summary>[comfort] Once, when the first area shows: say which of the user's data files are missing.</summary>
+        void AssetToasts()
+        {
+            if (!_atlas.HasPack) _hud.Toast("No pack.zip: plain colours (QUEST_SETUP Part E)", ToastKind.Warn, 8);
+            if (!File.Exists(Path.Combine(Application.persistentDataPath, EntityModels.FileName)))
+                _hud.Toast("No entity_models.json: mobs are boxes (Part E)", ToastKind.Warn, 8);
         }
 
         void BadSnapshot(int snapshotId, string why)
@@ -422,8 +670,13 @@ namespace TabletopCraft
 #endif
         }
 
+        void OnApplicationQuit() => FlushPrefs();
+
         void OnDestroy()
         {
+            OVRManager.HMDUnmounted -= OnUnmounted;
+            OVRManager.HMDMounted -= OnMounted;
+            if (_link != null && !Away) StopLink("app closed");   // [comfort] despawn the giant now, not 10 s later
             _link?.Dispose();
             _atlas?.Dispose();
             _entityTex?.Dispose();   // [entities]
