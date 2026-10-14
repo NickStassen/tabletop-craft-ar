@@ -73,7 +73,8 @@ static class NavTests
         // An old region without a margin: the first push pads it (same window), and with tight caps it steps instead.
         var old = new NavState();
         old.OnRegion("world", new Vector3Int(0, 60, 0), new Vector3Int(32, 64, 32), new Vector3Int(0, 0, 0), 0);
-        var oldStep = old.Move(new Vector3(0.5f, 0, 0), 0.05f, 1f);
+        Check(old.Move(new Vector3(0.5f, 0, 0), 0.05f, 1f) == null, "nav: stepped mode ignores a small push (jitter)");
+        var oldStep = old.Move(new Vector3(2f, 0, 0), 0.05f, 1.3f);
         Check(oldStep.HasValue && oldStep.Value.Kind == "shift", "nav: a server without view_margin only gets section steps");
         var p = new NavState { CanPad = true };
         p.OnRegion("world", new Vector3Int(0, 60, 0), new Vector3Int(32, 64, 32), new Vector3Int(0, 0, 0), 0);
@@ -84,8 +85,45 @@ static class NavTests
         Check(p.Window == new Vector3Int(32, 64, 32) && Near(p.View.x, 16), "nav: after padding the window is unchanged");
         var tight = new NavState { CanPad = true, Caps = new RegionLimits { MaxX = 32, MaxY = 64, MaxZ = 32, MaxBlocks = 1 << 20 } };
         tight.OnRegion("world", new Vector3Int(0, 60, 0), new Vector3Int(32, 64, 32), default, 0);
-        var step = tight.Move(new Vector3(0.5f, 0, 0), 0.05f, 1f);
+        var step = tight.Move(new Vector3(2.5f, 0, 0), 0.05f, 1f);
         Check(step.HasValue && step.Value.Kind == "shift" && step.Value.Origin == new Vector3Int(16, 60, 0), "nav: no room to pad -> 16-block steps");
+
+        // Hysteresis (headset log: z shifts -48 -> -32 -> -48 every 0.3 s while gliding). After a shift the view sits
+        // 12 blocks behind the new centre; a little reverse motion must not ask for the old region back.
+        var h = new NavState();
+        h.OnRegion("world", new Vector3Int(0, 0, -64), new Vector3Int(96, 64, 96), new Vector3Int(16, 16, 16), 0);   // centre z -16
+        var go = h.Move(new Vector3(0, 0, -4.5f), 0.1f, 1f);
+        Check(go.HasValue && go.Value.Origin.z == -80, "nav: gliding -z past the trigger shifts -16");
+        h.OnRegion("world", go.Value.Origin, h.Dims, h.Margin, 1.3f);   // centre z -32, view z -20.5 -> 11.5 behind
+        int zBack = 0; float t = 1.4f;
+        for (int i = 0; i < 40; i++, t += 0.05f)   // glide along +x with z jitter of +-0.3 blocks per frame
+        {
+            var mv = h.Move(new Vector3(0.6f, 0, (i & 1) == 0 ? 0.3f : -0.25f), 0.05f, t);
+            if (mv.HasValue && mv.Value.Origin.z != h.Origin.z) zBack++;
+            if (mv.HasValue) h.OnRegion("world", mv.Value.Origin, h.Dims, h.Margin, t + 0.01f);   // x shifts arrive at once
+        }
+        Check(zBack == 0, $"nav: z jitter while gliding along x asks for no z shift ({zBack})");
+        var zOnly = new NavState();
+        zOnly.OnRegion("world", new Vector3Int(0, 0, -64), new Vector3Int(96, 64, 96), new Vector3Int(16, 16, 16), 0);
+        var first = zOnly.Move(new Vector3(0, 0, -4.5f), 0.1f, 1f);
+        zOnly.OnRegion("world", first.Value.Origin, zOnly.Dims, zOnly.Margin, 1.3f);
+        bool pingPong = false; t = 1.4f;
+        for (int i = 0; i < 60; i++, t += 0.05f)
+        {
+            var mv = zOnly.Move(new Vector3(0, 0, (i & 1) == 0 ? 0.3f : -0.3f), 0.05f, t);   // hovering, z jitter only
+            if (mv.HasValue) { pingPong = true; break; }
+        }
+        Check(!pingPong && Math.Abs(zOnly.TriggerFor(2, +1, 16) - 15f) < 1e-4f, "nav: hovering after a shift never asks for the old region back");
+        var goBack = zOnly.Move(new Vector3(0, 0, 4f), 0.1f, 5f);   // a real move back, 4 blocks: 11.5 + 4 = 15.5 > 15
+        Check(goBack.HasValue && goBack.Value.Origin.z == -64, $"nav: a real move back still shifts back ({goBack?.Origin})");
+        var fwd = new NavState();
+        fwd.OnRegion("world", new Vector3Int(0, 0, -64), new Vector3Int(96, 64, 96), new Vector3Int(16, 16, 16), 0);
+        var f1 = fwd.Move(new Vector3(0, 0, -4.5f), 0.1f, 1f);
+        fwd.OnRegion("world", f1.Value.Origin, fwd.Dims, fwd.Margin, 1.3f);
+        Check(fwd.Move(new Vector3(0, 0, -12f), 0.1f, 1.5f) == null, "nav: crossing the new centre needs no request yet");
+        var f2 = fwd.Move(new Vector3(0, 0, -4.1f), 0.1f, 1.7f);   // view now 4.6 past the centre: next section
+        Check(f2.HasValue && f2.Value.Origin.z == -96 && Math.Abs(fwd.TriggerFor(2, +1, 16) - 4f) < 1e-4f,
+              "nav: gliding on keeps the normal trigger, and after crossing the centre reversing is normal again");
 
         // Speed: table metres per second, quadratic curve, ramp, and the streaming cap.
         var s = new NavState();

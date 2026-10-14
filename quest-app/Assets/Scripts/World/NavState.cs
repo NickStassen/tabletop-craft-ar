@@ -23,6 +23,15 @@ namespace TabletopCraft.World
         // Tuning (see docs/QUEST_SETUP.md).
         public Vector3Int MarginPref = new Vector3Int(16, 16, 16);   // margin per side requested when padding
         public float Trigger = 4f;                  // blocks past the region centre (in the direction of motion) before a shift request
+        /// <summary>
+        /// Extra blocks a shift back the other way needs. A shift leaves the view Step - Trigger blocks behind the new
+        /// centre, so without this a little reverse motion (stick or head-yaw jitter) would ask for the old region again
+        /// at once and the region would ping-pong. Until the view has come back across the new centre, a reverse
+        /// shift on that axis needs Step - Trigger + Hysteresis blocks (capped at the margin edge).
+        /// </summary>
+        public float Hysteresis = 3f;
+        /// <summary>Without a margin (stepped mode) a push has to add up to this many blocks before it asks for a step.</summary>
+        public float StepPush = 2f;
         public float BaseSpeedM = 0.12f;            // table metres per second at full stick deflection
         public float RampSeconds = 2f;              // holding the stick ramps the speed up to x(1 + RampGain)
         public float RampGain = 2f;
@@ -66,20 +75,32 @@ namespace TabletopCraft.World
         public string LastNote = "";
         float _pendingSince = -1, _lastRequestAt = -100;
         bool _padRefused;
+        readonly int[] _lastDir = new int[3];       // direction the region last moved per axis, while the view is still behind its centre
+        readonly float[] _over = new float[3];      // push beyond the margin edge (clamped away), per axis
 
         /// <summary>A new snapshot (or region_changed) defines the region. Keeps the view where it is in the world when it can.</summary>
         public void OnRegion(string world, Vector3Int origin, Vector3Int dims, Vector3Int margin, float now)
         {
             bool reset = !Loaded || world != World || dims != Dims || ClampMargin(margin, dims) != Margin;
+            var moved = new Vector3Int(origin.x - Origin.x, origin.y - Origin.y, origin.z - Origin.z);
             Loaded = true; World = world ?? World; Origin = origin; Dims = dims; Margin = ClampMargin(margin, dims);
+            for (int a = 0; a < 3; a++) if (moved[a] != 0) _lastDir[a] = Math.Sign(moved[a]);
             // The latency that matters ends when the new terrain is meshed (OnSettled), not when the snapshot lands.
             if (Pending) { _settleFrom = _pendingSince; Pending = false; }
             var c = RegionCentre;
-            if (reset) { View = c; _padRefused = false; return; }
+            for (int a = 0; a < 3; a++) _over[a] = 0;
+            if (reset) { View = c; _padRefused = false; for (int a = 0; a < 3; a++) _lastDir[a] = 0; return; }
             // Same size: a shift (ours or another headset's). Keep the world position; re-centre if it's far away.
             var off = View - c;
             if (Math.Abs(off.x) > Margin.x + Step || Math.Abs(off.y) > Margin.y + Step || Math.Abs(off.z) > Margin.z + Step) View = c;
             else View = c + Clamp(off, Margin);
+            ClearPassedDirections(View - c);
+        }
+
+        /// <summary>A view at or past the centre in the direction of the last shift has moved on: reverse shifts are normal again.</summary>
+        void ClearPassedDirections(Vector3 offset)
+        {
+            for (int a = 0; a < 3; a++) if (_lastDir[a] != 0 && offset[a] * _lastDir[a] >= 0) _lastDir[a] = 0;
         }
 
         /// <summary>The server refused a request (region_too_large etc.): stop asking for a while.</summary>
@@ -121,7 +142,17 @@ namespace TabletopCraft.World
             if (!Loaded) return null;
             var c = RegionCentre;
             var raw = View + delta - c;
-            View = c + Clamp(raw, Margin);
+            var clamped = Clamp(raw, Margin);
+            View = c + clamped;
+            ClearPassedDirections(clamped);
+            // Where the view would be without the clamp: the offset plus any push piled up against the margin edge.
+            var off = new Vector3();
+            for (int a = 0; a < 3; a++)
+            {
+                float spill = raw[a] - clamped[a];
+                _over[a] = spill != 0 && Math.Sign(spill) == Math.Sign(_over[a]) ? _over[a] + spill : spill;
+                off[a] = clamped[a] + _over[a];
+            }
             if (Pending && now - _pendingSince > RequestTimeout) { Pending = false; LastNote = "nav: request timed out"; }
             if (Pending || now - _lastRequestAt < MinRequestInterval) return null;
             if (delta.x == 0 && delta.y == 0 && delta.z == 0) return null;
@@ -133,7 +164,7 @@ namespace TabletopCraft.World
                 var pad = Pad();
                 if (pad.HasValue) return Issue(pad.Value, now);
             }
-            var shift = new Vector3Int(AxisShift(raw.x, delta.x, Margin.x), AxisShift(raw.y, delta.y, Margin.y), AxisShift(raw.z, delta.z, Margin.z));
+            var shift = new Vector3Int(AxisShift(0, off.x, delta.x, Margin.x), AxisShift(1, off.y, delta.y, Margin.y), AxisShift(2, off.z, delta.z, Margin.z));
             if (shift.y != 0)
             {
                 // Never ask for a region below or above the build height (the server would clamp dims and the view would jump).
@@ -141,17 +172,28 @@ namespace TabletopCraft.World
                 if (oy < MinY || (MaxY != int.MaxValue && oy + Dims.y > MaxY)) shift.y = 0;
             }
             if (shift.x == 0 && shift.y == 0 && shift.z == 0) return null;
+            for (int a = 0; a < 3; a++) if (shift[a] != 0) _over[a] = 0;
             return Issue(new RegionMove { Origin = new Vector3Int(Origin.x + shift.x, Origin.y + shift.y, Origin.z + shift.z), Dims = Dims, Margin = Margin, Kind = "shift" }, now);
         }
 
-        int AxisShift(float raw, float d, int margin)
+        /// <summary>Trigger for a shift on one axis in direction dir (+1/-1), given the last shift on that axis.</summary>
+        public float TriggerFor(int axis, int dir, int margin)
+        {
+            if (margin <= 0) return StepPush;
+            float trig = Math.Min(Trigger, margin / 2f);
+            if (_lastDir[axis] != 0 && dir != _lastDir[axis]) trig = Math.Min(Step - trig + Hysteresis, margin - 0.5f);
+            return trig;
+        }
+
+        int AxisShift(int axis, float off, float d, int margin)
         {
             if (d == 0) return 0;
-            float ahead = raw * Math.Sign(d);   // how far the view is past the centre in the direction of motion
-            float trig = Math.Min(Trigger, margin / 2f);
+            int dir = Math.Sign(d);
+            float ahead = off * dir;   // how far the view is past the centre in the direction of motion
+            float trig = TriggerFor(axis, dir, margin);
             if (ahead <= trig) return 0;
-            int n = Math.Max(1, (int)Math.Ceiling((ahead - trig) / Step));
-            return Math.Sign(d) * n * Step;
+            int n = margin <= 0 ? 1 : Math.Max(1, (int)Math.Ceiling((ahead - Math.Min(Trigger, margin / 2f)) / Step));
+            return dir * n * Step;
         }
 
         /// <summary>Region grown by MarginPref on each side (where caps and the build height allow), same window.</summary>
