@@ -184,6 +184,30 @@ Paper 26.3 build 181 test server (offline mode, seed 12345, region 64x96x64 from
 
 Still needs the headset and a Java client: the figures' look on the table (size at 1 cm/block, shading, label), skin downloads on the Quest (https from the headset), the giant's movement as seen by Java players (Mannequin interpolation plus server smoothing), and `skin_model`/`skin` from an online-mode server.
 
+### 7.1 Floating head and hands (the new default, 2026-10-13)
+
+Same test server, merged with master (water, block models, light). This replaces ground placement as the default, after the headset session's feedback (ARCHITECTURE 3.5).
+
+- **Unit tests**: plugin 45 JUnit tests, 0 failures. New:
+  - `GiantPlacementTest` +5: floating maps head and hands exactly; sizes and the cap; head face direction equals `Pose.forward()` for a yawed, pitched and rolled pose (identity faces north, a 90° yaw faces west); hand box axes; quaternion rotate against `Pose.forward()`.
+  - `HandColourTest` 3.
+
+  pytest 30 passed, ruff clean. `Tests~` 146/146 PASS (Quest code unchanged by this step).
+- **Live, scripted poses** (`giant_float.py`, not committed: holds each pose 4 s, then compares the debug `avatar_state` with `origin + p / block_size_m` and the sent quaternion). The head is yawed 30°, pitched −20° and rolled 10°; the hands are rotated differently:
+  ```
+  A: bs 0.01   head [32, 92, 32] (want [32, 92, 32])  left [12, 67, 22]  right [52, 62, 20]  pos_err 0.0000  head_q = pose q (err 0.0005, 3-decimal rounding)
+               head 25 blocks, hands 10, hand_block cherry_planks (from the skin), scale 50
+  B: bs 0.01   user 1 m back from the table, 1.6 m up: head [-100, 192, 32] exact; its chunk was loaded async and ticketed
+  C: bs 0.002  head [50, 282, 50] exact; head capped at 64 blocks (from 125), hands 25.6, note "head size capped from 125.0 to 64.0 blocks"
+  ALL OK
+  ```
+  `tools/fake_quest.py --avatar` (head circling 0.45 m above the table): head y 77 = 32 + 0.45 / 0.01, `head_q` = the scripted yaw quaternions, hands ±5 blocks.
+- **Second player**: the mineflayer bot (joining as 26.1 through ViaBackwards 5.12.0) receives the three `item_display` entities at spawn, then at the exact phase-C positions `(50, 282, 50)`, `(0, 182, 0)`, `(100, 182, 0)`. While the head was at x −100 in phase B, 188 blocks from the bot, the server stopped sending the entities (display tracking range 128) and sent them again in phase C.
+- **Skin**: `skin_player` resolved on the offline-mode server, the head switched to the signed profile and the hand block changed from the default skin's (`raw_copper_block`) to the closest match for the skin's hands (`cherry_planks`).
+- **Orientation conventions** come from the 26.3 client classes, read without a game client: `DisplayRenderer$ItemDisplayRenderer` rotates 180° about Y, `player_head.json` has a special-model transform of x 180° plus (0.5, 0, 0.5), `template_skull`'s `fixed` transform has y 180° plus 4/16 up, `ItemTransform.apply` then subtracts 0.5, and the head cube is (−4, −8, −4, 8, 8, 8). Together these put the FIXED head centred and facing +Z, which the unit test above builds on.
+
+Still needs a Java client by eye: that the head's face points where the headset looks (the convention above), the hand boxes' look, interpolation smoothness, and the view from far away.
+
 ## Not verified (and why)
 
 - **On the Quest** (see "First headset session"): MRUK table detection, area setup and live block edits haven't been checked yet.

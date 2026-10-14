@@ -248,7 +248,11 @@ Sent after each `avatar_config`, and when the server changes something by itself
 ```
 
 - `skin_resolved`: the server holds signed textures for `skin_player` (it also sends a fresh `avatar_state` when a lookup finishes). `false` doesn't always mean Java players see the default skin: their clients may still resolve the name.
-- Where the giant stands is server policy (ARCHITECTURE.md §3.5, `config.yml` `avatar.placement`): by default on the terrain under the headset's X/Z, clamped into the region, with hand offsets scaled to its size; `exact` maps the head and hands as in §4.7. With `debug.avatar-state` on, the `debug` object also reports `placement`, `ground_y`, `body_yaw` and `skin_player`.
+- What the giant looks like and where it is are server policy (ARCHITECTURE.md §3.5, `config.yml` `avatar.placement`):
+  - `floating` (default): a player head and two hands, no body, at exactly the mapped head and hand poses of §4.7 (position and full orientation), sized like a real head and hands at `block_size_m`. Here `scale` is the head's scale relative to a player's 0.5-block head, `world_height_blocks` is the head's size in blocks, `entity_uuid` is the head display, and `note` reports a capped head size.
+  - `ground`: a Mannequin standing on the terrain under the headset's X/Z, clamped into the region, with hand offsets scaled to its size.
+  - `exact`: a Mannequin whose head and hands are at the mapped poses.
+- With `debug.avatar-state` on, the `debug` object also reports `placement` and `skin_player`. Floating adds `head`, `head_q`, `head_size_blocks`, `hand_size_blocks` and `hand_block`. Ground and exact add `feet`, `ground_y` and `body_yaw`.
 
 ### 4.10 `ping` / `pong` (both directions)
 
@@ -326,3 +330,4 @@ Then it closes with code 1000. When the Quest client disconnects (with or withou
 - Fixtures: `tools/fixtures/region_request.json`, `region_query.json`, `region_changed.json`, `region_info.json`, `error_region_too_large.json` (also parsed by the C# tests).
 - Changelog: v1.1 adds the messages above. v1 clients are unaffected.
 - Changelog (additive, no version bump): adds `player_positions[].skin_model` (§4.6) and documents the giant's placement and skin lookup (§4.8, §4.9). Fixture: `tools/fixtures/player_positions.json`.
+- Changelog (no field changes): the default giant is now `floating` (a head and two hands at the exact poses); `avatar_state.scale` and `world_height_blocks` describe the head in that mode (§4.9).

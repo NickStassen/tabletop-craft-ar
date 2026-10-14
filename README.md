@@ -16,7 +16,7 @@ Related: the idea write-up [VR-7 in NickStassen/ideas](https://github.com/NickSt
 Java players (LAN) ──game protocol──▶ Paper 26.3 + tabletop plugin ◀──JSON over WebSocket (ws://host:8765/tabletop)─────▶ Quest 3 app
                                         │ chunk_snapshot / block_update / player_positions ──────────────────────▶ │ greedy-meshed miniature on the table
                                         │ ◀────────────────────────────────────────── pose (head + hands, 30 Hz)    │
-                                        └ giant avatar: Mannequin (SCALE attribute) + 2 ItemDisplay hands
+                                        └ giant avatar: floating player-head + 2 hand ItemDisplays (or a Mannequin)
 ```
 
 - **server-plugin/**: Paper plugin (Java 25, Gradle Kotlin DSL, Java-WebSocket 1.6.0 shaded). Streams a configurable box (default 32x64x32) and drives the giant.
@@ -29,7 +29,7 @@ Java players (LAN) ──game protocol──▶ Paper 26.3 + tabletop plugin ◀
 | Part | State |
 |---|---|
 | Plugin: snapshot, block updates, players, subscribe, errors, timeouts | Tested end to end on a headless Paper 26.3 server (and earlier on 1.21.11); see [TESTING](docs/TESTING.md) |
-| Giant avatar (Mannequin scale 16 + hands) following fake poses | Tested on 26.3: a mineflayer player (joining as 26.1 through ViaBackwards) receives the entity spawns and movement. On the first headset session a Java client on an online-mode server saw the giant follow the headset wearing the user's skin (exact placement). Ground placement and the server-side skin lookup were checked with entity positions and logs (TESTING section 7), not yet by eye |
+| Giant avatar following poses | Floating head + hands (default): positions and head rotation match the poses exactly on a 26.3 test server, and a mineflayer player receives the three displays (TESTING section 7); not yet seen by eye. Mannequin modes: on the first headset session a Java client on an online-mode server saw the giant follow the headset wearing the user's skin (exact placement); ground placement was tried and replaced as the default |
 | Java players on the table (skinned, animated figures) | Geometry, UVs, animation and skin rules unit-tested; skin download checked in the Unity Editor; not yet seen on a headset |
 | Quest C# protocol/mesher code | Compiled and unit-tested with .NET 8 outside Unity, plus a live session against the plugin |
 | Quest app in Unity | Compiles and builds an APK on Linux, headless (Unity 6000.0.84f1, Meta XR 85.0.0); see [TESTING](docs/TESTING.md) section 5 |
@@ -60,7 +60,7 @@ Copy the jar into a Paper **26.3** server's `plugins/`, start the server once, t
 /tabletop setorigin [x y z]        # region min corner (your position if omitted)
 /tabletop setsize <dx> <dy> <dz>   # max 64 x 384 x 64
 /tabletop avatar status|spawn|remove|blocksize <m>
-/tabletop avatar placement ground|exact   # giant on the terrain (default) or at the exact mapped head position
+/tabletop avatar placement floating|ground|exact   # head + hands at the headset/controllers (default), or a Mannequin
 /tabletop avatar skin <java name>         # giant's skin (also tabletop.json skin_player / config avatar.skin-player)
 /tabletop reload
 ```
