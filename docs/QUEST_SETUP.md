@@ -91,7 +91,7 @@ Don't commit or redistribute the jar or pack.
 2. Walk around inside the region: a small Minecraft figure with your skin and name walks on the table. Its legs and arms swing with your speed, its head turns and tilts with your view, the body follows like in the game, and it crouches when you sneak. The skin appears once it has downloaded (a second or so). Until then the figure shows the default skin. Break and place blocks: the miniature updates within a second (events are applied next tick, a full diff runs every second).
 3. Look for the giant (up to 28.8 blocks tall, scale 16, wearing the `skin_player` skin). With the default `avatar.placement: ground`, it stands on the terrain inside the region, below where the headset is. When you stand back from the table it waits at the region's edge, facing where you look. Its head turns with yours, and the two white blocks move like your controllers or hands relative to your head, scaled up to its size. For the old behaviour, where the head is exactly where the headset is above the table, run `/tabletop avatar placement exact`. At 1 cm/block that puts it far off and high up.
 
-Headset controls: **A** (right) = re-place the world at the right controller; hold **both grips** and move the right hand = drag/rotate; **right thumbstick up/down** = scale the miniature (also changes the giant's mapping).
+Headset controls: **A** (right) = re-place the world at the right controller; hold **both grips** and move the right hand = drag/rotate; **right thumbstick up/down** = scale the miniature (also changes the giant's mapping). Editing blocks (Part H): **right trigger** = break, **left trigger** = place, **B** = pick block.
 
 ## Part G: setting up a play area in the headset
 
@@ -117,13 +117,27 @@ Recommended sizes (estimates; see TESTING.md "Real terrain"):
 - 128×96×128 is the recommended maximum for normal terrain.
 - Taller areas work, but snapshots and load times grow.
 
+## Part H: editing blocks in the headset
+
+Break and place blocks in the miniature like a creative-mode player. The plugin allows it by default (config.yml `edit.enabled: true`); everyone else on the server sees the changes as normal block changes, and every headset gets them through the usual updates.
+
+1. Point the **right controller** at the terrain. A thin dark outline marks the block you're aiming at (like the game's selection box), and a faint laser runs from the controller to it. The ray goes through air and water, so you can aim at the sea floor. Plants, slabs, torches and other non-full blocks are targeted by their whole cell.
+2. **Right trigger**: break the outlined block. Hold it to keep breaking every quarter second while you sweep.
+3. **Left trigger**: place the selected block against the outlined face (on top when you aim at a top face, beside it for a side face). Hold to keep placing. Placing into water works and waterlogs slabs, stairs and the like. You can't place outside the area or into an occupied cell.
+4. **B** (right): pick the outlined block as the selected block, like middle-click. The selection starts as stone. It floats above the right controller as a small textured cube with its name, and the status text shows it too (`EDIT stone  R-trig break  L-trig place  B pick`).
+5. Orientation: logs and other pillars line up with the face you click, and blocks that have a horizontal facing turn toward you (stairs, doors, fence gates and beds face the way you look, as in the game). Everything else keeps the picked block's state exactly.
+
+Each edit gives a short buzz. Breaking and placing blocks that already appear in the area shows up at once; a block that's new to the area appears when the server confirms it (about 0.2 s). If the server refuses an edit, the block snaps back and the status text says why (for example `edit_denied: cell is occupied by ...`). Editing is paused while area setup (Y) is open, because setup uses the right trigger and B.
+
+Server options (config.yml `edit`): `enabled`, `require-token` (only allow edits when `auth.token` is set), `max-per-second` (20), `physics` (sand falls, water flows) and `deny` (blocks that can't be placed: command blocks, structure blocks, jigsaws). Each edit is logged as `EDIT session=... break|place world x,y,z ... old -> new`. Edits don't go through protection plugins.
+
 ## Logs
 
 ```
 adb logcat -s Unity | findstr Tabletop
 ```
 
-The floating status text shows `LINK`, `RTT`, `WORLD`, `PACK`, `LIGHT` (`smooth`/`flat`, or `off` when the server sends no light; then `BIOMES n`, with `(no colormap)` if the pack lacks `colormap/grass.png`), `TABLE`, `POSES` and the last server error. Biome colours (grass, leaves, water per biome) need both biomes from the server and a pack with the colour maps; without them the old fixed tints are used.
+The floating status text shows `LINK`, `RTT`, `WORLD`, `PACK`, `EDIT` (the selected block, or `off` when the server doesn't allow editing), `LIGHT` (`smooth`/`flat`, or `off` when the server sends no light; then `BIOMES n`, with `(no colormap)` if the pack lacks `colormap/grass.png`), `TABLE`, `POSES` and the last server error. Biome colours (grass, leaves, water per biome) need both biomes from the server and a pack with the colour maps; without them the old fixed tints are used.
 
 ## Troubleshooting
 
@@ -137,4 +151,6 @@ The floating status text shows `LINK`, `RTT`, `WORLD`, `PACK`, `LIGHT` (`smooth`
 | No table found | Redo Space Setup and mark the table; or press A to place it manually. |
 | Giant floats high or is far away | `avatar.placement` is `exact` (see ARCHITECTURE 3.5): positions are mapped exactly and the body is clamped to scale 16. Use `/tabletop avatar placement ground`. |
 | Giant has the default skin | No `skin_player` in tabletop.json and no `avatar.skin-player`, a misspelt name (`skin_failed` in the status text), or no internet on the server PC. Check `/tabletop avatar status` (`skin_resolved`). |
+| `EDIT off (server)` | The plugin is older than the headset app, `edit.enabled: false`, or `edit.require-token: true` without an `auth.token`. Update the plugin or change config.yml `edit`, then `/tabletop reload` and reconnect. |
+| Blocks I break come back after a moment | The server refused the edit (the status text shows the error) or never got it (link down: edits aren't queued). |
 | Players are plain-coloured figures | They have no skin URL (offline-mode server) and there's no `pack.zip` to take the default skins from (Part E). |

@@ -53,6 +53,7 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 | `pong` | both | reply to ping |
 | `error` | both | problem report |
 | `bye` | both | graceful close |
+| `block_edit` | C→S | break or place one block from the headset (§4.17, needs `edit_v1`) |
 
 ### 4.1 `hello` (C→S)
 
@@ -67,7 +68,7 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 - `client`: free string, e.g. `quest-app` or `fake-quest`.
 - `protocols`: protocol versions the client speaks. The server picks the highest one it also supports.
 - `token`: shared secret from the plugin `config.yml` (`auth.token`). If it's empty in config, auth is disabled (LAN dev only). A wrong token gets `error` `auth_failed` and then close code 4003.
-- `caps`: capability strings. v1 defines `rle_palette_v1` (required) and `avatar` (client will send poses). Optional extras: `light_v1` and `biomes_v1` (§4.5.1); unknown caps are ignored.
+- `caps`: capability strings. v1 defines `rle_palette_v1` (required) and `avatar` (client will send poses). Optional extras: `light_v1` and `biomes_v1` (§4.5.1), `edit_v1` (§4.17); unknown caps are ignored.
 - The client MUST NOT send anything else before it gets `welcome`. The server closes with 4002 if `hello` doesn't arrive within 5 s.
 
 ### 4.2 `welcome` (S→C)
@@ -282,6 +283,9 @@ Codes (strings, closed set in v1):
 | `rate_limited` | no | too many messages (e.g. poses > `pose_hz_max`) |
 | `skin_failed` | no | the skin lookup failed; the default skin is in use |
 | `internal` | no | server-side exception |
+| `edit_denied` | no | a `block_edit` was refused: no `edit_v1`, occupied cell, denied state (§4.17) |
+| `out_of_region` | no | a `block_edit` outside the session's region (§4.17) |
+| `bad_state` | no | a `block_edit` state that isn't a placeable block state (§4.17) |
 
 `ref_seq` is the `seq` of the offending message, if any. When `fatal` is true, the sender closes the socket right after.
 
@@ -315,6 +319,7 @@ Then it closes with code 1000. When the Quest client disconnects (with or withou
 
 - **v1 (2026-10-13):** initial.
 - **v1, light and biomes (2026-10-13, additive):** optional per-block light and 4x4x4 biomes in `chunk_snapshot`, light changes in `block_update`, opted into with the `light_v1` / `biomes_v1` caps and echoed in `welcome.caps` (§4.5.1). Peers without the caps are unaffected.
+- **v1, block editing (2026-10-13, additive):** `block_edit` (C→S) breaks or places one block inside the region, opted into with the `edit_v1` cap; error codes `edit_denied`, `out_of_region`, `bad_state`; an error about an edit carries its `op` and `pos` (§4.17). Peers without the cap are unaffected.
 
 ## 4.13–4.16 Runtime region control (v1, additive)
 
@@ -326,3 +331,44 @@ Then it closes with code 1000. When the Quest client disconnects (with or withou
 - Fixtures: `tools/fixtures/region_request.json`, `region_query.json`, `region_changed.json`, `region_info.json`, `error_region_too_large.json` (also parsed by the C# tests).
 - Changelog: v1.1 adds the messages above. v1 clients are unaffected.
 - Changelog (additive, no version bump): adds `player_positions[].skin_model` (§4.6) and documents the giant's placement and skin lookup (§4.8, §4.9). Fixture: `tools/fixtures/player_positions.json`.
+
+## 4.17 Block editing from the headset (`block_edit`, `edit_v1`; additive)
+
+The headset breaks and places blocks in the region, like a creative-mode player. It's opt-in per session: the client lists `edit_v1` in `hello.caps`, and the server grants it when its config allows editing (`edit.enabled`, default true; with `edit.require-token: true` only when `auth.token` is set, so every connected headset presented the token) and echoes it in `welcome.caps`. Without the grant every `block_edit` gets `error edit_denied`.
+
+```json
+{"v":1,"type":"block_edit","seq":42,"t":1760370004000,
+ "op":"place","pos":[105,64,-35],"state":"minecraft:oak_log[axis=x]","face":"east"}
+{"v":1,"type":"block_edit","seq":43,"t":1760370004100,"op":"break","pos":[104,63,-35],"face":"up"}
+```
+
+| field | type | req | meaning |
+|---|---|---|---|
+| `op` | string | yes | `break`: the block at `pos` is removed. `place`: `state` goes into `pos`. |
+| `pos` | int[3] | yes | World block coordinates of the cell that changes. For `place` that is the cell in front of the clicked face (clicked block + face normal), not the clicked block. Must be inside the session's current region. |
+| `state` | string | for `place` | Full block-state string as in the palette (`BlockData#getAsString`). Applied as given: the client picks the orientation (`axis`, `facing`). |
+| `face` | string | no | The clicked face of the targeted block: `west`, `east`, `down`, `up`, `north`, `south` (normals −X, +X, −Y, +Y, −Z, +Z). Informational (logged). |
+
+Server behaviour:
+- Edits are applied on the main thread in arrival order. Each session may make `edit.max-per-second` edits (default 20): a token bucket holding one second's worth, so a burst of 20 passes and the rest get `rate_limited`.
+- `break` of air does nothing. Breaking a block that holds water (waterlogged, kelp, seagrass) leaves a water source, and placing a waterloggable state into a water source sets `waterlogged=true`, as in vanilla. Block physics run after the edit (`edit.physics`), so sand falls and water flows into a gap.
+- `place` needs a replaceable cell (air, fluids, short grass and the like: `Block#isReplaceable`) and a state that isn't air or listed in `edit.deny` (by default the operator blocks: command blocks, structure blocks, jigsaws, test blocks). Two-block structures (doors, beds, tall plants) are placed as the one state given.
+- There is no acknowledgement. The change reaches every session through the normal `block_update` diff (the edit marks the region dirty), typically 100–200 ms after the edit arrives. Protection plugins are not consulted (no `BlockPlaceEvent`/`BlockBreakEvent`), so only the region bounds, the rate limit and the deny list restrict edits.
+- A refused edit gets an `error` with `ref_seq` and, additively, the edit's `op` and `pos`:
+
+| code | when |
+|---|---|
+| `edit_denied` | no `edit_v1` grant, occupied cell, a state from `edit.deny`, chunk not loaded |
+| `out_of_region` | `pos` is outside the session's region |
+| `bad_state` | `state` isn't a block state, or is air (use `break`) |
+| `rate_limited` | over `edit.max-per-second` |
+| `bad_message` | malformed: no `op`/`pos`, non-integer `pos`, unknown `face` (this reply has no `pos`) |
+
+```json
+{"v":1,"type":"error","seq":57,"t":1760370004120,"code":"edit_denied","message":"cell is occupied by minecraft:stone",
+ "ref_seq":42,"fatal":false,"op":"place","pos":[105,64,-35]}
+```
+
+Client guidance (non-normative; the Quest's `World/BlockEdits.cs`): show an edit at once only when the resulting state is already in the session palette. Never append to the palette locally, because `palette_add` indices must keep matching the server's. Remember the cell's old value: a `block_update` that touches the cell confirms the edit, an `error` with that `pos` reverts it, and if neither arrives within 3 s the client reverts too (the server diffs the region at least once a second, so silence means the world kept the old value). An older server answers `unknown_type`: revert everything and stop editing.
+
+Fixtures: `tools/fixtures/block_edit.json`, `block_edit_break.json`, `error_edit_denied.json` (Java `FixtureTest`, Python and C# tests).
