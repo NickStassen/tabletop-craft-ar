@@ -56,10 +56,12 @@ namespace TabletopCraft.World
         {
             if (!_faceCache.TryGetValue(state, out var faces))
             {
+                if (OffMainThread) return Unresolved(state);   // see ResourcePackAtlas.Models.cs
                 faces = new FaceKey[6];
                 Color32 flat = BlockRules.FlatColor(state);
                 for (int i = 0; i < 6; i++) faces[i] = new FaceKey { Layer = -1, Color = flat };
                 if (_zip != null) { try { Resolve(state, faces); } catch (Exception e) { Debug.LogWarning($"[Tabletop] texture for {state}: {e.Message}"); } }
+                PrepareModel(state, faces);   // bake the block model; full cubes get rotated faces (ResourcePackAtlas.Models.cs)
                 _faceCache[state] = faces;
             }
             return faces[dir];

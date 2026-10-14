@@ -11,7 +11,8 @@ namespace TabletopCraft.World
         public int Layer;        // Texture2DArray layer, -1 = flat colour only
         public Color32 Color;    // tint (biome) or flat colour
         public bool Transparent;
-        public bool Equals(FaceKey o) => Layer == o.Layer && Color.r == o.Color.r && Color.g == o.Color.g && Color.b == o.Color.b && Color.a == o.Color.a && Transparent == o.Transparent;
+        public byte UvMap;       // texture rotation/mirror from the block model (CubeUv in BlockModelBaker.cs), 0 = vanilla default
+        public bool Equals(FaceKey o) => Layer == o.Layer && Color.r == o.Color.r && Color.g == o.Color.g && Color.b == o.Color.b && Color.a == o.Color.a && Transparent == o.Transparent && UvMap == o.UvMap;
     }
 
     public interface IFaceSource
@@ -104,8 +105,8 @@ namespace TabletopCraft.World
             Vector3 Corner(float cu, float cv) { var p = new Vector3(); p[axis] = plane; p[ua] = cu; p[va] = cv; return p + (Vector3)b0; }
             int start = m.Verts.Count;
             m.Verts.Add(Corner(u, v)); m.Verts.Add(Corner(u + w, v)); m.Verts.Add(Corner(u + w, v + h)); m.Verts.Add(Corner(u, v + h));
-            float layer = key.Layer;
-            m.Uvs.Add(new Vector3(0, 0, layer)); m.Uvs.Add(new Vector3(w, 0, layer)); m.Uvs.Add(new Vector3(w, h, layer)); m.Uvs.Add(new Vector3(0, h, layer));
+            // Vanilla face orientation (grass fringe up on every side, logs on their side rotated), tiled per block.
+            for (int i = start; i < start + 4; i++) m.Uvs.Add(CubeUv.Greedy(dir, m.Verts[i] - (Vector3)b0, key));
             for (int i = 0; i < 4; i++) m.Colors.Add(key.Color);
             var tris = key.Transparent ? m.Transparent : m.Opaque;
             // Winding for a right-handed frame, CCW seen from outside. The renderer flips it after mirroring Z.
@@ -113,11 +114,12 @@ namespace TabletopCraft.World
             else { tris.Add(start); tris.Add(start + 2); tris.Add(start + 1); tris.Add(start); tris.Add(start + 3); tris.Add(start + 2); }
         }
 
-        /// <summary>Simple placeholders for non-cube shapes: crossed quads, half-height slabs.</summary>
+        /// <summary>Non-cube shapes: baked pack models (BlockShape.Model); without a pack, placeholder crossed quads and slabs.</summary>
         public static void BuildSpecials(WorldModel w, Vector3Int section, IFaceSource faces, MeshData m)
         {
             int S = WorldModel.Section;
             Vector3Int b0 = section * S;
+            var models = faces as IModelSource;   // baked resource-pack models (BlockModels.cs), null without a pack
             for (int y = b0.y; y < Mathf.Min(b0.y + S, w.Dims.y); y++)
                 for (int z = b0.z; z < Mathf.Min(b0.z + S, w.Dims.z); z++)
                     for (int x = b0.x; x < Mathf.Min(b0.x + S, w.Dims.x); x++)
@@ -126,6 +128,7 @@ namespace TabletopCraft.World
                         var shape = BlockRules.Shape(st);
                         if (shape == BlockShape.Cross) Cross(m, x, y, z, faces.Face(st, 4));
                         else if (shape == BlockShape.Slab) Box(m, new Vector3(x, y + (st.Contains("type=top") ? 0.5f : 0), z), new Vector3(1, 0.5f, 1), faces, st);
+                        else if (shape == BlockShape.Model) BlockModelMesher.Emit(m, w, x, y, z, st, models?.Model(st), models);
                     }
             // Water/lava, including waterlogged blocks and kelp/seagrass cells. Last, so water blends over the plants
             // and models inside it in the transparent submesh.
