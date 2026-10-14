@@ -418,3 +418,17 @@ The quad counts above were measured before block models and the fluid mesher exi
 **Tests after the merge:** plugin 37 tests, 0 failures; pytest 30 passed, ruff clean; `Tests~ dotnet run -- --jar …/26.3.jar` 180/180 PASS (adds model quads lit like cube faces, rotated quads with own-cell light, tinted model quads, fluid light and merge splitting, WaterColor per biome with the atlas alpha, and with the jar: grass_block top, short_grass cross and oak_stairs through the real models); Unity 6000.0.84f1 batch compile clean (no errors, no shader errors, no new warnings).
 
 **Headset to check:** the new face shading (east/west sides darker and north/south sides brighter than before, crosses at full brightness), cave darkness at brightness 0.5, AO on stairs/slabs/fences, water colour and light at depth (deep water faces darken: water light follows vanilla's sky attenuation), and FPS with about 25% more faces.
+
+### Dark faces in AR: light floor, Bright default, open-sky edges (after the first lit headset session; 2026-10-13)
+
+The headset showed near-black faces in caves and around a mineshaft cut by the region edge, and a very dark seabed. Changes in `BlockShading`: the lightmap uses vanilla's "Bright" setting (was the game's default 0.5) and is rescaled so light level 0 shows at `min_light` = 0.2 and full light stays 1, keeping vanilla's falloff shape in between; and every light/AO sample outside the region is open sky-lit air (before: clamped to the nearest cell inside, which copied the cave's darkness to the cut). `Tests~ dotnet run -- --light-report` (brightness of a white face before the shader's face shading):
+
+| face | before | after |
+|---|---|---|
+| floor of a light-0 cave | 0.094 | 0.200 |
+| the same cave floor at the region edge (corner at the cut .. corner inside) | 0.094 .. 0.094 | 0.686 .. 0.200 |
+| cut face (front cell outside the region) | 1.000 | 1.000 |
+| seabed 10 blocks under water (sky light 5) | 0.314 | 0.510 |
+| full daylight | 1.000 | 1.000 |
+
+Levels 10-15 now differ by under 2% (Bright compresses the top), so slightly more faces merge, but the total barely moves: 64×96×64 23,317 faces, 128×96×128 83,055, 128×128×128 159,947, 64×384×64 89,116 (pack mode, smooth light; +0.1-0.3% against the table above). `tabletop.json` `min_light` and `brightness` tune it on the headset (`min_light: -1` = vanilla's curve).
