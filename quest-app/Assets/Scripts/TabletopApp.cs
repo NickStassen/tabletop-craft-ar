@@ -37,6 +37,7 @@ namespace TabletopCraft
         PoseSender _poses;
         TablePlacement _placement;
         AreaSetupMode _area;
+        BlockEditMode _edit;   // block editing from the headset (XR/BlockEditMode.cs)
         string _session;
         TextMesh _status;
         float _nextPing; int _pingId; long _rttMs = -1;
@@ -81,6 +82,12 @@ namespace TabletopCraft
             _area.BlockSize = () => BlockSizeM; _area.World = () => _world;
             _area.Send = b => _link.Send(b);
             _area.ApplyBlockSize = bs => SetBlockSize(bs, false);
+
+            // Block editing: right trigger break, left trigger place, B pick (XR/BlockEditMode.cs, PROTOCOL.md 4.17).
+            _edit = gameObject.AddComponent<BlockEditMode>();
+            _edit.Blocks = _blocks; _edit.RightHand = RightHand; _edit.Head = Head; _edit.World = () => _world; _edit.Atlas = _atlas;
+            _edit.OpaqueMaterial = OpaqueMaterial; _edit.TransparentMaterial = TransparentMaterial;
+            _edit.Send = b => _link.Send(b); _edit.Online = () => _link.Connected; _edit.Blocked = () => _area.Active;
 
             _link = new LinkClient(ServerUrl, Token);
             _link.Start();
@@ -150,7 +157,7 @@ namespace TabletopCraft
                                $"WORLD {(_world.Loaded ? $"{_world.Dims.x}x{_world.Dims.y}x{_world.Dims.z} @ {_world.Origin}" : "-")}  PACK {(_atlas.HasPack ? "yes" : "flat")}  LIGHT {LightStatus()}\n" +
                                $"TABLE {_placement.Status}\nPOSES {(_poses ? _poses.Sent : 0)}  MESH {_renderer.Quads / 1000}k faces" +
                                (_renderer.Pending > 0 ? $" ({_renderer.Pending} sections pending)" : "") + $"  {_lastError}\n" +
-                               (_area.Active ? _area.Status : (_area.Status.Length > 0 ? _area.Status : "Y (left) = set up area"));
+                               (_area.Active ? _area.Status : (_area.Status.Length > 0 ? _area.Status : "Y (left) = set up area") + "\n" + _edit.Status);
         }
 
         /// <summary>Status text: server light (smooth/flat/off), biome count and whether the pack has colour maps.</summary>
@@ -165,6 +172,7 @@ namespace TabletopCraft
                 case "welcome":
                     Debug.Log($"[Tabletop] welcome from {m.S("server")} {m.S("server_version")} mc {m.S("mc_version")}");
                     _session = m.S("session");
+                    _edit.Editor.ServerAllows = m.A("caps")?.Contains(Protocol.CapEdit) == true;   // block editing granted
                     _area.State.Limits = RegionLimits.From(m.O("limits"), RegionLimits.Default);
                     // Light from the server makes faces merge less: scale the area-setup face estimate (soft cap).
                     AreaMath.LightFactor = AreaMath.LightFactorFor(m.A("caps")?.Contains(Protocol.CapLight) == true, BlockShading.SmoothLighting);
@@ -183,6 +191,7 @@ namespace TabletopCraft
                         var s = ChunkSnapshot.From(m);
                         _renderer.Clear();
                         _world.ApplySnapshot(s);
+                        _edit.Editor.OnSnapshot();
                         RecenterRegion();
                         Debug.Log($"[Tabletop] snapshot {s.SnapshotId}: {s.Dims} palette {s.Palette.Length} {LightStatus()}");
                     }
@@ -192,7 +201,7 @@ namespace TabletopCraft
                         _link.Send(new Dictionary<string, object> { ["type"] = "error", ["code"] = "bad_snapshot", ["message"] = e.Message, ["fatal"] = false });
                     }
                     break;
-                case "block_update": _world.ApplyBlockUpdate(m); break;
+                case "block_update": _edit.Editor.OnBlockUpdate(_world, m); _world.ApplyBlockUpdate(m); break;   // server values replace edit guesses
                 case "player_positions":
                     var list = new List<PlayerInfo>();
                     foreach (var o in m.A("players")) list.Add(PlayerInfo.From((Dictionary<string, object>)o));
@@ -211,6 +220,7 @@ namespace TabletopCraft
                 case "error":
                     _lastError = $"{m.S("code")}: {m.S("message")}";
                     _area.OnError(m);
+                    _edit.Editor.OnError(_world, m);   // undoes an optimistic edit the server refused
                     Debug.LogWarning("[Tabletop] server error " + _lastError);
                     break;
             }
