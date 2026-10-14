@@ -1,13 +1,16 @@
 // Break and place blocks in the miniature from the headset, Minecraft style (docs/QUEST_SETUP.md "Editing blocks").
 // A ray from the right controller (BlockRaycast, DDA in block space) targets a block; a thin outline shows it, like
-// vanilla's selection box, and a short laser runs from the controller to the hit point. Bindings, active while area
-// setup is off (it owns the trigger and B then):
+// vanilla's selection box, and a short laser runs from the controller to the hit point (a short faded stub when the
+// ray hits nothing). A faint ghost of the block the left trigger would place, oriented as it will be (BlockPlacement:
+// wall torches, top slabs, door halves...), sits in the cell it fills, inside a second outline; both turn red when the
+// placement would be refused. Bindings, active while area setup is off (it owns the trigger and B then):
 //   Right trigger   break the targeted block (hold to repeat)
-//   Left trigger    place the selected block against the targeted face (hold to repeat)
+//   Left trigger    place the selected block (hold to repeat)
 //   B (right)       pick the targeted block as the selected block (middle click)
-// The selected block floats above the right controller as a small textured cube with its name. Edits go out as
-// block_edit (PROTOCOL.md 4.20) and are shown at once when the result is already in the palette (BlockEdits.cs
-// reconciles them with the server's block_update / error). A short haptic tick confirms each edit.
+// The selected block floats above the right controller as a small textured cube with its name; under it, the targeted
+// block's name and world position ("oak stairs @ 105,64,-35"). Edits go out as block_edit (PROTOCOL.md 4.20) and are
+// shown at once when the result is already in the palette (BlockEdits.cs reconciles them with the server's
+// block_update / error). A short haptic tick confirms each edit.
 using System;
 using System.Collections.Generic;
 using TabletopCraft.World;
@@ -30,34 +33,45 @@ namespace TabletopCraft.XR
         public Action<string> Picked; // [menu] B picked this state (the block menu puts it into its hotbar)
         public float MaxRayM = 2f;
         public float RepeatSeconds = 0.25f, FirstRepeatSeconds = 0.35f;
+        /// <summary>Length of the faded laser stub shown when the ray hits nothing (metres).</summary>
+        public float MissLaserM = 0.12f;
+        /// <summary>Opacity of the placement ghost.</summary>
+        public float GhostAlpha = 0.4f;
 
         public readonly BlockEditor Editor = new BlockEditor();
         public BlockHit Target { get; private set; }
+        /// <summary>What the left trigger would place now (cell, oriented state, or why not).</summary>
+        public PlacePlan Placement { get; private set; }
 
         /// <summary>Status line for the HUD text.</summary>
         public string Status =>
             !Editor.ServerAllows ? "EDIT off" + (Editor.Result.Length > 0 ? ": " + Editor.Result : " (server)")
             : $"EDIT {BlockEditRules.Label(Editor.Selected)}  R-trig break  L-trig place  B pick" + (Editor.Result.Length > 0 ? "\n" + Editor.Result : "");
 
-        LineRenderer _outline, _laser;
-        Transform _preview;
-        Mesh _previewMesh;
-        TextMesh _label;
-        string _previewState;
-        float _breakAt = -1, _placeAt = -1, _hapticOff = -1;
+        LineRenderer _outline, _laser, _placeOutline;
+        Transform _preview, _ghost;
+        Mesh _previewMesh, _ghostMesh;
+        Material _ghostMat;
+        TextMesh _label, _target;
+        string _previewState, _ghostKey, _targetText;
+        float _breakAt = -1, _placeAt = -1, _hapticOff = -1, _planAt = -1;
         int _seenChanges;
         Vector3 _lo, _hi;   // the box targeting is limited to (region-local blocks)
-        readonly Vector3[] _box = new Vector3[16];
+        readonly Vector3[] _box = new Vector3[16], _placeBox = new Vector3[16];
         readonly List<Vector3> _verts = new List<Vector3>();
+        readonly List<Color32> _colors = new List<Color32>();
         static readonly Color OutlineColor = new Color(0.02f, 0.02f, 0.02f, 0.85f);
+        static readonly Color PlaceOkColor = new Color(1f, 1f, 1f, 0.35f), PlaceBadColor = new Color(1f, 0.15f, 0.1f, 0.8f);
+        static readonly Color HitLaserStart = new Color(1f, 1f, 1f, 0.15f), HitLaserEnd = new Color(1f, 1f, 1f, 0.7f);
+        static readonly Color MissLaserStart = new Color(1f, 1f, 1f, 0.3f), MissLaserEnd = new Color(1f, 1f, 1f, 0f);
 
         void Start()
         {
             var lineMat = new Material(Shader.Find("Sprites/Default"));
             _outline = NewLine("BlockOutline", lineMat, 16);
             _outline.startColor = _outline.endColor = OutlineColor;
+            _placeOutline = NewLine("PlaceOutline", lineMat, 16);
             _laser = NewLine("EditLaser", lineMat, 2);
-            _laser.startColor = new Color(1f, 1f, 1f, 0.15f); _laser.endColor = new Color(1f, 1f, 1f, 0.7f);
             _laser.startWidth = 0.0025f; _laser.endWidth = 0.0008f;
 
             _preview = new GameObject("SelectedBlock", typeof(MeshFilter), typeof(MeshRenderer)).transform;
@@ -67,12 +81,20 @@ namespace TabletopCraft.XR
             _previewMesh = new Mesh();
             _preview.GetComponent<MeshFilter>().sharedMesh = _previewMesh;
             _preview.GetComponent<MeshRenderer>().sharedMaterials = new[] { OpaqueMaterial, TransparentMaterial };
-            var label = new GameObject("SelectedLabel");
-            label.transform.SetParent(RightHand ? RightHand : transform, false);
-            label.transform.localPosition = new Vector3(0f, 0.075f, 0.03f);
-            _label = label.AddComponent<TextMesh>();
-            TabletopApp.SetBuiltinFont(_label);
-            _label.characterSize = 0.0022f; _label.fontSize = 48; _label.anchor = TextAnchor.LowerCenter; _label.color = Color.white;
+            _label = NewText("SelectedLabel", new Vector3(0f, 0.075f, 0.03f), 0.0022f, TextAnchor.LowerCenter, Color.white);
+            _target = NewText("TargetLabel", new Vector3(0f, 0.028f, 0.03f), 0.0016f, TextAnchor.UpperCenter, new Color(1f, 1f, 1f, 0.75f));
+
+            // The placement ghost: block-space mesh under Blocks (Z mirrored like the terrain), drawn see-through with
+            // its own copy of the transparent block material.
+            _ghost = new GameObject("PlaceGhost", typeof(MeshFilter), typeof(MeshRenderer)).transform;
+            if (Blocks) _ghost.SetParent(Blocks, false);
+            _ghostMesh = new Mesh();
+            _ghost.GetComponent<MeshFilter>().sharedMesh = _ghostMesh;
+            _ghostMat = TransparentMaterial ? new Material(TransparentMaterial) : null;
+            var gr = _ghost.GetComponent<MeshRenderer>();
+            gr.sharedMaterial = _ghostMat;
+            gr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off; gr.receiveShadows = false;
+            _ghost.gameObject.SetActive(false);
         }
 
         LineRenderer NewLine(string name, Material mat, int points)
@@ -86,6 +108,17 @@ namespace TabletopCraft.XR
             return l;
         }
 
+        TextMesh NewText(string name, Vector3 local, float size, TextAnchor anchor, Color color)
+        {
+            var go = new GameObject(name);
+            go.transform.SetParent(RightHand ? RightHand : transform, false);
+            go.transform.localPosition = local;
+            var t = go.AddComponent<TextMesh>();
+            TabletopApp.SetBuiltinFont(t);
+            t.characterSize = size; t.fontSize = 48; t.anchor = anchor; t.color = color;
+            return t;
+        }
+
         void Update()
         {
             float now = Time.unscaledTime;
@@ -95,7 +128,14 @@ namespace TabletopCraft.XR
             // Nothing to aim with until the server grants edit_v1 (the status line says why), or while area setup runs.
             bool active = Editor.ServerAllows && w != null && w.Loaded && RightHand && Blocks && !(Blocked?.Invoke() ?? false);
             ShowPreview(active);
-            if (!active) { Target = default; _outline.gameObject.SetActive(false); _laser.gameObject.SetActive(false); _breakAt = _placeAt = -1; return; }
+            if (!active)
+            {
+                Target = default; Placement = default;
+                _outline.gameObject.SetActive(false); _laser.gameObject.SetActive(false); _placeOutline.gameObject.SetActive(false);
+                _ghost.gameObject.SetActive(false); SetTargetText("");
+                _breakAt = _placeAt = -1;
+                return;
+            }
 
             // Only what's on the table can be targeted: the visible window when navigating (the margin is clipped away).
             _lo = Vector3.zero; _hi = w.Dims;
@@ -103,8 +143,14 @@ namespace TabletopCraft.XR
             // The controller ray in block space (InverseTransformVector includes the block scale: length in blocks).
             Vector3 o = BlockRaycast.FromBlocksLocal(Blocks.InverseTransformPoint(RightHand.position));
             Vector3 d = BlockRaycast.FromBlocksLocal(Blocks.InverseTransformVector(RightHand.forward * MaxRayM));
+            var prev = Target;
             Target = BlockRaycast.Cast(w, o, d, d.magnitude, _lo, _hi);
+            // What the left trigger would do: re-planned when the aim changes, and a few times a second for the rest
+            // (look direction, neighbours, server updates).
+            if (!Same(prev, Target) || now >= _planAt) { Placement = Editor.Plan(w, Target, d, Time.unscaledTimeAsDouble); _planAt = now + 0.1f; }
             Draw(Target);
+            DrawPlacement(Placement, Target.Hit);
+            SetTargetText(BlockEditor.Describe(w, Target));
 
             // Right trigger = break, left trigger = place; press acts at once, holding repeats.
             bool online = Online?.Invoke() ?? true;
@@ -112,20 +158,28 @@ namespace TabletopCraft.XR
             {
                 if (online) Do(Editor.Break(w, Target, Time.unscaledTimeAsDouble), OVRInput.Controller.RTouch);
                 else Editor.Result = "not connected";
+                _planAt = -1;
             }
             if (Held(OVRInput.Controller.LTouch, ref _placeAt, now) && Target.Hit)
             {
                 if (online) Do(Editor.Place(w, Target, d, Time.unscaledTimeAsDouble), OVRInput.Controller.LTouch);
                 else Editor.Result = "not connected";
+                _planAt = -1;
             }
-            if (OVRInput.GetDown(OVRInput.Button.Two, OVRInput.Controller.RTouch) && Editor.Pick(w, Target)) { Haptic(OVRInput.Controller.RTouch, 0.15f); Picked?.Invoke(Editor.Selected); }   // [menu] hotbar
+            if (OVRInput.GetDown(OVRInput.Button.Two, OVRInput.Controller.RTouch) && Editor.Pick(w, Target)) { Haptic(OVRInput.Controller.RTouch, 0.15f); Picked?.Invoke(Editor.Selected); _planAt = -1; }   // [menu] hotbar
         }
+
+        static bool Same(BlockHit a, BlockHit b) =>
+            a.Hit == b.Hit && a.Block == b.Block && a.Face == b.Face &&
+            (a.Point.y - a.Block.y > 0.5f) == (b.Point.y - b.Block.y > 0.5f) && (a.Point.x - a.Block.x > 0.5f) == (b.Point.x - b.Block.x > 0.5f) &&
+            (a.Point.z - a.Block.z > 0.5f) == (b.Point.z - b.Block.z > 0.5f);
 
         // After every Update (TabletopApp handles server errors there): grid changes from guesses and reverts.
         void LateUpdate()
         {
             if (Editor.Pending.Changes == _seenChanges) return;
             _seenChanges = Editor.Pending.Changes;
+            _planAt = -1;
             ModelChanged?.Invoke();
         }
 
@@ -155,23 +209,95 @@ namespace TabletopCraft.XR
         void Draw(BlockHit h)
         {
             _outline.gameObject.SetActive(h.Hit);
-            _laser.gameObject.SetActive(h.Hit);
-            if (!h.Hit) return;
-            // Selection box: the cell grown by 1/64 block so it doesn't z-fight the faces (vanilla grows it by 0.002),
-            // cut to the visible window like the terrain.
+            _laser.gameObject.SetActive(true);
+            _laser.SetPosition(0, RightHand.position);
+            if (!h.Hit)
+            {
+                // A miss: a short stub that fades out, so the aim is still visible.
+                _laser.startColor = MissLaserStart; _laser.endColor = MissLaserEnd;
+                _laser.SetPosition(1, RightHand.position + RightHand.forward * MissLaserM);
+                return;
+            }
+            _laser.startColor = HitLaserStart; _laser.endColor = HitLaserEnd;
+            _laser.SetPosition(1, Blocks.TransformPoint(BlockRaycast.ToBlocksLocal(h.Point)));
+            BoxLines(_outline, _box, h.Block, h.Block);
+        }
+
+        /// <summary>
+        /// Selection box over cells <paramref name="a"/>..<paramref name="b"/> (inclusive): grown by 1/64 block so it
+        /// doesn't z-fight the faces (vanilla grows it by 0.002), cut to the visible window like the terrain.
+        /// </summary>
+        void BoxLines(LineRenderer line, Vector3[] box, Vector3Int a0, Vector3Int b0)
+        {
             const float e = 1f / 64;
-            Vector3 a = new Vector3(Mathf.Max(h.Block.x, _lo.x) - e, Mathf.Max(h.Block.y, _lo.y) - e, Mathf.Max(h.Block.z, _lo.z) - e);
-            Vector3 b = new Vector3(Mathf.Min(h.Block.x + 1, _hi.x) + e, Mathf.Min(h.Block.y + 1, _hi.y) + e, Mathf.Min(h.Block.z + 1, _hi.z) + e);
+            var lo = new Vector3Int(Math.Min(a0.x, b0.x), Math.Min(a0.y, b0.y), Math.Min(a0.z, b0.z));
+            var hi = new Vector3Int(Math.Max(a0.x, b0.x), Math.Max(a0.y, b0.y), Math.Max(a0.z, b0.z));
+            Vector3 a = new Vector3(Mathf.Max(lo.x, _lo.x) - e, Mathf.Max(lo.y, _lo.y) - e, Mathf.Max(lo.z, _lo.z) - e);
+            Vector3 b = new Vector3(Mathf.Min(hi.x + 1, _hi.x) + e, Mathf.Min(hi.y + 1, _hi.y) + e, Mathf.Min(hi.z + 1, _hi.z) + e);
             int i = 0;
-            void P(float x, float y, float z) => _box[i++] = Blocks.TransformPoint(BlockRaycast.ToBlocksLocal(new Vector3(x, y, z)));
+            void P(float x, float y, float z) => box[i++] = Blocks.TransformPoint(BlockRaycast.ToBlocksLocal(new Vector3(x, y, z)));
             P(a.x, a.y, a.z); P(b.x, a.y, a.z); P(b.x, a.y, b.z); P(a.x, a.y, b.z); P(a.x, a.y, a.z);
             P(a.x, b.y, a.z); P(b.x, b.y, a.z); P(b.x, a.y, a.z); P(b.x, b.y, a.z); P(b.x, b.y, b.z); P(b.x, a.y, b.z);
             P(b.x, b.y, b.z); P(a.x, b.y, b.z); P(a.x, a.y, b.z); P(a.x, b.y, b.z); P(a.x, b.y, a.z);
-            _outline.SetPositions(_box);
-            float bs = Blocks.lossyScale.x;
-            _outline.widthMultiplier = Mathf.Clamp(bs * 0.08f, 0.0006f, 0.003f);
-            _laser.SetPosition(0, RightHand.position);
-            _laser.SetPosition(1, Blocks.TransformPoint(BlockRaycast.ToBlocksLocal(h.Point)));
+            line.SetPositions(box);
+            line.widthMultiplier = Mathf.Clamp(Blocks.lossyScale.x * 0.08f, 0.0006f, 0.003f);
+        }
+
+        /// <summary>The cell the left trigger fills: a faint outline and a ghost of the oriented block (red when refused).</summary>
+        void DrawPlacement(PlacePlan p, bool hit)
+        {
+            var w = World?.Invoke();
+            bool hasCell = hit && w != null && !p.Waiting && w.InBounds(p.Cell.x, p.Cell.y, p.Cell.z) && BlockRaycast.Overlaps(p.Cell, _lo, _hi) && (p.Ok || p.State != null || p.Why?.Length > 0);
+            bool show = hasCell && (p.Ok || p.Why.StartsWith("can't place:"));   // not for "can't place fire" (a selection problem)
+            _placeOutline.gameObject.SetActive(show);
+            if (!show) { _ghost.gameObject.SetActive(false); return; }
+            var color = p.Ok ? PlaceOkColor : PlaceBadColor;
+            _placeOutline.startColor = _placeOutline.endColor = color;
+            BoxLines(_placeOutline, _placeBox, p.Cell, p.HasPartner ? p.PartnerCell : p.Cell);
+            if (!p.Ok || _ghostMat == null) { _ghost.gameObject.SetActive(false); return; }
+            string key = p.State + "|" + p.PartnerState + "|" + (p.PartnerCell - p.Cell);
+            if (key != _ghostKey) BuildGhost(p);
+            _ghost.gameObject.SetActive(true);
+        }
+
+        /// <summary>The planned block(s) as a see-through mesh through the real mesher, placed at their cell.</summary>
+        void BuildGhost(PlacePlan p)
+        {
+            _ghostKey = p.State + "|" + p.PartnerState + "|" + (p.PartnerCell - p.Cell);
+            var one = BlockEditor.PreviewWorld(p, out var corner);
+            _ghostMesh.Clear();
+            if (one == null || Atlas == null) return;
+            foreach (var s in one.Palette) for (int dir = 0; dir < 6; dir++) Atlas.Face(s, dir);   // main thread: new states join the atlas
+            Atlas.Commit();
+            if (Atlas.Array != null) { _ghostMat.SetTexture("_Blocks", Atlas.Array); _ghostMat.SetFloat("_HasTex", 1); }
+            var data = new MeshData();
+            IFaceSource faces = Atlas;
+            GreedyMesher.Build(one, Vector3Int.zero, faces, data);
+            GreedyMesher.BuildSpecials(one, Vector3Int.zero, faces, data);
+            // Block space -> Blocks-local (mirror Z, flip winding); every face see-through at GhostAlpha.
+            _verts.Clear(); _colors.Clear();
+            foreach (var v in data.Verts) _verts.Add(new Vector3(v.x, v.y, -v.z));
+            byte alpha = (byte)Mathf.Clamp(GhostAlpha * 255f, 0f, 255f);
+            foreach (var c in data.Colors) _colors.Add(new Color32(c.r, c.g, c.b, (byte)(c.a * alpha / 255)));
+            var tris = new List<int>(data.Opaque.Count + data.Transparent.Count);
+            tris.AddRange(Flip(data.Opaque));
+            tris.AddRange(Flip(data.Transparent));
+            _ghostMesh.SetVertices(_verts);
+            _ghostMesh.SetUVs(0, data.Uvs);
+            _ghostMesh.SetColors(_colors);
+            _ghostMesh.SetTriangles(tris, 0, false);
+            _ghostMesh.RecalculateNormals();
+            _ghostMesh.RecalculateBounds();
+            _ghost.localPosition = BlockRaycast.ToBlocksLocal(corner);
+            _ghost.localRotation = Quaternion.identity; _ghost.localScale = Vector3.one;
+        }
+
+        void SetTargetText(string s)
+        {
+            if (s == _targetText) return;
+            _targetText = s;
+            _target.text = s;
+            _target.gameObject.SetActive(s.Length > 0);
         }
 
         void ShowPreview(bool active)
@@ -181,7 +307,11 @@ namespace TabletopCraft.XR
             if (!active) return;
             if (_previewState != Editor.Selected) BuildPreview(Editor.Selected);
             _preview.localRotation = Quaternion.Euler(20f, Time.unscaledTime * 30f % 360f, 0f);
-            if (Head) _label.transform.rotation = Quaternion.LookRotation(_label.transform.position - Head.position, Vector3.up);
+            if (Head)
+            {
+                _label.transform.rotation = Quaternion.LookRotation(_label.transform.position - Head.position, Vector3.up);
+                _target.transform.rotation = Quaternion.LookRotation(_target.transform.position - Head.position, Vector3.up);
+            }
         }
 
         /// <summary>The selected block as a one-block world through the real mesher: textures and models like the miniature.</summary>
@@ -224,6 +354,11 @@ namespace TabletopCraft.XR
             return r;
         }
 
-        void OnDestroy() { if (_previewMesh) Destroy(_previewMesh); }
+        void OnDestroy()
+        {
+            if (_previewMesh) Destroy(_previewMesh);
+            if (_ghostMesh) Destroy(_ghostMesh);
+            if (_ghostMat) Destroy(_ghostMat);
+        }
     }
 }

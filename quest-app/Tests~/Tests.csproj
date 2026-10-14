@@ -15,14 +15,16 @@
     <!-- [area] width presets and mesh batching -->
     <Compile Include="../Assets/Scripts/World/AreaSizing.cs;../Assets/Scripts/World/SectionBatches.cs" />
     <Compile Include="../Assets/Scripts/World/BlockShading.cs;../Assets/Scripts/World/BiomeColors.cs" />
-    <Compile Include="../Assets/Scripts/World/BlockModelBaker.cs;../Assets/Scripts/World/BlockModels.cs" />
+    <Compile Include="../Assets/Scripts/World/BlockModelBaker.cs;../Assets/Scripts/World/BlockModels.cs;../Assets/Scripts/World/PistonGhosts.cs;../Assets/Scripts/World/TextureMips.cs" />
     <Compile Include="../Assets/Scripts/World/PlayerModel.cs;../Assets/Scripts/World/PlayerAnimation.cs;../Assets/Scripts/World/SkinImage.cs" />
     <Compile Include="../Assets/Scripts/World/FluidMesher.cs;../Assets/Scripts/World/TextureAnimation.cs;../Assets/Scripts/World/EyeMedium.cs" />
-    <Compile Include="../Assets/Scripts/World/BlockRaycast.cs;../Assets/Scripts/World/BlockEdits.cs" />
+    <Compile Include="../Assets/Scripts/World/BlockRaycast.cs;../Assets/Scripts/World/BlockEdits.cs;../Assets/Scripts/World/BlockPlacement.cs" />
     <!-- entities and actions (PROTOCOL.md 4.21-4.22) -->
     <Compile Include="../Assets/Scripts/Net/EntityProtocol.cs;../Assets/Scripts/World/EntityModels.cs;../Assets/Scripts/World/EntityCatalog.cs;../Assets/Scripts/World/EntityAnimation.cs;../Assets/Scripts/World/ItemModels.cs" />
     <!-- [menu] block menu: registry, menu model, HUD toasts, icons (PROTOCOL.md 4.24) -->
     <Compile Include="../Assets/Scripts/Net/BlockRegistry.cs;../Assets/Scripts/World/BlockMenuModel.cs;../Assets/Scripts/World/HudState.cs;../Assets/Scripts/World/PngDecoder.cs;../Assets/Scripts/World/BlockIcons.cs" />
+    <!-- [comfort] keyboard, prefs.json, LAN discovery, session helpers -->
+    <Compile Include="../Assets/Scripts/World/KeyboardModel.cs;../Assets/Scripts/World/AppPrefs.cs;../Assets/Scripts/World/SessionState.cs;../Assets/Scripts/Net/LanDiscovery.cs" />
     <!-- [blocks] block entities: catalog, baked models, block_entities data (PROTOCOL.md 4.26) -->
     <Compile Include="../Assets/Scripts/World/BlockEntityCatalog.cs;../Assets/Scripts/World/BlockEntityModels.cs;../Assets/Scripts/Net/BlockEntityProtocol.cs;../Assets/Scripts/World/SignText.cs;../Assets/Scripts/World/BlockEntityExtras.cs" />
   </ItemGroup>

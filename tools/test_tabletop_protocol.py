@@ -11,6 +11,7 @@ from tabletop_protocol import (
     CAP_EDIT,
     CAP_ENTITIES,
     CAP_LIGHT,
+    DISCOVERY_PORT,
     REGISTRY_CATEGORIES,
     BlockEntityMirror,
     EntityMirror,
@@ -223,6 +224,23 @@ def test_entities_full_then_delta():
     assert m.entities == {}
 
 
+def test_entities_armor_stands():
+    """Armour stands (PROTOCOL.md 4.21): arms, base_plate and stand_pose; a default stand sends neither arms nor a pose."""
+    msg = json.loads((FIX / "entities_armor_stand.json").read_text())
+    validate(msg)
+    m = EntityMirror()
+    m.apply(msg)
+    plain, posed, small = m.entities[201], m.entities[202], m.entities[203]
+    assert plain["base_plate"] and "arms" not in plain and "stand_pose" not in plain
+    assert posed["arms"] and "base_plate" not in posed and posed["stand_pose"]["right_arm"] == [-110.0, 25.0, 10.0]
+    assert small["small"] and small["invisible"] and small["equipment"] == {"head": "minecraft:iron_helmet"}
+    m.apply({"full": False, "entities": [{"id": 202, "stand_pose": None, "arms": False}]})
+    assert m.entities[202]["stand_pose"] is None and not m.entities[202]["arms"]   # cleared, like other fields
+    del msg["entities"][1]["stand_pose"]["left_leg"]
+    with pytest.raises(ValueError):
+        validate(msg)
+
+
 def test_entities_validation():
     msg = json.loads((FIX / "entities.json").read_text())
     del msg["entities"][0]["type"]
@@ -368,3 +386,31 @@ def test_block_entities_rejects_bad_entries(bad):
     msg = json.loads((FIX / "block_entities.json").read_text())
     with pytest.raises(ValueError):
         validate(dict(msg, entities=[bad]))
+
+
+def test_discovery_probe_and_reply_fixtures():
+    """LAN discovery (PROTOCOL.md 7): UDP probe and reply, no envelope."""
+    probe = json.loads((FIX / "discovery_probe.json").read_text())
+    reply = json.loads((FIX / "discovery_reply.json").read_text())
+    validate(probe)
+    validate(reply)
+    assert probe == {"type": "tabletop_discover", "v": 1}
+    assert reply["port"] == DISCOVERY_PORT and reply["path"] == "/tabletop" and reply["token"] is False
+
+
+@pytest.mark.parametrize("patch", [{"port": 0}, {"port": 70000}, {"path": "tabletop"}, {"token": "no"}, {"v": 2}])
+def test_discovery_reply_rejects_bad_fields(patch):
+    msg = json.loads((FIX / "discovery_reply.json").read_text())
+    msg.update(patch)
+    with pytest.raises(ValueError):
+        validate(msg)
+
+
+def test_region_changed_carries_the_new_worlds_build_height():
+    """next version: region_changed has limits (build_height of the region's world) for gliding after a world change."""
+    msg = json.loads((FIX / "region_changed.json").read_text())
+    validate(msg)
+    assert msg["limits"]["build_height"] == [0, 256] and msg["world"] == "world_nether"
+    msg["limits"]["build_height"] = [320, -64]
+    with pytest.raises(ValueError):
+        validate(msg)

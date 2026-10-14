@@ -17,6 +17,13 @@ namespace TabletopCraft.Net
         public int[] Passengers = new int[0];
         public float Width, Height;
         public bool Baby, Small, Sheared, Invisible, Tamed, Angry;
+        /// <summary>Armour stands: arms and base plate shown; StandPose = 18 degrees (head, body, left_arm, right_arm,
+        /// left_leg, right_leg: x, y, z each), null for vanilla's default pose.</summary>
+        public bool Arms, BasePlate;
+        public float[] StandPose;
+        public static readonly string[] StandParts = { "head", "body", "left_arm", "right_arm", "left_leg", "right_leg" };
+        /// <summary>ArmorStand.DEFAULT_*_POSE (26.3), degrees, StandParts order.</summary>
+        public static readonly float[] DefaultStandPose = { 0, 0, 0, 0, 0, 0, -10, 0, -10, -15, 0, 10, -1, 0, -1, 1, 0, 1 };
         public string Variant, Color, Markings, Profession, Pose, Name, Item, Block, Facing;
         public int Count = 1, Rotation;
         public Dictionary<string, string> Equipment;
@@ -79,7 +86,8 @@ namespace TabletopCraft.Net
         {
             int v = e.LooksVersion;
             e.Vehicle = -1; e.Passengers = new int[0]; e.OnGround = false; e.HasBodyYaw = false;
-            e.Baby = e.Small = e.Sheared = e.Invisible = e.Tamed = e.Angry = false;
+            e.Baby = e.Small = e.Sheared = e.Invisible = e.Tamed = e.Angry = e.Arms = e.BasePlate = false;
+            e.StandPose = null;
             e.Variant = e.Color = e.Markings = e.Profession = e.Pose = e.Name = e.Item = e.Block = e.Facing = null;
             e.Count = 1; e.Rotation = 0; e.Equipment = null;
             e.LooksVersion = v + 1;
@@ -109,6 +117,9 @@ namespace TabletopCraft.Net
                     case "invisible": e.Invisible = Flag(v); looks = true; break;
                     case "tamed": e.Tamed = Flag(v); looks = true; break;
                     case "angry": e.Angry = Flag(v); looks = true; break;
+                    case "arms": e.Arms = Flag(v); looks = true; break;
+                    case "base_plate": e.BasePlate = Flag(v); looks = true; break;
+                    case "stand_pose": e.StandPose = StandPose(v as Dictionary<string, object>); looks = true; break;
                     case "variant": e.Variant = v as string; looks = true; break;
                     case "color": e.Color = v as string; looks = true; break;
                     case "markings": e.Markings = v as string; looks = true; break;
@@ -127,6 +138,18 @@ namespace TabletopCraft.Net
         }
 
         static bool Flag(object v) => v is bool b && b;
+
+        /// <summary>stand_pose {"head": [x, y, z], ...} -> 18 degrees in EntityInfo.StandParts order; null for null.
+        /// A part that is missing keeps vanilla's default (EntityInfo.DefaultStandPose).</summary>
+        public static float[] StandPose(Dictionary<string, object> o)
+        {
+            if (o == null) return null;
+            var p = (float[])EntityInfo.DefaultStandPose.Clone();
+            for (int i = 0; i < EntityInfo.StandParts.Length; i++)
+                if (o.TryGetValue(EntityInfo.StandParts[i], out var a) && a is List<object> l && l.Count >= 3)
+                    for (int k = 0; k < 3; k++) p[i * 3 + k] = l[k] is double d ? (float)d : p[i * 3 + k];
+            return p;
+        }
 
         public static Dictionary<string, string> Equipment(Dictionary<string, object> o)
         {

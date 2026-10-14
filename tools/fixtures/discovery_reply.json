@@ -1,0 +1,11 @@
+{
+ "type": "tabletop_server",
+ "v": 1,
+ "name": "A Minecraft Server",
+ "port": 8765,
+ "path": "/tabletop",
+ "token": false,
+ "version": "0.3.0",
+ "mc": "26.3",
+ "players": 2
+}

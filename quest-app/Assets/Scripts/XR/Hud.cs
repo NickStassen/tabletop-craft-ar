@@ -65,7 +65,8 @@ namespace TabletopCraft.XR
             return t;
         }
 
-        public void Toast(string text, ToastKind kind = ToastKind.Info) => Toasts.Push(text, kind, Time.unscaledTimeAsDouble);
+        /// <summary>life 0 = the kind's default; a key updates that toast in place ([comfort] "Loading area 40 %").</summary>
+        public void Toast(string text, ToastKind kind = ToastKind.Info, double life = 0, string key = null) => Toasts.Push(text, kind, Time.unscaledTimeAsDouble, life, key);
 
         void Update()
         {

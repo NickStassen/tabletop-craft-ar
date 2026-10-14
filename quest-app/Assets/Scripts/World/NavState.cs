@@ -273,6 +273,39 @@ namespace TabletopCraft.World
             !Loaded ? "NAV -" :
             $"VIEW {Window.x}x{Window.y}x{Window.z} @ {View.x:F0},{View.y - Window.y / 2f:F0},{View.z:F0}  margin {Margin.x}/{Margin.y}" +
             (Pending ? "  loading..." : "") + $"  ({LatencyEma * 1000:F0} ms)";
+
+        /// <summary>[comfort] "Reset view": the window back in the middle of the region (no request; the region stays).</summary>
+        public void Recenter()
+        {
+            if (!Loaded) return;
+            View = RegionCentre;
+            for (int a = 0; a < 3; a++) { _over[a] = 0; _lastDir[a] = 0; }
+        }
+
+        /// <summary>[comfort] The readout under the small hotbar: the block at the centre of the window's floor, and where you look.</summary>
+        public string Readout(float lookWorldX, float lookWorldZ) =>
+            !Loaded ? "" : $"{Math.Floor(View.x)} {Math.Floor(View.y - Window.y / 2f)} {Math.Floor(View.z)}  facing {Facing(lookWorldX, lookWorldZ)}";
+
+        static readonly string[] Compass = { "N", "NE", "E", "SE", "S", "SW", "W", "NW" };
+
+        /// <summary>8-way compass name of a world direction (Minecraft: north = -Z, east = +X); "-" for no direction.</summary>
+        public static string Facing(float worldX, float worldZ)
+        {
+            if (Math.Abs(worldX) < 1e-6f && Math.Abs(worldZ) < 1e-6f) return "-";
+            double deg = Math.Atan2(worldX, -worldZ) * 180 / Math.PI;   // 0 = north, 90 = east
+            int i = (int)Math.Floor((deg + 360 + 22.5) / 45) % 8;
+            return Compass[i];
+        }
+
+        /// <summary>[comfort] Where a ray from the centre of a halfX x halfZ rectangle along (dirX, dirZ) leaves it
+        /// (the offline badge sits on the table edge toward you).</summary>
+        public static (float x, float z) EdgePoint(float halfX, float halfZ, float dirX, float dirZ)
+        {
+            float ax = Math.Abs(dirX), az = Math.Abs(dirZ);
+            if (ax < 1e-6f && az < 1e-6f) return (0, -halfZ);
+            float t = Math.Min(ax > 1e-6f ? halfX / ax : float.MaxValue, az > 1e-6f ? halfZ / az : float.MaxValue);
+            return (dirX * t, dirZ * t);
+        }
     }
 
     /// <summary>A region_request the navigation wants to send (origin form plus view_margin).</summary>

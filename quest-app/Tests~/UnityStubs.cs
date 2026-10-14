@@ -20,6 +20,7 @@ namespace UnityEngine
         public Vector3Int(int x, int y, int z) { this.x = x; this.y = y; this.z = z; }
         public int this[int i] { get => i == 0 ? x : i == 1 ? y : z; set { if (i == 0) x = value; else if (i == 1) y = value; else z = value; } }
         public static Vector3Int operator +(Vector3Int a, Vector3Int b) => new Vector3Int(a.x + b.x, a.y + b.y, a.z + b.z);
+        public static Vector3Int operator -(Vector3Int a, Vector3Int b) => new Vector3Int(a.x - b.x, a.y - b.y, a.z - b.z);
         public static Vector3Int operator *(Vector3Int a, int k) => new Vector3Int(a.x * k, a.y * k, a.z * k);
         public static Vector3Int left => new Vector3Int(-1, 0, 0);
         public static Vector3Int right => new Vector3Int(1, 0, 0);

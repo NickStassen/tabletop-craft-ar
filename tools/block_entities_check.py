@@ -44,7 +44,8 @@ class Link:
     async def run(self, origin, script) -> None:
         env = Envelope()
         async with websockets.connect(URL, max_size=1 << 23) as ws:
-            await ws.send(json.dumps(env.wrap("hello", client="block-entities-check", protocols=[1], caps=["rle_palette_v1", CAP_BLOCK_ENTITIES])))
+            caps = ["rle_palette_v1", CAP_BLOCK_ENTITIES]
+            await ws.send(json.dumps(env.wrap("hello", client="block-entities-check", protocols=[1], caps=caps)))
             done = asyncio.Event()
 
             async def reader():
@@ -104,43 +105,54 @@ def main() -> int:
             fails.append(what)
 
     async def script(link: Link) -> None:
+        q = '"'
         await asyncio.sleep(1.5)
         cmd(f"forceload add {ox} {oz} {ox + DIMS[0] - 1} {oz + DIMS[2] - 1}")
         cmd(f"fill {ox} {oy} {oz} {ox + DIMS[0] - 1} {oy + DIMS[1] - 1} {oz + DIMS[2] - 1} air")
         await asyncio.sleep(1)
-        cmd(f"setblock {x} {y} {z} oak_sign[rotation=4]{{front_text:{{messages:[\"Hello\",\"Tabletop\",\"\",\"\"],color:\"blue\",has_glowing_text:1b}},"
-            f"back_text:{{messages:[\"\",\"Back\",\"\",\"\"],color:\"black\"}}}}")
-        cmd(f"setblock {x + 2} {y} {z} oak_hanging_sign[rotation=0,attached=false]{{front_text:{{messages:[\"Inn\",\"\",\"\",\"\"]}}}}")
-        cmd(f"setblock {x + 4} {y} {z} red_banner[rotation=8]{{patterns:[{{pattern:\"minecraft:stripe_bottom\",color:\"white\"}},{{pattern:\"minecraft:creeper\",color:\"black\"}}]}}")
-        cmd(f"setblock {x + 6} {y} {z} player_head[rotation=0]{{profile:{{id:[I;1,2,3,4],name:\"Steve\"}}}}")
-        cmd(f"setblock {x + 8} {y} {z} decorated_pot[facing=north]{{sherds:{{back:\"minecraft:brick\",left:\"minecraft:arms_up_pottery_sherd\","
-            f"right:\"minecraft:brick\",front:\"minecraft:skull_pottery_sherd\"}}}}")
-        cmd(f"setblock {x + 10} {y} {z} spawner{{SpawnData:{{entity:{{id:\"minecraft:zombie\"}}}}}}")
+
+        def lines(*t: str) -> str:
+            return "[" + ",".join(q + s + q for s in t) + "]"
+
+        cmd(f"setblock {x} {y} {z} oak_sign[rotation=4]{{front_text:{{messages:{lines('Hello', 'Tabletop', '', '')},"
+            f"color:{q}blue{q},has_glowing_text:1b}},back_text:{{messages:{lines('', 'Back', '', '')},color:{q}black{q}}}}}")
+        cmd(f"setblock {x + 2} {y} {z} oak_hanging_sign[rotation=0,attached=false]{{front_text:{{messages:{lines('Inn', '', '', '')}}}}}")
+        cmd(f"setblock {x + 4} {y} {z} red_banner[rotation=8]{{patterns:[{{pattern:{q}minecraft:stripe_bottom{q},color:{q}white{q}}},"
+            f"{{pattern:{q}minecraft:creeper{q},color:{q}black{q}}}]}}")
+        cmd(f"setblock {x + 6} {y} {z} player_head[rotation=0]{{profile:{{id:[I;1,2,3,4],name:{q}Steve{q}}}}}")
+        cmd(f"setblock {x + 8} {y} {z} decorated_pot[facing=north]{{sherds:{{back:{q}minecraft:brick{q},"
+            f"left:{q}minecraft:arms_up_pottery_sherd{q},right:{q}minecraft:brick{q},front:{q}minecraft:skull_pottery_sherd{q}}}}}")
+        cmd(f"setblock {x + 10} {y} {z} spawner{{SpawnData:{{entity:{{id:{q}minecraft:zombie{q}}}}}}}")
         cmd(f"fill {x - 1} {y - 1} {z + 4} {x + 1} {y - 1} {z + 6} iron_block")
         cmd(f"setblock {x} {y} {z + 5} beacon")
-        cmd(f"setblock {x + 4} {y} {z + 5} campfire[facing=north,lit=true]{{CookingTotalTimes:[I;6000,6000,6000,6000],Items:[{{Slot:0b,id:\"minecraft:beef\",count:1}},{{Slot:2b,id:\"minecraft:cod\",count:1}}]}}")
-        cmd(f"setblock {x + 6} {y} {z + 5} oak_shelf[facing=north]{{Items:[{{Slot:1b,id:\"minecraft:apple\",count:1}}]}}")
+        # Without CookingTotalTimes the items would be done (and dropped) at once.
+        cmd(f"setblock {x + 4} {y} {z + 5} campfire[facing=north,lit=true]{{CookingTotalTimes:[I;6000,6000,6000,6000],"
+            f"Items:[{{Slot:0b,id:{q}minecraft:beef{q},count:1}},{{Slot:2b,id:{q}minecraft:cod{q},count:1}}]}}")
+        cmd(f"setblock {x + 6} {y} {z + 5} oak_shelf[facing=north]{{Items:[{{Slot:1b,id:{q}minecraft:apple{q},count:1}}]}}")
         cmd(f"setblock {x + 8} {y} {z + 5} chest[facing=north]")
-        t0 = time.monotonic()
         want = {"sign": 2, "banner": 1, "skull": 1, "decorated_pot": 1, "spawner": 1, "campfire": 1, "shelf": 1}
         took = await wait_for(lambda: all(len(link.mirror.of_kind(k)) >= n for k, n in want.items()), 15)
-        check(took is not None, f"placed block entities arrive ({'%.2f s' % took if took is not None else 'timeout'}; kinds {sorted({e['kind'] for e in link.mirror.entries.values()})})")
+        kinds = sorted({e["kind"] for e in link.mirror.entries.values()})
+        check(took is not None, f"placed block entities arrive ({f'{took:.2f} s' if took is not None else 'timeout'}; kinds {kinds})")
         results.append(f"first entries after placing: {took}")
         e = link.mirror.entries
         sign = e.get((x, y, z))
-        check(sign is not None and sign["front"]["lines"][:2] == ["Hello", "Tabletop"] and sign["front"]["color"] == "blue" and sign["front"]["glowing"]
-              and sign["back"]["lines"][1] == "Back", f"sign: both sides, colour, glowing ({sign})")
+        check(sign is not None and sign["front"]["lines"][:2] == ["Hello", "Tabletop"] and sign["front"]["color"] == "blue"
+              and sign["front"]["glowing"] and sign["back"]["lines"][1] == "Back", f"sign: both sides, colour, glowing ({sign})")
         hang = e.get((x + 2, y, z))
         check(hang is not None and hang["kind"] == "sign" and hang["front"]["lines"][0] == "Inn", "hanging sign text")
         banner = e.get((x + 4, y, z))
-        check(banner is not None and [(p["pattern"], p["color"]) for p in banner["patterns"]] == [("minecraft:stripe_bottom", "white"), ("minecraft:creeper", "black")],
-              f"banner patterns ({banner})")
+        layers = [(p["pattern"], p["color"]) for p in banner["patterns"]] if banner else None
+        check(layers == [("minecraft:stripe_bottom", "white"), ("minecraft:creeper", "black")], f"banner patterns ({banner})")
         head = e.get((x + 6, y, z))
-        check(head is not None and head.get("name") == "Steve" and head.get("uuid", "").startswith("00000001-0000-0002"), f"player head profile ({head})")
+        check(head is not None and head.get("name") == "Steve" and head.get("uuid", "").startswith("00000001-0000-0002"),
+              f"player head profile ({head})")
         pot = e.get((x + 8, y, z))
-        check(pot is not None and pot["sherds"] == ["minecraft:brick", "minecraft:arms_up_pottery_sherd", "minecraft:brick", "minecraft:skull_pottery_sherd"], f"pot sherds ({pot})")
+        sherds = ["minecraft:brick", "minecraft:arms_up_pottery_sherd", "minecraft:brick", "minecraft:skull_pottery_sherd"]
+        check(pot is not None and pot["sherds"] == sherds, f"pot sherds ({pot})")
         sp = e.get((x + 10, y, z))
-        check(sp is not None and sp["entity"] == "minecraft:zombie" and sp.get("size") and abs(sp["size"][1] - 1.95) < 0.01, f"spawner mob and size ({sp})")
+        check(sp is not None and sp["entity"] == "minecraft:zombie" and sp.get("size") and abs(sp["size"][1] - 1.95) < 0.01,
+              f"spawner mob and size ({sp})")
         camp = e.get((x + 4, y, z + 5))
         check(camp is not None and camp["items"] == ["minecraft:beef", None, "minecraft:cod", None], f"campfire items ({camp})")
         shelf = e.get((x + 6, y, z + 5))
@@ -150,8 +162,12 @@ def main() -> int:
         check(took is not None, f"beacon on a 3x3 iron base reaches tier 1 ({took})")
         # /data changes no block and fires no event: the round robin finds it (chunks with only signs, banners, heads and
         # pots every 8 x rescan-ticks, 16 s by default; this one also holds a spawner, so every rescan-ticks).
-        cmd(f"data merge block {x} {y} {z} {{front_text:{{messages:[\"Changed\",\"\",\"\",\"\"]}}}}")
-        took = await wait_for(lambda: (link.mirror.entries.get((x, y, z)) or {}).get("front", {}).get("lines", [""])[0] == "Changed", 20)
+        cmd(f"data merge block {x} {y} {z} {{front_text:{{messages:{lines('Changed', '', '', '')}}}}}")
+
+        def changed() -> bool:
+            return (link.mirror.entries.get((x, y, z)) or {}).get("front", {}).get("lines", [""])[0] == "Changed"
+
+        took = await wait_for(changed, 20)
         check(took is not None, f"sign text changed by /data arrives with the round robin ({took})")
         results.append(f"/data sign change after: {took}")
         cmd(f"setblock {x + 4} {y} {z} air")

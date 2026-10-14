@@ -11,6 +11,7 @@ Status: **v1, normative.** The server plugin (`server-plugin/`), the Quest app (
 - Why JSON and not binary in v1: a 32x32x64 band is only tens of KB once run-length encoded (see §6.3), pose traffic at 30 Hz is about 10 KB/s, and JSON is easy to debug with `websocat` or the fake client. A binary chunk encoding is planned only if measurements show it's needed (PLAN.md, Phase 5).
 - Permessage-deflate is optional. The server MAY offer it, and the client MAY decline. Nothing in this spec depends on compression.
 - Max frame size the server accepts: 64 KiB. Max frame the server sends: 4 MiB.
+- Finding the server on the LAN is a separate small UDP exchange (§7).
 
 ## 2. Envelope
 
@@ -188,7 +189,7 @@ Sizes on real terrain (seed 12345, see TESTING.md "Lighting and biome colours"):
 
 ### 4.6 `player_positions` (S→C)
 
-Sent at `limits.player_hz` (default 10 Hz) whenever there's at least one player in the region bounds expanded by 16 blocks horizontally, plus once with an empty list when the last one leaves.
+Sent at `limits.player_hz` (default 10 Hz) whenever there's at least one player in the region bounds expanded by `stream.players-margin` (16) blocks on every axis, plus once with an empty list when the last one leaves. Next version: the margin applies to Y too (a player deep in a cave under the region isn't listed), and spectators, invisible players (the flag or the potion) and vanished players (a true `vanished` metadata value, as vanish plugins set, or hidden from any other online player) are never listed.
 
 ```json
 {"v":1,"type":"player_positions","seq":4,"t":1760370001050,
@@ -274,6 +275,7 @@ Sent after each `avatar_config`, and when the server changes something by itself
 
 - Either side MAY ping. The receiver MUST answer with `pong` carrying the same `id` and `echo_t` = the ping's `t`. RTT = now − `echo_t` on the original sender.
 - The client SHOULD ping every 2 s. The server closes a connection after 15 s with no messages at all (close code 4004).
+- Next version: the client SHOULD treat 6 s without any inbound bytes as a dead link (Wi-Fi gone without a TCP FIN, a frozen server), drop the socket and reconnect. The Quest app does, and clears its RTT while the link is down. A big snapshot in transit counts as traffic.
 
 ### 4.11 `error` (both directions)
 
@@ -322,6 +324,8 @@ Then it closes with code 1000. When the Quest client disconnects (with or withou
 | 4004 | idle timeout |
 | 4005 | server shutting down / plugin disabled |
 
+A client SHOULD NOT reconnect by itself after 4001 or 4003: nothing changes until the app, the plugin, the token or the address does. The Quest app stops retrying and shows its setup card (QUEST_SETUP.md Part D); it reconnects with backoff after every other close.
+
 ## 6. Implementation notes (non-normative)
 
 1. **Encoder reference (Java):** walk `i = 0 … N−1` in yzx order, look up `ChunkSnapshot.getBlockData(x&15, y, z&15).getAsString()`, map it to a palette index with a `HashMap<String,Integer>` (cache by `BlockData` identity), and emit a pair whenever the index changes.
@@ -329,18 +333,37 @@ Then it closes with code 1000. When the Quest client disconnects (with or withou
 3. **Size check:** a typical 32x64x32 band (65,536 blocks), mostly air above and stone below, has about 500–3,000 runs, so 5–30 KB of JSON. A worst-case noisy 32x384x32 region (393,216 blocks, all runs of 1) is about 2.5 MB of JSON, which is still under the 4 MiB cap. See RESEARCH.md §2.
 4. **Conformance:** `tools/` ships golden JSON fixtures for every message type. Both the Java unit tests and the fake client round-trip them.
 
+## 7. LAN discovery (UDP, outside the WebSocket; next version)
+
+So the headset can find a server without typing its address (QUEST_SETUP.md Part D, "Find servers"). It is a probe and a reply, each one UDP datagram holding one UTF-8 JSON object. There is no envelope (`seq`, `t`).
+
+```json
+{"type":"tabletop_discover","v":1}
+{"type":"tabletop_server","v":1,"name":"A Minecraft Server","port":8765,"path":"/tabletop","token":false,"version":"0.3.0","mc":"26.3","players":2}
+```
+
+- **Probe (headset → broadcast).** The client sends `tabletop_discover` to UDP port 8765 (the plugin's `discovery.port`; the app's tabletop.json `discovery_port` if changed) at `255.255.255.255` and at its own /24's broadcast address, then listens on its sending socket for about 1.2 s.
+- **Reply (plugin → the probe's sender, unicast).** `tabletop_server` with `name` (config `discovery.name`, else the server's MOTD as plain text, one line, at most 48 characters), the WebSocket `port` and `path` (`bind.port`, `bind.path`), `token` (true when `auth.token` is set, so the client knows it needs one), the plugin `version`, the game version `mc` and the number of online `players`. The client builds the URL from the reply's source address: `ws://<source>:<port><path>`.
+- The plugin answers only probes with `v` 1 from private (10/8, 172.16/12, 192.168/16), link-local or loopback addresses, at most 20 replies a second, and ignores everything else. `discovery.enabled: false` turns it off.
+- Why a probe and not a periodic beacon: an Android app receives broadcast or multicast only while it holds a `WifiManager.MulticastLock` (with the `CHANGE_WIFI_MULTICAST_STATE` permission), while sending a broadcast and receiving a unicast reply need neither. The Quest app's manifest is unchanged.
+- **Fallback (client only).** If nothing answers (a firewall that lets only TCP 8765 through), the Quest app connects to TCP 8765 on every host of its /24 (400 ms each, 48 at a time) and lists the hosts that accept as "port open". It never sends `hello` to them; connecting is the user's choice.
+- Fixtures: `tools/fixtures/discovery_probe.json`, `discovery_reply.json` (Java `LanBeaconTest`, Python `test_discovery_*`, C# `Tests~/ComfortTests.cs`).
+
 ## Changelog
 
 - **v1 (2026-10-13):** initial.
 - **v1, light and biomes (2026-10-13, additive):** optional per-block light and 4x4x4 biomes in `chunk_snapshot`, light changes in `block_update`, opted into with the `light_v1` / `biomes_v1` caps and echoed in `welcome.caps` (§4.5.1). Peers without the caps are unaffected.
 - **v1, block editing (2026-10-13, additive):** `block_edit` (C→S) breaks or places one block inside the region, opted into with the `edit_v1` cap; error codes `edit_denied`, `out_of_region`, `bad_state`; an error about an edit carries its `op` and `pos` (§4.20). Peers without the cap are unaffected.
 - **v0.2.0: block menu (2026-10-14, required, not backwards compatible):** the server sends `block_registry` (§4.24) to every client right after `welcome`, and a `block_edit` `place` must name a registry block or variant (else `bad_state`, §4.20). No cap: plugin, Quest app and tools must match.
+- **next version: armour stands (§4.21).** `entities` entries carry `arms`, `base_plate` and `stand_pose` for armour stands; fixture `entities_armor_stand.json` (Java `EntityDeltaTest`, Python, C# `EntityTests`).
 - **v0.3.0: visible width presets (§4.25).** `limits.max_view_width` (required in `welcome.limits`, `region_info.limits` and `region_too_large`); a `region_request` whose visible width is over it is narrowed around its centre instead of refused; `sections_v1` deltas may change `dims` (a section-aligned resize, §4.18). Fixtures `chunk_snapshot_grow.json`, `chunk_snapshot_shrink.json`, `region_request_resize.json`.
+- **Next version: sessions and discovery.** `region_changed` carries `limits` like `region_info` (with the new world's `build_height`, §4.13); LAN discovery over UDP (§7); `player_positions` filters on Y and leaves out spectators, invisible and vanished players (§4.6); clients drop a link after 6 s of silence (§4.10) and don't retry after 4001/4003 (§5). Fixtures `region_changed.json` (now with `limits`), `discovery_probe.json`, `discovery_reply.json`.
+- **next version (0.3.1): building like vanilla (§4.20).** No new fields. `block_edit` `pos` may be the clicked block itself when it is replaceable; the server places doors, beds and tall plants with both halves (and removes both on a break), checks vanilla replaceability and survival, refuses blocks with a collision box in a player or mob and edits outside the world border, makes placed leaves persistent, sets `waterlogged` from the cell, computes connection properties from the neighbours, and names blocks readably in refusals ("stone is in the way"; fixture `error_edit_denied.json`).
 
 ## 4.13–4.16 Runtime region control (v1, additive)
 
 - `region_request` (client→server): `{"origin":[x,y,z],"dims":[dx,dy,dz]}` or `{"center":[x,y,z],"size":[dx,dy,dz],"y_origin"?:y}` (origin = center − size/2). The server checks it against `max_region` in config.yml (x, y, z, blocks, bytes). Over the cap it returns `error{code:"region_too_large", max_dims, max_blocks, max_bytes}`.
-- `region_changed` (server→all shared sessions): `{world, origin, dims, by_session, ref_seq}`, followed by a full `chunk_snapshot`. When several clients write, the last request wins.
+- `region_changed` (server→all shared sessions): `{world, origin, dims, by_session, ref_seq}`, followed by a full `chunk_snapshot`. When several clients write, the last request wins. Next version: it also carries `view_margin` (§4.17) and `limits` as in `region_info` (`max_dims`, `max_blocks`, `max_bytes`, `max_view_width` and the region's world's `build_height`), so a client that moved to another world (area setup centred on a player in the Nether, say) glides within the right height at once.
 - `region_query` → `region_info{region, players:[{name,uuid,world,pos,yaw}], limits, ref_seq}` (used for "center on me").
 - `welcome.limits` gains `max_dims`, `max_blocks`, `max_bytes`. `chunk_snapshot` may carry `server_timing{read_ms,remap_ms,encode_ms}`, which clients ignore if they don't recognise it.
 - Growth triggers a full re-snapshot for `rle_palette_v1` clients. For `sections_v1` clients a resize whose origin moves by whole sections is a delta with only the new sections (§4.25); `limits` also carry `max_view_width` (§4.25).
@@ -406,32 +429,42 @@ The headset breaks and places blocks in the region, like a creative-mode player.
 | field | type | req | meaning |
 |---|---|---|---|
 | `op` | string | yes | `break`: the block at `pos` is removed. `place`: `state` goes into `pos`. |
-| `pos` | int[3] | yes | World block coordinates of the cell that changes. For `place` that is the cell in front of the clicked face (clicked block + face normal), not the clicked block. Must be inside the session's current region. |
-| `state` | string | for `place` | Full block-state string as in the palette (`BlockData#getAsString`). Applied as given: the client picks the orientation (`axis`, `facing`). |
+| `pos` | int[3] | yes | World block coordinates of the cell that changes. For `place` that is the cell in front of the clicked face (clicked block + face normal), or the clicked block itself when that block is replaceable (short grass, a single snow layer, vines: vanilla places into it). Must be inside the session's current region. For a two-block structure it is the lower half's or the foot's cell. |
+| `state` | string | for `place` | Full block-state string as in the palette (`BlockData#getAsString`). The client picks the orientation the way vanilla's `getStateForPlacement` does (`axis`, `facing`, `face`, `half`, `type`, `rotation`, `hinge`, wall forms, see the client guidance below); the server keeps it, apart from the adjustments listed under "Server behaviour". |
 | `face` | string | no | The clicked face of the targeted block: `west`, `east`, `down`, `up`, `north`, `south` (normals −X, +X, −Y, +Y, −Z, +Z). Informational (logged). |
 
 Server behaviour:
 - Edits are applied on the main thread in arrival order. Each session may make `edit.max-per-second` edits (default 20): a token bucket holding one second's worth, so a burst of 20 passes and the rest get `rate_limited`.
-- `break` of air does nothing. Breaking a block that holds water (waterlogged, kelp, seagrass) leaves a water source, and placing a waterloggable state into a water source sets `waterlogged=true`, as in vanilla. Block physics run after the edit (`edit.physics`), so sand falls and water flows into a gap.
-- `place` needs a replaceable cell (air, fluids, short grass and the like: `Block#isReplaceable`) and a state that isn't air or listed in `edit.deny` (by default the operator blocks: command blocks, structure blocks, jigsaws, test blocks). Two-block structures (doors, beds, tall plants) are placed as the one state given.
-- Since v0.2.0 the state's block must also be in the session's `block_registry` (§4.24), or be one of its `variants` (a wall torch picked from a wall is placed as is). Anything else (fire, water, portals, piston heads, potted plants: blocks without an item form) gets `bad_state` with the message "`<id>` is not a placeable block (not in block_registry)".
+- `break` of air does nothing. Breaking a block that holds water (waterlogged, kelp, seagrass) leaves a water source, as in vanilla. Block physics run after the edit (`edit.physics`), so sand falls and water flows into a gap.
+- Edits outside the world border are refused (`edit_denied`, "outside the world border").
+- `place` follows vanilla 26.3 (`BlockItem#place`), server side in `EditWorld`/`EditRules`:
+  - the cell must be replaceable (vanilla `canBeReplaced`): air, fluids, fire, light, short and tall grass, ferns, bushes, dead bushes, seagrass, vines, glow lichen, sculk vein, resin clumps, hanging roots, nether roots and sprouts, leaf litter, and snow only as a single layer; never by the same block (stacking snow or candles and merging slabs are not supported). Else `edit_denied` "`<block>` is in the way";
+  - the state must be able to stay there (`canSurvive`: a torch needs a block under or behind it, grass needs dirt, a door a floor). Else `edit_denied` "`<block>` can't stay there";
+  - a state with a collision box must not go into a player (not in spectator mode), a mob, an armour stand, a boat, a minecart or an end crystal (vanilla `isUnobstructed`; the giant avatar's own entities don't count). Else `edit_denied` "`<player name>` is in the way" / "a cow is in the way";
+  - the state isn't air and isn't listed in `edit.deny` (by default the operator blocks: command blocks, structure blocks, jigsaws, test blocks);
+  - adjustments: leaves get `persistent=true` (placed leaves never decay); `waterlogged` is set to whether the cell held a water source (a still water block or a block holding water), true or false, whatever the state said; a single block's connection properties (fences, panes, bars, walls, stair `shape`, redstone wire, `snowy` grass...) are computed from its neighbours with vanilla `Block.updateFromNeighbourShapes`;
+  - two-block structures get both halves: a door or double plant (`half=lower`, also small dripleaf and the pitcher plant) its `half=upper` one cell up, a bed (`part=foot`) its head one cell along `facing`. A state naming the top half or the head is placed from the bottom half or the foot at `pos`. The second cell must be inside the region and the build height, inside the world border and replaceable, and nobody may stand in it; else `edit_denied` "no room for the `<block>` ...". Breaking either half removes both (without drops), and replacing one half of tall grass or a large fern removes its other half.
+- Since v0.2.0 the state's block must also be in the session's `block_registry` (§4.24), or be one of its `variants` (a wall torch picked from a wall is placed as is). Anything else (fire, water, portals, piston heads, potted plants: blocks without an item form) gets `bad_state` with the message "`<block>` is not a placeable block (not in block_registry)".
+- Refusal messages name blocks by their id path with spaces ("oak stairs", "command block"), not as raw state strings, so a client can show them as they are.
 - There is no acknowledgement. The change reaches every session through the normal `block_update` diff (the edit marks the region dirty), typically 100–200 ms after the edit arrives. Protection plugins are not consulted (no `BlockPlaceEvent`/`BlockBreakEvent`), so only the region bounds, the rate limit and the deny list restrict edits.
 - A refused edit gets an `error` with `ref_seq` and, additively, the edit's `op` and `pos`:
 
 | code | when |
 |---|---|
-| `edit_denied` | no `edit_v1` grant, occupied cell, a state from `edit.deny`, chunk not loaded |
+| `edit_denied` | no `edit_v1` grant, the cell isn't replaceable, the block can't stay there, a player or mob is in the way, no room for the other half, outside the world border, a state from `edit.deny`, chunk not loaded |
 | `out_of_region` | `pos` is outside the session's region |
 | `bad_state` | `state` isn't a block state, is air (use `break`), or (since v0.2.0) isn't a `block_registry` block or variant |
 | `rate_limited` | over `edit.max-per-second` |
 | `bad_message` | malformed: no `op`/`pos`, non-integer `pos`, unknown `face` (this reply has no `pos`) |
 
 ```json
-{"v":1,"type":"error","seq":57,"t":1760370004120,"code":"edit_denied","message":"cell is occupied by minecraft:stone",
+{"v":1,"type":"error","seq":57,"t":1760370004120,"code":"edit_denied","message":"stone is in the way",
  "ref_seq":42,"fatal":false,"op":"place","pos":[105,64,-35]}
 ```
 
-Client guidance (non-normative; the Quest's `World/BlockEdits.cs`): show an edit at once only when the resulting state is already in the session palette. Never append to the palette locally, because `palette_add` indices must keep matching the server's. Remember the cell's old value: a `block_update` that touches the cell confirms the edit, an `error` with that `pos` reverts it, and if neither arrives within 3 s the client reverts too (the server diffs the region at least once a second, so silence means the world kept the old value). An older server answers `unknown_type`: revert everything and stop editing.
+Client guidance (non-normative; the Quest's `World/BlockEdits.cs`): show an edit at once only when the resulting state is already in the session palette. Never append to the palette locally, because `palette_add` indices must keep matching the server's. Remember the cell's old value: a `block_update` that touches the cell confirms the edit, an `error` with that `pos` reverts it, and if neither arrives within 3 s the client reverts too (the server diffs the region at least once a second, so silence means the world kept the old value). An older server answers `unknown_type`: revert everything and stop editing. A sectioned delta (§4.18) keeps the guesses in the sections it copied from the old grid (moved with the origin) and drops those in the sections it sent; a full snapshot drops them all. An edit whose result isn't shown (a state new to the palette) leaves its cell looking unchanged, so treat that cell as taken for about a second (or until a `block_update` or `error` for it) instead of sending it again while a trigger is held.
+
+Placement (non-normative; `World/BlockPlacement.cs`, after vanilla 26.3's `getStateForPlacement`; the "look" is the controller ray, standing in for the player's view): aiming at a replaceable block places into its cell. Logs and pillars take the clicked face's axis; most blocks with a horizontal `facing` face the user, stairs, doors, fence gates, beds, campfires, calibrated sculk sensors and decorated pots face the look, anvils its clockwise side; observers face the nearest look direction (6-way), pistons, dispensers, droppers and barrels the opposite; end rods, lightning rods, amethyst and shulker boxes point out of the clicked face, hoppers into the clicked block (down from above); torches, signs, banners, heads, coral fans and hanging signs use their wall form (the registry's `variants`) on a side face; buttons, levers and grindstones get `face` floor/wall/ceiling, bells `attachment`; slabs, stairs and trapdoors take the top half from the underside or the upper half of a side; doors get their hinge from the neighbours and the hit point; lanterns hang under a block; vines and lichen cling to the face; rails run along the look; signs, banners and heads get their 16-step `rotation` from the yaw. A B pick selects the block's registry default state (a wall torch picks the torch, a door's top half the door).
 
 Fixtures: `tools/fixtures/block_edit.json`, `block_edit_break.json`, `error_edit_denied.json` (Java `FixtureTest`, Python and C# tests).
 
@@ -467,6 +500,7 @@ Sent with `player_positions` (10 Hz) to sessions with `entities_v1` whenever som
   - `on_ground` (bool), `vehicle` (id of what it rides), `passengers` (ids in seat order, players included; see `player_positions[].id`).
   - `size`: `[width, height]` of the bounding box in blocks. Clients draw a box of this size for types they don't know, and slimes scale with it.
   - Looks: `baby`, `small` (armour stands), `sheared`, `tamed`, `angry`, `invisible` (bools). `variant`: the registry key path for vanilla ids (`temperate`, `pale`, `calico`, `desert`, `kebab`), `namespace:path` otherwise; enum values in lower case (horse colour `dark_brown`, rabbit `salt_and_pepper`, panda gene, axolotl, parrot, fox, llama colour, salmon size, pufferfish `small`/`medium`/`big`, tropical fish pattern). `color`: a dye colour (sheep wool, shulker, tropical fish body, a tamed wolf's or cat's collar). `markings`: horse markings (`white`, `whitefield`, `white_dots`, `black_dots`) or the tropical fish pattern colour. `profession`: villagers and zombie villagers; missing for none. `pose`: as for players, plus `sitting`; missing = standing. `name`: the custom name as plain text.
+  - Armour stands: `arms` and `base_plate` (bools, like the other looks: left out when false) say whether the stand shows its arms and its base plate (a stand placed in survival has a base plate and no arms). `stand_pose`: the stand's pose in degrees, `{"head": [x, y, z], "body": [...], "left_arm": [...], "right_arm": [...], "left_leg": [...], "right_leg": [...]}` (0.1° steps, the game's `Rotations`); left out when every part has the game's default pose (head and body 0, left arm −10/0/−10, right arm −15/0/10, left leg −1/0/−1, right leg 1/0/1). The whole object is resent when any angle changes, and `null` clears it. Fixture `tools/fixtures/entities_armor_stand.json`.
   - Items and blocks: `item` (item key of a dropped item, an item frame's item or an item display's item), `count` (dropped stacks over 1), `block` (block state of a falling block or a block display), `facing` (`north`, `south`... of item frames, paintings and leash knots), `rotation` (an item frame's item rotation, 0–7).
   - `equipment`: as for players, plus `body` (horse or wolf armour, llama carpet) and `saddle`. The whole object is resent when any slot changes.
 - Cost (TESTING.md "Entities and actions"): one sample per region per send, about 0.1–0.2 ms of main thread for 200 mobs; about 12–16 KB/s with 200 wandering mobs, under 100 B/s for a still scene.
@@ -496,7 +530,7 @@ At most one per tick, to sessions with `actions_v1`, with what happened inside t
 
 ### 4.23 Fixtures, tests, changelog
 
-- Fixtures: `tools/fixtures/entities.json` (a full list: a boat carrying a player and a baby pig, a sheep, an armed zombie, a dropped stack, an item frame), `entities_delta.json` (moves, a turned boat, changed equipment, a removal), `player_positions_riding.json` (a player in that boat with full equipment) and `actions.json`. Java `EntityDeltaTest` and `ActionBatchTest` build them from server-side state; Python `test_tabletop_protocol.py` and C# `Tests~/EntityTests.cs` apply them.
+- Fixtures: `tools/fixtures/entities.json` (a full list: a boat carrying a player and a baby pig, a sheep, an armed zombie, a dropped stack, an item frame), `entities_delta.json` (moves, a turned boat, changed equipment, a removal), `entities_armor_stand.json` (a survival stand, a posed stand with arms and a sword, a small invisible stand with a helmet), `player_positions_riding.json` (a player in that boat with full equipment) and `actions.json`. Java `EntityDeltaTest` and `ActionBatchTest` build them from server-side state; Python `test_tabletop_protocol.py` and C# `Tests~/EntityTests.cs` apply them.
 - `tools/entities_check.py` checks a live server: types, positions, the vehicle link, equipment, a removal, hurt and explosion actions, and bytes/s.
 - Changelog (additive, no version bump, 2026-10-13): adds the `entities_v1` and `actions_v1` caps with the `entities` and `actions` messages, and `player_positions[].id`, `vehicle`, `pose` and `equipment` (§4.6). Clients without the caps are unaffected.
 

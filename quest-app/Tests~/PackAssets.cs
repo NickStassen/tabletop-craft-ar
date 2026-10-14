@@ -45,8 +45,11 @@ sealed class ZipAssets : IModelAssets, IDisposable
     public FaceKey Texture(string texture, bool tinted, string state)
     {
         int l = LayerOf(texture);
-        return new FaceKey { Layer = l, Color = l < 0 ? BlockRules.FlatColor(state) : tinted ? Tint : new Color32(255, 255, 255, 255),
-                             Tint = tinted && l >= 0 ? BiomeColors.BlockTint(state, out _) : TintKind.None };   // as ResourcePackAtlas.Key
+        Color32? fixedTint = null;
+        var kind = tinted && l >= 0 ? BiomeColors.BlockTint(state, out fixedTint) : TintKind.None;   // as ResourcePackAtlas.Key
+        var white = new Color32(255, 255, 255, 255);
+        var c = !tinted ? white : fixedTint.HasValue ? fixedTint.Value : kind == TintKind.None ? white : Tint;
+        return new FaceKey { Layer = l, Color = l < 0 ? BlockRules.FlatColor(state) : c, Tint = kind };
     }
 
     public int AlphaClass(int layer) => layer >= 0 && layer < _alpha.Count ? _alpha[layer] : 0;

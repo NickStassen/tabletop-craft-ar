@@ -34,6 +34,12 @@ REQUIRED = {
     "block_registry": ["count", "categories"],
     "block_entities": ["entities"],
 }
+# LAN discovery over UDP (PROTOCOL.md 7): not WebSocket messages, so no envelope. Required fields per type.
+DISCOVERY = {
+    "tabletop_discover": [],
+    "tabletop_server": ["name", "port", "path", "token"],
+}
+DISCOVERY_PORT = 8765
 # block_registry categories (PROTOCOL.md 4.24), in tab order.
 REGISTRY_CATEGORIES = ("building", "colored", "natural", "functional", "redstone", "other")
 ERROR_CODES = {"version_mismatch", "auth_failed", "bad_message", "unknown_type", "unsupported", "region_too_large",
@@ -47,6 +53,7 @@ CAP_ENTITIES = "entities_v1"
 CAP_ACTIONS = "actions_v1"
 ACTION_KINDS = {"swing", "dig", "break", "place", "hurt"}
 EQUIPMENT_SLOTS = {"main_hand", "off_hand", "head", "chest", "legs", "feet", "body", "saddle"}
+STAND_PARTS = {"head", "body", "left_arm", "right_arm", "left_leg", "right_leg"}
 PLAYER_POSES = {"standing", "sneaking", "swimming", "sleeping", "gliding", "riding", "spin_attack", "dying"}
 # Block editing from the headset (PROTOCOL.md 4.20): block_edit, granted in welcome.caps.
 CAP_EDIT = "edit_v1"
@@ -61,6 +68,9 @@ DYES = {"white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "g
 
 def validate(msg: dict) -> None:
     t = msg.get("type")
+    if t in DISCOVERY:
+        validate_discovery(msg)
+        return
     if msg.get("v") != PROTOCOL_VERSION:
         raise ValueError(f"bad protocol version in {t}: {msg.get('v')}")
     if t not in REQUIRED:
@@ -84,6 +94,11 @@ def validate(msg: dict) -> None:
         raise ValueError(f"unknown error code {msg['code']}")
     if t in ("welcome", "region_info") and not isinstance(msg["limits"].get("max_view_width"), int):
         raise ValueError(f"{t} limits need max_view_width (PROTOCOL.md 4.25)")
+    if t == "region_changed" and "limits" in msg:
+        # next version: region_changed carries the new world's limits, build_height included (PROTOCOL.md 4.13)
+        bh = msg["limits"].get("build_height")
+        if bh is not None and not (isinstance(bh, list) and len(bh) == 2 and all(isinstance(v, int) for v in bh) and bh[0] < bh[1]):
+            raise ValueError(f"region_changed limits.build_height must be [minY, maxY), got {bh}")
     if t == "player_positions":
         for p in msg["players"]:
             if p.get("skin_model") not in (None, "wide", "slim"):
@@ -100,6 +115,7 @@ def validate(msg: dict) -> None:
             if "pos" in e and len(e["pos"]) != 3:
                 raise ValueError(f"entities entry {e['id']} pos must have 3 numbers")
             _check_equipment(e.get("equipment"))
+            _check_stand_pose(e.get("stand_pose"))
         if not all(isinstance(i, int) for i in msg.get("removed") or []):
             raise ValueError("entities removed must be a list of ids")
     if t == "actions":
@@ -160,6 +176,22 @@ def validate_block_entities(msg: dict) -> None:
         raise ValueError("block_entities removed must be integer positions")
 
 
+def validate_discovery(msg: dict) -> None:
+    """LAN discovery over UDP (PROTOCOL.md 7): the headset's probe and a plugin's reply. No envelope (seq, t)."""
+    if msg.get("v") != PROTOCOL_VERSION:
+        raise ValueError(f"bad protocol version in {msg.get('type')}: {msg.get('v')}")
+    for k in DISCOVERY[msg["type"]]:
+        if k not in msg:
+            raise ValueError(f"{msg['type']} missing {k}")
+    if msg["type"] == "tabletop_server":
+        if not (isinstance(msg["port"], int) and 0 < msg["port"] < 65536):
+            raise ValueError(f"tabletop_server port must be 1..65535, got {msg['port']}")
+        if not (isinstance(msg["path"], str) and msg["path"].startswith("/")):
+            raise ValueError(f"tabletop_server path must start with /, got {msg['path']}")
+        if not isinstance(msg["token"], bool):
+            raise ValueError("tabletop_server token must be true or false")
+
+
 def validate_block_registry(msg: dict) -> None:
     """block_registry (PROTOCOL.md 4.24): categories with default states, count, items and variants maps."""
     cats = msg["categories"]
@@ -194,6 +226,14 @@ def registry_id(state: str) -> str:
 def registry_states(msg: dict) -> dict[str, str]:
     """block_registry -> {block id: default state}, in menu order."""
     return {registry_id(s): s for c in msg["categories"] for s in c["blocks"]}
+
+
+def _check_stand_pose(pose: dict | None) -> None:
+    """An armour stand's stand_pose (PROTOCOL.md 4.21): every part once, [x, y, z] degrees."""
+    if pose is None:
+        return
+    if set(pose) != STAND_PARTS or not all(isinstance(v, list) and len(v) == 3 for v in pose.values()):
+        raise ValueError(f"stand_pose needs [x, y, z] for each of {sorted(STAND_PARTS)}, got {pose}")
 
 
 def _check_equipment(eq: dict | None) -> None:

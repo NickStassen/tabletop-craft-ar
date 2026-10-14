@@ -225,6 +225,7 @@ Still needs a Java client by eye: that the head's face points where the headset 
 - The 64 KiB inbound limit is checked on the decoded text length.
 - `avatar_state` carries an extra `debug` object (entity positions) when `debug.avatar-state: true`. v1 peers ignore unknown fields.
 - `avatar_state` also goes out when the avatar auto-spawns on the first pose (`avatar.spawn-on-first-pose`, a convenience for clients that never send `avatar_config`).
+- Block editing (§4.20) follows vanilla placement (two-block structures get both halves; the old "placed as the one state given" is gone), except: clicking a slab with the same slab doesn't make a double slab; snow layers, candles, sea pickles, petals and turtle eggs don't stack; two chests don't join; survival (`canSurvive`) is checked on the server only (the headset shows a plant on stone until the refusal reverts it); protection plugins aren't consulted (no `BlockPlaceEvent`); region requests aren't clamped to the world border (terrain past it is shown, edits there are refused).
 
 ## Region resize e2e (tools/region_e2e.py, flat world, async reader)
 
@@ -733,3 +734,118 @@ For each width W in 64, 96, 128, 192, 256: put `"area_width": W` in `tabletop.js
 3. Click through the presets once (64 → 96 → 128 → 192 → 256 → 64): the table never empties, the area grows/shrinks around the view, its footprint on the table stays the same (`AREA_RESIZED ... block ... mm in ... ms`), and the status line shows `AREA W wide ... server max 256`.
 4. Look for batching artefacts: water, leaves and glass across batch borders (world x or z a multiple of 32), the underwater view (inside faces), the cut faces at the window after a resize, the light at the new border after shrinking, and edits right at a batch border.
 5. At 256, repeat 2 with `"batch_columns": 4` to see whether fewer draw calls beat the bigger re-uploads.
+
+## Sessions, prefs, discovery and the keyboard (0.3.1 comfort; Paper 26.3, 2026-10-14, no headset)
+
+A separate headless Paper 26.3 test server (JDK 25, offline mode, seed 12345, its own ports, ViaVersion/ViaBackwards for the mineflayer player), the region the earlier runs left (80×96×80 with a 16-block margin).
+
+### Tests
+
+| Suite | Result |
+|---|---|
+| Plugin (JUnit) | 87 tests, 0 failures. New `LanBeaconTest` (8): the probe fixture is recognised and other packets aren't; only private, link-local and loopback senders get an answer; the reply equals `tools/fixtures/discovery_reply.json` (name cut to one 48-character line); 20 replies per second; a real UDP probe on loopback gets the reply and junk gets nothing; the `Headset URL` lines (192.168 first, then 10, then 172.16/12, interface names; a specific bind host alone); the constant-time token check; `PlayerFilter` (the margin on x, y and z; spectator, invisible and vanished are never shown). `FixtureTest.regionChangedFixtureCarriesLimits`. |
+| Tools (pytest + ruff) | 80 passed, ruff clean. New: discovery probe/reply fixtures (no envelope) and bad replies (port 0 or 70000, a path without `/`, a non-bool token, `v` 2), `region_changed.limits.build_height`. |
+| Quest scripts (`Tests~ --jar 26.3.jar --entity-models …`) | 629/629 PASS (531 before), new in `Tests~/ComfortTests.cs`: |
+
+- **Keyboard** (`World/KeyboardModel.cs`): 32 keys on the letter layer and 36 on `?123`, inside their box and not overlapping; every digit and the symbols commands need are on `?123`; one-shot shift, caps lock on the second press, off on the third; a full server URL and a command with every symbol typed key by key; enter, del and clear; search collapses spaces; max length; the field shows its tail with the cursor.
+- **Info tab** (`World/BlockMenuModel.cs`): Show HUD, Reset view and the Server button below the status, nothing overlapping; the Server field opens with the keyboard and Find / Connect / Cancel (0.35 m tall panel); typing goes to the field, not the search; enter connects to the normalised address; found servers are buttons, hovering shows the URL, a click connects; a bad address is refused and the field stays open; cancel keeps the old server; leaving the tab closes the field; enter in Search picks the first result.
+- **prefs.json** (`World/AppPrefs.cs`): round trip; the tabletop.json values it saw; a broken file is reported (the app starts fresh); the shared-key rule (a new or edited tabletop.json value wins, an unchanged one doesn't); the table pose relative to the table anchor round-trips and follows a moved and turned table; yaw like `Quaternion.Euler`; debounced saving (1.5 s quiet, 10 s at most, never twice, flush); the Server field rewriting tabletop.json keeps every other key and refuses to silently replace a broken file; the hotbar and tab restore (empties skipped, a category tab waits for the block list).
+- **Addresses and discovery** (`Net/LanDiscovery.cs`): `192.168.1.50` → `ws://192.168.1.50:8765/tabletop`, typed ports kept, full URLs kept, junk refused; the reply fixture parsed with the sender's address; the limited + /24 broadcast targets; a UDP probe answered by a loopback responder (a duplicate reply listed once); the TCP fallback finds the one open port among 254 loopback hosts in 12 ms.
+- **Link** (`Net/LinkClient.cs`, against a small RFC 6455 server inside the test): a full snapshot drops the queued snapshots and updates (a delta drops nothing) and the queue is bounded; pongs measured inside the client and not queued; shutdown sends `avatar_config` then `bye`, clears the RTT and doesn't reconnect; a server that goes silent after `welcome` is noticed after `DeadSeconds` and reconnected; close 4003 stops the retries; a URL without `ws://` doesn't start; nobody listening gives an error status and no RTT.
+- **Session helpers** (`World/SessionState.cs`): the setup card after 5 s without a first connection or at once on a fatal close, never for a later drop; the offline badge and hidden figures after 1.5 s; a new server can show the card again; the card text (URL, status, settings path, the Info > Server and QUEST_SETUP Part D pointers, "not retrying" on 4003); `Loading area N %` only for big loads, then `Area loaded` once; keyed toasts update in place, custom lifetimes; hold A fires once after 0.5 s, a tap never, a press that starts on or passes over the menu never.
+- **Orientation** (`World/NavState.cs`): the 8-way compass (north = -Z), the readout (`58 16 41  facing N` for a known view), Reset view's re-centring, the badge's point on the table edge toward the head.
+
+Unity 6000.0.84f1 batch compile clean (no warnings in Assets), ShaderCheck 80 variants 0 errors (no shader changes), `TabletopBatch.BuildApk` succeeded (46 MB APK, il2cpp in 81 s, not installed). The Android manifest is unchanged: discovery needs no new permission (PROTOCOL.md §7).
+
+### Live server
+- **Startup log:** `Link listening on ws://0.0.0.0:8802/tabletop`, then one `Headset URL: ws://<lan-ip>:8802/tabletop (<interface>)` per private IPv4 (two on the test box: the Ethernet adapter and a VPN interface), then `LAN discovery on UDP 8802 as "Comfort Test"` (the MOTD).
+- **Discovery** (`Tests~ --discover 8802`): the probe to loopback and to the LAN broadcast found the server twice (127.0.0.1 and the LAN address) within 1.5 s: name, plugin 0.3.0, mc 26.3, players. With `auth.token` set and `/tabletop reload`, the replies say `token`.
+- **Dead link** (`Tests~ --live-link`, the server frozen with `kill -STOP` for 12 s): `no answer for 6 s: reconnecting` exactly 6.0 s after the freeze, the RTT back to -1, connection attempts while frozen end with `no answer within 5 s` (the kernel accepts TCP, nobody answers the upgrade), and a new `welcome` 0.5 s after `kill -CONT` (12.5 s in all).
+- **Wrong token** (`--live-token`, `auth.token: test-secret`): close 4003 with one `auth_failed` error, then no reconnect for 3 s (the server log has one `Link closed … code=4003`).
+- **Players and limits** (a Python client plus the mineflayer player, console commands through the FIFO), 9/9: shown in creative inside the region; hidden in spectator; shown again; hidden with the invisibility potion; shown after `effect clear`; hidden 18 blocks below the region's 16-block margin (y 10 for a region from y 44); shown again at y 100. `region_request` to `world_nether` → `region_changed` with `limits.build_height` [0, 256], and back to the overworld with [-64, 320].
+- `Tests~ --live` still passes (its RTT now comes from `LinkClient`).
+
+### Not verified (needs the headset)
+- Headset off and on: the giant disappears at once in the Java world, the app reconnects on its own when the headset is back, the old table shows meanwhile, no "Link lost" toast, `LINK paused (headset off)` in the Info tab; whether Quest sends `HMDUnmounted`, `OnApplicationPause(true)` or both, and when.
+- A Wi-Fi drop or a server stop while playing: the red badge at the table edge toward you, players and mobs hidden after 1.5 s and back after reconnecting.
+- First run with no server reachable: the setup card after about 5 s (size and position), hidden while the menu is open; Find servers on the real LAN (UDP broadcast from the Quest, reply through the PC firewall; the TCP fallback when UDP 8765 is blocked); typing an address on the keyboard and connecting; the toasts for a missing `pack.zip` / `entity_models.json`.
+- prefs.json across restarts: block size, table position and turn on the same MRUK table, hotbar, selection, menu tab, Show HUD; first run fitting the area to the table.
+- Hold A (tick, then buzz after 0.5 s; a tap does nothing; nothing on the menu); a late MRUK scene keeping a manual placement.
+- The N marker, the coordinates line under the small hotbar, Reset view; player labels disappearing outside the window; the `Loading area N %` toast on a width change.
+
+### Known gaps
+- Players and entities are hidden while offline rather than faded: neither the player skin shader nor the entity shader has a fade, and hiding needs no shader change.
+- The headset can't type a token yet (only the address); a server with `auth.token` needs it in `tabletop.json`.
+- The table pose is remembered only relative to an MRUK table; without one the miniature starts in front of you each session (a spatial anchor is future work).
+- Named entities' labels outside the window are the entity renderer's (not changed here).
+
+## Building like vanilla (block editing, PROTOCOL §4.20; Paper 26.3, seed 12345, 2026-10-14, no headset)
+
+Replaceable cells, vanilla placement orientation, two-block structures, placed states, mobs in the way, connections, edits across deltas, the placement ghost and readable refusals. Rules taken from the 26.3 classes with `javap` (`BlockPlaceContext`, `StandingAndWallBlockItem`, each block's `getStateForPlacement`/`canBeReplaced`, `Direction.orderedByNearest`, `RotationSegment`); the replaceable list from the `Properties#replaceable` calls in `Blocks` (hand-written into the code, nothing copied from the jar).
+
+### Tests
+
+| Suite | Result |
+|---|---|
+| Plugin (JUnit) | 84 tests, 0 failures. New `EditRulesTest` (6): readable labels, state properties, vanilla replaceability (one snow layer, sculk vein, never by the same block), water sources (falling water isn't one), two-block partners (doors, double plants, beds both ways; not stairs, trapdoors or the pitcher crop), placing from the lower half or the foot. |
+| Tools (pytest + ruff) | 71 passed, ruff clean. `error_edit_denied.json` now carries a readable message ("stone is in the way"). |
+| Quest scripts (`Tests~`, .NET 8) | 634/634 PASS with `--jar` and `--entity-models` (about 100 new in `EditTests.cs`): the look (yaw, horizontal direction, nearest-direction order as `Direction.orderedByNearest`), Java-style rotation rounding, wall forms by name checked against the registry; per family: log axis, furnaces/anvils/campfires, standing vs wall torch/redstone torch/sign/banner/skull/coral fan, a torch with nothing to hold it refused, hanging signs under a full block (4-way) and on a wall (along it), button/lever/grindstone floor/wall/ceiling, bell floor/single wall/double wall/ceiling, slab/stair/trapdoor top halves from the underside and the upper half of a side, end rods (flipped on an end rod), lightning rods, amethyst, shulker boxes, hoppers, observers, pistons, dispensers, barrels, crafter orientation, door lower half + upper, hinge from the hit point and against a wall, no room above, bed foot + head along the look, tall grass and small dripleaf, lanterns, vines, glow lichen, cocoa, ladders, persistent leaves, rails; replaceable cells (aim at short grass → its cell, next to one snow layer → replaced, two layers refused); door/bed breaks guess both halves and a refused one puts both back; picks take the registry default (wall torch → torch, a door's open top half → the door, wheat → age 0, water cauldron → cauldron), without a registry lower half/foot/age 0/unpowered/dry; **optimistic edit → sectioned delta → error: the moved guess is reverted** (a guess in a listed section is dropped, one in a copied section still expires after 3 s); a block new to the palette isn't sent twice within a second, the `block_update` answers it, a shown block can be broken at once; the preview ghost world (bed halves) and the target readout. |
+| Unity 6000.0.84f1 | Batch compile 0 errors, no warnings in `Assets/`; `ShaderCheck` 80 variants, 0 errors (no shader changed); `TabletopBatch.BuildApk` succeeded (46 MB, not installed). |
+
+### Live (own Paper 26.3 server, seed 12345, region origin (0, 20, 0) 32×64×32: at the default (0, 60, 0) the region is open ocean with the sea floor below it)
+
+- `tools/edit_check.py --url ws://127.0.0.1:8801/tabletop --fifo tools/run/edit/stdin.fifo`: **51/51 PASS**. The earlier checks (the messages now read "gold block is in the way" and "fire is not a placeable block (not in block_registry)"), then on a 5×5 stone platform built 8 blocks under the region's top (and removed again): short grass and a single snow layer replaced, two layers refused ("snow is in the way"), short grass on stone refused ("short grass can't stay there"), leaves sent with `persistent=false` stored `persistent=true`, a `waterlogged=true` slab placed in air stored dry; door both halves, breaking the top removes both, a door sent as its top half placed from the bottom, bed foot + head and breaking the head removes the foot, tall grass both halves and replacing its lower half removes the top, a door without room above refused, a door on the region's top layer refused ("its other half would be outside the area"); fence, glass pane, iron bars and cobblestone wall next to their own kind connect both ways, a fence beside a stone block connects (`east=true`), a stair against a perpendicular stair gets `shape=outer_right`; with the console: a NoAI cow in the cell refuses stone ("a cow is in the way") but takes a torch, and with a 3-block world border around the platform a cell outside it is refused ("outside the world border") while one inside works.
+- Baseline for the connections (the audit's "probably don't connect"): plugin 0.3.0 from master on the same server gave a fence next to a fence `west=true` (the neighbour's own shape update cascades back), but a fence beside stone stayed `east=false` and a stair against a perpendicular stair stayed `shape=straight`. With this build the server log says `EDIT_SHAPES on: placed blocks connect to their neighbours (vanilla Block.updateFromNeighbourShapes)` and both are right.
+- `Tests~ --live-edit ws://127.0.0.1:8801/tabletop`: 7/7 PASS (gravel broken and put back, a gold block new to the palette not guessed and confirmed in 152 ms, the denied command block reverted from the error's `pos` in 51 ms; the refusal now reads "command block can't be placed from the headset (edit.deny)").
+- Main thread per edit (105 edits, `EDIT ... (ms)`): median 0.13 ms, p90 0.38 ms, max 3.9 ms (the first place, which also sets up the reflection). A door or bed logs `cells=2`.
+
+### Not verified (needs the headset)
+The ghost's look in passthrough (alpha 0.4 of the block's own textures; does it read as "here", is it visible on bright terrain), the red refusal tint and outline, the target readout's size and position under the selected block, the miss stub, and how the orientation feels with the controller ray as the look (e.g. stairs and furnaces when pointing steeply down at the table: the horizontal facing comes from the ray's small horizontal part).
+
+## Looking like vanilla 26.3 (0.3.1 rendering; Paper 26.3, seed 12345, 2026-10-14, no headset)
+
+Sources: the 26.3 client jar's assets and the renderers' bytecode (`javap -p -c` on the unobfuscated jar), never copied into the repo. Golden numbers for vanilla's randomness were computed by calling the real 26.3 classes (`Mth.getSeed`, `RandomSource.createThreadLocalInstance`) from a scratch harness.
+
+### Tests
+
+- `quest-app/Tests~ dotnet run -- --jar <26.3 jar> --entity-models <entity_models.json>`: **570 PASS** (531 before). New, mostly in `Tests~/RenderTests.cs`:
+  - Randomness at six positions (including ±30,000,000) against the real classes: `Mth.getSeed`, the Random LCG, `nextInt(4/5/16)`, the multipart part seed and picks, XYZ offsets. Lily pads (4 turned variants), fire (2 × 4 combinations on the ground, 4 on two walls), chorus plants (5, weights 2+1+1+1); a poppy at (1000, −12, −999) meshes 0.05 / 0.117 blocks off its cell.
+  - Random UV tables: stone (mirrored, all sides), dirt and grass top/bottom (turned), netherrack (16), deepslate `axis=x`, sand; every table entry reproduces that variant's baked face UVs; a 4×4 stone floor still merges into 6 quads.
+  - Tints: exactly vanilla's 28 tinted blocks over all 35,723 states (probe); cherry/pale oak leaves, bamboo, bamboo sapling, lava/powder snow cauldrons and the stonecutter untinted; pink petals tint only their stems.
+  - Grass sides: the overlay is a second quad on the same corners after the base (10 quads for one block, 2 blocks still merge); snowy grass has none. Only `grass_block` has an overlay among all 26.3 states.
+  - Lighting in a closed dark stone box: magma's top full bright (255), the stone walls dark (20), the open eyeblossom's emissive faces glow, its plain faces dark; doors and rails flat, active sculk sensors full bright; the heavy core resolves its `"all"` slot.
+  - Pistons: push (head + 2 blocks), retract and sticky pull, with the change sets a Paper 26.3 server sends (recorded live, below); the push meshes the head and both blocks in their moving cells.
+  - Mips: 16 px → 5 levels, linear-light means (black + white → 188), solidified cut-outs, a poppy keeps 0.50 coverage at 2×2 (a box filter: 0), oak leaves stay closer to their level-0 coverage.
+  - Entity roots (`EntityTests.cs`): arrow, trident, end crystal and leash-knot figure transforms equal the vanilla `PoseStack` through the Z mirror for 4 yaws × 3 pitches (worst error 2.6e-7 blocks); an arrow flying east points east, pitched up points up; the crystal glass bobs 4.8-11.2 px below its pivot. Armour stand fixture: arms, base plate, pose, parts (default pose, sticks follow the body, the plate turns against the yaw, no hat).
+- `server-plugin ./gradlew build`: 79 tests, 0 failures (new `EntityDeltaTest.armorStandFixture`). `tools`: pytest 73 passed (new `test_entities_armor_stands`), ruff clean.
+- Unity 6000.0.84f1 headless: compile clean, `ShaderCheck` 80 variants / 0 errors (Vulkan + GLES3, stereo keywords), `BatchMeshCheck.RunRenderer` 8/8 PASS.
+
+### Live server (own Paper 26.3, ports 25603/8803, a scratch recorder)
+
+- Armour stands summoned with `{ShowArms:1b,NoBasePlate:1b,Pose:{Head:[10f,20f,0f],RightArm:[-110f,25f,10f]}}`, a plain one and `{Invisible:1b,Small:1b}`: the `entities` entries carried `arms`, `stand_pose` (the two set parts, the rest at vanilla's defaults), `base_plate` only on the other two, `small` + `invisible` on the third.
+- Pistons: every move is one `block_update` when it starts and one 2 ticks (0.2 s) later. Extending (piston, stone, 2 × dirt in front): `piston[extended=true]` at the base, `moving_piston[type=normal]` on the head cell and the three destination cells, no separate air changes. Retracting: the base cell becomes `moving_piston`, the head cell air. Sticky pull: base `moving_piston[type=sticky]`, the head cell `moving_piston[type=normal]` (the pulled stone), the stone's cell air. `PistonGhosts` handles exactly these.
+
+### Faces (`Tests~ --measure-batches`, pack, smooth light, the same snapshots before and after)
+
+| region | master 9f0e1ab | 0.3.1, `leaves_inner: false` | 0.3.1 (default) |
+|---|---|---|---|
+| 160×128×160 at 0,0 (ocean, dark forest) | 190,494 | 191,239 | 192,096 (+0.8%) |
+| 128×96×128 forest (−224, 288) | 163,958 | 170,846 | 177,864 (+8.5%) |
+| 128×96×128 dark forest (96, −32) | 104,008 | 106,416 | 106,936 (+2.8%) |
+
+Without the leaves change the difference is the grass side overlays (one extra quad per merged grass side; the forest: +6,920 with only that commit); faces between identical leaves add 0.3-4.1%. `leaves_inner` stays on by default (vanilla's look).
+
+### Texture memory
+
+A 16 px layer is 1,024 bytes, 1,364 with mips. Real regions need 55-98 layers (73-130 KB with mips, +18-32 KB); every block texture and animation frame of the 26.3 pack would be 1,945 KB → 2,590 KB. Animated textures copy every mip level per frame change (5 small copies instead of 1).
+
+### Not verified (needs the headset)
+
+Everything above is engine-free or editor-only. The look of the per-block texture rotation and the mips (and their GPU cost: the block shaders now sample with explicit gradients), grass sides in different biomes, offsets, emissive blocks, leaves, pistons and the entity roots must be checked on the Quest (checklist in the 0.3.1 merge notes).
+
+### Known gaps (deferred)
+
+- Greedy cubes pick their rotation from a hash of the world block, not the Java client's exact choice (that needs 64-bit integer maths per pixel); model blocks (lily pads, fire...) match exactly.
+- Blocks with a light level (glowstone, torches, lanterns...) still get smooth light and AO; vanilla lights every light-emitting state flat. The server sends no per-state light level, and only magma and sculk sensors (emissive rendering) are handled.
+- Pistons: blocks jump to their new cell instead of sliding for 2 ticks.
+- 26.x `shade_direction_override` (flowerbed stems, emissive crosses) is not applied.

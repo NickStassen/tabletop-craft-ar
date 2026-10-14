@@ -135,6 +135,7 @@ static class Program
         Check(err.MaxX == 128 && err.MaxBlocks == 2097152, "region_too_large limits parse");
         Check(Protocol.RegionQuery("Bob").S("player") == "Bob" && !Protocol.RegionQuery().ContainsKey("player"), "region_query builder");
 
+        if (args.Contains("--no-leaves-inner")) GreedyMesher.LeavesInner = false;   // measure the leaves option (tabletop.json "leaves_inner")
         fails += NavTests.Run(Fixture);   // navigation, streaming, clip caps (Tests~/NavTests.cs)
         AreaTests.Run(Check, Fixture);    // [area] width presets, resize re-keying, mesh batching (Tests~/AreaTests.cs)
         if (args.Contains("--be-probe")) { BlockEntityTests.PrintProbes(); return 0; }   // [blocks] the transforms, to compare with the client's own
@@ -166,11 +167,13 @@ static class Program
         EditTests.Run(Check, Fixture);  // block editing: DDA targeting, Z mirror, optimistic edits (EditTests.cs)
         MenuTests.Run(Check, Fixture, JarPath(args), args);   // [menu] block registry, menu model, hotbar, HUD toasts, icons (MenuTests.cs)
         EyeTests.Run(Check);            // eye in water/lava/powder snow/blocks, water inside faces (EyeTests.cs)
+        ComfortTests.Run(Check, Fixture, args);   // [comfort] keyboard, Info tab, prefs.json, discovery, link health (ComfortTests.cs)
 
         // Block models from a real client jar / resource pack (never committed; MC_CLIENT_JAR or --jar PATH).
         string jar = JarPath(args);
         if (jar != null) ModelTests(jar);
         else Console.WriteLine("SKIP block model tests: set MC_CLIENT_JAR or pass --jar PATH (a client jar or resource pack zip)");
+        RenderTests.Run(Check, jar);   // 0.3.1 vanilla look: randomness, offsets, random UV tables (RenderTests.cs)
 
         int sceneIdx = Array.IndexOf(args, "--scene");
         if (sceneIdx >= 0 && jar != null) SceneDump.Run(jar, args[sceneIdx + 1], args);
@@ -255,7 +258,7 @@ static class Program
         int greedyVerts = m.Verts.Count;
         bool cherryTop = false;
         for (int i = 0; i < greedyVerts; i += 4)
-            if (m.Verts[i].y == 1 && m.Verts[i + 2].y == 1 && (int)m.Uvs[i].z == assets.LayerOf("block/grass_block_top") && Near(m.Colors[i], 0xB6, 0xDB, 0x61, 0)) cherryTop = true;
+            if (m.Verts[i].y == 1 && m.Verts[i + 2].y == 1 && (int)m.Uvs[i].z % RandomUv.LayerStride == assets.LayerOf("block/grass_block_top") && Near(m.Colors[i], 0xB6, 0xDB, 0x61, 0)) cherryTop = true;
         Check(cherryTop, "pack: grass_block top (model cube face, tintindex) takes the biome grass colour");
         GreedyMesher.BuildSpecials(w, new Vector3Int(0, 0, 0), faces, m);
         int grassLayer = assets.LayerOf("block/short_grass");
@@ -590,6 +593,7 @@ static class Program
         Check(registry != null && registry.Count > 500 && registryBeforeSnapshot && registry.IsPlaceable("minecraft:diamond_block") && !registry.IsPlaceable("minecraft:fire"),
               $"live: block_registry before the first snapshot ({registry?.Count} blocks, {registry?.Variants.Count} variants, " +
               $"{string.Join(" ", registry?.CategoryIds.Select((c, i) => c + "=" + registry.ByCategory[i].Count) ?? new string[0])})");
+        if (rtt < 0) rtt = link.RttMs;   // [comfort] LinkClient pings by itself and keeps pongs out of Inbound
         Check(rtt >= 0, $"live: ping/pong rtt {rtt} ms");
         Check(avatarNote != null, $"live: avatar_state {avatarNote}");
         Console.WriteLine($"live: poses sent {posesSent}, player msgs {playerMsgs}, block updates {updates}");
@@ -817,6 +821,50 @@ static class Program
             if (Enumerable.Range(i, 4).All(k => m.Verts[k].x == 1))
                 oriented = Enumerable.Range(i, 4).All(k => Near(m.Uvs[k].y - m.Uvs[i].y, m.Verts[k].y - m.Verts[i].y) && Near(m.Uvs[k].x - m.Uvs[i].x, -(m.Verts[k].z - m.Verts[i].z)));
         Check(oriented, "mesh: greedy east face of grass is upright (fringe on top)");
+
+        // Tints only where vanilla's BlockColors registers one: a tintindex on any other block is ignored (drawn white).
+        bool Untinted(string s) { var mm = B(s); return mm != null && mm.Quads.Length > 0 && mm.Quads.All(q => q.Tint == TintKind.None && !q.Tinted && (q.T0.z < 0 || (q.Color.r == 255 && q.Color.g == 255 && q.Color.b == 255))); }
+        var notTinted = new[] { "minecraft:cherry_leaves[distance=1,persistent=false,waterlogged=false]", "minecraft:pale_oak_leaves[distance=1,persistent=false,waterlogged=false]",
+                                "minecraft:bamboo[age=0,leaves=large,stage=0]", "minecraft:bamboo_sapling", "minecraft:lava_cauldron", "minecraft:powder_snow_cauldron[level=3]",
+                                "minecraft:stonecutter[facing=north]", "minecraft:azalea_leaves[distance=1,persistent=false,waterlogged=false]" };
+        var wrong = notTinted.Where(s => !Untinted(s)).ToList();
+        Check(wrong.Count == 0, "tints: cherry/pale oak leaves, bamboo, bamboo sapling, lava/powder snow cauldrons, stonecutter untinted" + (wrong.Count > 0 ? ": TINTED " + string.Join(", ", wrong) : ""));
+        var oakLeaves = B("minecraft:oak_leaves[distance=1,persistent=false,waterlogged=false]");
+        var petals = B("minecraft:pink_petals[facing=north,flower_amount=4]");
+        Check(oakLeaves.Quads.All(q => q.Tint == TintKind.Foliage) && B("minecraft:birch_leaves[distance=1,persistent=false,waterlogged=false]").Quads.All(q => q.Tint == TintKind.None && q.Color.g == 0xA7) &&
+              B("minecraft:water_cauldron[level=3]").Quads.Any(q => q.Tint == TintKind.Water) &&
+              petals.Quads.Any(q => q.Tint == TintKind.Grass) && petals.Quads.Any(q => q.Tint == TintKind.None && (int)q.T0.z == assets.LayerOf("block/pink_petals")),
+              "tints: oak leaves foliage, birch fixed, water cauldron water, pink petals tint only their stems (index 1)");
+
+        // Grass block sides: the tinted grass_block_side_overlay is a second whole face per side (vanilla draws it over
+        // the plain side). The greedy path keeps it as FaceKey.Overlay and emits it on exactly the base quad's corners,
+        // right after it in the same submesh; snowy grass has no overlay.
+        int overlayLayer = assets.LayerOf("block/grass_block_side_overlay");
+        Check(Enumerable.Range(0, 6).All(d => (d == 2 || d == 3) ? grass.CubeFaces[d].Overlay == 0
+                  : grass.CubeFaces[d].Overlay == overlayLayer + 1 && grass.CubeFaces[d].OverlayTint == TintKind.Grass && grass.CubeFaces[d].Layer == assets.LayerOf("block/grass_block_side")),
+              "model: grass_block sides carry the tinted side overlay, top and bottom don't");
+        var snowy = B("minecraft:grass_block[snowy=true]");
+        Check(snowy.FullCube && snowy.CubeFaces.All(f => f.Overlay == 0) && snowy.CubeFaces[4].Layer == assets.LayerOf("block/grass_block_snow"), "model: snowy grass keeps its snowy side, no overlay");
+        m.Clear();
+        GreedyMesher.Build(w4, new Vector3Int(0, 0, 0), pf, m);
+        int quads = m.Verts.Count / 4, overlays = 0; bool coplanar = true, after = true;
+        for (int q = 0; q < quads; q++)
+            if ((int)m.Uvs[q * 4].z == overlayLayer)
+            {
+                overlays++;
+                coplanar &= Enumerable.Range(0, 4).All(i => { var a = m.Verts[q * 4 + i]; var b = m.Verts[(q - 1) * 4 + i]; return a.x == b.x && a.y == b.y && a.z == b.z; });
+                after &= (int)m.Uvs[(q - 1) * 4].z == assets.LayerOf("block/grass_block_side");
+            }
+        // The overlay's triangles follow the base's in the opaque list (index order = draw order).
+        int baseTri = m.Opaque.IndexOf(m.Verts.Count - 8), overTri = m.Opaque.IndexOf(m.Verts.Count - 4);
+        Check(quads == 10 && overlays == 4 && coplanar && after && m.Transparent.Count == 0 && overTri > baseTri,
+              $"mesh: one grass block = 6 faces + 4 side overlays on the same corners, drawn after the sides (got {quads} quads, {overlays} overlays)");
+        // Two grass blocks side by side still merge their sides, overlays included.
+        var w5 = Box(2, 1, 1, (x, y, z) => 1, "minecraft:air", "minecraft:grass_block[snowy=false]");
+        pf.Prewarm(w5);
+        m.Clear();
+        GreedyMesher.Build(w5, new Vector3Int(0, 0, 0), pf, m);
+        Check(m.Verts.Count / 4 == 10, $"mesh: two grass blocks merge into 6 faces + 4 overlays (got {m.Verts.Count / 4})");
         BlockRules.ResetShapes();
     }
 }

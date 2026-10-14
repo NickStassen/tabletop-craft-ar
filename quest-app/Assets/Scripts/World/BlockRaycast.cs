@@ -8,7 +8,8 @@
 // space maps to block space by negating z, and back the same way (FromBlocksLocal is its own inverse).
 //
 // Air (incl. cave air, barriers, light) and fluids are skipped, so you aim through water at the seabed and the cell in
-// front of the hit (Adjacent) is where a placed block goes. Non-cube blocks (models, plants) are targeted by their cell.
+// front of the hit (Adjacent) is where a placed block goes, unless the hit block is replaceable (short grass, a snow
+// layer: BlockEditor.Plan places into its cell then). Non-cube blocks (models, plants) are targeted by their cell.
 // With navigation (NavState) only a window of the region is shown: Cast takes that box (region-local blocks, may be
 // fractional) and never targets past it, so hidden margin blocks can't be hit or built on.
 using System;
@@ -49,9 +50,14 @@ namespace TabletopCraft.World
         /// <summary>What the ray stops at: everything except air-like blocks and fluids.</summary>
         public static bool Targetable(BlockShape s) => s != BlockShape.Air && s != BlockShape.Fluid;
 
-        /// <summary>A placed block may go into air or a fluid (vanilla replaces water and lava when you place into it).</summary>
-        public static bool CanPlaceInto(WorldModel w, Vector3Int c) =>
-            w.InBounds(c.x, c.y, c.z) && !Targetable(w.ShapeOf(w.Grid[w.Index(c.x, c.y, c.z)]));
+        /// <summary>A placed block may go into air, a fluid or a replaceable block (short grass, a snow layer, vines...:
+        /// BlockPlacement.Replaceable, vanilla's canBeReplaced); <paramref name="placing"/> is the block being placed.</summary>
+        public static bool CanPlaceInto(WorldModel w, Vector3Int c, string placing = null)
+        {
+            if (!w.InBounds(c.x, c.y, c.z)) return false;
+            ushort id = w.Grid[w.Index(c.x, c.y, c.z)];
+            return !Targetable(w.ShapeOf(id)) || BlockPlacement.Replaceable(w.State(id), placing);
+        }
 
         /// <summary>
         /// First targetable cell along the ray from <paramref name="origin"/> in direction <paramref name="dir"/> (block
