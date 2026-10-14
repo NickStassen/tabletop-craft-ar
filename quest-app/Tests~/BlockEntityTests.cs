@@ -54,7 +54,7 @@ static class BlockEntityTests
         Scan(check);
         if (EntityModels.Loaded) Models(check);
         else Console.WriteLine("SKIP block entity models: pass --entity-models (generated from your own client jar)");
-        if (jar != null) Font(check, jar);
+        if (jar != null) { Font(check, jar); Baker(check, jar); }
         else Console.WriteLine("SKIP sign font: pass --jar");
     }
 
@@ -243,7 +243,7 @@ static class BlockEntityTests
                                       "decorated_pot_base", "decorated_pot_sides", "conduit#shell", "conduit#cage", "conduit#eye", "conduit#wind", "copper_golem",
                                       "copper_golem_running", "copper_golem_sitting", "copper_golem_star", "book" })
             if (EntityModels.Get(layer) == null) missing.Add(layer);
-        if (missing.Count == 27) { Console.WriteLine("SKIP block entity models: this entity_models.json predates 0.4.0 (regenerate it with DumpEntityModels)"); return; }
+        if (missing.Contains("chest") && missing.Contains("book")) { Console.WriteLine("SKIP block entity models: this entity_models.json predates 0.4.0 (regenerate it with DumpEntityModels)"); return; }
         check(missing.Count == 0, "entity_models.json has the block-entity layers" + (missing.Count > 0 ? " (missing " + string.Join(" ", missing) + ")" : ""));
         if (missing.Count > 0) return;
         var b = BlockBounds("minecraft:chest[facing=north,type=single,waterlogged=false]");
@@ -279,6 +279,78 @@ static class BlockEntityTests
         int verts = Bake(PartsOf("minecraft:chest[facing=north,type=single,waterlogged=false]")[0]).VertexCount;
         check(verts == 3 * 24, $"chest mesh: three boxes, 72 vertices ({verts})");
     }
+
+    /// <summary>With BlockEntityRenderer the terrain's baker leaves code-drawn block entities out; icons keep their boxes.</summary>
+    public static void Baker(Action<bool, string> check, string jar)
+    {
+        using var assets = new ZipAssets(jar);
+        var with = new BlockModels(assets);
+        var without = new BlockModels(assets) { EntityBoxes = false };
+        int Q(BlockModels m, string s) => m.Prepare(s, new FaceKey[6])?.Quads.Length ?? -1;
+        string chest = "minecraft:chest[facing=north,type=single,waterlogged=false]", bell = "minecraft:bell[attachment=floor,facing=north,powered=false]",
+               sign = "minecraft:oak_sign[rotation=0,waterlogged=false]", portal = "minecraft:end_portal", shulker = "minecraft:shulker_box[facing=up]";
+        check(Q(with, chest) > 0 && Q(without, chest) == 0 && Q(without, portal) == 0 && Q(without, shulker) == 0,
+              $"terrain baker: no placeholder boxes for code-drawn block entities (chest {Q(with, chest)} -> {Q(without, chest)} quads)");
+        check(Q(without, bell) > 0 && Q(without, bell) < Q(with, bell) && Q(without, sign) == Q(with, sign) && Q(without, sign) > 0,
+              $"terrain baker: the bell keeps its frame (body drawn by code), signs keep their 26.x models ({Q(with, bell)} -> {Q(without, bell)})");
+        BlockRules.ResetShapes();
+    }
+
+    /// <summary>--measure-blocks DIR: terrain faces with and without the placeholder boxes, and the block entities
+    /// BlockEntityRenderer would draw (instances, instanced groups and draw calls, triangles) per saved snapshot.</summary>
+    public static void Measure(string dir, string jar)
+    {
+        using var assets = new ZipAssets(jar);
+        foreach (var f in Directory.GetFiles(dir, "*.json").OrderBy(x => x))
+        {
+            var w = new WorldModel();
+            w.ApplySnapshot(ChunkSnapshot.From(Json.Parse(File.ReadAllText(f)) as Dictionary<string, object>));
+            long[] faces = new long[2];
+            for (int pass = 0; pass < 2; pass++)
+            {
+                BlockRules.ResetShapes();
+                var pf = new PackFaces(assets, pass == 0);
+                pf.Prewarm(w);
+                var mesh = new MeshData();
+                var n = w.SectionCount;
+                for (int x = 0; x < n.x; x++) for (int y = 0; y < n.y; y++) for (int z = 0; z < n.z; z++)
+                {
+                    mesh.Clear();
+                    GreedyMesher.Build(w, new Vector3Int(x, y, z), pf, mesh);
+                    GreedyMesher.BuildSpecials(w, new Vector3Int(x, y, z), pf, mesh);
+                    faces[pass] += mesh.Verts.Count / 4;
+                }
+            }
+            BlockRules.ResetShapes();
+            var mask = BlockEntityScan.Mask(w.Palette);
+            var cells = new List<Vector3Int>();
+            BlockEntityScan.Cells(w.Grid, w.Dims, mask, null, cells);
+            var byKind = new Dictionary<BlockEntityKind, int>();
+            var groups = new Dictionary<string, int>();
+            var tris = new Dictionary<string, int>();
+            long boxFaces = 0;
+            foreach (var c in cells)
+            {
+                string st = w.State(w.Get(c.x, c.y, c.z));
+                var k = BlockEntityCatalog.KindOfState(st);
+                byKind.TryGetValue(k, out int nk); byKind[k] = nk + 1;
+                foreach (var p in PartsOf(st))
+                {
+                    string key = p.MeshKey + "@" + p.Texture;
+                    groups.TryGetValue(key, out int ng); groups[key] = ng + 1;
+                    if (!tris.ContainsKey(p.MeshKey)) { var fm = EntityModels.Loaded ? Bake(p) : null; tris[p.MeshKey] = fm != null ? fm.Tris.Count / 3 : 12; }
+                }
+            }
+            long beTris = 0; int calls = 0;
+            foreach (var g in groups) { calls += (g.Value + BlockEntityRenderer_Chunk - 1) / BlockEntityRenderer_Chunk; beTris += (long)g.Value * tris[g.Key.Substring(0, g.Key.IndexOf('@'))]; }
+            boxFaces = faces[0] - faces[1];
+            Console.WriteLine($"MEASURE_BLOCKS {Path.GetFileName(f)} dims={w.Dims.x}x{w.Dims.y}x{w.Dims.z} terrain_faces_with_boxes={faces[0]} without={faces[1]} (placeholder faces {boxFaces}) " +
+                              $"block_entities={cells.Count} [{string.Join(" ", byKind.OrderByDescending(kv => kv.Value).Select(kv => kv.Key + "=" + kv.Value))}] " +
+                              $"instanced_groups={groups.Count} draw_calls={calls} block_entity_tris={beTris} models={(EntityModels.Loaded ? "entity_models.json" : "fallback boxes")}");
+        }
+    }
+
+    const int BlockEntityRenderer_Chunk = 256;   // BlockEntityRenderer.Chunk (instances per draw call)
 
     static (Color32[] px, int w, int h)? Png(ZipArchive z, string path)
     {

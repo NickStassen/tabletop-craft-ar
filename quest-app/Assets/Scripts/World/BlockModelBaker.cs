@@ -598,13 +598,22 @@ namespace TabletopCraft.World
             }
             return m;
         }
+
+        /// <summary>[blocks] Placeholder boxes for block entities (chests, banners, heads...). The terrain sets this to
+        /// false when BlockEntityRenderer draws them; the block menu's icon baker keeps them.</summary>
+        public bool EntityBoxes = true;
     }
 
     /// <summary>Block entities are drawn by code in vanilla; their block models only name a particle texture.
-    /// Simple boxes keep them from being invisible. Bells get a body under their (modelled) frame.</summary>
+    /// Simple boxes keep them from being invisible. Bells get a body under their (modelled) frame.
+    /// [blocks] On the table BlockEntityRenderer draws them from their entity model layers, so the terrain's baker
+    /// leaves the boxes out (BlockModelBaker.EntityBoxes = false); the menu icons still use them.</summary>
     static class BlockEntityBoxes
     {
         static Vector3 V(float x, float y, float z) => new Vector3(x, y, z);
+
+        /// <summary>[blocks] False when BlockEntityRenderer draws this block (BlockEntityCatalog.CodeDrawn).</summary>
+        public static bool Wanted(BlockModelBaker b, string path) => b.EntityBoxes || !BlockEntityCatalog.CodeDrawn(path);
 
         static double Facing(Dictionary<string, string> p)
         {
@@ -627,6 +636,7 @@ namespace TabletopCraft.World
 
         public static void Add(BlockModelBaker b, string path, Dictionary<string, string> p, object model, string state, List<BakedQuad> q)
         {
+            if (!Wanted(b, path)) return;   // [blocks] drawn by BlockEntityRenderer
             if (path == "bell")
             {
                 if (b.ParticleOf(model, state, out var bell)) { b.Box(V(4, 4, 4), V(12, 6, 12), bell, 0, q); b.Box(V(5, 6, 5), V(11, 13, 11), bell, 0, q); }

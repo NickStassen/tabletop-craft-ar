@@ -137,7 +137,15 @@ static class Program
 
         fails += NavTests.Run(Fixture);   // navigation, streaming, clip caps (Tests~/NavTests.cs)
         AreaTests.Run(Check, Fixture);    // [area] width presets, resize re-keying, mesh batching (Tests~/AreaTests.cs)
-        if (args.Contains("--be-probe")) { BlockEntityTests.PrintProbes(); return 0; }   // [blocks] scratch: compare with the vanilla transforms
+        if (args.Contains("--be-probe")) { BlockEntityTests.PrintProbes(); return 0; }   // [blocks] the transforms, to compare with the client's own
+        int beMeasIdx = Array.IndexOf(args, "--measure-blocks");
+        if (beMeasIdx >= 0 && JarPath(args) != null)
+        {
+            int mi = Array.IndexOf(args, "--entity-models");
+            if (mi >= 0) EntityModels.LoadFile(args[mi + 1]);
+            BlockEntityTests.Measure(args[beMeasIdx + 1], JarPath(args));   // [blocks] faces and draw calls before/after
+            return 0;
+        }
         int batchMeasIdx = Array.IndexOf(args, "--measure-batches");
         if (batchMeasIdx >= 0) { AreaTests.MeasureBatches(args[batchMeasIdx + 1], JarPath(args)); return fails == 0 ? 0 : 1; }
         int liveResizeIdx = Array.IndexOf(args, "--live-resize");

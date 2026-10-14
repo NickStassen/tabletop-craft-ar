@@ -21,6 +21,8 @@ namespace TabletopCraft.World
         BlockShape[] _shapes = new BlockShape[0];   // per palette index; swapped whole, read by workers
         volatile int _shapesVersion = -1;           // BlockRules.Version the cache was built for
         public readonly HashSet<Vector3Int> DirtySections = new HashSet<Vector3Int>();
+        /// <summary>[blocks] A cell's block or light changed (block_update, local edits): region-local x, y, z. Main thread.</summary>
+        public System.Action<int, int, int> CellChanged;
         public bool Loaded => SnapshotId >= 0;
         public Vector3Int SectionCount => new Vector3Int((Dims.x + Section - 1) / Section, (Dims.y + Section - 1) / Section, (Dims.z + Section - 1) / Section);
 
@@ -74,7 +76,7 @@ namespace TabletopCraft.World
                 int x = (int)(double)a[0], y = (int)(double)a[1], z = (int)(double)a[2], p = (int)(double)a[3];
                 if (!InBounds(x, y, z) || p >= Palette.Count) continue;
                 Grid[Index(x, y, z)] = (ushort)p;
-                MarkDirty(x, y, z);
+                MarkDirty(x, y, z); CellChanged?.Invoke(x, y, z);
             }
             // Optional light changes (PROTOCOL.md 4.4.1): [x, y, z, sky << 4 | block], also sent without block changes.
             var light = Light;
@@ -85,7 +87,7 @@ namespace TabletopCraft.World
                     int x = (int)(double)a[0], y = (int)(double)a[1], z = (int)(double)a[2], v = (int)(double)a[3];
                     if (!InBounds(x, y, z) || (uint)Index(x, y, z) >= (uint)light.Length) continue;
                     light[Index(x, y, z)] = (byte)v;
-                    MarkDirty(x, y, z);
+                    MarkDirty(x, y, z); CellChanged?.Invoke(x, y, z);
                 }
             return true;
         }
@@ -95,7 +97,7 @@ namespace TabletopCraft.World
         {
             if (!InBounds(x, y, z) || id >= Palette.Count) return;
             Grid[Index(x, y, z)] = id;
-            MarkDirty(x, y, z);
+            MarkDirty(x, y, z); CellChanged?.Invoke(x, y, z);
         }
 
         void MarkDirty(int x, int y, int z)
