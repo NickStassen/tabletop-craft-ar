@@ -97,6 +97,7 @@ public final class TabletopPlugin extends JavaPlugin {
         avatar.maxHeadBlocks = c.getDouble("avatar.max-head-blocks", 64);
         avatar.handBlockSetting = c.getString("avatar.hand-block", "auto");
         avatar.smoothing = c.getDouble("avatar.smoothing", 0.5);
+        reader.snapshotBudgetMs = Math.max(0, c.getDouble("stream.snapshot-budget-ms", 1.5));   // [area] spread big reads over ticks
         lightOn = c.getBoolean("stream.light", true);
         biomesOn = c.getBoolean("stream.biomes", true);
         entities.configure(c.getBoolean("entities.enabled", true), c.getInt("entities.max", 256), c.getInt("entities.margin", 2));
@@ -175,6 +176,7 @@ public final class TabletopPlugin extends JavaPlugin {
         if (tickCount % Math.max(1, getConfig().getInt("stream.players-every-ticks", 2)) == 0) { sendPlayers(); entities.tick(ready()); }
         actions.flush(ready());   // swings, digging, breaks, damage of this tick (PROTOCOL.md 4.22)
         if (tickCount % 20 == 0) timeouts();
+        if (tickCount % 600 == 0) { String rs = reader.takeStats(); if (rs != null) getLogger().info("READS " + rs); }   // [area] main-thread cost of reads, per 30 s
         if (tickCount % 10 == 0) updateTickets();   // follow the giant
         // A headset gliding across the world changes the region every second or so: save the config at most every 5 s.
         if (configSaveAt >= 0 && System.currentTimeMillis() >= configSaveAt) { configSaveAt = -1; saveConfig(); }
@@ -578,8 +580,8 @@ public final class TabletopPlugin extends JavaPlugin {
                 send(s, tooLarge(msg, refSeq));
                 return;
             }
-            getLogger().info(String.format("REGION_SET by=%s %s origin=%d,%d,%d dims=%dx%dx%d est_bytes=%d total_ms=%.1f chunk_load_ms=%.1f snapshot_main_ms=%.2f walk_async_ms=%.1f",
-                s.id, wn, r.ox(), r.oy(), r.oz(), r.sx(), r.sy(), r.sz(), est, (System.nanoTime() - t0) / 1e6, reader.lastLoadMs, reader.lastSnapMs, reader.lastWalkMs));
+            getLogger().info(String.format("REGION_SET by=%s %s origin=%d,%d,%d dims=%dx%dx%d est_bytes=%d total_ms=%.1f chunk_load_ms=%.1f snapshot_main_ms=%.2f snapshot_ticks=%d walk_async_ms=%.1f",
+                s.id, wn, r.ox(), r.oy(), r.oz(), r.sx(), r.sy(), r.sz(), est, (System.nanoTime() - t0) / 1e6, reader.lastLoadMs, reader.lastSnapMs, reader.lastSnapTicks, reader.lastWalkMs));
             getConfig().set("region.world", wn);
             getConfig().set("region.origin.x", r.ox()); getConfig().set("region.origin.y", r.oy()); getConfig().set("region.origin.z", r.oz());
             getConfig().set("region.dims.x", r.sx()); getConfig().set("region.dims.y", r.sy()); getConfig().set("region.dims.z", r.sz());

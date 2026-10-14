@@ -30,8 +30,11 @@ public final class RegionReader {
     /** Biome key -> [temperature, downfall]; World#getTemperature/getHumidity are only called on the main thread. */
     private final Map<String, double[]> climate = new ConcurrentHashMap<>();
 
-    /** Timings of the last completed read, for logs/tests. */
+    /** Timings of the last completed read, for logs/tests. lastSnapMs is main-thread time over lastSnapTicks ticks. */
     public volatile double lastLoadMs, lastSnapMs, lastWalkMs;
+    public volatile int lastSnapTicks = 1;
+    /** [area] Main-thread time per tick for taking ChunkSnapshots (config stream.snapshot-budget-ms; 0 = no limit). */
+    public volatile double snapshotBudgetMs = 1.5;
 
     public RegionReader(Plugin plugin) { this.plugin = plugin; }
 
@@ -51,32 +54,84 @@ public final class RegionReader {
         boolean light = (extras & LIGHT) != 0, biomes = (extras & BIOMES) != 0;
         if (w == null) throw new IllegalStateException("world not loaded: " + r.world());
         long t0 = System.nanoTime();
-        List<CompletableFuture<Chunk>> fs = new ArrayList<>();
+        List<long[]> coords = new ArrayList<>();
         for (int cx = r.ox() >> 4; cx <= (r.ox() + r.sx() - 1) >> 4; cx++)
-            for (int cz = r.oz() >> 4; cz <= (r.oz() + r.sz() - 1) >> 4; cz++)
-                fs.add(w.getChunkAtAsync(cx, cz));
-        CompletableFuture.allOf(fs.toArray(new CompletableFuture[0])).whenComplete((v, err) -> Bukkit.getScheduler().runTask(plugin, () -> {
-            if (err != null) { plugin.getLogger().warning("chunk load failed: " + err); return; }
+            for (int cz = r.oz() >> 4; cz <= (r.oz() + r.sz() - 1) >> 4; cz++) coords.add(new long[] { cx, cz });
+        Map<Long, ChunkSnapshot> snaps = new HashMap<>();
+        load(w, coords, 0, () -> {
             long t1 = System.nanoTime();
-            Map<Long, ChunkSnapshot> snaps = new HashMap<>();
-            for (CompletableFuture<Chunk> f : fs) {
-                Chunk c = f.join();
-                snaps.put(key(c.getX(), c.getZ()), c.getChunkSnapshot(false, biomes, false, light));
-            }
-            long t2 = System.nanoTime();
-            int minY = w.getMinHeight(), maxY = w.getMaxHeight();
-            Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
-                long t3 = System.nanoTime();
-                RegionData d = walk(r, snaps, minY, maxY, light, biomes);
-                long t4 = System.nanoTime();
-                lastLoadMs = (t1 - t0) / 1e6; lastSnapMs = (t2 - t1) / 1e6; lastWalkMs = (t4 - t3) / 1e6;
-                T extra = offThread.apply(d);
-                if (plugin.isEnabled()) Bukkit.getScheduler().runTask(plugin, () -> {
-                    if (d.biomes() != null) fillClimate(w, d.biomes());
-                    done.accept(d, extra);
+            capture(w, coords, 0, snaps, biomes, light, 0, 1, 0, (mainNs, ticks) -> {
+                int minY = w.getMinHeight(), maxY = w.getMaxHeight();
+                Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+                    long t3 = System.nanoTime();
+                    RegionData d = walk(r, snaps, minY, maxY, light, biomes);
+                    long t4 = System.nanoTime();
+                    lastLoadMs = (t1 - t0) / 1e6; lastSnapMs = mainNs / 1e6; lastSnapTicks = ticks; lastWalkMs = (t4 - t3) / 1e6;
+                    T extra = offThread.apply(d);
+                    if (plugin.isEnabled()) Bukkit.getScheduler().runTask(plugin, () -> {
+                        if (d.biomes() != null) fillClimate(w, d.biomes());
+                        done.accept(d, extra);
+                    });
                 });
             });
+        });
+    }
+
+    /** Loads coords[from..] with getChunkAtAsync, then runs next on the main thread. */
+    private void load(World w, List<long[]> coords, int from, Runnable next) {
+        List<CompletableFuture<Chunk>> fs = new ArrayList<>();
+        for (int i = from; i < coords.size(); i++) fs.add(w.getChunkAtAsync((int) coords.get(i)[0], (int) coords.get(i)[1]));
+        CompletableFuture.allOf(fs.toArray(new CompletableFuture[0])).whenComplete((v, err) -> Bukkit.getScheduler().runTask(plugin, () -> {
+            if (err != null) { plugin.getLogger().warning("chunk load failed: " + err); return; }
+            next.run();
         }));
+    }
+
+    /**
+     * [area] Takes the ChunkSnapshots on the main thread, at most snapshotBudgetMs per tick: a 288x288 region is 361
+     * chunks, about 3 ms warm and 6 ms right after generation, so big regions are spread over a few ticks
+     * (TESTING.md "Area size presets"). Chunks are only ticketed once the region is set, so one that unloaded between
+     * ticks is loaded again asynchronously first (after two such reloads it is loaded in place, so a read always ends).
+     * Snapshots taken a tick apart are fine: diffs compare each block with what was last sent, and events re-trigger a
+     * diff for anything that changed in between.
+     */
+    private void capture(World w, List<long[]> coords, int from, Map<Long, ChunkSnapshot> snaps, boolean biomes, boolean light,
+                         long mainNs, int ticks, int reloads, java.util.function.BiConsumer<Long, Integer> done) {
+        long t0 = System.nanoTime(), budget = (long) (snapshotBudgetMs * 1e6);
+        int i = from;
+        while (i < coords.size()) {
+            int cx = (int) coords.get(i)[0], cz = (int) coords.get(i)[1];
+            if (reloads < 2 && !w.isChunkLoaded(cx, cz)) {
+                int at = i;
+                long spent = mainNs + System.nanoTime() - t0;
+                load(w, coords, at, () -> capture(w, coords, at, snaps, biomes, light, spent, ticks + 1, reloads + 1, done));
+                return;
+            }
+            snaps.put(key(cx, cz), w.getChunkAt(cx, cz).getChunkSnapshot(false, biomes, false, light));
+            i++;
+            if (budget > 0 && i < coords.size() && System.nanoTime() - t0 > budget) break;
+        }
+        long tick = System.nanoTime() - t0, spent = mainNs + tick;
+        statMaxTickNs = Math.max(statMaxTickNs, tick);
+        if (i < coords.size()) {
+            int at = i;
+            Bukkit.getScheduler().runTask(plugin, () -> capture(w, coords, at, snaps, biomes, light, spent, ticks + 1, reloads, done));
+            return;
+        }
+        statReads++; statMainNs += spent; statTicks += ticks; statChunks += coords.size();
+        done.accept(spent, ticks);
+    }
+
+    // [area] Main-thread cost of reads (snapshots, diffs) since the last takeStats(); main thread only.
+    private long statReads, statMainNs, statMaxTickNs, statTicks, statChunks;
+
+    /** "reads=N chunks=C main_ms_total=T main_ms_max_tick=M ticks=K" since the last call, or null when nothing was read. */
+    public String takeStats() {
+        if (statReads == 0) return null;
+        String s = String.format("reads=%d chunks=%d main_ms_total=%.1f main_ms_max_tick=%.2f ticks=%d budget_ms=%.1f",
+            statReads, statChunks, statMainNs / 1e6, statMaxTickNs / 1e6, statTicks, snapshotBudgetMs);
+        statReads = statMainNs = statMaxTickNs = statTicks = statChunks = 0;
+        return s;
     }
 
     static long key(int cx, int cz) { return (((long) cx) << 32) ^ (cz & 0xffffffffL); }
