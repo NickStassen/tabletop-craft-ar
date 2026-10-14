@@ -56,7 +56,7 @@ Phases 0-3 were built and checked on Paper 1.21.11 / Java 21. The server pin has
 Ordered by how much each adds to the feeling of a living world on the table that you can act on.
 
 **1. World manipulation.**
-- Two-hand grab: pull the hands apart to zoom around their midpoint, twist to rotate, grab the terrain to drag it.
+- (Done) Two-hand grab: pull the hands apart to zoom around their midpoint, twist to rotate, grab the terrain to drag it.
 - Follow a player: the area tracks them.
 
 **2. A living world.**
