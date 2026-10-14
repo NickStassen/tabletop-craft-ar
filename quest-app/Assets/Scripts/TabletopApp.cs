@@ -43,6 +43,14 @@ namespace TabletopCraft
         float _avatarConfigAt = -1;   // send avatar_config once scaling settles, not every frame
         string _lastError = "";
         AndroidJavaObject _wifiLock;
+        // [nav] moving around, streaming, clip caps
+        NavController _nav;
+        ClipCaps _caps;
+        Transform _playersT;
+        List<PlayerInfo> _lastPlayers;
+        readonly SnapshotAssembler _snaps = new SnapshotAssembler();
+        readonly Queue<Dictionary<string, object>> _held = new Queue<Dictionary<string, object>>();
+        int _modelVersion;
 
         void Start()
         {
@@ -82,12 +90,23 @@ namespace TabletopCraft
             _area.Send = b => _link.Send(b);
             _area.ApplyBlockSize = bs => SetBlockSize(bs, false);
 
+            // [nav] solid sides for the clipped box, and moving around (XR/NavController)
+            _playersT = playersT;
+            _caps = new GameObject("Caps").AddComponent<ClipCaps>();
+            _caps.transform.SetParent(_blocks, false);
+            _caps.Model = _world; _caps.Faces = _atlas; _caps.OpaqueMaterial = OpaqueMaterial; _caps.TransparentMaterial = TransparentMaterial;
+            _nav = gameObject.AddComponent<NavController>();
+            _nav.Anchor = _anchor; _nav.RegionRoot = _regionRoot; _nav.Head = Head; _nav.Renderer = _renderer; _nav.Caps = _caps;
+            _nav.BlockSize = () => BlockSizeM; _nav.Suspended = () => _area.Active; _nav.Send = b => _link.Send(b);
+            _area.Nav = _nav.State;
+
             _link = new LinkClient(ServerUrl, Token);
             _link.Start();
             if (SendPoses)
             {
                 _poses = gameObject.AddComponent<PoseSender>();
                 _poses.Link = _link; _poses.RegionRoot = _regionRoot; _poses.Head = Head; _poses.LeftHand = LeftHand; _poses.RightHand = RightHand;
+                _poses.SnapshotId = () => _world.SnapshotId;   // [nav] the frame the pose is in (PROTOCOL.md 4.7)
             }
             SetBlockSize(BlockSizeM, false);
             CreateStatus();
@@ -126,17 +145,28 @@ namespace TabletopCraft
             _avatarConfigAt = Time.unscaledTime + 0.3f;
         }
 
-        /// <summary>Put the region centre on the anchor: RegionRoot local = (-dx/2, 0, +dz/2) * bs (Z mirrored).</summary>
+        /// <summary>Put the visible window's bottom centre on the anchor (NavController; RegionRoot = region corner, Z mirrored).</summary>
         void RecenterRegion()
         {
             if (!_world.Loaded) return;
-            _regionRoot.localPosition = new Vector3(-_world.Dims.x / 2f, 0, _world.Dims.z / 2f) * BlockSizeM;
+            _nav.Place();
         }
 
         void Update()
         {
+            // [nav] Snapshots decode on a worker; block updates and newer snapshots wait, in order, until it is applied.
+            if (_snaps.TryTake(out var decoded)) ApplySnapshot(decoded);
             int budget = 50;
-            while (budget-- > 0 && _link.Inbound.TryDequeue(out var m)) Handle(m);
+            while (budget-- > 0)
+            {
+                Dictionary<string, object> m;
+                bool fromHeld = !_snaps.Busy && _held.Count > 0;
+                if (fromHeld) m = _held.Dequeue();
+                else if (!_link.Inbound.TryDequeue(out m)) break;
+                string type = m.S("type");
+                if (!fromHeld && (_snaps.Busy || _held.Count > 0) && (type == "block_update" || type == "chunk_snapshot")) { _held.Enqueue(m); continue; }
+                Handle(m);
+            }
             if (_link.Connected && Time.unscaledTime > _nextPing) { _nextPing = Time.unscaledTime + 2f; _link.Send(Protocol.Ping(_pingId++)); }
             if (_avatarConfigAt >= 0 && Time.unscaledTime >= _avatarConfigAt)
             {
@@ -148,7 +178,8 @@ namespace TabletopCraft
                                $"WORLD {(_world.Loaded ? $"{_world.Dims.x}x{_world.Dims.y}x{_world.Dims.z} @ {_world.Origin}" : "-")}  PACK {(_atlas.HasPack ? "yes" : "flat")}\n" +
                                $"TABLE {_placement.Status}\nPOSES {(_poses ? _poses.Sent : 0)}  MESH {_renderer.Quads / 1000}k faces" +
                                (_renderer.Pending > 0 ? $" ({_renderer.Pending} sections pending)" : "") + $"  {_lastError}\n" +
-                               (_area.Active ? _area.Status : (_area.Status.Length > 0 ? _area.Status : "Y (left) = set up area"));
+                               _nav.Status + "\n" +   // [nav]
+                               (_area.Active ? _area.Status : (_area.Status.Length > 0 ? _area.Status : "Y (left) = set up area   left stick = move"));
         }
 
         void Handle(Dictionary<string, object> m)
@@ -159,31 +190,25 @@ namespace TabletopCraft
                     Debug.Log($"[Tabletop] welcome from {m.S("server")} {m.S("server_version")} mc {m.S("mc_version")}");
                     _session = m.S("session");
                     _area.State.Limits = RegionLimits.From(m.O("limits"), RegionLimits.Default);
+                    _nav.OnWelcome(m);   // [nav] server caps, limits, build height
                     _link.Send(Protocol.AvatarConfig(true, BlockSizeM, SkinPlayer, true, "Tabletop Giant"));
                     break;
                 case "region_info":
                     _area.OnRegionInfo(RegionInfo.From(m));
+                    _nav.OnLimits(m.O("limits"));   // [nav]
                     break;
                 case "region_changed":
                     // A snapshot of the new region follows; just note who changed it (shared region, last writer wins).
                     _area.OnRegionChanged(m, m.S("by_session") == _session);
                     break;
                 case "chunk_snapshot":
-                    try
-                    {
-                        var s = ChunkSnapshot.From(m);
-                        _renderer.Clear();
-                        _world.ApplySnapshot(s);
-                        RecenterRegion();
-                        Debug.Log($"[Tabletop] snapshot {s.SnapshotId}: {s.Dims} palette {s.Palette.Length}");
-                    }
-                    catch (Exception e)
-                    {
-                        _lastError = "bad snapshot: " + e.Message;
-                        _link.Send(new Dictionary<string, object> { ["type"] = "error", ["code"] = "bad_snapshot", ["message"] = e.Message, ["fatal"] = false });
-                    }
+                    // [nav] decoded (and compared with the current region) on a worker; ApplySnapshot runs when it's done.
+                    try { _snaps.Offer(m, _world, _renderer.Unsettled()); }
+                    catch (Exception e) { BadSnapshot(m.I("snapshot_id"), e.Message); }
                     break;
-                case "block_update": _world.ApplyBlockUpdate(m); break;
+                case "block_update":
+                    if (_world.ApplyBlockUpdate(m)) _caps.ModelVersion = ++_modelVersion;   // [nav] caps re-slice
+                    break;
                 case "player_positions":
                     var list = new List<PlayerInfo>();
                     foreach (var o in m.A("players"))
@@ -194,6 +219,7 @@ namespace TabletopCraft
                             Yaw = (float)p.D("yaw"), Pitch = (float)p.D("pitch"), Sneaking = p.B("sneaking"), Skin = p.S("skin") });
                     }
                     _players.Apply(list);
+                    _lastPlayers = list;   // [nav] re-applied when the origin moves
                     break;
                 case "pong":
                     _rttMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - (long)m.D("echo_t");
@@ -208,9 +234,46 @@ namespace TabletopCraft
                 case "error":
                     _lastError = $"{m.S("code")}: {m.S("message")}";
                     _area.OnError(m);
+                    if (m.S("code") == "region_too_large" && _nav.State.Pending) _nav.OnRegionError(m.S("message"));   // [nav]
                     Debug.LogWarning("[Tabletop] server error " + _lastError);
                     break;
             }
+        }
+
+        // [nav] Apply a decoded snapshot without emptying the table (TabletopRenderer.OnSnapshot) and keep the view,
+        // the player markers and the pose frame where they are in the world.
+        void ApplySnapshot(SnapshotAssembler.Result r)
+        {
+            if (r.Snapshot == null) { BadSnapshot(r.SnapshotId, r.Error); return; }
+            var s = r.Snapshot;
+            bool had = _world.Loaded;
+            var oldOrigin = had ? _world.Origin : s.Origin;
+            _world.ApplySnapshot(s);
+            _renderer.OnSnapshot(r.Plan, oldOrigin, s.Origin);
+            _caps.ModelVersion = ++_modelVersion;
+            _nav.OnSnapshot(s.World, s.Origin, s.Dims, r.ViewMargin);
+            if (had) ShiftPlayers(new Vector3Int(s.Origin.x - oldOrigin.x, s.Origin.y - oldOrigin.y, s.Origin.z - oldOrigin.z));
+            Debug.Log($"[Tabletop] snapshot {s.SnapshotId}: {s.Dims} palette {s.Palette.Length} parts {r.Parts}" +
+                      (r.Delta ? $" delta ({r.Listed} sections sent)" : "") +
+                      (r.Plan.Rekey ? $" re-keyed by {r.Plan.ShiftBlocks}: {r.Plan.Mesh.Count} to mesh, {r.Plan.Kept} kept" : " full re-mesh") +
+                      $" decode+plan {r.Ms:F0} ms");
+        }
+
+        void BadSnapshot(int snapshotId, string why)
+        {
+            _lastError = "bad snapshot: " + why;
+            Debug.LogWarning("[Tabletop] " + _lastError);
+            // The server answers with a full snapshot (PROTOCOL.md 4.18).
+            _link.Send(new Dictionary<string, object> { ["type"] = "error", ["code"] = "bad_snapshot", ["message"] = why, ["snapshot_id"] = snapshotId, ["fatal"] = false });
+        }
+
+        /// <summary>Markers are placed relative to the region origin; when it moves, move them with it so they don't jump.</summary>
+        void ShiftPlayers(Vector3Int d)
+        {
+            if (d == Vector3Int.zero || _playersT == null) return;
+            var off = new Vector3(d.x, d.y, -d.z) * BlockSizeM;
+            foreach (Transform c in _playersT) c.localPosition -= off;
+            if (_lastPlayers != null) _players.Apply(_lastPlayers);
         }
 
         void CreateStatus()

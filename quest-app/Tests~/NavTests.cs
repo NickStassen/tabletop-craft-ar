@@ -68,14 +68,18 @@ static class NavTests
         Check(b.Move(new Vector3(0, -20, 0), 0.1f, 1f) == null && Near(b.View.y, 16), "nav: no request below the build height; view stops at the margin");
 
         // An old region without a margin: the first push pads it (same window), and with tight caps it steps instead.
-        var p = new NavState();
+        var old = new NavState();
+        old.OnRegion("world", new Vector3Int(0, 60, 0), new Vector3Int(32, 64, 32), new Vector3Int(0, 0, 0), 0);
+        var oldStep = old.Move(new Vector3(0.5f, 0, 0), 0.05f, 1f);
+        Check(oldStep.HasValue && oldStep.Value.Kind == "shift", "nav: a server without view_margin only gets section steps");
+        var p = new NavState { CanPad = true };
         p.OnRegion("world", new Vector3Int(0, 60, 0), new Vector3Int(32, 64, 32), new Vector3Int(0, 0, 0), 0);
         var pad = p.Move(new Vector3(0.5f, 0, 0), 0.05f, 1f);
         Check(pad.HasValue && pad.Value.Kind == "pad" && pad.Value.Dims == new Vector3Int(64, 96, 64) && pad.Value.Margin == new Vector3Int(16, 16, 16) &&
               pad.Value.Origin == new Vector3Int(-16, 44, -16), $"nav: pad request keeps the window ({pad?.Origin} {pad?.Dims})");
         p.OnRegion("world", pad.Value.Origin, pad.Value.Dims, pad.Value.Margin, 1.3f);
         Check(p.Window == new Vector3Int(32, 64, 32) && Near(p.View.x, 16), "nav: after padding the window is unchanged");
-        var tight = new NavState { Caps = new RegionLimits { MaxX = 32, MaxY = 64, MaxZ = 32, MaxBlocks = 1 << 20 } };
+        var tight = new NavState { CanPad = true, Caps = new RegionLimits { MaxX = 32, MaxY = 64, MaxZ = 32, MaxBlocks = 1 << 20 } };
         tight.OnRegion("world", new Vector3Int(0, 60, 0), new Vector3Int(32, 64, 32), default, 0);
         var step = tight.Move(new Vector3(0.5f, 0, 0), 0.05f, 1f);
         Check(step.HasValue && step.Value.Kind == "shift" && step.Value.Origin == new Vector3Int(16, 60, 0), "nav: no room to pad -> 16-block steps");

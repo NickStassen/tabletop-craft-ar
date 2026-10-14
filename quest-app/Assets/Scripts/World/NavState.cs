@@ -46,6 +46,9 @@ namespace TabletopCraft.World
         // Server limits (welcome / region_info).
         public RegionLimits Caps = RegionLimits.Default;
         public int MinY = int.MinValue, MaxY = int.MaxValue;         // build height [MinY, MaxY), when the server sends it
+        /// <summary>The server keeps view_margin with the region (welcome.caps has "view_margin"). Without it a padded
+        /// region would come back without its margin and look bigger, so navigation only steps by sections.</summary>
+        public bool CanPad;
 
         // Request bookkeeping.
         public bool Pending { get; private set; }
@@ -115,7 +118,7 @@ namespace TabletopCraft.World
 
             // No margin on a moving axis: pad the region once (same window, margins added), else step by sections.
             bool needPad = (delta.x != 0 && Margin.x == 0) || (delta.z != 0 && Margin.z == 0) || (delta.y != 0 && Margin.y == 0);
-            if (needPad && !_padRefused)
+            if (needPad && CanPad && !_padRefused)
             {
                 var pad = Pad();
                 if (pad.HasValue) return Issue(pad.Value, now);

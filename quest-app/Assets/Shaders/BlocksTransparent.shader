@@ -14,14 +14,16 @@ Shader "TabletopCraft/BlocksTransparent"
             #pragma fragment frag
             #pragma require 2darray
             #include "UnityCG.cginc"
+            #include "TabletopClip.cginc"   // [nav] clip volume (XR/NavController)
             UNITY_DECLARE_TEX2DARRAY(_Blocks);
             float _HasTex, _Cutoff;
             struct appdata { float4 vertex : POSITION; float3 normal : NORMAL; float3 uv : TEXCOORD0; fixed4 color : COLOR; UNITY_VERTEX_INPUT_INSTANCE_ID };
-            struct v2f { float4 pos : SV_POSITION; float3 uv : TEXCOORD0; half4 color : COLOR; UNITY_VERTEX_OUTPUT_STEREO };
+            struct v2f { float4 pos : SV_POSITION; float3 uv : TEXCOORD0; half4 color : COLOR; TABLETOP_CLIP_COORDS(7) UNITY_VERTEX_OUTPUT_STEREO };
             v2f vert (appdata v)
             {
                 v2f o; UNITY_SETUP_INSTANCE_ID(v); UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
                 o.pos = UnityObjectToClipPos(v.vertex); o.uv = v.uv;
+                TABLETOP_TRANSFER_CLIP(o, v.vertex)   // [nav] clip volume
                 float3 n = abs(v.normal);
                 float shade = n.y > 0.5 ? (v.normal.y > 0 ? 1.0 : 0.5) : (n.x > 0.5 ? 0.8 : 0.65); // Minecraft-like face shading
                 o.color = v.color; o.color.rgb *= shade;
@@ -33,6 +35,7 @@ Shader "TabletopCraft/BlocksTransparent"
             }
             fixed4 frag (v2f i) : SV_Target
             {
+                TABLETOP_CLIP(i)   // [nav] clip volume
                 fixed4 c = i.color;
                 if (_HasTex > 0.5 && i.uv.z >= 0) c *= UNITY_SAMPLE_TEX2DARRAY(_Blocks, i.uv);
                 clip(c.a - 0.01);
