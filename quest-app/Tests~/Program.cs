@@ -487,12 +487,14 @@ static class Program
         SnapshotAssembler.Result delta = null; string[] afterDelta = null; byte[] lightAfterDelta = null; bool fullMatches = false; string encoding = null;
         var deadline = DateTime.UtcNow.AddSeconds(14);
         var mesh = new MeshData();
+        BlockRegistry registry = null; bool registryBeforeSnapshot = false;   // [menu] PROTOCOL.md 4.24
         while (DateTime.UtcNow < deadline)
         {
             while (link.Inbound.TryDequeue(out var m))
             {
                 switch (m.S("type"))
                 {
+                    case BlockRegistry.Type: registry = BlockRegistry.From(m); registryBeforeSnapshot = !world.Loaded && !asm.Busy; break;
                     case "welcome":
                         serverCaps = m.A("caps"); session = m.S("session"); area.Limits = RegionLimits.From(m.O("limits"), RegionLimits.Default);
                         nav.CanPad = m.A("caps")?.Contains("view_margin") == true;
@@ -570,6 +572,9 @@ static class Program
         Check(delta != null && delta.Error == null && delta.Delta && delta.Plan.Rekey && delta.Listed > 0 && delta.Listed < delta.Plan.Kept,
               $"live: one-section shift arrives as a delta ({delta?.Listed} sections sent, {delta?.Plan.Kept} kept, encoding {encoding})");
         Check(fullMatches, $"live: bad_snapshot -> full resend matches the delta-assembled region (blocks{(world.Light != null ? " and light" : "")})");
+        Check(registry != null && registry.Count > 500 && registryBeforeSnapshot && registry.IsPlaceable("minecraft:diamond_block") && !registry.IsPlaceable("minecraft:fire"),
+              $"live: block_registry before the first snapshot ({registry?.Count} blocks, {registry?.Variants.Count} variants, " +
+              $"{string.Join(" ", registry?.CategoryIds.Select((c, i) => c + "=" + registry.ByCategory[i].Count) ?? new string[0])})");
         Check(rtt >= 0, $"live: ping/pong rtt {rtt} ms");
         Check(avatarNote != null, $"live: avatar_state {avatarNote}");
         Console.WriteLine($"live: poses sent {posesSent}, player msgs {playerMsgs}, block updates {updates}");

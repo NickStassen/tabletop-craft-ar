@@ -73,7 +73,11 @@ static class MenuTests
     {
         var r = Big(fx);
         var m = new BlockMenuModel();
+        check(m.SearchTab == 0 && m.InfoTab == 1 && m.Layout().Items.Count(i => i.Part == MenuPart.Tab) == 2, "menu: before the registry only Search and Info");
+        m.SetTab(m.InfoTab);
         m.SetRegistry(r);
+        check(m.Tab == m.InfoTab && m.InfoTab == 7, "menu: the open Info tab stays Info when the categories arrive");
+        m.SetTab(0);
         check(m.Selected == "minecraft:stone" && m.Hotbar[0] == "minecraft:stone" && !m.Open, "menu: starts closed with stone selected and in the hotbar");
 
         // Closed: the ray never belongs to the menu.

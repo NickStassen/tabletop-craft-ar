@@ -133,8 +133,9 @@ namespace TabletopCraft.World
 
         public void SetRegistry(BlockRegistry r)
         {
+            bool search = Tab == SearchTab, info = Tab == InfoTab;   // Search and Info move when the category count changes
             Registry = r;
-            if (Tab > InfoTab) Tab = 0;
+            Tab = search ? SearchTab : info ? InfoTab : Tab > InfoTab ? 0 : Tab;
             _scrollByTab.Clear();
             Refresh(true);
         }

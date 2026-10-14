@@ -366,7 +366,8 @@ namespace TabletopCraft.XR
             _used.Add(key);
             if (!t.gameObject.activeSelf) t.gameObject.SetActive(true);
             if (t.text != text) t.text = text;
-            t.characterSize = size; t.anchor = anchor; t.color = color;
+            t.characterSize = size; t.anchor = anchor;
+            t.color = QualitySettings.activeColorSpace == ColorSpace.Linear ? color.linear : color;   // vertex colours, as in MeshBuilder
             t.transform.localPosition = L(x, y, -0.001f);
         }
 
@@ -425,9 +426,15 @@ namespace TabletopCraft.XR
 
             public void Clear() { _v.Clear(); _c.Clear(); _uv.Clear(); _t.Clear(); }
 
+            // Vertex colours reach Sprites/Default unconverted; the project renders in linear space and the colours here
+            // are sRGB (like the blocks' tints, which Blocks.shader converts itself).
+            static readonly bool Linear = QualitySettings.activeColorSpace == ColorSpace.Linear;
+            static Color32 Lin(Color32 c) => Linear ? (Color32)((Color)c).linear : c;
+
             /// <summary>a b c d clockwise from the top-left (as seen by the viewer); uv default = a white texel.</summary>
             public void Quad(Vector3 a, Vector3 b, Vector3 c, Vector3 d, Color32 col, Rect uv)
             {
+                col = Lin(col);
                 int n = _v.Count;
                 _v.Add(a); _v.Add(b); _v.Add(c); _v.Add(d);
                 for (int k = 0; k < 4; k++) _c.Add(col);
@@ -438,6 +445,7 @@ namespace TabletopCraft.XR
 
             public void Tri(Vector3 a, Vector3 b, Vector3 c, Color32 col)
             {
+                col = Lin(col);
                 int n = _v.Count;
                 _v.Add(a); _v.Add(b); _v.Add(c);
                 for (int k = 0; k < 3; k++) { _c.Add(col); _uv.Add(new Vector2(0.5f, 0.5f)); }
