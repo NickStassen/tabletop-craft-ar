@@ -53,7 +53,16 @@ namespace TabletopCraft.World
         // Request bookkeeping.
         public bool Pending { get; private set; }
         public int Requests { get; private set; }
-        public float LatencyEma = 0.5f;             // s from request to snapshot (seeded; measured as we go)
+        public float LatencyEma = 0.5f;             // s from request to the new terrain meshed (seeded; measured as we go)
+        float _settleFrom = -1;
+
+        /// <summary>The renderer has meshed everything urgent: closes the latency measurement of the last request.</summary>
+        public void OnSettled(float now)
+        {
+            if (_settleFrom < 0 || Pending) return;
+            LatencyEma = 0.7f * LatencyEma + 0.3f * Math.Max(0.05f, now - _settleFrom);
+            _settleFrom = -1;
+        }
         public string LastNote = "";
         float _pendingSince = -1, _lastRequestAt = -100;
         bool _padRefused;
@@ -63,7 +72,8 @@ namespace TabletopCraft.World
         {
             bool reset = !Loaded || world != World || dims != Dims || ClampMargin(margin, dims) != Margin;
             Loaded = true; World = world ?? World; Origin = origin; Dims = dims; Margin = ClampMargin(margin, dims);
-            if (Pending) { LatencyEma = 0.7f * LatencyEma + 0.3f * Math.Max(0.05f, now - _pendingSince); Pending = false; }
+            // The latency that matters ends when the new terrain is meshed (OnSettled), not when the snapshot lands.
+            if (Pending) { _settleFrom = _pendingSince; Pending = false; }
             var c = RegionCentre;
             if (reset) { View = c; _padRefused = false; return; }
             // Same size: a shift (ours or another headset's). Keep the world position; re-centre if it's far away.

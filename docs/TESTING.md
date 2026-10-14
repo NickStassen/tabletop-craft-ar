@@ -222,3 +222,56 @@ With a resource pack, faces only merge when they share a texture, so expect more
 - **33/33 PASS.** This adds tests for `AreaMath` (block-size fit, clamping, the estimate, soft cap and override, clamping to server caps), `AreaSetupState` (centre on origin/player, resize clamps, request matches the fixture, warn/override), and `region_info`/`region_too_large` fixture parsing.
 - **`--live`** against the real-terrain server: all checks PASS, including the area-setup resize. The live test uses the same `AreaSetupState`: it requests +16 x/z, which the server's `max_blocks` limit clamps to 80×327×80, and gets back `region_changed` from its own session plus a snapshot with the new dims.
 - **`tools/e2e.sh`:** re-run after the async reader change and PASS. The block_update check found 0/65536 cells differing between the live and fresh snapshots, error paths returned the expected codes, and the avatar entities spawned. The earlier hang was caused by a stray test server still holding ports 25565/8765. The script now checks those ports before it starts and exits with an error if either is in use.
+
+## Navigation and bigger areas (Paper 26.3, seed 12345, 2026-10-13)
+
+A separate headless test server (Paper 26.3 build 181, JDK 25, offline, normal world seed 12345, its own ports) running this plugin, with `max_region` raised for the big runs. Numbers are from second runs, with chunks already generated. All on the x86 box: no headset.
+
+### Tests
+
+| Suite | Result |
+|---|---|
+| Plugin (JUnit) | 28 tests, 0 failures. New: `SectionCodecTest` (6: section round trip with partial edges, delta lists only new/changed sections, part splitting, size estimate, fixtures rebuild snapshot 9 from 8, diff index limit) and `RegionRequestTest.viewMargin`. |
+| Tools (pytest + ruff) | 29 passed, ruff clean. New: the three fixtures, plus `sections_v1` full/delta, parts and validation tests. |
+| Quest scripts (`Tests~`, .NET 8) | 90/90 PASS. New `NavTests.cs`: NavState (window, RegionRoot placement, trigger and shift requests, clamp while pending, seamless re-centre, reverse and diagonal moves, refusal back-off, timeout, far jumps, build height, padding with and without the server cap, speed curve and stream cap, latency until meshed), SectionPlan (re-key with a permuted palette, changed and stale sections, delta lists, unaligned shifts, new dims, partial edge sections), `sections_v1` (full, delta, wrong base, missing section, bad totals, delta without its new section), SnapshotAssembler (parts, delta plan, v1 still works), CapMesher, and area setup with margins and the section budget. |
+| `Tests~ --live` against the server | All PASS, including: area setup 48×64×48 window + 16 margin → an 80×96×80 region; a one-section shift arrives as a delta (30 of 150 sections, 8 KB instead of 47 KB); `bad_snapshot` → the server's full resend matches the delta-assembled grid block for block. |
+| Unity 6000.0.84f1 batch compile | 0 errors; the only warning in our code is the existing CS0618 (`overlayType`). |
+| `Editor/ShaderCheck` (headless, `-executeMethod TabletopCraft.EditorTools.ShaderCheck.Run`) | 40 variants (Blocks and BlocksTransparent × Vulkan and GLES3 × no keyword, `STEREO_MULTIVIEW_ON`, `STEREO_INSTANCING_ON`, `INSTANCING_ON`, `UNITY_SINGLE_PASS_STEREO` × vertex and fragment), 0 errors. A deliberately broken shader is reported, so the check is real. |
+
+### Gliding across the world (`tools/nav_e2e.py`)
+
+A `sections_v1` "headset" asks for a window plus a 16-block margin, then shifts the region by one section 4 times (east, then south). With `--no-v1` it is alone on the server (latency below); otherwise a v1 client on the same shared region gets every region in full, and each delta-assembled grid is compared with it block for block.
+
+| visible window (y range) | region loaded | first snapshot, `sections_v1` | same region, one v1 message | one-section shift (delta) | sections sent | request→snapshot, headset alone | server walk (async) |
+|---|---|---|---|---|---|---|---|
+| 128×96×128 (y 32..128) | 160×128×160 | 835 KB, 1 part, 369 ms | 730–845 KB | 86–156 KB | 80 of 800 | 144–183 ms | 42 ms |
+| 192×96×192 (y 32..128) | 224×128×224 | 1.84 MB, 2 parts, 643 ms | 1.60–1.84 MB | 122–279 KB | 112 of 1,568 | 227–256 ms | 83 ms |
+| 256×96×256 (y 32..128) | 288×128×288 | 3.37 MB, 4 parts, 1.0 s | 2.90–3.25 MB | 169–365 KB | 145 of 2,592 | 350–398 ms | 138 ms |
+| 256×128×256 (y 0..128) | 288×160×288 | 6.54 MB, 7 parts, 1.3 s | 5.6–5.95 MB: over the 4 MiB frame, the v1 client gets `region_too_large` | 327–543 KB | 180 of 3,240 | 401–454 ms | 172 ms |
+
+- **Cross-check**: every delta-assembled region matched the v1 client's full snapshot (4 shifts per size, then 8 more at 256×96×256). The only difference ever seen was transient: kelp grew between the two clients' `block_update`s, and it matched after 1.5 s.
+- **Server main thread** per region change: about 3 ms at 288×288 (361 chunk snapshots). The walk, the diff compare, the `region_request` size estimate, the palette remap and the encoding all run off the main thread now.
+- **Faster walk**: block ids are cached by `BlockData` instead of building a state string per block. The same 128×96×128 box (y 32..128) read in 121 ms before and about 20 ms after; 224×128×224 (6.4M blocks) reads in 83 ms.
+- A sectioned snapshot is about 15% bigger than one `rle_palette_v1` message for the same region (per-section headers, runs cut at section borders), but it splits into parts under 1 MiB and, while gliding, only the new slice is sent: 11–20% of a full region.
+
+### Meshing the same regions (`Tests~ dotnet run -c Release -- --measure-nav DIR`, x86, one thread)
+
+"Texture-like" keys merge faces only within one block's top, bottom or side texture, which approximates a resource pack; flat colours merge more. "Non-empty" sections are the ones that become meshes.
+
+| region (window + margin) | sections | non-empty | quads, flat | quads, texture-like | vertices | mesh, 1 thread | worst section | re-key compare (1-section shift) | 6 clip caps | `AreaMath.Estimate` |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 160×128×160 | 800 | 328 | 108k | 113k | 452k | 542 ms (incl. JIT warm-up) | 8 ms | 4 ms | 6.0k quads, 2.1 ms | 118k |
+| 224×128×224 | 1,568 | 706 | 234k | 243k | 973k | 770 ms | 1.2 ms | 5 ms | 10.9k quads, 1.4 ms | 232k |
+| 288×128×288 | 2,592 | 1,223 | 380k | 396k | 1.58M | 1.3 s | 33 ms | 8 ms | 16.5k quads, 1.9 ms | 383k |
+| 288×160×288 | 3,240 | 1,808 | 544k | 566k | 2.26M | 1.8 s | 59 ms | 10 ms | 20.8k quads, 2.2 ms | 476k |
+
+### Quest 3 capacity guidance (ESTIMATES; only 64×96×64 has run on the headset)
+
+- **Draw calls are the likely limit.** Every non-empty 16³ section is its own mesh (one draw call, two when it has water, glass or plants). The headset has only been measured at 64×96×64: about 50 meshes, 72 FPS, 2.5 ms app GPU time. A 128-wide window loads about 330 meshes; 192 about 700; 256 about 1,200–1,800. Area setup now warns above about 600 estimated meshes (and still above 250k faces); hold B to try bigger areas anyway. Bigger areas need the section meshes batched (for example 2×2×2 sections per mesh), which is the next step.
+- **Defaults**: the plugin's `max_region` is now 288×384×288 / 16,777,216 blocks / 32 MiB in total, so a 256-wide window with its margin fits. The recommended maximum window stays 128×96×128, now with a margin to glide; you can move anywhere in the world.
+- **Streaming**: a 128-wide window needs one delta of about 90–160 KB per 16 blocks travelled, so gliding at 30 blocks/s is about 0.3 MB/s. The headset assembles it on a worker (copy plus a few dozen sections) and meshes about 80 new sections, plus about 80 neighbours refreshed when idle; the old meshes stay up the whole time.
+- **Speed limit**: the view can't leave the loaded margin, so the glide speed is capped at about 12 blocks of slack divided by 1.3 × the measured round trip until the new terrain is meshed. On this box that's about 50 blocks/s for a 128 window; the headset's meshing time adds to it.
+
+### Not verified (needs the headset)
+
+Clipping and the cut-face caps on screen, turning, the glide speed and feel, how long the headset takes to assemble and mesh a delta, the giant staying put while the region moves (`pose.snapshot_id`), and frame rates above 64×96×64.

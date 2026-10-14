@@ -40,7 +40,10 @@ static class NavTests
         Check(n.Move(new Vector3(30, 0, 0), 0.1f, 1.2f) == null && Near(n.View.x, 64), $"nav: clamped to the margin while pending (view {n.View.x})");
         n.OnRegion("world", new Vector3Int(16, 0, 0), new Vector3Int(96, 64, 96), new Vector3Int(16, 16, 16), 1.5f);
         Check(!n.Pending && Near(n.View.x, 64) && Near(n.Offset.x, 0), "nav: shifted snapshot keeps the view in the world (seamless)");
-        Check(n.LatencyEma < 0.5f && n.LatencyEma > 0.3f, $"nav: latency estimate updated ({n.LatencyEma:F2} s)");
+        n.OnSettled(1.6f);   // the renderer finished meshing the new sections 0.5 s after the request
+        Check(n.LatencyEma > 0.49f && n.LatencyEma < 0.51f, $"nav: latency runs until the new terrain is meshed ({n.LatencyEma:F2} s)");
+        n.OnSettled(5f);
+        Check(n.LatencyEma < 0.51f, "nav: settling twice doesn't count twice");
         var back = n.Move(new Vector3(-5, 0, 0), 0.1f, 2f);
         Check(back.HasValue && back.Value.Origin.x == 0, "nav: reversing past the trigger requests the way back");
         n.OnRegion("world", new Vector3Int(0, 0, 0), new Vector3Int(96, 64, 96), new Vector3Int(16, 16, 16), 2.2f);

@@ -88,6 +88,7 @@ namespace TabletopCraft.XR
                 }
                 else _held = 0;
             }
+            if (Renderer && Renderer.Pending == 0) State.OnSettled(Time.unscaledTime);
             var move = State.Move(delta, dt, Time.unscaledTime);
             if (move.HasValue)
             {

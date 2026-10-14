@@ -85,13 +85,13 @@ Don't commit or redistribute the jar or pack.
 2. Walk around inside the region: an orange capsule with your name moves on the table. Break and place blocks: the miniature updates within a second (events are applied next tick, a full diff runs every second).
 3. Look up from inside the region: the giant (up to 28.8 blocks tall, scale 16) follows the headset user's head; the two white blocks follow the controllers or hands. Its head sits exactly where the headset is above the table, so lean in close to the table to bring it down to the terrain.
 
-Headset controls: **A** (right) = re-place the world at the right controller; hold **both grips** and move the right hand = drag/rotate; **right thumbstick up/down** = scale the miniature (also changes the giant's mapping).
+Headset controls: **left thumbstick** = glide across the world (hold the **left trigger** and push up/down to move up/down; see Part H); **right thumbstick left/right** = turn the table; **right thumbstick up/down** = scale the miniature (also changes the giant's mapping); **A** (right) = re-place the world at the right controller; hold **both grips** and move the right hand = drag/rotate; **Y** (left) = area setup (Part G).
 
 ## Part G: setting up a play area in the headset
 
 The server picks the starting region (config.yml `region`). You can change it from the headset at any time. The new area is shared: every connected headset switches to it, and the last request wins.
 
-1. Press **Y** (left controller) to enter area setup. A cyan wireframe box shows the area you're about to request, drawn at the current scale relative to the terrain on the table. The status panel shows its size, how many blocks it contains, the estimated face/vertex count, and the block size it would use.
+1. Press **Y** (left controller) to enter area setup. A cyan wireframe box shows the area you're about to request, drawn at the current scale relative to the terrain on the table. The status panel shows its size, how many blocks it contains, the estimated face/vertex count, and the block size it would use. The box is what you will **see**; the headset also asks for a 16-block view margin around it (shown as `+16/16 margin`) so you can glide smoothly (Part H). The margin shrinks when the box gets close to the server's limits.
 2. Choose where the area is centred, using **X** (left) to cycle through these modes:
    - **CurrentOrigin**: the area currently shown.
    - **Player**: an online player. Push the **right stick left/right** to step through players; their feet end up about a third of the way up the box.
@@ -101,15 +101,36 @@ The server picks the starting region (config.yml `region`). You can change it fr
    - **Right stick up/down**: height, in 16-block steps.
    - Or point at one of the yellow handle spheres (+X face, +Z face, top) and hold the **right trigger** to drag that face. The box grows symmetrically around its centre.
 
-   Sizes are clamped to the server's limits (by default 128×384×128 and at most 2,097,152 blocks).
+   Sizes are clamped to the server's limits (by default 288×384×288 including the margin, and at most 16,777,216 blocks; a server with an older config.yml keeps its own `max_region`, e.g. 128×384×128).
 4. Block size: **auto-fit** is on by default. It sets block size = min(table width/X, table depth/Z) × 0.95, so the area fills the table detected by MRUK; without a detected table it assumes a 0.8 × 0.6 m table. Click the **right stick** to switch to keeping your manual scale; outside setup, the right stick still scales the model.
-5. Press **A** to confirm. The server answers with `region_changed` and a new snapshot, and the terrain reloads in the background ("N sections pending" in the status panel). Tap **B** to cancel.
-6. If the estimate is over the headset budget (about 250k faces by default), the box turns red and A won't confirm. **Hold B for 1 s** to override the warning. If the server rejects the request (`region_too_large`), the panel shows the server's limits.
+5. Press **A** to confirm. The server answers with `region_changed` and a new snapshot. The old terrain stays on the table while the new area is meshed in the background ("N sections pending" in the status panel), then the new one replaces it in one go. Tap **B** to cancel.
+6. If the estimate is over the headset budget, the box turns red and A won't confirm. There are two budgets: about 250k faces, and about 600 section meshes (each 16×16×16 block section with something in it is its own mesh, so roughly one or two draw calls). **Hold B for 1 s** to override the warning. If the server rejects the request (`region_too_large`), the panel shows the server's limits.
 
-Recommended sizes (estimates; see TESTING.md "Real terrain"):
+Recommended sizes (estimates from seed 12345 terrain; see TESTING.md "Navigation and bigger areas"), all with the 16-block margin on top:
 - 64×96×64 is a comfortable area to start with.
-- 128×96×128 is the recommended maximum for normal terrain.
+- 128×96×128 is the recommended maximum: about 113k faces and 330 section meshes for the 160×128×160 region it loads.
+- 192×96×192 (about 240k faces, about 700 meshes) and 256×96×256 (about 400k faces, about 1,200 meshes) go over the budgets. Try them with the override and watch the frame rate; they need draw-call batching to be comfortable.
 - Taller areas work, but snapshots and load times grow.
+
+## Part H: moving around
+
+You can glide across the whole world without leaving the table. The miniature stays a neat box: terrain slides through it, and the cut sides show the blocks inside, like a cross-section.
+
+| Control | Action |
+|---|---|
+| **Left thumbstick** | Glide. Forward moves the view away from you (relative to where you look), sideways strafes. Speed is about 0.12 m of table per second at full tilt, so it feels the same at any scale, and ramps up to 3× while you hold the stick. |
+| **Left trigger + left thumbstick** | Up/down (stick forward = up); sideways still strafes. |
+| **Right thumbstick left/right** | Turn the table about its centre (push right = turn right). |
+| **Right thumbstick up/down** | Scale, as before. |
+
+How it works:
+- The server sends a region a bit bigger than what you see: a 16-block **view margin** on every side. The headset shows only the inner box and clips everything outside it, so terrain from the margin slides in smoothly by fractional blocks.
+- When you've moved about 4 blocks past the region's centre, the headset asks for the region moved by one 16-block section in that direction. The server answers with a **delta**: only the new slice of sections (about 80 of 800 for a 128-wide view). The headset keeps all other meshes, moves them, and meshes only the new slice. Nothing on the table blinks or goes empty.
+- If you outrun the stream, the view stops at the edge of the margin until the next region arrives. The status panel shows `VIEW` (window size and position), the margin, `loading...` while a request is in flight, and the measured round trip. The speed limit adapts to it: about 12 blocks of slack divided by the round trip.
+- The region is shared: other headsets on the same server move with you (the last request wins).
+- The giant and the player figures stay where they belong in the world while the region moves (each pose says which snapshot's origin it's relative to).
+- An area set up before this version has no margin. The first push asks the server for the same view plus a margin (needs a server that advertises `view_margin` in `welcome.caps`; older servers step 16 blocks at a time instead).
+- Vertical moves stop at the world's build height.
 
 ## Logs
 
