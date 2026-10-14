@@ -112,6 +112,18 @@ class FixtureTest {
         assertEquals(SkinLookup.model(true), p.get("skin_model").getAsString());
     }
 
+    /** PROTOCOL.md 4.17: block_edit (place, break) and the error reply that carries the edit's op and pos. */
+    @Test void blockEditFixturesParseAndErrorMatchesBuilder() throws Exception {
+        BlockEdit p = BlockEdit.parse(fixture("block_edit"));
+        assertEquals(new BlockEdit(BlockEdit.Op.PLACE, 105, 64, -35, "minecraft:oak_log[axis=x]", "east"), p);
+        BlockEdit b = BlockEdit.parse(fixture("block_edit_break"));
+        assertEquals(BlockEdit.Op.BREAK, b.op());
+        assertEquals("up", b.face());
+        JsonObject fx = fixture("error_edit_denied");
+        JsonObject built = p.error(fx.get("code").getAsString(), fx.get("message").getAsString(), fx.get("ref_seq").getAsLong());
+        for (String k : new String[] { "type", "code", "message", "ref_seq", "fatal", "op", "pos" }) assertEquals(fx.get(k), built.get(k), k);
+    }
+
     @Test void avatarConfigFixtureParses() throws Exception {
         AvatarConfig c = AvatarConfig.parse(fixture("avatar_config"));
         assertEquals(0.01, c.blockSizeM());
