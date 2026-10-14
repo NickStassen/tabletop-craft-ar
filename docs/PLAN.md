@@ -40,3 +40,69 @@ Phases 0-3 were built and checked on Paper 1.21.11 / Java 21. The server pin has
 ## Phase 8 — Public server
 - `wss://` behind a reverse proxy, per-user tokens via `/tabletop link`, rate limits, region permissions, and a usage-guidelines review (no Mojang assets shipped, the name doesn't start with or imply the game's brand, non-commercial).
 - **Exit:** a security checklist passes, and the repo flips to public after a personal-details scrub.
+
+## Status after the first headset sessions (2026-10-13)
+- **Done:**
+  - Phases 0–4 run on a Quest 3 against Paper 26.3.
+  - From Phase 5: block models from the pack, biome colours, smooth lighting with AO, animated textures, waterlogging and fluids, gliding across the world with sectioned/delta streaming (v1.2), and areas up to 128×96×128 recommended.
+  - Phase 6: `block_edit` from the headset (break, place, pick). It was done as an additive v1 message (`edit_v1`), not a v2 bump, and the plugin applies edits itself rather than as the avatar entity.
+- **Also done (not in the original phases):**
+  - The floating giant: a head and hands at the exact headset poses.
+  - Skinned and animated player figures.
+  - The eye-in-fluid effects: underwater fog and tint, the surface seen from below, lava and powder snow.
+- **In progress:** entities (vehicles, mobs, dropped items, held items) and player actions (arm swing, digging cracks, break particles, hurt flash).
+
+## Roadmap: "playing Minecraft as a god"
+Ordered by how much each adds to the feeling of a living world on the table that you can act on.
+
+**1. World manipulation.**
+- Two-hand grab: pull the hands apart to zoom around their midpoint, twist to rotate, grab the terrain to drag it.
+- Follow a player: the area tracks them.
+
+**2. A living world.**
+- Day/night and weather from the server: sky light scaled by time, rain and snow particles, lightning flashes.
+- Clouds at cloud height above the table.
+- Particles: torches, lava, splashes, explosions.
+- Block entities: sign text, banner patterns, item frames, chests opening.
+
+**3. Presence in AR.**
+- Hand tracking: pinch to break or place, fist to grab.
+- Depth-API occlusion, so real hands hide the terrain.
+- Working MRUK table detection; the log shows OpenXR binding warnings.
+- A persistent spatial anchor.
+- A diorama plinth and a soft shadow on the real table.
+- Status text on a wrist panel.
+
+**4. Sound.** Spatial audio from the miniature: blocks, footsteps, mobs, water, rain. It needs the user's sound assets from the launcher's asset index on the headset, plus server sound events.
+
+**5. God powers.**
+- A block palette, hotbar and creative inventory.
+- Interacting with doors, levers, buttons and TNT.
+- Undo.
+- Lightning, time and weather gestures.
+- Picking up and moving mobs or players.
+- Terraform brushes.
+- Spawning mobs.
+- Chat to and from players: dictation in, chat bubbles out.
+
+**6. Multiple headsets.**
+- One giant per session (today one giant, owned by the last headset).
+- Per-session regions (today the region is shared, last writer wins).
+- Co-located shared anchors.
+- Edit permissions per user.
+
+**7. Scale.**
+- Batch section meshes for 192+ wide areas; draw calls are the limit.
+- Spread the main-thread model prewarm over frames (45–53 ms on a new area).
+- A low-detail map skirt around the detailed box.
+
+**Edge cases to keep covered:**
+- **Area edges:** fluids at the cut edges and the region top.
+- **Players:** riding, sleeping, swimming, gliding, invisible or in spectator mode, near the region edge, or in another dimension.
+- **Edits:**
+  - placing into players or water
+  - orientation and two-block items
+  - gravity blocks
+  - griefing limits and undo
+- **Streaming:** into ungenerated chunks, at build-height limits and the world border, and big diffs (explosions, floods) falling back to a snapshot.
+- **Pause and reconnect** when the headset is taken off.
