@@ -138,9 +138,9 @@ public final class LinkServer extends WebSocketServer {
                 }
                 case "world_query" -> {
                     String world = m.has("world") && m.get("world").isJsonPrimitive() ? m.get("world").getAsString() : null;
-                    plugin.enqueue(() -> plugin.control.onWorldQuery(s, world, refSeq));
+                    if (!limited(s, s.completeLimiter, "queries", refSeq)) plugin.enqueue(() -> plugin.control.onWorldQuery(s, world, refSeq));
                 }
-                case "players_query" -> plugin.enqueue(() -> plugin.control.onPlayersQuery(s, refSeq));
+                case "players_query" -> { if (!limited(s, s.completeLimiter, "queries", refSeq)) plugin.enqueue(() -> plugin.control.onPlayersQuery(s, refSeq)); }
                 case "ping" -> {
                     JsonObject p = Protocol.body("pong");
                     if (m.has("id")) p.add("id", m.get("id"));

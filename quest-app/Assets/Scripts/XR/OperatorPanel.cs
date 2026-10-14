@@ -134,9 +134,8 @@ namespace TabletopCraft.XR
         {
             long refSeq = (long)m.D("ref_seq", -1);
             if (Model.Console.OnError(refSeq, m.S("code"), m.S("message"))) { if (Model.Tab != OpTab.Console) Model.Note = m.S("message"); return true; }
-            if (_queries.Remove(refSeq)) return true;
-            string code = m.S("code");
-            if (code == "chat_denied") { Model.Note = m.S("message"); return false; }
+            // Our chat_send, completion or query: the note line says it (no toast; "rate_limited" there means edits).
+            if (_queries.TryGetValue(refSeq, out var what)) { _queries.Remove(refSeq); Model.Note = (what == "chat" ? "chat: " : "") + m.S("message"); return true; }
             return false;
         }
 
@@ -223,9 +222,12 @@ namespace TabletopCraft.XR
                     break;
                 }
                 case PanelActionKind.Chat:
-                    if (Send(ControlProtocol.ChatSend(a.Line)) < 0) Model.Note = "not connected";
+                {
+                    long seq = Send(ControlProtocol.ChatSend(a.Line));
+                    if (seq < 0) Model.Note = "not connected"; else _queries[seq] = "chat";
                     Haptic(0.35f);
                     break;
+                }
                 case PanelActionKind.Refused: Haptic(0.08f); break;
                 case PanelActionKind.None: break;
                 default: Haptic(0.15f); break;

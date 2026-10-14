@@ -672,7 +672,7 @@ Granted when `commands.enabled` (default true) and, with `commands.require-token
 
 ### 4.28 Server status (`status_v1`)
 
-Granted when `status.enabled` (default true). Without it `world_query` and `players_query` get `unsupported`.
+Granted when `status.enabled` (default true). Without it `world_query` and `players_query` get `unsupported`. Queries share the completion limit (`commands.completions-per-second`, 10 per session); more get `rate_limited`.
 
 **`server_status` (S→C)**, every `status.every-ticks` (40 = 2 s), about 600 bytes:
 

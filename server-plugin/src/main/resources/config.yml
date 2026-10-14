@@ -124,7 +124,8 @@ commands:
   enabled: true
   # true: commands only when auth.token above is set (every connected headset presented it).
   require-token: true
-  # Commands per second per headset (a token bucket of "burst"); tab completions have their own limit.
+  # Commands per second per headset (a token bucket of "burst"). Tab completions and the world/players queries share
+  # their own limit (completions-per-second).
   max-per-second: 2
   burst: 5
   completions-per-second: 10
