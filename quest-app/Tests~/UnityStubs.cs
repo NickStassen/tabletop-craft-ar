@@ -25,6 +25,10 @@ namespace UnityEngine
         public static Vector3Int right => new Vector3Int(1, 0, 0);
         public static Vector3Int up => new Vector3Int(0, 1, 0);
         public static Vector3Int down => new Vector3Int(0, -1, 0);
+        public static bool operator ==(Vector3Int a, Vector3Int b) => a.x == b.x && a.y == b.y && a.z == b.z;
+        public static bool operator !=(Vector3Int a, Vector3Int b) => !(a == b);
+        public override bool Equals(object o) => o is Vector3Int v && v == this;
+        public override int GetHashCode() => x * 73856093 ^ y * 19349663 ^ z * 83492791;
         public override string ToString() => $"({x}, {y}, {z})";
     }
     public struct Quaternion

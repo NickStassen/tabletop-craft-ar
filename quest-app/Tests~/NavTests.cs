@@ -1,0 +1,236 @@
+// Engine-free tests for moving around on the table: NavState (pan, margin clamp, shift requests, padding, speed),
+// SectionPlan (re-keying section meshes when the origin moves by whole sections), sections_v1 / delta snapshots
+// (PROTOCOL.md 4.18) and the clip-cap mesher.
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using TabletopCraft.Net;
+using TabletopCraft.World;
+using UnityEngine;
+
+static class NavTests
+{
+    static int fails;
+    static void Check(bool ok, string what) { Console.WriteLine((ok ? "PASS " : "FAIL ") + what); if (!ok) fails++; }
+    static bool Near(float a, float b, float eps = 1e-4f) => Math.Abs(a - b) <= eps;
+
+    sealed class Flat : IFaceSource { public FaceKey Face(string s, int d) => new FaceKey { Layer = -1, Color = BlockRules.FlatColor(s) }; }
+
+    public static int Run(Func<string, string> fixture)
+    {
+        NavStateTests();
+        SectionPlanTests();
+        SectionedTests(fixture);
+        CapTests();
+        return fails;
+    }
+
+    static void NavStateTests()
+    {
+        var n = new NavState();
+        n.OnRegion("world", new Vector3Int(0, 0, 0), new Vector3Int(96, 64, 96), new Vector3Int(16, 16, 16), 0);
+        Check(n.Window == new Vector3Int(64, 32, 64) && Near(n.View.x, 48) && Near(n.View.y, 32), $"nav: window = dims - 2*margin, view at the centre ({n.Window})");
+        var rr = n.RegionRootLocal(0.01f);
+        Check(Near(rr.x, -0.48f) && Near(rr.y, -0.16f) && Near(rr.z, 0.48f), $"nav: RegionRoot local puts the window's bottom centre on the anchor ({rr})");
+
+        Check(n.Move(new Vector3(3, 0, 0), 0.1f, 1f) == null && Near(n.View.x, 51), "nav: small pan, no request");
+        var req = n.Move(new Vector3(2, 0, 0), 0.1f, 1.1f);
+        Check(req.HasValue && req.Value.Origin == new Vector3Int(16, 0, 0) && req.Value.Dims == n.Dims && req.Value.Margin == n.Margin && n.Pending,
+              "nav: past the trigger -> request the region shifted by one section");
+        Check(n.Move(new Vector3(30, 0, 0), 0.1f, 1.2f) == null && Near(n.View.x, 64), $"nav: clamped to the margin while pending (view {n.View.x})");
+        n.OnRegion("world", new Vector3Int(16, 0, 0), new Vector3Int(96, 64, 96), new Vector3Int(16, 16, 16), 1.5f);
+        Check(!n.Pending && Near(n.View.x, 64) && Near(n.Offset.x, 0), "nav: shifted snapshot keeps the view in the world (seamless)");
+        Check(n.LatencyEma < 0.5f && n.LatencyEma > 0.3f, $"nav: latency estimate updated ({n.LatencyEma:F2} s)");
+        var back = n.Move(new Vector3(-5, 0, 0), 0.1f, 2f);
+        Check(back.HasValue && back.Value.Origin.x == 0, "nav: reversing past the trigger requests the way back");
+        n.OnRegion("world", new Vector3Int(0, 0, 0), new Vector3Int(96, 64, 96), new Vector3Int(16, 16, 16), 2.2f);
+
+        // Diagonal and vertical moves shift several axes at once.
+        n.View = n.RegionCentre;
+        var diag = n.Move(new Vector3(-6, 6, 6), 0.1f, 3f);
+        Check(diag.HasValue && diag.Value.Origin == new Vector3Int(-16, 16, 16), $"nav: diagonal + up shift ({diag?.Origin})");
+        n.OnRefused(3.1f, "test");
+        Check(!n.Pending && n.Move(new Vector3(1, 0, 0), 0.1f, 3.5f) == null, "nav: refusal backs off");
+        Check(n.Move(new Vector3(-1, 1, 1), 0.1f, 5.5f).HasValue, "nav: asks again after the back-off");
+        Check(n.Move(new Vector3(0, 0, 0), 0.1f, 6f) == null && n.Pending, "nav: one request in flight at a time");
+        Check(n.Move(new Vector3(-1, 0, 0), 0.1f, 12f).HasValue, "nav: a lost answer times out");
+
+        // Another headset moved the shared region far away: re-centre.
+        n.OnRegion("world", new Vector3Int(1000, 0, 0), new Vector3Int(96, 64, 96), new Vector3Int(16, 16, 16), 13f);
+        Check(Near(n.View.x, 1048), "nav: far jump by someone else re-centres the view");
+        // Area setup changed the size: re-centre on the new region.
+        n.OnRegion("world", new Vector3Int(0, 0, 0), new Vector3Int(160, 128, 160), new Vector3Int(16, 16, 16), 14f);
+        Check(n.Window == new Vector3Int(128, 96, 128) && Near(n.View.x, 80), "nav: new dims re-centre");
+
+        // Build height: never ask for a region below MinY.
+        var b = new NavState { MinY = 0, MaxY = 320 };
+        b.OnRegion("world", new Vector3Int(0, 0, 0), new Vector3Int(64, 64, 64), new Vector3Int(16, 16, 16), 0);
+        Check(b.Move(new Vector3(0, -20, 0), 0.1f, 1f) == null && Near(b.View.y, 16), "nav: no request below the build height; view stops at the margin");
+
+        // An old region without a margin: the first push pads it (same window), and with tight caps it steps instead.
+        var p = new NavState();
+        p.OnRegion("world", new Vector3Int(0, 60, 0), new Vector3Int(32, 64, 32), new Vector3Int(0, 0, 0), 0);
+        var pad = p.Move(new Vector3(0.5f, 0, 0), 0.05f, 1f);
+        Check(pad.HasValue && pad.Value.Kind == "pad" && pad.Value.Dims == new Vector3Int(64, 96, 64) && pad.Value.Margin == new Vector3Int(16, 16, 16) &&
+              pad.Value.Origin == new Vector3Int(-16, 44, -16), $"nav: pad request keeps the window ({pad?.Origin} {pad?.Dims})");
+        p.OnRegion("world", pad.Value.Origin, pad.Value.Dims, pad.Value.Margin, 1.3f);
+        Check(p.Window == new Vector3Int(32, 64, 32) && Near(p.View.x, 16), "nav: after padding the window is unchanged");
+        var tight = new NavState { Caps = new RegionLimits { MaxX = 32, MaxY = 64, MaxZ = 32, MaxBlocks = 1 << 20 } };
+        tight.OnRegion("world", new Vector3Int(0, 60, 0), new Vector3Int(32, 64, 32), default, 0);
+        var step = tight.Move(new Vector3(0.5f, 0, 0), 0.05f, 1f);
+        Check(step.HasValue && step.Value.Kind == "shift" && step.Value.Origin == new Vector3Int(16, 60, 0), "nav: no room to pad -> 16-block steps");
+
+        // Speed: table metres per second, quadratic curve, ramp, and the streaming cap.
+        var s = new NavState();
+        Check(Near(s.Speed(0.01f, 1f, 0f, 0), 12f, 1e-3f) && Near(s.Speed(0.01f, 0.5f, 0f, 0), 3f, 1e-3f), "nav: speed = 0.12 m/s / block size, quadratic stick");
+        Check(Near(s.Speed(0.01f, 1f, 5f, 0), 36f, 1e-3f), "nav: holding ramps to x3");
+        Check(Near(s.Speed(0.01f, 1f, 5f, 16), s.StreamSpeedCap(16), 1e-3f) && s.StreamSpeedCap(16) < 36f, $"nav: capped so it can't outrun streaming ({s.StreamSpeedCap(16):F1} blocks/s)");
+        Check(n.InWindow(new Vector3(80, 64, 80)) && !n.InWindow(new Vector3(10, 64, 80)), "nav: InWindow");
+
+        // Area setup sizes the visible box and requests the margin on top (shrunk near the caps / build height).
+        var a = new AreaSetupState { Limits = new RegionLimits { MaxX = 256, MaxY = 384, MaxZ = 256, MaxBlocks = 8 << 20 } };
+        a.Begin("world", new Vector3Int(0, 32, 0), new Vector3Int(64, 96, 64));
+        var rq = a.BuildRequest();
+        Check(Json.Write(rq.A("size")) == "[96,128,96]" && (int)rq["y_origin"] == 16 && Json.Write(rq.A("view_margin")) == "[16,16,16]" &&
+              a.Estimate.Quads == AreaMath.Estimate(96, 128, 96).Quads, $"area: request = window + 2*margin ({Json.Write(rq)})");
+        a.Size = new Vector3Int(256, 96, 240);
+        Check(a.RequestMargin == new Vector3Int(0, 16, 8), $"area: margin shrinks to fit the caps ({a.RequestMargin})");
+        a.Size = new Vector3Int(64, 96, 64); a.MinY = 24;
+        Check(a.RequestMargin.y == 8, "area: margin stops at the build height");
+    }
+
+    static WorldModel Terrain(Vector3Int origin, Vector3Int dims, string[] palette, Func<int, int, int, string> f, int id = 1)
+    {
+        var w = new WorldModel { SnapshotId = id, World = "world", Origin = origin, Dims = dims };
+        w.Palette.AddRange(palette);
+        w.Grid = new ushort[dims.x * dims.y * dims.z];
+        for (int y = 0; y < dims.y; y++) for (int z = 0; z < dims.z; z++) for (int x = 0; x < dims.x; x++)
+            w.Grid[w.Index(x, y, z)] = (ushort)Array.IndexOf(palette, f(origin.x + x, origin.y + y, origin.z + z));
+        return w;
+    }
+
+    static ChunkSnapshot Snap(WorldModel w, int id) => new ChunkSnapshot { SnapshotId = id, World = w.World, Origin = w.Origin, Dims = w.Dims, Palette = w.Palette.ToArray(), Grid = w.Grid };
+
+    static string Hills(int x, int y, int z) => y < 4 + ((x * 7 + z * 3) & 7) ? "minecraft:stone" : y == 4 + ((x * 7 + z * 3) & 7) ? "minecraft:grass_block" : "minecraft:air";
+
+    static void SectionPlanTests()
+    {
+        var pal = new[] { "minecraft:air", "minecraft:stone", "minecraft:grass_block" };
+        var dims = new Vector3Int(48, 16, 32);
+        var old = Terrain(new Vector3Int(0, 0, 0), dims, pal, Hills);
+        old.DirtySections.Clear();
+        // Same world, shifted by one section in +X, palette in another order.
+        var pal2 = new[] { "minecraft:grass_block", "minecraft:air", "minecraft:stone" };
+        var neu = Terrain(new Vector3Int(16, 0, 0), dims, pal2, Hills, 2);
+        var plan = SectionPlan.Compute(old, Snap(neu, 2), new HashSet<Vector3Int>(), null);
+        Check(plan.Rekey && plan.ShiftSections == new Vector3Int(1, 0, 0), "plan: whole-section shift re-keys");
+        Check(plan.Mesh.SetEquals(new[] { new Vector3Int(2, 0, 0), new Vector3Int(2, 0, 1) }) && plan.Kept == 4,
+              $"plan: only the new column is meshed, 4 kept ({string.Join(" ", plan.Mesh)})");
+        Check(plan.Refresh.SetEquals(new[] { new Vector3Int(1, 0, 0), new Vector3Int(1, 0, 1) }), $"plan: neighbours refreshed later ({string.Join(" ", plan.Refresh)})");
+
+        // A changed block inside the overlap, and a stale (dirty) old section.
+        var changed = Terrain(new Vector3Int(16, 0, 0), dims, pal2, (x, y, z) => x == 20 && y == 15 && z == 3 ? "minecraft:stone" : Hills(x, y, z), 2);
+        var stale = new HashSet<Vector3Int> { new Vector3Int(2, 0, 1) };   // old key (2,0,1) -> new key (1,0,1)
+        var p2 = SectionPlan.Compute(old, Snap(changed, 2), stale, null);
+        Check(p2.Mesh.Contains(new Vector3Int(0, 0, 0)) && p2.Mesh.Contains(new Vector3Int(1, 0, 1)) && p2.Kept == 2,
+              $"plan: changed and stale sections are meshed again ({string.Join(" ", p2.Mesh)})");
+
+        // Delta snapshots: listed sections only, no compare.
+        var p3 = SectionPlan.Compute(old, Snap(neu, 2), null, new List<Vector3Int> { new Vector3Int(2, 0, 0), new Vector3Int(2, 0, 1) });
+        Check(p3.Rekey && p3.Mesh.Count == 2 && p3.Compared == 0, "plan: delta uses the listed sections");
+
+        // Not section aligned, other dims, other world: no re-key.
+        var odd = Terrain(new Vector3Int(8, 0, 0), dims, pal, Hills, 2);
+        Check(!SectionPlan.Compute(old, Snap(odd, 2), null, null).Rekey, "plan: 8-block shift -> full re-mesh");
+        var big = Terrain(new Vector3Int(0, 0, 0), new Vector3Int(64, 16, 32), pal, Hills, 2);
+        var pb = SectionPlan.Compute(old, Snap(big, 2), null, null);
+        Check(!pb.Rekey && pb.Mesh.Count == 8, "plan: new dims -> full re-mesh");
+        // Unaligned dims: a partial old section can't stand in for a full new one.
+        var w40 = Terrain(new Vector3Int(0, 0, 0), new Vector3Int(40, 16, 16), pal, Hills);
+        var w40b = Terrain(new Vector3Int(16, 0, 0), new Vector3Int(40, 16, 16), pal, Hills, 2);
+        var p40 = SectionPlan.Compute(w40, Snap(w40b, 2), null, null);
+        Check(p40.Rekey && p40.Mesh.Contains(new Vector3Int(1, 0, 0)) && p40.Mesh.Contains(new Vector3Int(2, 0, 0)) && !p40.Mesh.Contains(new Vector3Int(0, 0, 0)),
+              $"plan: partial edge section is re-meshed ({string.Join(" ", p40.Mesh)})");
+    }
+
+    static Dictionary<string, object> Load(Func<string, string> fixture, string name) =>
+        Json.Parse(System.IO.File.ReadAllText(fixture(name))) as Dictionary<string, object>;
+
+    static void SectionedTests(Func<string, string> fixture)
+    {
+        var full = Load(fixture, "chunk_snapshot_sections.json");
+        var s = SectionedSnapshot.Assemble(new[] { full }, null, null);
+        var w = new WorldModel(); w.ApplySnapshot(s);
+        Check(w.Dims == new Vector3Int(32, 16, 16) && w.State(w.Get(3, 7, 9)) == "minecraft:stone" && w.State(w.Get(3, 8, 9)).StartsWith("minecraft:grass_block") &&
+              w.State(w.Get(3, 9, 9)) == "minecraft:air" && w.State(w.Get(20, 3, 15)) == "minecraft:stone" && w.State(w.Get(20, 4, 0)) == "minecraft:air",
+              "sections_v1: full snapshot decodes");
+        var delta = Load(fixture, "chunk_snapshot_delta.json");
+        var listed = new List<Vector3Int>();
+        var d = SectionedSnapshot.Assemble(new[] { delta }, w, listed);
+        var w2 = new WorldModel(); w2.ApplySnapshot(d);
+        Check(w2.Origin == new Vector3Int(16, 60, 0) && w2.State(w2.Get(4, 3, 15)) == "minecraft:stone" && w2.State(w2.Get(4, 4, 15)) == "minecraft:air" &&
+              w2.State(w2.Get(16, 0, 0)).StartsWith("minecraft:oak_log") && w2.State(w2.Get(31, 0, 0)).StartsWith("minecraft:oak_log") &&
+              w2.State(w2.Get(16, 0, 1)) == "minecraft:air" && listed.Count == 1, "sections_v1: delta copies the base shifted and applies listed sections");
+
+        bool Throws(Action a) { try { a(); return false; } catch (FormatException) { return true; } }
+        var wrongBase = new WorldModel(); wrongBase.ApplySnapshot(s); wrongBase.SnapshotId = 5;
+        Check(Throws(() => SectionedSnapshot.Assemble(new[] { delta }, wrongBase, null)), "sections_v1: delta against another snapshot is rejected");
+        var missing = Load(fixture, "chunk_snapshot_sections.json");
+        missing["sections"] = new List<object> { missing.A("sections")[0] };
+        Check(Throws(() => SectionedSnapshot.Assemble(new[] { missing }, null, null)), "sections_v1: a missing section in a full snapshot is rejected");
+        var badRun = Load(fixture, "chunk_snapshot_sections.json");
+        ((Dictionary<string, object>)badRun.A("sections")[1])["data"] = new List<object> { 1.0, 1000.0 };
+        Check(Throws(() => SectionedSnapshot.Assemble(new[] { badRun }, null, null)), "sections_v1: wrong section run total is rejected");
+        var gap = Load(fixture, "chunk_snapshot_delta.json");
+        gap["sections"] = new List<object>();
+        Check(Throws(() => SectionedSnapshot.Assemble(new[] { gap }, w, null)), "sections_v1: delta without the new section is rejected");
+
+        // Parts: two messages, assembled after the last one, decode + plan off the main thread.
+        var a = Load(fixture, "chunk_snapshot_sections.json"); var b2 = Load(fixture, "chunk_snapshot_sections.json");
+        var secs = a.A("sections");
+        a["parts"] = 2.0; b2["parts"] = 2.0; b2["part"] = 1.0;
+        a["sections"] = new List<object> { secs[0] }; b2["sections"] = new List<object> { secs[1] };
+        var asm = new SnapshotAssembler();
+        asm.Offer(a, new WorldModel(), new HashSet<Vector3Int>());
+        Check(!asm.Busy && asm.PartsWaiting == 1, "assembler: waits for the last part");
+        asm.Offer(b2, new WorldModel(), new HashSet<Vector3Int>());
+        var r = asm.Wait();
+        Check(r != null && r.Error == null && r.Parts == 2 && r.Snapshot.Grid.Length == 32 * 16 * 16 && r.ViewMargin == new Vector3Int(8, 0, 0) && !r.Plan.Rekey,
+              $"assembler: two parts -> one snapshot ({r?.Error})");
+        asm.Offer(delta, w, new HashSet<Vector3Int>());
+        var rd = asm.Wait();
+        Check(rd.Error == null && rd.Delta && rd.Plan.Rekey && rd.Plan.Mesh.Count == 1 && rd.Plan.Kept == 1, $"assembler: delta -> re-key plan ({rd.Error})");
+        var v1 = Load(fixture, "chunk_snapshot.json");
+        asm.Offer(v1, w, new HashSet<Vector3Int>());
+        var r1 = asm.Wait();
+        Check(r1.Error == null && r1.Snapshot.Dims == new Vector3Int(32, 64, 32) && r1.ViewMargin == default, "assembler: v1 rle snapshot still works");
+        var req = Load(fixture, "region_request_nav.json");
+        var built = Protocol.RegionRequest("world", new Vector3Int(16, 60, 0), new Vector3Int(32, 16, 16), new Vector3Int(8, 0, 0));
+        Check(Json.Write(built.A("view_margin")) == Json.Write(req.A("view_margin")) && Json.Write(built.A("origin")) == Json.Write(req.A("origin")), "region_request with view_margin matches the fixture");
+        Check(Protocol.Hello("").A("caps").Contains(SectionedSnapshot.Cap), "hello advertises sections_v1");
+    }
+
+    static void CapTests()
+    {
+        var pal = new[] { "minecraft:air", "minecraft:stone", "minecraft:water", "minecraft:poppy" };
+        var w = Terrain(new Vector3Int(0, 0, 0), new Vector3Int(8, 6, 4), pal, (x, y, z) => y < 2 ? "minecraft:stone" : y == 2 && x < 4 ? "minecraft:water" : y == 3 ? "minecraft:poppy" : "minecraft:air");
+        var keys = new FaceKey[pal.Length * 6]; var caps = new bool[pal.Length]; var flat = new Flat();
+        for (int i = 0; i < pal.Length; i++)
+        {
+            var shape = BlockRules.Shape(pal[i]);
+            caps[i] = CapMesher.Caps(shape);
+            for (int f = 0; f < 6; f++) { keys[i * 6 + f] = flat.Face(pal[i], f); keys[i * 6 + f].Transparent |= shape != BlockShape.Cube; }
+        }
+        var m = new MeshData();
+        CapMesher.Build(w, 0, 0, keys, caps, m);   // -X side, slice x=0: stone y<2 (2x4 cells) + water at y=2 (1x4)
+        Check(m.Verts.Count == 8 && m.Opaque.Count == 6 && m.Transparent.Count == 6, $"caps: -X slice = 1 stone quad + 1 water quad (got {m.Verts.Count / 4})");
+        Check(m.Verts.All(v => v.x == 0), "caps: plane axis at 0");
+        CapMesher.Build(w, 1, 7, keys, caps, m);   // +X side at x=7: no water there
+        Check(m.Verts.Count == 4 && m.Transparent.Count == 0, "caps: +X slice = 1 stone quad");
+        CapMesher.Build(w, 3, 3, keys, caps, m);   // top cut through the poppies: crosses get no cap
+        Check(m.Verts.Count == 0, "caps: no caps for non-full blocks");
+        CapMesher.Build(w, 2, 0, keys, caps, m);   // bottom: 8x4 stone = one quad
+        Check(m.Verts.Count == 4, "caps: bottom merges into one quad");
+        Check(CapMesher.Slice(0, 2.3f, 9f) == 2 && CapMesher.Slice(1, 0f, 5f) == 4 && CapMesher.Slice(1, 0f, 5.2f) == 5 && CapMesher.Slice(0, 3f, 9f) == 3, "caps: slice under each plane");
+    }
+}

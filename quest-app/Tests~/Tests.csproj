@@ -10,5 +10,7 @@
     <Compile Include="*.cs" />
     <Compile Include="../Assets/Scripts/Net/Json.cs;../Assets/Scripts/Net/Protocol.cs;../Assets/Scripts/Net/LinkClient.cs" />
     <Compile Include="../Assets/Scripts/World/WorldModel.cs;../Assets/Scripts/World/BlockRules.cs;../Assets/Scripts/World/GreedyMesher.cs;../Assets/Scripts/World/AreaMath.cs;../Assets/Scripts/World/AreaSetupState.cs" />
+    <!-- navigation, streaming and clip caps (World/NavState etc.) -->
+    <Compile Include="../Assets/Scripts/World/NavState.cs;../Assets/Scripts/World/SectionPlan.cs;../Assets/Scripts/World/SnapshotAssembler.cs;../Assets/Scripts/World/CapMesher.cs;../Assets/Scripts/Net/SectionedSnapshot.cs" />
   </ItemGroup>
 </Project>
