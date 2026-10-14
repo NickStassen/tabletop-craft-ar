@@ -36,6 +36,7 @@ namespace UnityEngine
     public static class Mathf
     {
         public static int Min(int a, int b) => Math.Min(a, b);
+        public static float Min(float a, float b) => Math.Min(a, b);
         public static float Max(float a, float b) => Math.Max(a, b);
         public static int Max(int a, int b) => Math.Max(a, b);
         public static int Clamp(int v, int lo, int hi) => v < lo ? lo : v > hi ? hi : v;

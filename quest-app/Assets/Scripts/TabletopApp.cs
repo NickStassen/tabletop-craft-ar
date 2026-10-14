@@ -107,7 +107,8 @@ namespace TabletopCraft
                 BlockSizeM = (float)c.D("block_size_m", BlockSizeM);
                 SkinPlayer = c.S("skin_player") ?? SkinPlayer;
                 BlockShading.SmoothLighting = c.B("smooth_lighting", true);       // lighting look (BlockShading.cs)
-                BlockShading.Brightness = (float)c.D("brightness", 0.5);
+                BlockShading.Brightness = (float)c.D("brightness", BlockShading.Brightness);   // vanilla slider, default 1 = Bright
+                BlockShading.MinLight = (float)c.D("min_light", BlockShading.MinLight);         // brightness of light level 0
             }
             catch (Exception e) { Debug.LogWarning("[Tabletop] bad tabletop.json: " + e.Message); }
         }
