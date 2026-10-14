@@ -114,6 +114,15 @@ public final class LinkServer extends WebSocketServer {
                     AvatarConfig cfg = AvatarConfig.parse(m);
                     plugin.enqueue(() -> plugin.onAvatarConfig(s, cfg, refSeq));
                 }
+                case "block_edit" -> {   // PROTOCOL.md 4.20; rate-limited here so a flood never reaches the main thread
+                    BlockEdit e = BlockEdit.parse(m);
+                    EditLimiter lim = s.editLimiter;
+                    if (s.canEdit && lim != null && !lim.tryAcquire(System.nanoTime())) {
+                        s.send(e.error("rate_limited", "more than " + plugin.editRate() + " edits per second", refSeq));
+                        return;
+                    }
+                    plugin.enqueue(() -> plugin.onBlockEdit(s, e, refSeq));
+                }
                 case "ping" -> {
                     JsonObject p = Protocol.body("pong");
                     if (m.has("id")) p.add("id", m.get("id"));
@@ -154,6 +163,7 @@ public final class LinkServer extends WebSocketServer {
                 String c = e.getAsString();
                 if (c.equals(Protocol.CAP_LIGHT)) s.wantsLight = plugin.lightEnabled();
                 else if (c.equals(Protocol.CAP_BIOMES)) s.wantsBiomes = plugin.biomesEnabled();
+                else if (c.equals(Protocol.CAP_EDIT) && plugin.editAllowed()) { s.editLimiter = new EditLimiter(plugin.editRate()); s.canEdit = true; }
             }
         s.state = Session.State.READY;
         plugin.getLogger().info("Hello from " + s.client + " (session " + s.id + ") @ " + s.conn.getRemoteSocketAddress());

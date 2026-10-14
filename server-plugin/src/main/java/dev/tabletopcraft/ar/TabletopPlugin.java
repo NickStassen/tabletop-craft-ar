@@ -6,7 +6,12 @@ import org.bukkit.HeightMap;
 import org.bukkit.profile.PlayerTextures;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.World;
+import org.bukkit.block.Block;
+import org.bukkit.block.data.BlockData;
+import org.bukkit.block.data.Levelled;
+import org.bukkit.block.data.Waterlogged;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Entity;
@@ -57,6 +62,10 @@ public final class TabletopPlugin extends JavaPlugin {
     private volatile boolean lightOn = true, biomesOn = true;
     private long lightRecheckTick = -1;
     static final int LIGHT_RECHECK_TICKS = 4, MAX_LIGHT_CHANGES = 16384;
+    // Block editing from the headset (block_edit, PROTOCOL.md 4.20), config section "edit". Read on websocket threads.
+    private volatile boolean editEnabled = true, editRequireToken, editTokenSet, editPhysics = true;
+    private volatile int editRate = 20;
+    private volatile Set<String> editDeny = Set.of();
 
     @Override public void onEnable() {
         saveDefaultConfig();
@@ -86,6 +95,14 @@ public final class TabletopPlugin extends JavaPlugin {
         avatar.smoothing = c.getDouble("avatar.smoothing", 0.5);
         lightOn = c.getBoolean("stream.light", true);
         biomesOn = c.getBoolean("stream.biomes", true);
+        editEnabled = c.getBoolean("edit.enabled", true);
+        editRequireToken = c.getBoolean("edit.require-token", false);
+        editTokenSet = !c.getString("auth.token", "").isEmpty();
+        editRate = Math.max(1, c.getInt("edit.max-per-second", 20));
+        editPhysics = c.getBoolean("edit.physics", true);
+        Set<String> deny = new HashSet<>();
+        for (String id : c.getStringList("edit.deny")) deny.add(BlockEdit.blockId(id));
+        editDeny = Set.copyOf(deny);
         outbound = Executors.newSingleThreadExecutor(r -> { Thread t = new Thread(r, "tabletop-outbound"); t.setDaemon(true); return t; });
         link = new LinkServer(this, c.getString("bind.host", "0.0.0.0"), c.getInt("bind.port", 8765), c.getString("bind.path", "/tabletop"), c.getString("auth.token", ""));
         link.start();
@@ -181,13 +198,14 @@ public final class TabletopPlugin extends JavaPlugin {
         w.add("limits", lim);
         w.addProperty("avatar_supported", true);
         // Caps in effect for this session: the optional features it asked for and was granted (light_v1, biomes_v1,
-        // sections_v1), plus what this server always does (view_margin, pose_snapshot_id). PROTOCOL.md 4.5.1, 4.17-4.18.
+        // sections_v1, edit_v1), plus what this server always does (view_margin, pose_snapshot_id). PROTOCOL.md 4.5.1, 4.17-4.18, 4.20.
         com.google.gson.JsonArray sc = new com.google.gson.JsonArray();
         if (s.wantsLight) sc.add(Protocol.CAP_LIGHT);
         if (s.wantsBiomes) sc.add(Protocol.CAP_BIOMES);
         if (sectionsFor(s)) sc.add(SectionCodec.ENCODING);
         sc.add("view_margin");
         sc.add("pose_snapshot_id");
+        if (s.canEdit) sc.add(Protocol.CAP_EDIT);   // block editing (PROTOCOL.md 4.20)
         w.add("caps", sc);
         send(s, w);
         subscribe(s, r, null);
@@ -344,7 +362,9 @@ public final class TabletopPlugin extends JavaPlugin {
         java.util.Set<RegionSpec> regions = new java.util.HashSet<>();
         for (Session s : ready()) if (s.lastGrid != null) regions.add(s.region);
         for (RegionSpec r : regions) {
-            if (!diffInFlight.add(r)) continue;
+            // A diff of this region is still reading: stay dirty so a change made since it started goes out right after
+            // it, not with the next light recheck or safety diff (headset edits measured 350 ms instead of 150 ms).
+            if (!diffInFlight.add(r)) { dirty = true; continue; }
             Map<Session, Integer> gen = new HashMap<>();
             Map<Session, int[]> base = new HashMap<>();
             Map<Session, byte[]> baseLight = new HashMap<>();
@@ -575,6 +595,60 @@ public final class TabletopPlugin extends JavaPlugin {
         o.add("limits", lim);
         if (refSeq != null) o.addProperty("ref_seq", refSeq);
         send(s, o);
+    }
+
+    // ---------- block editing from the headset (PROTOCOL.md 4.20) ----------
+    /** edit_v1 is granted when edit.enabled and, with edit.require-token, the server has an auth.token (so every headset had to present it). */
+    boolean editAllowed() { return editEnabled && (!editRequireToken || editTokenSet); }
+    int editRate() { return editRate; }
+
+    /**
+     * Applies one block_edit on the main thread: only inside the session's region, never into an occupied cell, never
+     * a state from edit.deny. Breaking a block that holds water leaves water and placing a waterloggable block into a
+     * water source waterlogs it (vanilla). A plugin's setBlockData fires no block events, so the region is marked dirty
+     * here and the change reaches every headset through the normal block_update diff (this tick).
+     */
+    void onBlockEdit(Session s, BlockEdit e, Long refSeq) {
+        if (s.state != Session.State.READY) return;
+        if (!s.canEdit) { denyEdit(s, e, "edit_denied", editAllowed() ? "ask for edit_v1 in hello.caps" : "block editing is off on this server (edit.enabled / edit.require-token)", refSeq); return; }
+        RegionSpec r = s.region;
+        if (r == null || !r.containsWorld(e.x(), e.y(), e.z())) { denyEdit(s, e, "out_of_region", "position is outside the table's region", refSeq); return; }
+        World w = Bukkit.getWorld(r.world());
+        if (w == null) { denyEdit(s, e, "world_not_found", "no world " + r.world(), refSeq); return; }
+        if (!w.isChunkLoaded(e.x() >> 4, e.z() >> 4)) { denyEdit(s, e, "edit_denied", "chunk not loaded", refSeq); return; }
+        Block b = w.getBlockAt(e.x(), e.y(), e.z());
+        BlockData old = b.getBlockData(), next;
+        if (e.op() == BlockEdit.Op.BREAK) {
+            if (old.getMaterial().isAir()) { getLogger().info(String.format("EDIT session=%s break %d,%d,%d: already air", s.id, e.x(), e.y(), e.z())); return; }
+            next = Bukkit.createBlockData(holdsWater(old) ? Material.WATER : Material.AIR);
+        } else {
+            try { next = Bukkit.createBlockData(e.state()); }
+            catch (IllegalArgumentException ex) { denyEdit(s, e, "bad_state", "not a block state: " + e.state(), refSeq); return; }
+            String id = BlockEdit.blockId(next.getAsString());
+            if (next.getMaterial().isAir()) { denyEdit(s, e, "bad_state", "use op break to remove a block", refSeq); return; }
+            if (editDeny.contains(id)) { denyEdit(s, e, "edit_denied", id + " can't be placed from the headset (edit.deny)", refSeq); return; }
+            if (!b.isReplaceable()) { denyEdit(s, e, "edit_denied", "cell is occupied by " + old.getAsString(), refSeq); return; }
+            if (next instanceof Waterlogged wl && old.getMaterial() == Material.WATER && old instanceof Levelled lv && lv.getLevel() == 0) wl.setWaterlogged(true);
+        }
+        long t0 = System.nanoTime();
+        b.setBlockData(next, editPhysics);
+        markDirty(w.getName(), e.x(), e.y(), e.z());
+        getLogger().info(String.format("EDIT session=%s %s %s %d,%d,%d%s %s -> %s (%.2f ms)", s.id, e.op().id(), w.getName(), e.x(), e.y(), e.z(),
+            e.face() == null ? "" : " face=" + e.face(), old.getAsString(), b.getBlockData().getAsString(), (System.nanoTime() - t0) / 1e6));
+    }
+
+    private void denyEdit(Session s, BlockEdit e, String code, String why, Long refSeq) {
+        getLogger().info(String.format("EDIT_DENIED session=%s %s %d,%d,%d %s: %s", s.id, e.op().id(), e.x(), e.y(), e.z(), code, why));
+        send(s, e.error(code, why, refSeq));
+    }
+
+    /** Waterlogged blocks and the always-underwater plants leave a water source when broken. */
+    private static boolean holdsWater(BlockData d) {
+        if (d instanceof Waterlogged wl && wl.isWaterlogged()) return true;
+        return switch (d.getMaterial()) {
+            case KELP, KELP_PLANT, SEAGRASS, TALL_SEAGRASS, BUBBLE_COLUMN -> true;
+            default -> false;
+        };
     }
 
     // ---------- avatar ----------

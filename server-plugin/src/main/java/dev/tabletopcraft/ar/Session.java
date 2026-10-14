@@ -55,6 +55,9 @@ public final class Session {
     /** Opted into light_v1 / biomes_v1 in hello.caps (and enabled in config); PROTOCOL.md 4.4.1. */
     public volatile boolean wantsLight, wantsBiomes;
     public byte[] lastLight;               // packed light, as last sent (main thread), null without light_v1
+    /** Granted edit_v1 in welcome.caps (block_edit, PROTOCOL.md 4.20); its rate limit, set together with it. */
+    public volatile boolean canEdit;
+    public volatile EditLimiter editLimiter;
 
     /** RegionReader extras this session needs in its snapshots and diffs. */
     public int readExtras() { return (wantsLight ? RegionReader.LIGHT : 0) | (wantsBiomes ? RegionReader.BIOMES : 0); }

@@ -1,0 +1,12 @@
+{
+ "v": 1,
+ "type": "error",
+ "seq": 57,
+ "t": 1760370004120,
+ "code": "edit_denied",
+ "message": "cell is occupied by minecraft:stone",
+ "ref_seq": 42,
+ "fatal": false,
+ "op": "place",
+ "pos": [105, 64, -35]
+}
