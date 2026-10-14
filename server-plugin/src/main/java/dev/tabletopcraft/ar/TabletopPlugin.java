@@ -36,6 +36,7 @@ public final class TabletopPlugin extends JavaPlugin {
     private final AtomicReference<PoseSet> latestPose = new AtomicReference<>();
     private PoseSet lastPose;                              // re-stepped while the smoothed giant catches up
     private final Map<String, PlayerProfile> skinCache = new HashMap<>(); // lower-case name -> resolved profile
+    private final Map<String, String> skinHandBlocks = new HashMap<>();   // lower-case name -> block closest to the skin's hand
     private final Set<String> skinLookups = new HashSet<>();
     private BukkitTask tickTask;
     private Map<String, Set<Long>> ticketed = Map.of();   // world name -> chunk keys holding our plugin ticket
@@ -70,7 +71,11 @@ public final class TabletopPlugin extends JavaPlugin {
         avatar.userHeightM = c.getDouble("avatar.user-height-m", 1.75);
         avatar.skinPlayer = defaultSkinPlayer();
         avatar.interpolationTicks = c.getInt("avatar.interpolation-ticks", 2);
-        avatar.placement = GiantPlacement.Mode.parse(c.getString("avatar.placement", "ground"));
+        avatar.placement = GiantPlacement.Mode.parse(c.getString("avatar.placement", "floating"));
+        avatar.headSizeM = c.getDouble("avatar.head-size-m", 0.25);
+        avatar.handSizeM = c.getDouble("avatar.hand-size-m", 0.1);
+        avatar.maxHeadBlocks = c.getDouble("avatar.max-head-blocks", 64);
+        avatar.handBlockSetting = c.getString("avatar.hand-block", "auto");
         avatar.smoothing = c.getDouble("avatar.smoothing", 0.5);
         lightOn = c.getBoolean("stream.light", true);
         biomesOn = c.getBoolean("stream.biomes", true);
@@ -463,7 +468,9 @@ public final class TabletopPlugin extends JavaPlugin {
         // Stand on the ground in the middle of the region until the first pose arrives (region chunks are ticketed).
         int cx = r.ox() + r.sx() / 2, cz = r.oz() + r.sz() / 2;
         double y = w.isChunkLoaded(cx >> 4, cz >> 4) ? w.getHighestBlockYAt(cx, cz, HeightMap.MOTION_BLOCKING_NO_LEAVES) + 1 : r.oy();
-        avatar.resolvedSkin = skinCache.get(avatar.skinPlayer.toLowerCase(Locale.ROOT));
+        String key = avatar.skinPlayer.toLowerCase(Locale.ROOT);
+        avatar.resolvedSkin = skinCache.get(key);
+        avatar.skinHandBlock = skinHandBlocks.get(key);
         avatar.spawn(w, new Location(w, cx + 0.5, y, cz + 0.5));
         resolveSkin(avatar.skinPlayer);
         getLogger().info(String.format("Avatar spawned: scale %.2f (%s), placement %s, skin %s", avatar.scale(),
@@ -500,19 +507,27 @@ public final class TabletopPlugin extends JavaPlugin {
                     }
                 }
             } catch (Exception e) { why = e.getClass().getSimpleName() + ": " + e.getMessage(); }
+            // The floating hands take the skin's hand colour (closest plain block); a failure keeps the default.
+            String hand = null;
+            if (done != null) {
+                try {
+                    hand = SkinLookup.handBlock(done.getTextures().getSkin(), done.getTextures().getSkinModel() == PlayerTextures.SkinModel.SLIM);
+                } catch (Exception e) { getLogger().warning("SKIN hand colour for " + name + ": " + e); }
+            }
             PlayerProfile result = done;
-            String reason = why;
-            enqueue(() -> onSkinResolved(name, key, result, reason));
+            String reason = why, handBlock = hand;
+            enqueue(() -> onSkinResolved(name, key, result, reason, handBlock));
         });
     }
 
-    private void onSkinResolved(String name, String key, PlayerProfile p, String why) {
+    private void onSkinResolved(String name, String key, PlayerProfile p, String why, String handBlock) {
         skinLookups.remove(key);
         boolean current = avatar.skinPlayer.equalsIgnoreCase(name);
         if (p != null) {
             skinCache.put(key, p);
-            getLogger().info("SKIN resolved " + name + " -> " + p.getId() + " (" + (p.getTextures().getSkinModel() == PlayerTextures.SkinModel.SLIM ? "slim" : "wide") + ")");
-            if (current) { avatar.resolvedSkin = p; avatar.skinNote = null; avatar.refreshSkin(); }
+            if (handBlock != null) skinHandBlocks.put(key, handBlock);
+            getLogger().info("SKIN resolved " + name + " -> " + p.getId() + " (" + (p.getTextures().getSkinModel() == PlayerTextures.SkinModel.SLIM ? "slim" : "wide") + "), hand block " + handBlock);
+            if (current) { avatar.resolvedSkin = p; avatar.skinHandBlock = handBlock; avatar.skinNote = null; avatar.refreshSkin(); }
         } else {
             getLogger().warning("SKIN lookup failed for " + name + ": " + why);
             if (current) avatar.skinNote = "server skin lookup failed (" + why + "); Java clients may still resolve " + name;
@@ -560,7 +575,7 @@ public final class TabletopPlugin extends JavaPlugin {
         if (!targets.equals(giantChunks) || !w.getName().equals(giantWorld) || !giantPending.isEmpty()) {
             giantChunks = targets; giantWorld = w.getName(); giantPending.clear(); updateTickets();
         }
-        avatar.commit(w, step, ps.left(), ps.right(), ps.seq());
+        avatar.commit(w, step, ps.head(), ps.left(), ps.right(), ps.seq());
         if (getConfig().getBoolean("debug.log-poses", false))
             getLogger().info(String.format("pose seq=%d eye=%.2f,%.2f,%.2f yaw=%.1f ground=%.1f", ps.seq(), step.eye()[0], step.eye()[1], step.eye()[2], step.yaw(), step.groundY()));
     }
@@ -665,9 +680,11 @@ public final class TabletopPlugin extends JavaPlugin {
                     case "spawn" -> { avatar.enabled = true; spawnAvatarAtAnchor(); sender.sendMessage("[tabletop] avatar spawned, scale " + avatar.scale()); }
                     case "remove" -> { avatar.enabled = false; avatar.remove(); sender.sendMessage("[tabletop] avatar removed"); }
                     case "placement" -> {
-                        if (args.length < 3 || !(args[2].equalsIgnoreCase("ground") || args[2].equalsIgnoreCase("exact"))) { sender.sendMessage("[tabletop] usage: /tabletop avatar placement <ground|exact>"); return true; }
+                        if (args.length < 3 || !List.of("floating", "ground", "exact").contains(args[2].toLowerCase(Locale.ROOT))) { sender.sendMessage("[tabletop] usage: /tabletop avatar placement <floating|ground|exact>"); return true; }
                         avatar.placement = GiantPlacement.Mode.parse(args[2]);
                         getConfig().set("avatar.placement", avatar.placement.id()); saveConfig();
+                        // Floating is a head and hands, ground/exact a Mannequin: switching between them needs new entities.
+                        if (avatar.spawned() && avatar.floating() == avatar.placement.hasBody()) spawnAvatarAtAnchor();
                         sender.sendMessage("[tabletop] giant placement: " + avatar.placement.id());
                     }
                     case "skin" -> {
@@ -710,7 +727,7 @@ public final class TabletopPlugin extends JavaPlugin {
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (args.length == 1) return List.of("status", "setorigin", "setsize", "avatar", "reload");
         if (args.length == 2 && args[0].equalsIgnoreCase("avatar")) return List.of("status", "spawn", "remove", "blocksize", "placement", "skin");
-        if (args.length == 3 && args[0].equalsIgnoreCase("avatar") && args[1].equalsIgnoreCase("placement")) return List.of("ground", "exact");
+        if (args.length == 3 && args[0].equalsIgnoreCase("avatar") && args[1].equalsIgnoreCase("placement")) return List.of("floating", "ground", "exact");
         return List.of();
     }
 }
