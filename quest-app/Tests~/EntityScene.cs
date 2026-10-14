@@ -62,7 +62,8 @@ static class EntityScene
         if (model == null) return parts;
         float yaw = e.HasBodyYaw ? e.BodyYaw : e.Yaw;
         var root = Mul(T(x, y, -z), Mul(RY(180 + yaw), S(look.Scale / 16f, look.Scale / 16f, look.Scale / 16f)));
-        float[] mr = look.Root == RootKind.Living ? T(0, 24.016f, 0) : look.Root == RootKind.Boat ? Mul(T(0, 6, 0), RY(90)) : T(0, 6, 0);
+        var ro = EntityCatalog.RootOffset(look.Root);
+        float[] mr = Mul(T(ro.x, ro.y, ro.z), RY(EntityCatalog.RootYaw(look.Root)));
         var rot = anim?.Invoke(model) ?? new float[model.Parts.Count * 3];
         var world = new float[model.Parts.Count][];
         int layer = o.Layer(look.Texture);

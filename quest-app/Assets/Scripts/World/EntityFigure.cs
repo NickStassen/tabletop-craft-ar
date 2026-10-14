@@ -58,10 +58,9 @@ namespace TabletopCraft.World
             var mat = tex.Material(tex.Get(Look.Texture, Look.Overlays, Look.Tint.r == 255 && Look.Tint.g == 255 && Look.Tint.b == 255 ? (Color32?)null : Look.Tint));
             _modelRoot = new GameObject("model").transform;
             _modelRoot.SetParent(Root.transform, false);
-            // The game renderer's transforms before the model: living entities stand on y 0 (model origin 1.501 blocks up),
-            // boats sit 6 px up turned 90 degrees, minecarts 6 px up (pitched by the renderer).
-            if (Look.Root == RootKind.Living) _modelRoot.localPosition = new Vector3(0, 24.016f, 0);
-            else { _modelRoot.localPosition = new Vector3(0, 6, 0); if (Look.Root == RootKind.Boat) _modelRoot.localRotation = Quaternion.AngleAxis(90, Vector3.up); }
+            // The game renderer's transforms before the model (EntityCatalog.RootOffset); minecarts are pitched in Animate.
+            _modelRoot.localPosition = EntityCatalog.RootOffset(Look.Root);
+            _modelRoot.localRotation = Quaternion.AngleAxis(EntityCatalog.RootYaw(Look.Root), Vector3.up);
             int n = _model.Parts.Count;
             _parts = new Transform[n];
             _defaults = new Quaternion[n];

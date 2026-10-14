@@ -292,6 +292,23 @@ static class EntityTests
         }
         check(missing.Count == 0, $"entity catalog: {samples.Count} looks resolve to models and pack textures" + (missing.Count > 0 ? ": MISSING " + string.Join("; ", missing.Take(12)) : ""));
 
+        // A leash knot sits on its fence post: LeashKnotRenderer only flips the model, so the knot spans 0-8 px above the
+        // entity position (block + 0.375), not 1.5 blocks higher like a living entity's model.
+        var knot = EntityCatalog.Resolve(new EntityInfo { Type = "minecraft:leash_knot", Width = 0.375f, Height = 0.5f });
+        if (EntityModels.Loaded && EntityModels.Get(knot.Model) is EModel km)
+        {
+            float lo = float.MaxValue, hi = float.MinValue, oy = EntityCatalog.RootOffset(knot.Root).y;
+            foreach (var p in km.Parts)
+            {
+                var fm = new FigureMesh();
+                EntityModels.BuildPart(km, p, fm);
+                EntityModels.Pivot(p, out _, out float py, out _);
+                for (int i = 1; i < fm.Pos.Count; i += 3) { lo = Math.Min(lo, oy + py + fm.Pos[i]); hi = Math.Max(hi, oy + py + fm.Pos[i]); }
+            }
+            check(knot.Root == RootKind.Origin && Math.Abs(lo) < 0.01f && Math.Abs(hi - 8) < 0.01f,
+                $"leash knot spans {lo / 16:0.###}-{hi / 16:0.###} blocks above its position (fence y + 0.375): on the post");
+        }
+
         // Items.
         var diamond = ItemModels.Resolve("minecraft:diamond", Read);
         check(diamond.Kind == ItemVisualKind.Sprite && diamond.Sprite == "minecraft:item/diamond" && Has(diamond.Sprite), $"item: diamond -> sprite {diamond.Sprite}");
