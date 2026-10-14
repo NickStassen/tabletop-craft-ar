@@ -43,6 +43,14 @@ namespace TabletopCraft.World
             catch (Exception e) { Status = "pack error: " + e.Message; _zip = null; return false; }
         }
 
+        /// <summary>Raw bytes of a file in the pack, or null. Main thread only (used by PlayerSkins for default skins).</summary>
+        public byte[] ReadBytes(string path)
+        {
+            var e = _zip?.GetEntry(path);
+            if (e == null) return null;
+            using (var s = e.Open()) using (var ms = new MemoryStream()) { s.CopyTo(ms); return ms.ToArray(); }
+        }
+
         public FaceKey Face(string state, int dir)
         {
             if (!_faceCache.TryGetValue(state, out var faces))

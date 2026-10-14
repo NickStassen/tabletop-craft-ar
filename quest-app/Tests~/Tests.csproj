@@ -11,5 +11,6 @@
     <Compile Include="../Assets/Scripts/Net/Json.cs;../Assets/Scripts/Net/Protocol.cs;../Assets/Scripts/Net/LinkClient.cs" />
     <Compile Include="../Assets/Scripts/World/WorldModel.cs;../Assets/Scripts/World/BlockRules.cs;../Assets/Scripts/World/GreedyMesher.cs;../Assets/Scripts/World/AreaMath.cs;../Assets/Scripts/World/AreaSetupState.cs" />
     <Compile Include="../Assets/Scripts/World/BlockModelBaker.cs;../Assets/Scripts/World/BlockModels.cs" />
+    <Compile Include="../Assets/Scripts/World/PlayerModel.cs;../Assets/Scripts/World/PlayerAnimation.cs;../Assets/Scripts/World/SkinImage.cs" />
   </ItemGroup>
 </Project>

@@ -121,6 +121,8 @@ static class Program
         Check(err.MaxX == 128 && err.MaxBlocks == 2097152, "region_too_large limits parse");
         Check(Protocol.RegionQuery("Bob").S("player") == "Bob" && !Protocol.RegionQuery().ContainsKey("player"), "region_query builder");
 
+        PlayerTests.Run(Check, Fixture);
+
         // Block models from a real client jar / resource pack (never committed; MC_CLIENT_JAR or --jar PATH).
         string jar = JarPath(args);
         if (jar != null) ModelTests(jar);
