@@ -80,6 +80,10 @@ Fake headset: `pip install -r tools/requirements.txt && python tools/fake_quest.
 
 Follow the [Minecraft EULA](https://www.minecraft.net/eula) and [usage guidelines](https://www.minecraft.net/usage-guidelines). Running a server means accepting the EULA yourself (`eula.txt`); this repo never commits `eula.txt`, the server jar, or game assets. The Quest app loads textures only from a resource pack or client jar the user already owns.
 
+## Support
+
+tabletop-craft-ar is free and open source, built in my spare time. If you enjoy it, you can [buy me a coffee on Ko-fi](https://ko-fi.com/nickstassen). It's totally optional, but it really helps keep the project going.
+
 ## License
 
 MIT, see [LICENSE](LICENSE).
