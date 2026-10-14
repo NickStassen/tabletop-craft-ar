@@ -51,6 +51,7 @@ Phases 0-3 were built and checked on Paper 1.21.11 / Java 21. The server pin has
   - Skinned and animated player figures.
   - The eye-in-fluid effects: underwater fog and tint, the surface seen from below, lava and powder snow.
 - **In progress:** entities (vehicles, mobs, dropped items, held items) and player actions (arm swing, digging cracks, break particles, hurt flash).
+- **Built, waiting for headset measurements (2026-10-14):** area width presets 64–256 without reconnecting (resize deltas, re-keyed meshes, footprint kept) and mesh batching (roadmap item 7).
 
 ## Roadmap: "playing Minecraft as a god"
 Ordered by how much each adds to the feeling of a living world on the table that you can act on.
@@ -92,7 +93,7 @@ Ordered by how much each adds to the feeling of a living world on the table that
 - Edit permissions per user.
 
 **7. Scale.**
-- Batch section meshes for 192+ wide areas; draw calls are the limit.
+- (Done, not yet measured on the headset) Batch section meshes for 192+ wide areas: world-aligned batches of 2×2 section columns, 100 renderers / 200 draw calls at a 256-wide window instead of 1,223 / about 2,000 (ARCHITECTURE.md "Batching"). The visible width steps through 64/96/128/192/256 with a left stick click (QUEST_SETUP.md Part J, PROTOCOL.md 4.25). Next: the headset FPS per preset; with draw calls gone, the faces (about 700k at 256 with the pack and light) are the likely limit.
 - Spread the main-thread model prewarm over frames (45–53 ms on a new area).
 - A low-detail map skirt around the detailed box.
 

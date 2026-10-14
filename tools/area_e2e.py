@@ -9,7 +9,7 @@ delta and full sizes, sections sent and the server timings. With --save DIR, C's
 biomes included) is written as DIR/<width>.json for `quest-app/Tests~ dotnet run -- --measure-batches DIR`.
 
 Usage: TABLETOP_URL=ws://127.0.0.1:8765/tabletop python area_e2e.py [--widths 128,64,256,96] [--height 96]
-       [--center 0,0] [--y0 32] [--light] [--save DIR] [--server-clamp]
+       [--center 0,0] [--y0 32] [--light] [--save DIR] [--server-clamp] [--hold SECONDS]
 """
 from __future__ import annotations
 
@@ -107,6 +107,7 @@ async def main() -> int:
     ap.add_argument("--light", action="store_true", help="ask for light_v1 + biomes_v1 (light is compared too)")
     ap.add_argument("--save", default=None, help="write each full snapshot (parts) as DIR/<width>.json")
     ap.add_argument("--server-clamp", action="store_true", help="send widths over limits.max_view_width as asked (the server must clamp)")
+    ap.add_argument("--hold", type=float, default=0, help="seconds to stay connected after the last step (server READS lines)")
     a = ap.parse_args()
     widths = [int(x) for x in a.widths.split(",")]
     cx, cz = (int(x) for x in a.center.split(","))
@@ -165,6 +166,8 @@ async def main() -> int:
         o, d = plan(hs.mirror, view, w, 1 << 30 if a.server_clamp else max_view)
         await step(o, d, w, f"resize -> {w}")
     print(json.dumps({"limits": limits, "steps": rows, "ok": fails == 0}, indent=1))
+    if a.hold:
+        await asyncio.sleep(a.hold)   # stay subscribed so the server keeps diffing the last region (READS log lines)
     await hs.close()
     return 0 if fails == 0 else 1
 

@@ -76,6 +76,8 @@ Then relaunch the app. Alternatively set **ServerUrl** on the TabletopApp compon
 
 Optional lighting keys (the server sends light and biomes when its config has `stream.light` / `stream.biomes` on, the default): `"smooth_lighting": false` gives one light value per face and no ambient occlusion (about 15-18% fewer faces than smooth lighting on real terrain), and `"brightness"` is Minecraft's Brightness slider, 0 (Moody) to 1 (Bright), default 1 (Bright, so caves stay readable over passthrough). `"min_light"` (default 0.2) is how bright light level 0 is drawn, 0..1; everything brighter is rescaled up to full daylight, so a cave reads as dark but visible and the seabed 10 blocks down at about half of daylight. A negative value gives vanilla's own curve (level 0 = 0.15 at Bright).
 
+Optional area keys (Part J): `"area_width"` starts the app at a width preset with the block size fitted to the table, and `"batch_columns"` sets the mesh batch size.
+
 ## Part E: textures (resource pack)
 
 Without a pack the app uses flat colours. To use textures you already own:
@@ -99,7 +101,7 @@ Don't commit or redistribute the jar, the pack or `entity_models.json` (all thre
 3. Entities and actions (needs the plugin and app from the entities work; `ENTITIES n` in the status text counts them). Mobs, boats, minecarts, dropped items, item frames, paintings and falling blocks in the region show on the table with their Minecraft models and textures from `pack.zip` (babies, variants and colours included; types the app doesn't know show as a box of their size). Get in a boat or minecart or on a horse: your figure sits in it, legs forward, and moves with it. What you hold shows in your figure's hands (and in a zombie's or skeleton's), and armour shows on the body. Swinging, digging and placing: the figure's arm swings, the block being dug shows the game's growing cracks, and a broken block bursts into small particles of its texture. Hit a mob (or get hit): it flashes red. The models need `entity_models.json` (Part E step 3); without it entities are boxes of their size. Without `pack.zip` the models are plain white and items don't show. Server side, `entities.*` and `actions.*` in `config.yml` turn this off or cap it; `/tabletop entities` prints counts, main-thread time and bytes/s.
 4. Look up for the giant. With the default `avatar.placement: floating` it is a huge player head wearing the `skin_player` skin, plus two hands, exactly where the headset and controllers are relative to the table. The head turns, tilts and rolls with yours, and the hands follow the controllers. Sizes match a real head (0.25 m) and hand (0.1 m) at the table's scale: a 25-block head and 10-block hands at 1 cm/block, capped at 64 blocks by `avatar.max-head-blocks`. The hands are flat boxes in the block colour closest to your skin's hands (`avatar.hand-block` to override). Standing 1.6 m tall at a table puts the head about 100-160 blocks above the terrain, so look up. Java players more than 128 blocks away horizontally don't receive the entities; raise `entity-tracking-range.display` in `spigot.yml` if needed. For a body instead, `/tabletop avatar placement ground` puts a Mannequin (up to 28.8 blocks tall) on the terrain below you, and `exact` hangs one from the mapped head position.
 
-Headset controls: **left thumbstick** = glide across the world (hold the **left grip** and push up/down to move up/down; see Part H); **right thumbstick left/right** = turn the table; **right thumbstick up/down** = scale the miniature (also changes the giant's mapping); **A** (right) = re-place the world at the right controller; hold **both grips** and move the right hand = drag/rotate; **Y** (left) = area setup (Part G). Editing blocks (Part I): **right trigger** = break, **left trigger** = place, **B** = pick block.
+Headset controls: **left thumbstick** = glide across the world (hold the **left grip** and push up/down to move up/down; see Part H); **right thumbstick left/right** = turn the table; **right thumbstick up/down** = scale the miniature (also changes the giant's mapping); **A** (right) = re-place the world at the right controller; hold **both grips** and move the right hand = drag/rotate; **Y** (left) = area setup (Part G); **click the left thumbstick** = next area width (64 → 96 → 128 → 192 → 256 blocks, Part J). Editing blocks (Part I): **right trigger** = break, **left trigger** = place, **B** = pick block.
 
 ## Part G: setting up a play area in the headset
 
@@ -118,12 +120,12 @@ The server picks the starting region (config.yml `region`). You can change it fr
    Sizes are clamped to the server's limits (by default 288×384×288 including the margin, and at most 16,777,216 blocks; a server with an older config.yml keeps its own `max_region`, e.g. 128×384×128).
 4. Block size: **auto-fit** is on by default. It sets block size = min(table width/X, table depth/Z) × 0.95, so the area fills the table detected by MRUK; without a detected table it assumes a 0.8 × 0.6 m table. Click the **right stick** to switch to keeping your manual scale; outside setup, the right stick still scales the model.
 5. Press **A** to confirm. The server answers with `region_changed` and a new snapshot. The old terrain stays on the table while the new area is meshed in the background ("N sections pending" in the status panel), then the new one replaces it in one go. Tap **B** to cancel.
-6. If the estimate is over the headset budget, the box turns red and A won't confirm. There are two budgets: about 250k faces, and about 600 section meshes (each 16×16×16 block section with something in it is its own mesh, so roughly one or two draw calls). **Hold B for 1 s** to override the warning. If the server rejects the request (`region_too_large`), the panel shows the server's limits.
+6. If the estimate is over the headset budget, the box turns red and A won't confirm. There are two budgets: about 250k faces, and about 300 mesh batches (sections are merged into batches of 2×2 section columns over the full height, each one renderer and about two draw calls; Part J). **Hold B for 1 s** to override the warning. If the server rejects the request (`region_too_large`), the panel shows the server's limits.
 
-Recommended sizes (estimates from seed 12345 terrain; see TESTING.md "Navigation and bigger areas"), all with the 16-block margin on top:
+Recommended sizes (estimates from seed 12345 terrain; see TESTING.md "Navigation and bigger areas" and "Area size presets and batching"), all with the 16-block margin on top:
 - 64×96×64 is a comfortable area to start with.
-- 128×96×128 is the recommended maximum: about 113k faces (roughly 150k with smooth lighting) and 330 section meshes for the 160×128×160 region it loads.
-- 192×96×192 (about 240k faces, about 700 meshes) and 256×96×256 (about 400k faces, about 1,200 meshes) go over the budgets. Try them with the override and watch the frame rate; they need draw-call batching to be comfortable.
+- 128×96×128 is the recommended maximum until the wider presets are measured on the headset: about 190k faces with the pack and smooth lighting, and 36 mesh batches for the 160×128×160 region it loads.
+- 192×96×192 (about 430k faces, 64 batches) and 256×96×256 (about 700k faces, 100 batches) go over the face budget. Batching removed the draw-call limit; whether the headset holds 72 FPS with that many faces is what Part J's measurement hooks are for. The width presets (Part J) skip this budget.
 - Taller areas work, but snapshots and load times grow.
 
 ## Part H: moving around
@@ -162,13 +164,30 @@ Each edit gives a short buzz. Breaking and placing blocks that already appear in
 
 Server options (config.yml `edit`): `enabled`, `require-token` (only allow edits when `auth.token` is set), `max-per-second` (20), `physics` (sand falls, water flows) and `deny` (blocks that can't be placed: command blocks, structure blocks, jigsaws). Each edit is logged as `EDIT session=... break|place world x,y,z ... old -> new`. Edits don't go through protection plugins.
 
+## Part J: seeing a wider area (width presets)
+
+**Click the left thumbstick** to step the visible width: 64 → 96 → 128 → 192 → 256 → 64 blocks (x and z; the height stays what it is). Area setup (Y) owns the sticks while it is open, so the click does nothing there.
+
+- The area grows or shrinks around the spot you are looking at: the centre of the view stays where it is in the world.
+- The miniature keeps its size on the table: the block size is scaled by old width / new width when the new area arrives (64 → 256 makes each block a quarter as wide). The right stick still zooms afterwards, and both grips still drag and turn the table.
+- The table never empties. Growing keeps every terrain mesh already on the table and only meshes the new ring around it, nearest first; the server sends only that ring (2.1 MB for 192 → 256 with light). Shrinking drops the outer part at once and sends almost nothing.
+- The status text shows `AREA <width> wide`, the presets, and the server's max (`max_region.view_width` in config.yml, default 256; presets above it are left out). If the server narrows a request, the status says `server set width ...`.
+- It is the same shared region as area setup and gliding: other headsets on the server follow (the last request wins). One region request is in flight at a time, so a click during a glide shift is sent right after it.
+- Only one headset's own clicks rescale its block size; another headset's change just shows the new area at your current scale.
+
+For measurements, `tabletop.json` can start the app at a preset: `"area_width": 192` (64, 96, 128, 192 or 256). The block size is then fitted to the table like area setup's auto-fit (min(table width, depth) / width × 0.95; 0.8 × 0.6 m without a detected table), so every preset covers the same part of the table. `"batch_columns": 2` sets how many 16-block section columns go into one mesh batch per side (default 2; 4 halves the draw calls but makes every block edit re-upload more). logcat (`adb logcat -s Unity | grep Tabletop`) then shows:
+
+- `AREA_REQUEST width 128 -> 192 ...` and `AREA_RESIZED width 128 -> 192 (asked 192) block 2.97 mm in 640 ms` when a resize is sent and arrives.
+- `AREA_LOADED width=192 region=224x128x224 load_s=1.8 faces=... batches=64 renderers=64 draw_calls~128 sections=706/1568 verts=... tris=... gpu_kb=...` once the new area is fully meshed and uploaded.
+- `PERF width=192 frames=360 fps=72.0 frame_ms p50=13.9 p90=14.1 p99=16.2 max=22.0 over15ms=3 faces=... pending=0 batches=...` every 5 s: Unity's frame times (`Time.unscaledDeltaTime`) next to VrApi's own FPS lines.
+
 ## Logs
 
 ```
 adb logcat -s Unity | findstr Tabletop
 ```
 
-The floating status text shows `LINK`, `RTT`, `WORLD`, `PACK`, `EDIT` (the selected block, or `off` when the server doesn't allow editing), `LIGHT` (`smooth`/`flat`, or `off` when the server sends no light; then `BIOMES n`, with `(no colormap)` if the pack lacks `colormap/grass.png`), `TABLE`, `POSES` and the last server error. Biome colours (grass, leaves, water per biome) need both biomes from the server and a pack with the colour maps; without them the old fixed tints are used.
+The floating status text shows `LINK`, `RTT`, `WORLD`, `PACK`, `EDIT` (the selected block, or `off` when the server doesn't allow editing), `LIGHT` (`smooth`/`flat`, or `off` when the server sends no light; then `BIOMES n`, with `(no colormap)` if the pack lacks `colormap/grass.png`), `TABLE`, `POSES`, `AREA` (width, presets and the server max; Part J) and the last server error. Biome colours (grass, leaves, water per biome) need both biomes from the server and a pack with the colour maps; without them the old fixed tints are used.
 
 ## Troubleshooting
 
