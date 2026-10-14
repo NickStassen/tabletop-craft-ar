@@ -222,3 +222,44 @@ With a resource pack, faces only merge when they share a texture, so expect more
 - **33/33 PASS.** This adds tests for `AreaMath` (block-size fit, clamping, the estimate, soft cap and override, clamping to server caps), `AreaSetupState` (centre on origin/player, resize clamps, request matches the fixture, warn/override), and `region_info`/`region_too_large` fixture parsing.
 - **`--live`** against the real-terrain server: all checks PASS, including the area-setup resize. The live test uses the same `AreaSetupState`: it requests +16 x/z, which the server's `max_blocks` limit clamps to 80×327×80, and gets back `region_changed` from its own session plus a snapshot with the new dims.
 - **`tools/e2e.sh`:** re-run after the async reader change and PASS. The block_update check found 0/65536 cells differing between the live and fresh snapshots, error paths returned the expected codes, and the avatar entities spawned. The earlier hang was caused by a stray test server still holding ports 25565/8765. The script now checks those ports before it starts and exits with an error if either is in use.
+
+## Water, waterlogging and animated textures (Quest mesher and atlas, 2026-10-13)
+
+What changed: `World/FluidMesher.cs` draws water and lava, including the water inside waterlogged blocks and in kelp, kelp_plant, seagrass, tall_seagrass and bubble_column cells (the 26.3 blocks that always hold water, found by listing the client's `getFluidState` overrides). It culls faces between cells that hold the same fluid and uses vanilla surface heights (a source is 8/9, flowing water is amount/9, corners are averaged with the neighbours). `World/TextureAnimation.cs` parses `<texture>.png.mcmeta`, and `ResourcePackAtlas.Animation.cs` advances animated textures at 20 ticks/s by GPU-copying single frames into their atlas layers.
+
+**Engine-free tests** (`Tests~/WaterTests.cs`, part of `dotnet run`; 60/60 PASS overall):
+- Water next to kelp makes 6 merged water quads and none between the cells. The kelp cross is still drawn, and it comes before the water in the transparent index list, so the water blends over the plant.
+- A kelp_plant inside 3×3×3 water: the cross plus 10 merged outer water quads, no faces around the kelp cell. All water quads wind counter-clockwise seen from outside.
+- A two-high water column: the top is lowered to 1 + 8/9, with no face between the cells. A 16×4×16 ocean merges into 10 quads.
+- `water[level=1]` next to air slopes from about 0.88 to about 0.39 (vanilla corner averaging).
+- Waterlogged bottom slab: slab box plus 5 water quads; the slab's own bottom face hides the water's. Waterlogged top slab: its top hides the water surface.
+- Waterlogged stairs hold water and get no face from the water beside them. While `BlockRules` still meshes stairs as an opaque cube, the cube hides that water. With a real stair shape the cell fills, and the back and bottom faces are culled. `FluidRules.FullFaces` is the hook for that.
+- Water next to stone: 5 water quads, and stone keeps all 6 faces. Lava: 6 quads, all opaque.
+- mcmeta: a `frames` list with `{index,time}` entries; a bad index is dropped; the schedule wraps; `texture`-only files and single frames are static; explicit `width`/`height` grids.
+- Against the user's 26.3 client jar (`--jar PATH` or `TABLETOP_CLIENT_JAR`, skipped when missing):
+  - water_still: 32 frames × 2 ticks (3.2 s cycle).
+  - kelp: 20 × 2.
+  - prismarine: a 22-step sequence over 4 frames, 300 ticks each, interpolated; tick 150 is a 0.5 blend toward the next frame.
+  - lava_still: a 38-step ping-pong over 20 frames.
+  - All 54 animated block textures parse. 105 block mcmeta files exist; the other 51 only carry `texture` hints such as mipmap strategy.
+
+**Real terrain** (seed 12345, centred on 0,0, y 32..128, `tools/measure_regions.py` against a local 26.3 server). The 128² region holds 258k water cells, 5.9k kelp/seagrass and 14 waterlogged blocks; 121 of its 384 sections have visible water. Counts use flat-colour keys. Times are on the x86 box, with `Tests~` built in Release and tiered JIT off (`dotnet run -c Release -- --measure DIR --measure-fluids DIR`).
+
+| region | total quads master → now | water quads master → now | whole mesh master → now | fluid pass alone (worst section) |
+|---|---|---|---|---|
+| 32×96×32 | 2,676 → 2,465 | 465 → 254 | 13 → 13 ms | 1 ms (0.12 ms) |
+| 64×96×64 | 13,019 → 11,094 | 2,949 → 1,029 | 51 → 49 ms | 4 ms (0.13 ms) |
+| 128×96×128 | 45,704 → 38,239 | 11,546 → 4,097 | 180 → 194 ms | 16 ms (0.14 ms) |
+
+Before this change, water drew faces against every plant and every change of water level. Removing those faces more than pays for the new water cells. The fluid pass costs about 0.04 ms per section. A Debug build of `Tests~` is much slower (8× for the whole mesher here, far more for the fluid pass), so compare timings in Release only. `--live` against the same server also passed.
+
+**Animation cost (estimate; the CPU side was measured):**
+- Scheduling all 54 animations takes 0.7 µs per tick on the box.
+- A layer copy is one 16×16 RGBA32 frame (1 KB), GPU to GPU, and happens only when a frame changes. A typical ocean view (water, kelp ×2, seagrass ×3, each changing every 2 ticks) needs about 60 copies/s. The worst case, with all 54 animated block textures on screen at once, is 814 copies/s.
+- Interpolated textures (prismarine, magma, command blocks, sculk, ...) also blend 256 pixels on the CPU and upload 1 KB to a one-layer staging array, at most 20 times/s each.
+- The frame store holds every frame of the textures that are loaded, at 1 KB per frame (about 150 KB for an ocean scene). The atlas is only rebuilt when the palette brings new textures, as before.
+
+**Needs the headset:**
+- `Graphics.CopyTexture` between `Texture2DArray`s on Quest Vulkan. Watch logcat for `[Tabletop] ANIM N animated textures`. If the copy is unsupported, it logs `ANIM off` and the first frames stay.
+- How water transparency and sorting look with kelp/seagrass and at region edges.
+- 72 FPS with animation running.
