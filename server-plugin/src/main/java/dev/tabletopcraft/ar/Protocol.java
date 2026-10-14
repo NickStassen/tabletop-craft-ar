@@ -54,6 +54,44 @@ public final class Protocol {
         return o;
     }
 
+    /**
+     * One part of a {@code sections_v1} chunk_snapshot (PROTOCOL.md 4.18). baseId &lt; 0 = full snapshot, else a delta
+     * against the client's snapshot baseId with the origin moved by shift (whole sections).
+     */
+    public static JsonObject chunkSnapshotSections(int snapshotId, RegionSpec r, List<String> palette, int[] viewMargin,
+                                                   int part, int parts, int baseId, int[] shift, List<SectionCodec.Section> sections) {
+        JsonObject o = body("chunk_snapshot");
+        o.addProperty("snapshot_id", snapshotId);
+        o.addProperty("world", r.world());
+        o.add("origin", ints(r.ox(), r.oy(), r.oz()));
+        o.add("dims", ints(r.sx(), r.sy(), r.sz()));
+        if (viewMargin != null) o.add("view_margin", ints(viewMargin));
+        o.addProperty("order", "yzx");
+        JsonArray pal = new JsonArray();
+        palette.forEach(pal::add);
+        o.add("palette", pal);
+        o.addProperty("encoding", SectionCodec.ENCODING);
+        if (baseId >= 0) {
+            JsonObject b = new JsonObject();
+            b.addProperty("snapshot_id", baseId);
+            b.add("shift", ints(shift));
+            o.add("base", b);
+        }
+        o.addProperty("part", part);
+        o.addProperty("parts", parts);
+        JsonArray secs = new JsonArray();
+        for (SectionCodec.Section s : sections) {
+            JsonObject e = new JsonObject();
+            e.add("s", ints(s.sx(), s.sy(), s.sz()));
+            e.add("data", ints(s.data()));
+            secs.add(e);
+        }
+        o.add("sections", secs);
+        o.add("biomes", null);
+        o.add("light", null);
+        return o;
+    }
+
     public record Change(int lx, int ly, int lz, int paletteIndex) {}
 
     public static JsonObject blockUpdate(int snapshotId, List<String> paletteAdd, List<Change> changes) {

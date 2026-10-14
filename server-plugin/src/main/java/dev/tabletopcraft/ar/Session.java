@@ -34,6 +34,23 @@ public final class Session {
     public boolean lastPlayersNonEmpty;
     /** True while following the server's shared region (default); false after a private subscribe. */
     public volatile boolean shared = true;
+    /** hello.caps (e.g. "sections_v1"). Written once before READY. */
+    public volatile Set<String> caps = Set.of();
+    /** Region that lastGrid describes (what the client has), for delta snapshots. Main thread. */
+    public RegionSpec gridRegion;
+    /** Recent snapshot id -> region, so a pose is mapped with the origin the client used (pose.snapshot_id). Main thread. */
+    private final Map<Integer, RegionSpec> recentRegions = new java.util.LinkedHashMap<>() {
+        @Override protected boolean removeEldestEntry(Map.Entry<Integer, RegionSpec> e) { return size() > 8; }
+    };
+    public long lastFullResendMs;
+
+    public void rememberRegion(int snapshotId, RegionSpec r) { recentRegions.put(snapshotId, r); }
+
+    /** The region a pose with this snapshot_id refers to; the current region if unknown or absent (&lt; 0). */
+    public RegionSpec regionFor(int snapshotId) {
+        RegionSpec r = snapshotId < 0 ? null : recentRegions.get(snapshotId);
+        return r != null ? r : region;
+    }
 
     public Session(WebSocket conn) { this.conn = conn; }
 

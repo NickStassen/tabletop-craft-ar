@@ -137,7 +137,10 @@ static class Program
         var world = new WorldModel();
         var area = new AreaSetupState(); bool requested = false, changed = false; string session = null; Vector3Int resized = default;
         int updates = 0, playerMsgs = 0, posesSent = 0; long rtt = -1; string avatarNote = null;
-        var deadline = DateTime.UtcNow.AddSeconds(8);
+        // Navigation: after the resize, shift by one section (expect a delta), then ask for a full resend and compare.
+        var asm = new SnapshotAssembler(); var nav = new NavState(); int navPhase = 0;
+        SnapshotAssembler.Result delta = null; string[] afterDelta = null; bool fullMatches = false; string encoding = null;
+        var deadline = DateTime.UtcNow.AddSeconds(14);
         var mesh = new MeshData();
         while (DateTime.UtcNow < deadline)
         {
@@ -145,11 +148,36 @@ static class Program
             {
                 switch (m.S("type"))
                 {
-                    case "welcome": session = m.S("session"); area.Limits = RegionLimits.From(m.O("limits"), RegionLimits.Default); link.Send(Protocol.AvatarConfig(true, 0.01f, "", true, "Tabletop Giant")); link.Send(Protocol.Ping(1)); break;
+                    case "welcome":
+                        session = m.S("session"); area.Limits = RegionLimits.From(m.O("limits"), RegionLimits.Default);
+                        nav.CanPad = m.A("caps")?.Contains("view_margin") == true;
+                        link.Send(Protocol.AvatarConfig(true, 0.01f, "", true, "Tabletop Giant")); link.Send(Protocol.Ping(1)); break;
                     case "chunk_snapshot":
-                        world.ApplySnapshot(ChunkSnapshot.From(m));
+                        encoding = m.S("encoding");
+                        asm.Offer(m, world, new HashSet<Vector3Int>());
+                        if (!asm.Busy) break;   // more parts to come
+                        var res = asm.Wait();
+                        if (res.Error != null) { Console.WriteLine("snapshot error " + res.Error); fails++; break; }
+                        world.ApplySnapshot(res.Snapshot);
+                        nav.OnRegion(world.World, world.Origin, world.Dims, res.ViewMargin, (float)(DateTime.UtcNow - DateTime.UnixEpoch).TotalSeconds);
                         if (!requested) { requested = true; area.Begin(world.World, world.Origin, world.Dims); link.Send(Protocol.RegionQuery()); }
-                        else if (changed) resized = world.Dims;
+                        else if (changed && navPhase == 0)
+                        {
+                            resized = world.Dims; navPhase = 1;
+                            link.Send(Protocol.RegionRequest(world.World, new Vector3Int(world.Origin.x + 16, world.Origin.y, world.Origin.z), world.Dims, nav.Margin));
+                        }
+                        else if (navPhase == 1)
+                        {
+                            delta = res; navPhase = 2;
+                            afterDelta = world.Grid.Select(id => world.State(id)).ToArray();
+                            // Pretend we lost it: the server must answer with a full snapshot of the same region.
+                            link.Send(new Dictionary<string, object> { ["type"] = "error", ["code"] = "bad_snapshot", ["message"] = "live test", ["snapshot_id"] = world.SnapshotId, ["fatal"] = false });
+                        }
+                        else if (navPhase == 2)
+                        {
+                            navPhase = 3;
+                            fullMatches = !res.Delta && afterDelta != null && afterDelta.Length == world.Grid.Length && world.Grid.Select(id => world.State(id)).SequenceEqual(afterDelta);
+                        }
                         break;
                     case "region_info":
                         area.SetInfo(RegionInfo.From(m));
@@ -178,7 +206,10 @@ static class Program
         var n = world.SectionCount;
         for (int x = 0; x < n.x; x++) for (int y = 0; y < n.y; y++) for (int z = 0; z < n.z; z++) { GreedyMesher.Build(world, new Vector3Int(x, y, z), new Flat(), mesh); quads += mesh.Verts.Count / 4; }
         Check(quads > 0, $"live: meshed {n.x * n.y * n.z} sections into {quads} quads");
-        Check(changed && resized.x == area.Size.x && resized.z == area.Size.z, $"live: area setup resize -> region_changed + snapshot {resized}");
+        Check(changed && resized.x == area.RequestDims.x && resized.z == area.RequestDims.z, $"live: area setup resize -> region_changed + snapshot {resized} (window {area.Size} + margin {area.RequestMargin})");
+        Check(delta != null && delta.Error == null && delta.Delta && delta.Plan.Rekey && delta.Listed > 0 && delta.Listed < delta.Plan.Kept,
+              $"live: one-section shift arrives as a delta ({delta?.Listed} sections sent, {delta?.Plan.Kept} kept, encoding {encoding})");
+        Check(fullMatches, "live: bad_snapshot -> full resend matches the delta-assembled region");
         Check(rtt >= 0, $"live: ping/pong rtt {rtt} ms");
         Check(avatarNote != null, $"live: avatar_state {avatarNote}");
         Console.WriteLine($"live: poses sent {posesSent}, player msgs {playerMsgs}, block updates {updates}");

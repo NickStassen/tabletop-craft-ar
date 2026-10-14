@@ -58,3 +58,43 @@ def test_parse_region_forms():
     assert c == {"center": [0.5, 70.0, -3.0], "size": [32, 64, 32], "y_origin": -64}
     with pytest.raises(ValueError):
         parse_region("1,2,3")
+
+
+def test_sections_snapshot_and_delta():
+    """sections_v1 (PROTOCOL.md 4.18): full fixture, then the delta fixture against it."""
+    m = WorldMirror()
+    assert m.apply_snapshot(json.loads((FIX / "chunk_snapshot_sections.json").read_text()))
+    assert m.dims == (32, 16, 16) and m.view_margin == (8, 0, 0)
+    assert m.at_world(3, 67, 9) == "minecraft:stone" and m.at_world(3, 68, 9).startswith("minecraft:grass_block")
+    assert m.at_world(20, 63, 15) == "minecraft:stone" and m.at_world(20, 64, 0) == "minecraft:air"
+    delta = json.loads((FIX / "chunk_snapshot_delta.json").read_text())
+    assert m.apply_snapshot(delta)
+    assert m.origin == (16, 60, 0) and m.sections_sent == 1
+    assert m.at_world(20, 63, 15) == "minecraft:stone"          # copied from the base
+    assert m.at_world(32, 60, 0).startswith("minecraft:oak_log")  # new section
+    assert m.at_world(32, 60, 1) == "minecraft:air"
+    with pytest.raises(ValueError):
+        m.apply_snapshot(delta)  # base 8 is no longer the current snapshot
+
+
+def test_sections_parts_wait_for_the_last_one():
+    full = json.loads((FIX / "chunk_snapshot_sections.json").read_text())
+    a, b = dict(full), dict(full)
+    a["parts"] = b["parts"] = 2
+    b["part"] = 1
+    a["sections"], b["sections"] = full["sections"][:1], full["sections"][1:]
+    m = WorldMirror()
+    assert not m.apply_snapshot(a)
+    assert m.apply_snapshot(b) and m.count("minecraft:stone") == 2048 + 1024
+
+
+def test_sections_validation():
+    full = json.loads((FIX / "chunk_snapshot_sections.json").read_text())
+    validate(full)
+    broken = dict(full)
+    del broken["sections"]
+    with pytest.raises(ValueError):
+        validate(broken)
+    short = dict(full, sections=full["sections"][:1])
+    with pytest.raises(ValueError):
+        WorldMirror().apply_snapshot(short)

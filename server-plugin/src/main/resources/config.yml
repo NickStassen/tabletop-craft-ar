@@ -18,6 +18,11 @@ stream:
   players-every-ticks: 2
   # Players within region XZ bounds + this margin are sent.
   players-margin: 16
+  # Send chunk_snapshot as 16^3 sections (split into messages, deltas when the region moves by whole sections) to
+  # clients that advertise "sections_v1" (PROTOCOL.md 4.18). false = always one rle_palette_v1 message.
+  sections-v1: true
+  # Target size of one sectioned chunk_snapshot message (bytes of JSON).
+  max-message-bytes: 1048576
 avatar:
   # Real metres per block on the table; the Quest overrides it with avatar_config.
   block-size-m: 0.01

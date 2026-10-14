@@ -29,7 +29,13 @@ public final class RegionReader {
 
     public Palette palette() { return palette; }
 
-    public void readAsync(RegionSpec r, Consumer<int[]> done) {
+    public void readAsync(RegionSpec r, Consumer<int[]> done) { readAsync(r, g -> null, (g, x) -> done.accept(g)); }
+
+    /**
+     * Like {@link #readAsync(RegionSpec, Consumer)}, plus a step that runs on the async worker right after the walk
+     * (diffs, size estimates: O(volume) work that must stay off the main thread); its result goes to done.
+     */
+    public <T> void readAsync(RegionSpec r, java.util.function.Function<int[], T> offThread, java.util.function.BiConsumer<int[], T> done) {
         World w = Bukkit.getWorld(r.world());
         if (w == null) throw new IllegalStateException("world not loaded: " + r.world());
         long t0 = System.nanoTime();
@@ -52,7 +58,8 @@ public final class RegionReader {
                 int[] grid = walk(r, snaps, minY, maxY);
                 long t4 = System.nanoTime();
                 lastLoadMs = (t1 - t0) / 1e6; lastSnapMs = (t2 - t1) / 1e6; lastWalkMs = (t4 - t3) / 1e6;
-                if (plugin.isEnabled()) Bukkit.getScheduler().runTask(plugin, () -> done.accept(grid));
+                T extra = offThread.apply(grid);
+                if (plugin.isEnabled()) Bukkit.getScheduler().runTask(plugin, () -> done.accept(grid, extra));
             });
         }));
     }
@@ -62,24 +69,27 @@ public final class RegionReader {
     private int[] walk(RegionSpec r, Map<Long, ChunkSnapshot> snaps, int minY, int maxY) {
         int[] grid = new int[r.volume()];
         int air = palette.id("minecraft:air");
-        // Small per-walk cache: BlockData string -> id (avoids palette lock for repeated states).
-        Map<String, Integer> local = new HashMap<>();
-        for (int lx = 0; lx < r.sx(); lx++) {
+        // Per-walk cache keyed by BlockData (equals/hashCode compare the underlying block state), so the state
+        // string is built once per distinct state instead of once per block.
+        Map<org.bukkit.block.data.BlockData, Integer> local = new HashMap<>();
+        int sx = r.sx(), sz = r.sz();
+        for (int lx = 0; lx < sx; lx++) {
             int x = r.ox() + lx;
-            for (int lz = 0; lz < r.sz(); lz++) {
+            for (int lz = 0; lz < sz; lz++) {
                 int z = r.oz() + lz;
                 ChunkSnapshot cs = snaps.get(key(x >> 4, z >> 4));
-                for (int ly = 0; ly < r.sy(); ly++) {
+                int i = lz * sx + lx, step = sx * sz;
+                for (int ly = 0; ly < r.sy(); ly++, i += step) {
                     int y = r.oy() + ly;
                     int id;
                     if (y < minY || y >= maxY) id = air;
                     else {
-                        String s = cs.getBlockData(x & 15, y, z & 15).getAsString();
-                        Integer c = local.get(s);
-                        if (c == null) { c = palette.id(s); local.put(s, c); }
+                        var bd = cs.getBlockData(x & 15, y, z & 15);
+                        Integer c = local.get(bd);
+                        if (c == null) { c = palette.id(bd.getAsString()); local.put(bd, c); }
                         id = c;
                     }
-                    grid[r.index(lx, ly, lz)] = id;
+                    grid[i] = id;
                 }
             }
         }

@@ -6,13 +6,15 @@ import time
 from dataclasses import dataclass, field
 
 PROTOCOL_VERSION = 1
+SECTIONS = "sections_v1"   # chunk_snapshot encoding and hello cap (PROTOCOL.md 4.18)
+SECTION = 16
 
 # Required payload fields per message type, on top of the envelope (v, type, seq, t).
 REQUIRED = {
     "hello": ["client", "protocols"],
     "welcome": ["protocol", "server", "server_version", "mc_version", "session", "world", "region", "limits", "avatar_supported"],
     "subscribe": ["origin", "dims"],
-    "chunk_snapshot": ["snapshot_id", "world", "origin", "dims", "order", "palette", "encoding", "data"],
+    "chunk_snapshot": ["snapshot_id", "world", "origin", "dims", "order", "palette", "encoding"],
     "block_update": ["snapshot_id", "changes"],
     "player_positions": ["players"],
     "pose": ["head"],
@@ -41,6 +43,15 @@ def validate(msg: dict) -> None:
         if not isinstance(msg.get(k), int):
             raise ValueError(f"{t} envelope field {k} missing or not int")
     missing = [k for k in REQUIRED[t] if k not in msg]
+    if t == "chunk_snapshot":
+        # rle_palette_v1 carries "data"; sections_v1 (PROTOCOL.md 4.18) carries "sections", "part" and "parts".
+        enc = msg.get("encoding")
+        if enc == "rle_palette_v1":
+            missing += [k for k in ("data",) if k not in msg]
+        elif enc == SECTIONS:
+            missing += [k for k in ("sections", "part", "parts") if k not in msg]
+        else:
+            raise ValueError(f"unknown snapshot encoding {enc}")
     if missing:
         raise ValueError(f"{t} missing {missing}")
     if t == "error" and msg["code"] not in ERROR_CODES:
@@ -62,6 +73,26 @@ def decode_rle(data: list[int], volume: int) -> list[int]:
     return out
 
 
+def decode_section(data: list[int], grid: list[int], dims: tuple[int, int, int], key: tuple[int, int, int], palette_size: int) -> None:
+    """One sections_v1 section: [paletteIndex, runLength] pairs over its box (clamped to dims) in yzx order."""
+    dx, dy, dz = dims
+    x0, y0, z0 = (k * SECTION for k in key)
+    sx, sy, sz = min(SECTION, dx - x0), min(SECTION, dy - y0), min(SECTION, dz - z0)
+    if len(data) % 2:
+        raise ValueError("section data must be pairs")
+    cells = [((y0 + y) * dz + z0 + z) * dx + x0 + x for y in range(sy) for z in range(sz) for x in range(sx)]
+    p = 0
+    for i in range(0, len(data), 2):
+        v, run = data[i], data[i + 1]
+        if run < 1 or p + run > len(cells) or not 0 <= v < palette_size:
+            raise ValueError(f"bad run in section {key}")
+        for c in cells[p:p + run]:
+            grid[c] = v
+        p += run
+    if p != len(cells):
+        raise ValueError(f"section {key} runs cover {p} of {len(cells)}")
+
+
 @dataclass
 class WorldMirror:
     """Client-side copy of the subscribed region, kept current from chunk_snapshot + block_update."""
@@ -72,6 +103,9 @@ class WorldMirror:
     snapshot_id: int = -1
     palette: list[str] = field(default_factory=list)
     grid: list[int] = field(default_factory=list)
+    view_margin: tuple[int, int, int] = (0, 0, 0)          # PROTOCOL.md 4.17
+    parts: list[dict] = field(default_factory=list)          # sectioned snapshot parts received so far
+    sections_sent: int = 0                                   # sections in the last sectioned snapshot (delta size)
 
     @property
     def loaded(self) -> bool:
@@ -81,15 +115,75 @@ class WorldMirror:
         dx, _, dz = self.dims
         return (y * dz + z) * dx + x
 
-    def apply_snapshot(self, msg: dict) -> None:
-        if msg["order"] != "yzx" or msg["encoding"] != "rle_palette_v1":
-            raise ValueError("unsupported order/encoding")
+    def apply_snapshot(self, msg: dict) -> bool:
+        """Applies a chunk_snapshot. Returns False while parts of a sectioned snapshot are still missing."""
+        if msg["order"] != "yzx":
+            raise ValueError("unsupported order")
+        if msg["encoding"] == SECTIONS:
+            return self._apply_sections(msg)
+        if msg["encoding"] != "rle_palette_v1":
+            raise ValueError("unsupported encoding")
         dims = tuple(msg["dims"])
         grid = decode_rle(msg["data"], dims[0] * dims[1] * dims[2])
         if grid and max(grid) >= len(msg["palette"]):
             raise ValueError("palette index out of range")
         self.world, self.origin, self.dims = msg["world"], tuple(msg["origin"]), dims
         self.snapshot_id, self.palette, self.grid = msg["snapshot_id"], list(msg["palette"]), grid
+        self.view_margin = tuple(msg.get("view_margin") or (0, 0, 0))
+        return True
+
+    def _apply_sections(self, msg: dict) -> bool:
+        """sections_v1 (PROTOCOL.md 4.18): collect the parts, then copy the base (delta) and decode the listed sections."""
+        if msg["part"] == 0 or (self.parts and self.parts[0]["snapshot_id"] != msg["snapshot_id"]):
+            self.parts = []
+        self.parts.append(msg)
+        if len(self.parts) < msg["parts"]:
+            return False
+        parts, self.parts = self.parts, []
+        m0 = parts[0]
+        dx, dy, dz = dims = tuple(m0["dims"])
+        palette = list(m0["palette"])
+        grid = [0] * (dx * dy * dz)
+        base = m0.get("base")
+        n = [(d + SECTION - 1) // SECTION for d in dims]
+        listed = set()
+        if base is not None:
+            sx, sy, sz = base["shift"]
+            if base["snapshot_id"] != self.snapshot_id or self.dims != dims or self.world != m0["world"]:
+                raise ValueError("delta against a snapshot we don't have")
+            moved = (self.origin[0] + sx, self.origin[1] + sy, self.origin[2] + sz)
+            if any(s % SECTION for s in (sx, sy, sz)) or moved != tuple(m0["origin"]):
+                raise ValueError("bad delta shift")
+            if palette[: len(self.palette)] != self.palette:
+                raise ValueError("delta palette must extend the base palette")
+            for y in range(dy):
+                oy = y + sy
+                if not 0 <= oy < dy:
+                    continue
+                for z in range(dz):
+                    oz = z + sz
+                    if not 0 <= oz < dz:
+                        continue
+                    x0, x1 = max(0, -sx), min(dx, dx - sx)
+                    if x1 > x0:
+                        dst, src = (y * dz + z) * dx, (oy * dz + oz) * dx + sx
+                        grid[dst + x0:dst + x1] = self.grid[src + x0:src + x1]
+        for i, m in enumerate(parts):
+            if m["part"] != i or m["snapshot_id"] != m0["snapshot_id"]:
+                raise ValueError("parts out of order")
+            for sec in m["sections"]:
+                kx, ky, kz = sec["s"]
+                if not (0 <= kx < n[0] and 0 <= ky < n[1] and 0 <= kz < n[2]) or (kx, ky, kz) in listed:
+                    raise ValueError("bad or repeated section key")
+                listed.add((kx, ky, kz))
+                decode_section(sec["data"], grid, dims, (kx, ky, kz), len(palette))
+        if base is None and len(listed) != n[0] * n[1] * n[2]:
+            raise ValueError("full sectioned snapshot is missing sections")
+        self.world, self.origin, self.dims = m0["world"], tuple(m0["origin"]), dims
+        self.snapshot_id, self.palette, self.grid = m0["snapshot_id"], palette, grid
+        self.view_margin = tuple(m0.get("view_margin") or (0, 0, 0))
+        self.sections_sent = len(listed)
+        return True
 
     def apply_block_update(self, msg: dict) -> bool:
         if msg["snapshot_id"] != self.snapshot_id:

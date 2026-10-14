@@ -30,7 +30,11 @@ public final class TabletopPlugin extends JavaPlugin {
     private final java.util.Set<RegionSpec> diffInFlight = new java.util.HashSet<>();
     private final GiantAvatar avatar = new GiantAvatar();
     private final ConcurrentLinkedQueue<Runnable> queue = new ConcurrentLinkedQueue<>();
-    private record PoseSet(Session s, Pose head, Pose left, Pose right, long seq) {}
+    private record PoseSet(Session s, Pose head, Pose left, Pose right, long seq, int snapshotId) {}
+    /** Server capabilities in welcome.caps (PROTOCOL.md 4.17-4.18). */
+    static final List<String> SERVER_CAPS = List.of("view_margin", SectionCodec.ENCODING, "pose_snapshot_id");
+    private int[] sharedMargin = new int[3];              // view_margin of the shared region (config region.view_margin)
+    private long configSaveAt = -1;                       // debounced saveConfig (region changes while panning)
     private final AtomicReference<PoseSet> latestPose = new AtomicReference<>();
     private BukkitTask tickTask;
     private Map<String, Set<Long>> ticketed = Map.of();   // world name -> chunk keys holding our plugin ticket
@@ -59,6 +63,8 @@ public final class TabletopPlugin extends JavaPlugin {
         avatar.userHeightM = c.getDouble("avatar.user-height-m", 1.75);
         avatar.skinPlayer = c.getString("avatar.skin-player", "");
         avatar.interpolationTicks = c.getInt("avatar.interpolation-ticks", 2);
+        RegionSpec d = defaultRegion();
+        sharedMargin = RegionRequest.clampMargin(new int[] { c.getInt("region.view_margin.x", 0), c.getInt("region.view_margin.y", 0), c.getInt("region.view_margin.z", 0) }, d.sx(), d.sy(), d.sz());
         outbound = Executors.newSingleThreadExecutor(r -> { Thread t = new Thread(r, "tabletop-outbound"); t.setDaemon(true); return t; });
         link = new LinkServer(this, c.getString("bind.host", "0.0.0.0"), c.getInt("bind.port", 8765), c.getString("bind.path", "/tabletop"), c.getString("auth.token", ""));
         link.start();
@@ -67,6 +73,7 @@ public final class TabletopPlugin extends JavaPlugin {
 
     private void stop() {
         if (tickTask != null) tickTask.cancel();
+        if (configSaveAt >= 0) { configSaveAt = -1; saveConfig(); }
         avatar.remove();
         releaseTickets();
         if (link != null) {
@@ -79,7 +86,7 @@ public final class TabletopPlugin extends JavaPlugin {
 
     // ---------- thread hand-off ----------
     void enqueue(Runnable r) { queue.add(r); }
-    void offerPose(Session s, Pose h, Pose l, Pose r, long seq) { latestPose.set(new PoseSet(s, h, l, r, seq)); }
+    void offerPose(Session s, Pose h, Pose l, Pose r, long seq, int snapshotId) { latestPose.set(new PoseSet(s, h, l, r, seq, snapshotId)); }
     private void send(Session s, JsonObject body) { if (outbound != null && !outbound.isShutdown()) outbound.execute(() -> s.send(body)); }
 
     void markDirty(String world, int x, int y, int z) {
@@ -102,10 +109,16 @@ public final class TabletopPlugin extends JavaPlugin {
         }
         applyPose();
         int safety = Math.max(1, getConfig().getInt("stream.safety-diff-ticks", 20));
+        // Big regions take longer to re-read: stretch the safety-net period (events still trigger a diff right away).
+        long biggest = 0;
+        for (Session s : ready()) biggest = Math.max(biggest, s.region.volume());
+        safety *= (int) Math.max(1, biggest / 4_000_000L);
         if (dirty || tickCount % safety == 0) { dirty = false; diffAll(); }
         if (tickCount % Math.max(1, getConfig().getInt("stream.players-every-ticks", 2)) == 0) sendPlayers();
         if (tickCount % 20 == 0) timeouts();
         if (tickCount % 10 == 0) updateTickets();   // follow the giant
+        // A headset gliding across the world changes the region every second or so: save the config at most every 5 s.
+        if (configSaveAt >= 0 && System.currentTimeMillis() >= configSaveAt) { configSaveAt = -1; saveConfig(); }
         if (tickCount % 10 == 0 && getConfig().getBoolean("debug.avatar-state", false) && avatar.spawned()) broadcast(avatar.state(true));
     }
 
@@ -129,13 +142,18 @@ public final class TabletopPlugin extends JavaPlugin {
         JsonObject reg = new JsonObject();
         reg.add("origin", Protocol.ints(r.ox(), r.oy(), r.oz()));
         reg.add("dims", Protocol.ints(r.sx(), r.sy(), r.sz()));
+        reg.add("view_margin", Protocol.ints(sharedMargin));
         w.add("region", reg);
         JsonObject lim = new JsonObject();
         caps.addTo(lim);
+        addBuildHeight(lim, r.world());
         lim.addProperty("pose_hz_max", 60);
         lim.addProperty("player_hz", 20 / Math.max(1, getConfig().getInt("stream.players-every-ticks", 2)));
         w.add("limits", lim);
         w.addProperty("avatar_supported", true);
+        com.google.gson.JsonArray sc = new com.google.gson.JsonArray();
+        SERVER_CAPS.forEach(sc::add);
+        w.add("caps", sc);   // PROTOCOL.md 4.17-4.18 (additive)
         send(s, w);
         subscribe(s, r, null);
     }
@@ -162,32 +180,81 @@ public final class TabletopPlugin extends JavaPlugin {
         reader.readAsync(r, g -> { if (r.equals(s.region) && s.state == Session.State.READY) sendSnapshot(s, g); });
     }
 
-    private void sendSnapshot(Session s, int[] grid) {
+    private void sendSnapshot(Session s, int[] grid) { sendSnapshot(s, grid, false); }
+
+    /**
+     * Sends the session's region. Clients with the "sections_v1" cap get it as 16^3 sections split into messages of
+     * at most stream.max-message-bytes, and as a delta (only new or changed sections) when the region moved by whole
+     * sections from what they already have (PROTOCOL.md 4.18). Others get one rle_palette_v1 message.
+     */
+    private void sendSnapshot(Session s, int[] grid, boolean forceFull) {
         long t0 = System.nanoTime();
         long readNs = (long) ((reader.lastSnapMs + reader.lastWalkMs) * 1e6);
-        s.lastGrid = grid;
-        s.snapshotId++;
-        s.resetPalette();
-        Palette pal = reader.palette();
-        int air = pal.id("minecraft:air");
-        boolean hasAir = false;
-        for (int g : grid) if (g == air) { hasAir = true; break; }
-        if (hasAir) s.localIndex(air, pal, null); // index 0 = air when present
-        int[] local = new int[grid.length];
-        for (int i = 0; i < grid.length; i++) local[i] = s.localIndex(grid[i], pal, null);
-        List<String> palette = List.copyOf(s.palette);
         RegionSpec r = s.region;
+        boolean sectioned = s.caps.contains(SectionCodec.ENCODING) && getConfig().getBoolean("stream.sections-v1", true);
+        int[] oldGrid = s.lastGrid;
+        int baseId = s.snapshotId;
+        // A delta keeps the session palette (base indices stay valid); cap its growth with an occasional full snapshot.
+        int[] shift = sectioned && !forceFull && oldGrid != null && s.palette.size() < 4096 ? SectionCodec.deltaShift(s.gridRegion, r) : null;
+        s.lastGrid = grid;
+        s.gridRegion = r;
+        s.snapshotId++;
+        s.rememberRegion(s.snapshotId, r);
+        Palette pal = reader.palette();
+        if (shift == null) {
+            s.resetPalette();
+            int air = pal.id("minecraft:air");
+            boolean hasAir = false;
+            for (int g : grid) if (g == air) { hasAir = true; break; }
+            if (hasAir) s.localIndex(air, pal, null); // index 0 = air when present
+        }
+        int[] map = new int[pal.size()];
+        java.util.Arrays.fill(map, -1);
+        int[] local = new int[grid.length];
+        for (int i = 0; i < grid.length; i++) {
+            int g = grid[i];
+            int l = g < map.length ? map[g] : -1;
+            if (l < 0) { l = s.localIndex(g, pal, null); if (g < map.length) map[g] = l; }
+            local[i] = l;
+        }
+        List<String> palette = List.copyOf(s.palette);
         int id = s.snapshotId;
+        int[] margin = s.shared ? sharedMargin.clone() : new int[3];
+        long maxMsg = Math.max(64 * 1024, getConfig().getLong("stream.max-message-bytes", 1L << 20));
         // Encode + serialize off the main thread; the outbound executor keeps message order.
         long remapNs = System.nanoTime() - t0;
         if (outbound != null) outbound.execute(() -> {
             long e0 = System.nanoTime();
-            int[] data = BlockCodec.encode(local);
-            long encNs = System.nanoTime() - e0;
-            JsonObject msg = Protocol.chunkSnapshot(id, r, palette, data);
             JsonObject timing = new JsonObject();
             timing.addProperty("read_ms", Math.round(readNs / 1e4) / 100.0);
             timing.addProperty("remap_ms", Math.round(remapNs / 1e4) / 100.0);
+            if (sectioned) {
+                int dx = r.sx(), dy = r.sy(), dz = r.sz();
+                List<int[]> keys = shift != null ? SectionCodec.changedSections(oldGrid, grid, dx, dy, dz, shift) : SectionCodec.allSections(dx, dy, dz);
+                List<SectionCodec.Section> secs = new ArrayList<>(keys.size());
+                for (int[] k : keys) secs.add(new SectionCodec.Section(k[0], k[1], k[2], SectionCodec.encodeSection(local, dx, dy, dz, k[0], k[1], k[2])));
+                long fixed = 400;
+                for (String p : palette) fixed += p.length() + 3;
+                List<List<SectionCodec.Section>> parts = SectionCodec.split(secs, maxMsg, fixed);
+                long encNs = System.nanoTime() - e0;
+                timing.addProperty("encode_ms", Math.round(encNs / 1e4) / 100.0);
+                long j0 = System.nanoTime(), bytes = 0, runs = 0;
+                for (SectionCodec.Section sec : secs) runs += sec.data().length / 2;
+                for (int i = 0; i < parts.size(); i++) {
+                    JsonObject msg = Protocol.chunkSnapshotSections(id, r, palette, margin, i, parts.size(), shift != null ? baseId : -1, shift, parts.get(i));
+                    if (i == 0) msg.add("server_timing", timing);
+                    bytes += s.sendCounted(msg);
+                }
+                int total = SectionCodec.sections(dx) * SectionCodec.sections(dy) * SectionCodec.sections(dz);
+                getLogger().info(String.format("SNAPSHOT session=%s dims=%dx%dx%d blocks=%d palette=%d encoding=sections_v1 %s sections=%d/%d parts=%d runs=%d bytes=%d read_ms=%.2f remap_ms=%.2f encode_ms=%.2f json_send_ms=%.2f",
+                    s.id, dx, dy, dz, r.volume(), palette.size(), shift != null ? "delta=" + shift[0] + "," + shift[1] + "," + shift[2] : "full", secs.size(), total, parts.size(), runs, bytes,
+                    readNs / 1e6, remapNs / 1e6, encNs / 1e6, (System.nanoTime() - j0) / 1e6));
+                return;
+            }
+            int[] data = BlockCodec.encode(local);
+            long encNs = System.nanoTime() - e0;
+            JsonObject msg = Protocol.chunkSnapshot(id, r, palette, data);
+            msg.add("view_margin", Protocol.ints(margin));   // PROTOCOL.md 4.17
             timing.addProperty("encode_ms", Math.round(encNs / 1e4) / 100.0);
             msg.add("server_timing", timing); // additive extension, ignored by older clients
             long j0 = System.nanoTime();
@@ -197,27 +264,63 @@ public final class TabletopPlugin extends JavaPlugin {
         });
     }
 
+    /** The client couldn't apply a snapshot: send its region again, in full (at most every 2 s per session). */
+    void onBadSnapshot(Session s) {
+        if (s.state != Session.State.READY || s.region == null) return;
+        long now = System.currentTimeMillis();
+        if (now - s.lastFullResendMs < 2000) return;
+        s.lastFullResendMs = now;
+        RegionSpec r = s.region;
+        getLogger().info("BAD_SNAPSHOT from session " + s.id + ": resending in full");
+        reader.readAsync(r, g -> { if (r.equals(s.region) && s.state == Session.State.READY) sendSnapshot(s, g, true); });
+    }
+
+    private void addBuildHeight(JsonObject limits, String world) {
+        World w = Bukkit.getWorld(world);
+        if (w != null) limits.add("build_height", Protocol.ints(w.getMinHeight(), w.getMaxHeight()));   // PROTOCOL.md 4.17
+    }
+
     private void diffAll() {
         java.util.Set<RegionSpec> regions = new java.util.HashSet<>();
         for (Session s : ready()) if (s.lastGrid != null) regions.add(s.region);
         for (RegionSpec r : regions) {
             if (!diffInFlight.add(r)) continue;
             Map<Session, Integer> gen = new HashMap<>();
-            for (Session s : ready()) if (r.equals(s.region) && s.lastGrid != null) gen.put(s, s.snapshotId);
+            Map<Session, int[]> base = new HashMap<>();
+            for (Session s : ready()) if (r.equals(s.region) && s.lastGrid != null) { gen.put(s, s.snapshotId); base.put(s, s.lastGrid); }
             try {
-                reader.readAsync(r, g -> { diffInFlight.remove(r); applyDiff(r, g, gen); });
+                // The O(volume) compare runs on the async worker (sessions usually share one base array).
+                reader.readAsync(r, g -> {
+                    Map<int[], int[]> changes = new java.util.IdentityHashMap<>();
+                    for (int[] old : base.values()) changes.computeIfAbsent(old, o -> changedIndices(o, g, 4097));
+                    return changes;
+                }, (g, changes) -> { diffInFlight.remove(r); applyDiff(r, g, gen, base, changes); });
             } catch (IllegalStateException e) { diffInFlight.remove(r); }
         }
     }
 
-    private void applyDiff(RegionSpec r, int[] g, Map<Session, Integer> gen) {
+    /** Indices where the grids differ, stopping after limit (more than 4096 means "send a snapshot instead"). */
+    static int[] changedIndices(int[] old, int[] g, int limit) {
+        if (old.length != g.length) return null;
+        int[] out = new int[64];
+        int n = 0;
+        for (int i = 0; i < g.length && n < limit; i++) {
+            if (g[i] == old[i]) continue;
+            if (n == out.length) out = java.util.Arrays.copyOf(out, n * 2);
+            out[n++] = i;
+        }
+        return java.util.Arrays.copyOf(out, n);
+    }
+
+    private void applyDiff(RegionSpec r, int[] g, Map<Session, Integer> gen, Map<Session, int[]> base, Map<int[], int[]> changes) {
         for (var e : gen.entrySet()) {
             Session s = e.getKey();
-            // Drop results that started before a newer snapshot or a region change.
-            if (s.state != Session.State.READY || !r.equals(s.region) || s.snapshotId != e.getValue() || s.lastGrid == null) continue;
-            int[] old = s.lastGrid;
-            List<int[]> changed = new ArrayList<>();
-            for (int i = 0; i < g.length; i++) if (g[i] != old[i]) changed.add(new int[] { i, g[i] });
+            // Drop results that started before a newer snapshot, a region change or another diff.
+            if (s.state != Session.State.READY || !r.equals(s.region) || s.snapshotId != e.getValue() || s.lastGrid == null || s.lastGrid != base.get(s)) continue;
+            int[] idx = changes.get(s.lastGrid);
+            if (idx == null) continue;
+            List<int[]> changed = new ArrayList<>(idx.length);
+            for (int i : idx) changed.add(new int[] { i, g[i] });
             s.lastGrid = g;
             if (changed.isEmpty()) continue;
             if (changed.size() > 4096) { sendSnapshot(s, g); continue; }
@@ -293,13 +396,14 @@ public final class TabletopPlugin extends JavaPlugin {
         o.addProperty("world", r.world());
         o.add("origin", Protocol.ints(r.ox(), r.oy(), r.oz()));
         o.add("dims", Protocol.ints(r.sx(), r.sy(), r.sz()));
+        o.add("view_margin", Protocol.ints(sharedMargin));   // PROTOCOL.md 4.17
         o.addProperty("by_session", by == null ? "server" : by.id);
         if (refSeq != null && by != null) o.addProperty("ref_seq", refSeq);
         return o;
     }
 
     /** Shared-region change requested by a headset: validate, check byte cap, then last-writer-wins broadcast. */
-    void onRegionRequest(Session s, RegionRequest q, Long refSeq) {
+    void onRegionRequest(Session s, RegionRequest q, int[] viewMargin, Long refSeq) {
         if (s.state != Session.State.READY) return;
         String wn = q.world() == null ? defaultRegion().world() : q.world();
         World w = Bukkit.getWorld(wn);
@@ -309,16 +413,18 @@ public final class TabletopPlugin extends JavaPlugin {
         int y0 = Math.max(q.oy(), w.getMinHeight()), y1 = Math.min(q.oy() + q.dy(), w.getMaxHeight());
         if (y1 <= y0) { send(s, tooLarge("region is outside the build height " + w.getMinHeight() + ".." + w.getMaxHeight(), refSeq)); return; }
         RegionSpec r = new RegionSpec(wn, q.ox(), y0, q.oz(), q.dx(), y1 - y0, q.dz());
+        int[] margin = RegionRequest.clampMargin(viewMargin, r.sx(), r.sy(), r.sz());
         long t0 = System.nanoTime();
-        reader.readAsync(r, grid -> {
-            if (s.state != Session.State.READY) return;
-            // Byte cap: estimate from the global-palette RLE (same run structure as each session's encoding).
-            int[] data = BlockCodec.encode(grid);
+        // Byte cap: estimate from the global-palette RLE (same run structure as each session's encoding), off the main thread.
+        reader.readAsync(r, g -> {
+            int[] data = BlockCodec.encode(g);
             java.util.Set<Integer> ids = new java.util.HashSet<>();
             for (int k = 0; k < data.length; k += 2) ids.add(data[k]);
             List<String> pal = new ArrayList<>();
             for (int id : ids) pal.add(reader.palette().state(id));
-            long est = RegionRequest.estimateSnapshotBytes(data, pal);
+            return RegionRequest.estimateSnapshotBytes(data, pal);
+        }, (grid, est) -> {
+            if (s.state != Session.State.READY) return;
             if (est > caps.maxBytes()) {
                 String msg = String.format("snapshot would be about %d bytes, over max %d (try a smaller region)", est, caps.maxBytes());
                 getLogger().info("REGION_REJECT " + msg);
@@ -330,7 +436,9 @@ public final class TabletopPlugin extends JavaPlugin {
             getConfig().set("region.world", wn);
             getConfig().set("region.origin.x", r.ox()); getConfig().set("region.origin.y", r.oy()); getConfig().set("region.origin.z", r.oz());
             getConfig().set("region.dims.x", r.sx()); getConfig().set("region.dims.y", r.sy()); getConfig().set("region.dims.z", r.sz());
-            saveConfig();
+            sharedMargin = margin;
+            getConfig().set("region.view_margin.x", margin[0]); getConfig().set("region.view_margin.y", margin[1]); getConfig().set("region.view_margin.z", margin[2]);
+            if (configSaveAt < 0) configSaveAt = System.currentTimeMillis() + 5000;   // debounced (see tick)
             s.shared = true;
             for (Session o : ready()) {
                 if (!o.shared) continue;
@@ -350,6 +458,7 @@ public final class TabletopPlugin extends JavaPlugin {
         reg.addProperty("world", r.world());
         reg.add("origin", Protocol.ints(r.ox(), r.oy(), r.oz()));
         reg.add("dims", Protocol.ints(r.sx(), r.sy(), r.sz()));
+        reg.add("view_margin", Protocol.ints(s.shared ? sharedMargin : new int[3]));
         o.add("region", reg);
         com.google.gson.JsonArray arr = new com.google.gson.JsonArray();
         for (Player p : Bukkit.getOnlinePlayers()) {
@@ -367,6 +476,7 @@ public final class TabletopPlugin extends JavaPlugin {
         o.add("players", arr);
         JsonObject lim = new JsonObject();
         caps.addTo(lim);
+        addBuildHeight(lim, r.world());
         o.add("limits", lim);
         if (refSeq != null) o.addProperty("ref_seq", refSeq);
         send(s, o);
@@ -411,7 +521,9 @@ public final class TabletopPlugin extends JavaPlugin {
             send(ps.s(), avatar.state(getConfig().getBoolean("debug.avatar-state", false)));
         }
         if (!avatar.spawned()) return;
-        RegionSpec r = ps.s().region;
+        // The origin of the snapshot the headset's frame is in (pose.snapshot_id): while a moved region is in flight
+        // the headset still places RegionRoot for the previous one, and mapping with the new origin would jump.
+        RegionSpec r = ps.s().regionFor(ps.snapshotId());
         World w = Bukkit.getWorld(r.world());
         if (w == null) return;
         double bs = avatar.blockSizeM;
@@ -542,6 +654,7 @@ public final class TabletopPlugin extends JavaPlugin {
 
     private void resubscribeAll() {
         RegionSpec r = defaultRegion();
+        sharedMargin = RegionRequest.clampMargin(sharedMargin, r.sx(), r.sy(), r.sz());
         for (Session s : ready()) if (s.shared) { send(s, regionChanged(r, null, null)); subscribe(s, r, null); }
         updateTickets();
     }
