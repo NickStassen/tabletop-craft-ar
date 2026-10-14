@@ -66,6 +66,22 @@ static class EditTests
         h = BlockRaycast.Cast(plant, new Vector3(1.5f, 2.9f, 1.5f), new Vector3(0, -1, 0), 10);
         check(h.Hit && Eq(h.Block, V(1, 1, 1)), "short grass is targetable by its cell");
 
+        // Navigation shows a window of the region (NavState: fractional bounds) and clips the rest: never target past it.
+        var nav = World(12, 6, 12, (x, y, z) => y == 0 || x == 11 || (x == 9 && y == 1) ? 1 : 0, "minecraft:air", "minecraft:stone");
+        Vector3 lo = new Vector3(2.5f, 0, 2.5f), hi = new Vector3(9.5f, 6, 9.5f);
+        check(!BlockRaycast.Cast(nav, new Vector3(1.5f, 5f, 5.5f), new Vector3(0, -1, 0), 20, lo, hi).Hit, "window: a column outside the visible box can't be hit");
+        h = BlockRaycast.Cast(nav, new Vector3(5.5f, 5f, 5.5f), new Vector3(0, -1, 0), 20, lo, hi);
+        check(h.Hit && Eq(h.Block, V(5, 0, 5)) && h.AdjacentInView, "window: inside it works as before");
+        h = BlockRaycast.Cast(nav, new Vector3(-3f, 0.5f, 5.5f), new Vector3(1, 0, 0), 30, lo, hi);
+        check(h.Hit && Eq(h.Block, V(2, 0, 5)) && h.Face == 0 && Near(h.Point.x, 2.5f) && !h.AdjacentInView,
+              $"window: entering through its cut side hits the half-shown cell; the cell before it is hidden (got {h.Block}, point x {h.Point.x})");
+        h = BlockRaycast.Cast(nav, new Vector3(4.5f, 2.5f, 5.5f), new Vector3(1, 0, 0), 30, lo, hi);
+        check(!h.Hit, "window: a wall in the hidden margin (x = 11) isn't hit");
+        h = BlockRaycast.Cast(nav, new Vector3(4.5f, 1.5f, 5.5f), new Vector3(1, 0, 0), 30, lo, hi);
+        check(h.Hit && Eq(h.Block, V(9, 1, 5)) && Eq(h.Adjacent, V(8, 1, 5)) && h.AdjacentInView, "window: a half-shown block at its edge can be hit and built on");
+        check(!BlockRaycast.Cast(nav, new Vector3(4.5f, 1.5f, 5.5f), new Vector3(1, 0, 0), 30, new Vector3(2, 0, 2), new Vector3(9, 6, 9)).Hit,
+              "window: with a whole-block edge the next cell (x = 9) is outside");
+
         // Property test against a fine ray march: the hit cell is solid, the hit point lies on the stated face, and no
         // solid cell comes earlier along the ray; a miss means the march finds nothing either.
         var rnd = new System.Random(1234);
@@ -259,6 +275,7 @@ static class EditTests
         var down = new Vector3(0, -1, 0);
         int step = 0; string original = null; Vector3Int cell = default, top = default;
         var t0 = DateTime.UtcNow; var phaseStart = t0; var log = new List<string>();
+        var asm = new SnapshotAssembler();   // the app's snapshot path (sections_v1 parts, deltas)
         double Now() => (DateTime.UtcNow - t0).TotalSeconds;
         bool Wait(Func<bool> done, string what)
         {
@@ -269,7 +286,13 @@ static class EditTests
                     switch (m.S("type"))
                     {
                         case "welcome": ed.ServerAllows = m.A("caps")?.Contains(Protocol.CapEdit) == true; break;
-                        case "chunk_snapshot": w.ApplySnapshot(ChunkSnapshot.From(m)); ed.OnSnapshot(); break;
+                        case "chunk_snapshot":
+                            asm.Offer(m, w, new HashSet<Vector3Int>());
+                            if (!asm.Busy) break;   // more parts to come
+                            var res = asm.Wait();
+                            if (res.Error != null) { log.Add("snapshot error " + res.Error); break; }
+                            w.ApplySnapshot(res.Snapshot); ed.OnSnapshot();
+                            break;
                         case "block_update": ed.OnBlockUpdate(w, m); w.ApplyBlockUpdate(m); break;
                         case "error": log.Add($"error {m.S("code")} {m.S("message")}"); ed.OnError(w, m); break;
                     }
@@ -298,16 +321,18 @@ static class EditTests
         link.Send(ed.Place(w, h, down, Now())); step++;
         check(Wait(() => ed.Pending.Count == 0 && w.State(w.Get(cell.x, cell.y, cell.z)) == original, "restore confirmed") && Eq(h.Adjacent, cell),
               $"live edit: place {original} back -> {w.State(w.Get(cell.x, cell.y, cell.z))}");
-        // Gold isn't in the palette: no guess, it arrives with palette_add.
-        ed.Selected = "minecraft:gold_block";
+        // A block that isn't in the palette (ruined portals bring gold blocks): no guess, it arrives with palette_add.
+        string fresh = new[] { "minecraft:gold_block", "minecraft:emerald_block", "minecraft:lapis_block", "minecraft:purpur_block" }.First(b => !w.Palette.Contains(b));
+        ed.Selected = fresh;
         h = Down(); top = h.Adjacent;
         link.Send(ed.Place(w, h, down, Now())); step++;
-        check(Wait(() => w.State(w.Get(top.x, top.y, top.z)) == "minecraft:gold_block", "gold placed"), $"live edit: place gold_block (new palette entry) at {w.Origin + top}");
+        bool guessed = ed.Pending.Count > 0;
+        check(Wait(() => w.State(w.Get(top.x, top.y, top.z)) == fresh, "new block placed") && !guessed, $"live edit: place {fresh} (new palette entry, not guessed) at {w.Origin + top}");
         h = Down();
         link.Send(ed.Break(w, h, Now())); step++;
-        check(Wait(() => ed.Pending.Count == 0 && w.Get(top.x, top.y, top.z) == w.Palette.IndexOf(BlockEditRules.BreakResult("minecraft:gold_block")), "gold broken"), "live edit: break gold_block");
+        check(Wait(() => ed.Pending.Count == 0 && w.Get(top.x, top.y, top.z) == w.Palette.IndexOf(BlockEditRules.BreakResult(fresh)), "new block broken"), $"live edit: break {fresh}");
         // A guess the server refuses (command blocks are on the deny list): the error's pos reverts it.
-        ed.Pending.Apply(w, top, (ushort)w.Palette.IndexOf("minecraft:gold_block"), Now());
+        ed.Pending.Apply(w, top, (ushort)w.Palette.IndexOf(fresh), Now());
         link.Send(Protocol.BlockEdit("place", w.Origin + top, "minecraft:command_block[conditional=false,facing=up]", "up"));
         check(Wait(() => ed.Pending.Count == 0, "denied") && w.State(w.Get(top.x, top.y, top.z)) == "minecraft:air", "live edit: denied place is reverted from the error's pos");
         foreach (var l in log) Console.WriteLine("live edit: " + l);

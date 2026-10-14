@@ -6,13 +6,15 @@ import time
 from dataclasses import dataclass, field
 
 PROTOCOL_VERSION = 1
+SECTIONS = "sections_v1"   # chunk_snapshot encoding and hello cap (PROTOCOL.md 4.18)
+SECTION = 16
 
 # Required payload fields per message type, on top of the envelope (v, type, seq, t).
 REQUIRED = {
     "hello": ["client", "protocols"],
     "welcome": ["protocol", "server", "server_version", "mc_version", "session", "world", "region", "limits", "avatar_supported"],
     "subscribe": ["origin", "dims"],
-    "chunk_snapshot": ["snapshot_id", "world", "origin", "dims", "order", "palette", "encoding", "data"],
+    "chunk_snapshot": ["snapshot_id", "world", "origin", "dims", "order", "palette", "encoding"],
     "block_update": ["snapshot_id", "changes"],
     "player_positions": ["players"],
     "pose": ["head"],
@@ -30,10 +32,10 @@ REQUIRED = {
 }
 ERROR_CODES = {"version_mismatch", "auth_failed", "bad_message", "unknown_type", "unsupported", "region_too_large",
                "world_not_found", "bad_snapshot", "rate_limited", "skin_failed", "internal",
-               "edit_denied", "out_of_region", "bad_state"}   # the last three: block_edit (PROTOCOL.md 4.17)
+               "edit_denied", "out_of_region", "bad_state"}   # the last three: block_edit (PROTOCOL.md 4.20)
 # Optional snapshot extras a client can ask for in hello.caps (PROTOCOL.md 4.4.1).
 CAP_LIGHT, CAP_BIOMES = "light_v1", "biomes_v1"
-# Block editing from the headset (PROTOCOL.md 4.17): block_edit, granted in welcome.caps.
+# Block editing from the headset (PROTOCOL.md 4.20): block_edit, granted in welcome.caps.
 CAP_EDIT = "edit_v1"
 FACES = ("west", "east", "down", "up", "north", "south")
 
@@ -48,6 +50,15 @@ def validate(msg: dict) -> None:
         if not isinstance(msg.get(k), int):
             raise ValueError(f"{t} envelope field {k} missing or not int")
     missing = [k for k in REQUIRED[t] if k not in msg]
+    if t == "chunk_snapshot":
+        # rle_palette_v1 carries "data"; sections_v1 (PROTOCOL.md 4.18) carries "sections", "part" and "parts".
+        enc = msg.get("encoding")
+        if enc == "rle_palette_v1":
+            missing += [k for k in ("data",) if k not in msg]
+        elif enc == SECTIONS:
+            missing += [k for k in ("sections", "part", "parts") if k not in msg]
+        else:
+            raise ValueError(f"unknown snapshot encoding {enc}")
     if missing:
         raise ValueError(f"{t} missing {missing}")
     if t == "error" and msg["code"] not in ERROR_CODES:
@@ -61,7 +72,7 @@ def validate(msg: dict) -> None:
 
 
 def validate_block_edit(msg: dict) -> None:
-    """block_edit (PROTOCOL.md 4.17): op break|place, integer world pos, state for place, optional face."""
+    """block_edit (PROTOCOL.md 4.20): op break|place, integer world pos, state for place, optional face."""
     if msg["op"] not in ("break", "place"):
         raise ValueError(f"block_edit op must be break or place, got {msg['op']}")
     pos = msg["pos"]
@@ -86,6 +97,26 @@ def decode_rle(data: list[int], volume: int) -> list[int]:
     if len(out) != volume:
         raise ValueError(f"runs cover {len(out)} of {volume}")
     return out
+
+
+def decode_section(data: list[int], grid: list[int], dims: tuple[int, int, int], key: tuple[int, int, int], palette_size: int) -> None:
+    """One sections_v1 section: [paletteIndex, runLength] pairs over its box (clamped to dims) in yzx order."""
+    dx, dy, dz = dims
+    x0, y0, z0 = (k * SECTION for k in key)
+    sx, sy, sz = min(SECTION, dx - x0), min(SECTION, dy - y0), min(SECTION, dz - z0)
+    if len(data) % 2:
+        raise ValueError("section data must be pairs")
+    cells = [((y0 + y) * dz + z0 + z) * dx + x0 + x for y in range(sy) for z in range(sz) for x in range(sx)]
+    p = 0
+    for i in range(0, len(data), 2):
+        v, run = data[i], data[i + 1]
+        if run < 1 or p + run > len(cells) or not 0 <= v < palette_size:
+            raise ValueError(f"bad run in section {key}")
+        for c in cells[p:p + run]:
+            grid[c] = v
+        p += run
+    if p != len(cells):
+        raise ValueError(f"section {key} runs cover {p} of {len(cells)}")
 
 
 def decode_light(obj: dict, volume: int) -> list[int]:
@@ -137,6 +168,9 @@ class WorldMirror:
     snapshot_id: int = -1
     palette: list[str] = field(default_factory=list)
     grid: list[int] = field(default_factory=list)
+    view_margin: tuple[int, int, int] = (0, 0, 0)          # PROTOCOL.md 4.17
+    parts: list[dict] = field(default_factory=list)          # sectioned snapshot parts received so far
+    sections_sent: int = 0                                   # sections in the last sectioned snapshot (delta size)
     light: list[int] | None = None   # packed sky << 4 | block, when the server sent light
     biomes: BiomeGrid | None = None
 
@@ -148,9 +182,14 @@ class WorldMirror:
         dx, _, dz = self.dims
         return (y * dz + z) * dx + x
 
-    def apply_snapshot(self, msg: dict) -> None:
-        if msg["order"] != "yzx" or msg["encoding"] != "rle_palette_v1":
-            raise ValueError("unsupported order/encoding")
+    def apply_snapshot(self, msg: dict) -> bool:
+        """Applies a chunk_snapshot. Returns False while parts of a sectioned snapshot are still missing."""
+        if msg["order"] != "yzx":
+            raise ValueError("unsupported order")
+        if msg["encoding"] == SECTIONS:
+            return self._apply_sections(msg)
+        if msg["encoding"] != "rle_palette_v1":
+            raise ValueError("unsupported encoding")
         dims = tuple(msg["dims"])
         grid = decode_rle(msg["data"], dims[0] * dims[1] * dims[2])
         if grid and max(grid) >= len(msg["palette"]):
@@ -160,6 +199,79 @@ class WorldMirror:
         self.world, self.origin, self.dims = msg["world"], tuple(msg["origin"]), dims
         self.snapshot_id, self.palette, self.grid = msg["snapshot_id"], list(msg["palette"]), grid
         self.light, self.biomes = light, biomes
+        self.view_margin = tuple(msg.get("view_margin") or (0, 0, 0))
+        return True
+
+    def _apply_sections(self, msg: dict) -> bool:
+        """sections_v1 (PROTOCOL.md 4.18): collect the parts, then copy the base (delta) and decode the listed sections.
+
+        With light (top-level "light" with in_sections), every listed section carries its own light runs and unlisted
+        sections of a delta keep the base's light; biomes, when sent, come whole on part 0.
+        """
+        if msg["part"] == 0 or (self.parts and self.parts[0]["snapshot_id"] != msg["snapshot_id"]):
+            self.parts = []
+        self.parts.append(msg)
+        if len(self.parts) < msg["parts"]:
+            return False
+        parts, self.parts = self.parts, []
+        m0 = parts[0]
+        dx, dy, dz = dims = tuple(m0["dims"])
+        palette = list(m0["palette"])
+        grid = [0] * (dx * dy * dz)
+        with_light = bool(m0.get("light"))
+        if with_light and m0["light"].get("encoding") != "rle_v1":
+            raise ValueError("unsupported light encoding")
+        light = [0] * len(grid) if with_light else None
+        base = m0.get("base")
+        n = [(d + SECTION - 1) // SECTION for d in dims]
+        listed = set()
+        if base is not None:
+            sx, sy, sz = base["shift"]
+            if base["snapshot_id"] != self.snapshot_id or self.dims != dims or self.world != m0["world"]:
+                raise ValueError("delta against a snapshot we don't have")
+            moved = (self.origin[0] + sx, self.origin[1] + sy, self.origin[2] + sz)
+            if any(s % SECTION for s in (sx, sy, sz)) or moved != tuple(m0["origin"]):
+                raise ValueError("bad delta shift")
+            if palette[: len(self.palette)] != self.palette:
+                raise ValueError("delta palette must extend the base palette")
+            if with_light and self.light is None:
+                raise ValueError("delta with light against a snapshot without light")
+            for y in range(dy):
+                oy = y + sy
+                if not 0 <= oy < dy:
+                    continue
+                for z in range(dz):
+                    oz = z + sz
+                    if not 0 <= oz < dz:
+                        continue
+                    x0, x1 = max(0, -sx), min(dx, dx - sx)
+                    if x1 > x0:
+                        dst, src = (y * dz + z) * dx, (oy * dz + oz) * dx + sx
+                        grid[dst + x0:dst + x1] = self.grid[src + x0:src + x1]
+                        if light is not None:
+                            light[dst + x0:dst + x1] = self.light[src + x0:src + x1]
+        for i, m in enumerate(parts):
+            if m["part"] != i or m["snapshot_id"] != m0["snapshot_id"]:
+                raise ValueError("parts out of order")
+            for sec in m["sections"]:
+                kx, ky, kz = sec["s"]
+                if not (0 <= kx < n[0] and 0 <= ky < n[1] and 0 <= kz < n[2]) or (kx, ky, kz) in listed:
+                    raise ValueError("bad or repeated section key")
+                listed.add((kx, ky, kz))
+                decode_section(sec["data"], grid, dims, (kx, ky, kz), len(palette))
+                if light is not None:
+                    if "light" not in sec:
+                        raise ValueError(f"section {sec['s']} has no light")
+                    decode_section(sec["light"], light, dims, (kx, ky, kz), 256)
+        if base is None and len(listed) != n[0] * n[1] * n[2]:
+            raise ValueError("full sectioned snapshot is missing sections")
+        self.world, self.origin, self.dims = m0["world"], tuple(m0["origin"]), dims
+        self.snapshot_id, self.palette, self.grid = m0["snapshot_id"], palette, grid
+        self.light = light
+        self.biomes = BiomeGrid.from_json(m0["biomes"]) if m0.get("biomes") else None
+        self.view_margin = tuple(m0.get("view_margin") or (0, 0, 0))
+        self.sections_sent = len(listed)
+        return True
 
     def apply_block_update(self, msg: dict) -> bool:
         if msg["snapshot_id"] != self.snapshot_id:
@@ -201,7 +313,7 @@ class Envelope:
 
 
 def block_edit(op: str, pos, state: str | None = None, face: str | None = None) -> dict:
-    """block_edit payload (PROTOCOL.md 4.17); wrap it with Envelope.wrap("block_edit", **payload)."""
+    """block_edit payload (PROTOCOL.md 4.20); wrap it with Envelope.wrap("block_edit", **payload)."""
     d: dict = {"op": op, "pos": [int(v) for v in pos]}
     if state is not None:
         d["state"] = state

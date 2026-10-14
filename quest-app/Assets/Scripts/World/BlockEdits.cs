@@ -1,5 +1,5 @@
 // Block editing from the headset, engine-free part (tested in Tests~): the selected block, the block_edit messages
-// (PROTOCOL.md 4.17), placement orientation, and optimistic local updates that reconcile with the server.
+// (PROTOCOL.md 4.20), placement orientation, and optimistic local updates that reconcile with the server.
 //
 // Optimistic updates: an edit is applied to WorldModel right away (so the section re-meshes without waiting a round
 // trip) only when the resulting state is already in the session palette. The palette mirrors the server's session
@@ -108,6 +108,8 @@ namespace TabletopCraft.World
         int _snapshot = -1;
 
         public int Count => _cells.Count;
+        /// <summary>Bumped whenever a cell is changed here (guess or revert): the app re-slices what depends on the grid.</summary>
+        public int Changes { get; private set; }
         public bool IsPending(WorldModel w, Vector3Int c) => w.InBounds(c.x, c.y, c.z) && _cells.ContainsKey(w.Index(c.x, c.y, c.z));
 
         /// <summary>Sets the cell to palette index <paramref name="id"/> now and remembers its old value.</summary>
@@ -119,6 +121,7 @@ namespace TabletopCraft.World
             ushort before = _cells.TryGetValue(i, out var e) ? e.Before : w.Grid[i];
             _cells[i] = new Entry { Before = before, Expires = now + ExpirySeconds };
             w.SetLocal(c.x, c.y, c.z, id);
+            Changes++;
         }
 
         /// <summary>Call for every block_update before WorldModel.ApplyBlockUpdate: the server's values replace the guesses.</summary>
@@ -142,6 +145,7 @@ namespace TabletopCraft.World
             if (!_cells.TryGetValue(i, out var e)) return false;
             _cells.Remove(i);
             w.SetLocal(c.x, c.y, c.z, e.Before);
+            Changes++;
             return true;
         }
 
@@ -200,7 +204,7 @@ namespace TabletopCraft.World
         {
             if (!Ready(w, h)) return null;
             var c = h.Adjacent;
-            if (!w.InBounds(c.x, c.y, c.z)) { Result = "can't place outside the area"; return null; }
+            if (!h.AdjacentInView) { Result = "can't place outside the area"; return null; }
             if (!BlockRaycast.CanPlaceInto(w, c)) { Result = "can't place: cell is occupied"; return null; }
             string state = BlockEditRules.Orient(Selected, h.Face, rayDir);
             Optimistic(w, c, BlockEditRules.PlaceResult(state, w.State(w.Get(c.x, c.y, c.z))), now);

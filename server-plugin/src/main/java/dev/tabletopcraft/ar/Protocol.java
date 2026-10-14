@@ -54,9 +54,55 @@ public final class Protocol {
         return o;
     }
 
+    /**
+     * One part of a {@code sections_v1} chunk_snapshot (PROTOCOL.md 4.18). baseId &lt; 0 = full snapshot, else a delta
+     * against the client's snapshot baseId with the origin moved by shift (whole sections). With light, each section
+     * carries its own "light" runs and the top-level "light" says so; biomes (whole region) go on part 0.
+     */
+    public static JsonObject chunkSnapshotSections(int snapshotId, RegionSpec r, List<String> palette, int[] viewMargin,
+                                                   int part, int parts, int baseId, int[] shift, List<SectionCodec.Section> sections,
+                                                   boolean light, BiomeGrid biomes) {
+        JsonObject o = body("chunk_snapshot");
+        o.addProperty("snapshot_id", snapshotId);
+        o.addProperty("world", r.world());
+        o.add("origin", ints(r.ox(), r.oy(), r.oz()));
+        o.add("dims", ints(r.sx(), r.sy(), r.sz()));
+        if (viewMargin != null) o.add("view_margin", ints(viewMargin));
+        o.addProperty("order", "yzx");
+        JsonArray pal = new JsonArray();
+        palette.forEach(pal::add);
+        o.add("palette", pal);
+        o.addProperty("encoding", SectionCodec.ENCODING);
+        if (baseId >= 0) {
+            JsonObject b = new JsonObject();
+            b.addProperty("snapshot_id", baseId);
+            b.add("shift", ints(shift));
+            o.add("base", b);
+        }
+        o.addProperty("part", part);
+        o.addProperty("parts", parts);
+        JsonArray secs = new JsonArray();
+        for (SectionCodec.Section s : sections) {
+            JsonObject e = new JsonObject();
+            e.add("s", ints(s.sx(), s.sy(), s.sz()));
+            e.add("data", ints(s.data()));
+            if (s.light() != null) e.add("light", ints(s.light()));
+            secs.add(e);
+        }
+        o.add("sections", secs);
+        o.add("biomes", biomes != null && part == 0 ? biomes.toJson() : null);
+        if (light) {
+            JsonObject l = new JsonObject();
+            l.addProperty("encoding", "rle_v1");
+            l.addProperty("in_sections", true);
+            o.add("light", l);
+        } else o.add("light", null);
+        return o;
+    }
+
     /** Optional per-session features a client opts into via hello.caps (PROTOCOL.md 4.4.1). */
     public static final String CAP_LIGHT = "light_v1", CAP_BIOMES = "biomes_v1";
-    /** Block editing from the headset (block_edit, PROTOCOL.md 4.17). */
+    /** Block editing from the headset (block_edit, PROTOCOL.md 4.20). */
     public static final String CAP_EDIT = "edit_v1";
 
     /** Fills the snapshot's optional "light" / "biomes" fields (left null when the session didn't ask for them). */

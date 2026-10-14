@@ -8,7 +8,7 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * block_edit (PROTOCOL.md 4.17): one block broken or placed from the headset. Parsed and checked on the websocket
+ * block_edit (PROTOCOL.md 4.20): one block broken or placed from the headset. Parsed and checked on the websocket
  * thread (pure, unit-tested); TabletopPlugin#onBlockEdit applies it on the main thread.
  *
  * @param state block-state string for "place" (null for "break")

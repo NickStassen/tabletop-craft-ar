@@ -6,7 +6,7 @@
 //   Left trigger    place the selected block against the targeted face (hold to repeat)
 //   B (right)       pick the targeted block as the selected block (middle click)
 // The selected block floats above the right controller as a small textured cube with its name. Edits go out as
-// block_edit (PROTOCOL.md 4.17) and are shown at once when the result is already in the palette (BlockEdits.cs
+// block_edit (PROTOCOL.md 4.20) and are shown at once when the result is already in the palette (BlockEdits.cs
 // reconciles them with the server's block_update / error). A short haptic tick confirms each edit.
 using System;
 using System.Collections.Generic;
@@ -25,6 +25,8 @@ namespace TabletopCraft.XR
         public Action<Dictionary<string, object>> Send;
         public Func<bool> Online;     // link up (edits are dropped otherwise)
         public Func<bool> Blocked;    // another mode owns the controllers (area setup)
+        public NavState Nav;          // visible window inside the region (navigation); null = the whole region is shown
+        public Action ModelChanged;   // an optimistic edit or its revert changed the grid (clip caps re-slice)
         public float MaxRayM = 2f;
         public float RepeatSeconds = 0.25f, FirstRepeatSeconds = 0.35f;
 
@@ -42,6 +44,8 @@ namespace TabletopCraft.XR
         TextMesh _label;
         string _previewState;
         float _breakAt = -1, _placeAt = -1, _hapticOff = -1;
+        int _seenChanges;
+        Vector3 _lo, _hi;   // the box targeting is limited to (region-local blocks)
         readonly Vector3[] _box = new Vector3[16];
         readonly List<Vector3> _verts = new List<Vector3>();
         static readonly Color OutlineColor = new Color(0.02f, 0.02f, 0.02f, 0.85f);
@@ -92,10 +96,13 @@ namespace TabletopCraft.XR
             ShowPreview(active);
             if (!active) { Target = default; _outline.gameObject.SetActive(false); _laser.gameObject.SetActive(false); _breakAt = _placeAt = -1; return; }
 
+            // Only what's on the table can be targeted: the visible window when navigating (the margin is clipped away).
+            _lo = Vector3.zero; _hi = w.Dims;
+            if (Nav != null && Nav.Loaded && Nav.Origin == w.Origin) { _lo = Nav.WindowMin - (Vector3)w.Origin; _hi = _lo + (Vector3)Nav.Window; }
             // The controller ray in block space (InverseTransformVector includes the block scale: length in blocks).
             Vector3 o = BlockRaycast.FromBlocksLocal(Blocks.InverseTransformPoint(RightHand.position));
             Vector3 d = BlockRaycast.FromBlocksLocal(Blocks.InverseTransformVector(RightHand.forward * MaxRayM));
-            Target = BlockRaycast.Cast(w, o, d, d.magnitude);
+            Target = BlockRaycast.Cast(w, o, d, d.magnitude, _lo, _hi);
             Draw(Target);
 
             // Right trigger = break, left trigger = place; press acts at once, holding repeats.
@@ -111,6 +118,14 @@ namespace TabletopCraft.XR
                 else Editor.Result = "not connected";
             }
             if (OVRInput.GetDown(OVRInput.Button.Two, OVRInput.Controller.RTouch) && Editor.Pick(w, Target)) Haptic(OVRInput.Controller.RTouch, 0.15f);
+        }
+
+        // After every Update (TabletopApp handles server errors there): grid changes from guesses and reverts.
+        void LateUpdate()
+        {
+            if (Editor.Pending.Changes == _seenChanges) return;
+            _seenChanges = Editor.Pending.Changes;
+            ModelChanged?.Invoke();
         }
 
         /// <summary>True on the trigger press, then every RepeatSeconds while it stays held.</summary>
@@ -141,9 +156,11 @@ namespace TabletopCraft.XR
             _outline.gameObject.SetActive(h.Hit);
             _laser.gameObject.SetActive(h.Hit);
             if (!h.Hit) return;
-            // Selection box: the cell grown by 1/64 block so it doesn't z-fight the faces (vanilla grows it by 0.002).
+            // Selection box: the cell grown by 1/64 block so it doesn't z-fight the faces (vanilla grows it by 0.002),
+            // cut to the visible window like the terrain.
             const float e = 1f / 64;
-            Vector3 a = new Vector3(h.Block.x - e, h.Block.y - e, h.Block.z - e), b = new Vector3(h.Block.x + 1 + e, h.Block.y + 1 + e, h.Block.z + 1 + e);
+            Vector3 a = new Vector3(Mathf.Max(h.Block.x, _lo.x) - e, Mathf.Max(h.Block.y, _lo.y) - e, Mathf.Max(h.Block.z, _lo.z) - e);
+            Vector3 b = new Vector3(Mathf.Min(h.Block.x + 1, _hi.x) + e, Mathf.Min(h.Block.y + 1, _hi.y) + e, Mathf.Min(h.Block.z + 1, _hi.z) + e);
             int i = 0;
             void P(float x, float y, float z) => _box[i++] = Blocks.TransformPoint(BlockRaycast.ToBlocksLocal(new Vector3(x, y, z)));
             P(a.x, a.y, a.z); P(b.x, a.y, a.z); P(b.x, a.y, b.z); P(a.x, a.y, b.z); P(a.x, a.y, a.z);

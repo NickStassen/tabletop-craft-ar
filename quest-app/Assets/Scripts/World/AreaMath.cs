@@ -52,6 +52,16 @@ namespace TabletopCraft.World
         /// <summary>True when the estimate exceeds the budget and the user has not chosen to override.</summary>
         public static bool OverBudget(MeshEstimate e, long budget, bool overridden) => !overridden && e.Quads > budget;
 
+        // [nav] Every non-empty 16^3 section is its own mesh, i.e. one or two draw calls per frame. On real terrain
+        // (seed 12345, docs/TESTING.md "Navigation and bigger areas") 41-56% of a region's sections are non-empty.
+        public const double NonEmptyFraction = 0.5;
+        /// <summary>Default soft cap on non-empty sections (ESTIMATE: ~1-1.5 draw calls each, built-in pipeline on Quest 3).</summary>
+        public const int DefaultSectionBudget = 600;
+
+        /// <summary>Sections in a region, and the non-empty ones that become meshes (estimate).</summary>
+        public static long Sections(int dx, int dy, int dz) => (long)((dx + 15) / 16) * ((dy + 15) / 16) * ((dz + 15) / 16);
+        public static long EstimateMeshes(int dx, int dy, int dz) => (long)Math.Ceiling(Sections(dx, dy, dz) * NonEmptyFraction);
+
         /// <summary>Clamp requested dims to the server's advertised caps (welcome/region_info limits).</summary>
         public static (int, int, int) ClampToCaps(int dx, int dy, int dz, int maxX, int maxY, int maxZ, long maxBlocks)
         {

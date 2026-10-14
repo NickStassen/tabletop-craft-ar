@@ -11,17 +11,20 @@ public final class BlockCodec {
 
     /** Encodes a grid whose values are already indices into the target palette. */
     public static int[] encode(int[] grid) {
-        int[] tmp = new int[grid.length * 2 + 2];
+        // Count the runs first: big regions (millions of blocks) would otherwise need a 2N scratch array.
+        int runs = grid.length == 0 ? 0 : 1;
+        for (int i = 1; i < grid.length; i++) if (grid[i] != grid[i - 1]) runs++;
+        int[] out = new int[runs * 2];
         int n = 0, i = 0;
         while (i < grid.length) {
             int v = grid[i];
             int j = i + 1;
             while (j < grid.length && grid[j] == v) j++;
-            tmp[n++] = v;
-            tmp[n++] = j - i;
+            out[n++] = v;
+            out[n++] = j - i;
             i = j;
         }
-        return Arrays.copyOf(tmp, n);
+        return out;
     }
 
     /** Same pair encoding for unsigned bytes (packed light, PROTOCOL.md 4.4.1 {@code rle_v1}). */

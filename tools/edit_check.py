@@ -1,4 +1,4 @@
-"""Block editing from the headset against a running plugin (PROTOCOL.md 4.17).
+"""Block editing from the headset against a running plugin (PROTOCOL.md 4.20).
 
 Connects like the Quest (hello caps edit_v1), finds the surface block in the middle of the region by looking down
 through air and water (as the headset's ray does), then:
@@ -113,7 +113,7 @@ async def run(a: argparse.Namespace) -> dict:
     t0 = time.perf_counter()
     await c.send("block_edit", **block_edit("place", above, "minecraft:gold_block", "up"))
     got = await c.until(lambda: m.at_world(*above) == "minecraft:gold_block")
-    check(got is not None, "place gold_block (new palette entry) -> block_update with palette_add", pos=above,
+    check(got is not None, "place gold_block -> block_update", pos=above,
           ms=round((time.perf_counter() - t0) * 1000))
 
     # A fresh connection reads the world itself: the gold block is really there. Without edit_v1 it can't edit.

@@ -15,15 +15,15 @@ namespace TabletopCraft.Net
         {
             ["type"] = "hello", ["client"] = ClientName, ["client_version"] = ClientVersion,
             ["protocols"] = new List<object> { Version }, ["token"] = token ?? "",
-            ["caps"] = new List<object> { "rle_palette_v1", "avatar", CapLight, CapBiomes, CapEdit },
+            ["caps"] = new List<object> { "rle_palette_v1", "avatar", CapLight, CapBiomes, SectionedSnapshot.Cap, CapEdit },
         };
 
         /// <summary>Optional snapshot extras (PROTOCOL.md 4.4.1): per-block light and 4x4x4 biomes.</summary>
         public const string CapLight = "light_v1", CapBiomes = "biomes_v1";
-        /// <summary>Block editing from the headset (PROTOCOL.md 4.17); granted in welcome.caps when the server allows it.</summary>
+        /// <summary>Block editing from the headset (PROTOCOL.md 4.20); granted in welcome.caps when the server allows it.</summary>
         public const string CapEdit = "edit_v1";
 
-        /// <summary>block_edit (PROTOCOL.md 4.17): op "break" or "place", world block position, state (place only), clicked face.</summary>
+        /// <summary>block_edit (PROTOCOL.md 4.20): op "break" or "place", world block position, state (place only), clicked face.</summary>
         public static Dictionary<string, object> BlockEdit(string op, Vector3Int pos, string state, string face)
         {
             var d = new Dictionary<string, object> { ["type"] = "block_edit", ["op"] = op, ["pos"] = new List<object> { pos.x, pos.y, pos.z } };
@@ -63,6 +63,14 @@ namespace TabletopCraft.Net
             ["type"] = "region_request", ["world"] = world,
             ["origin"] = new List<object> { origin.x, origin.y, origin.z }, ["dims"] = new List<object> { dims.x, dims.y, dims.z },
         };
+
+        /// <summary>region_request, origin form, with the view margin kept around the visible box (PROTOCOL.md 4.17).</summary>
+        public static Dictionary<string, object> RegionRequest(string world, Vector3Int origin, Vector3Int dims, Vector3Int viewMargin)
+        {
+            var d = RegionRequest(world, origin, dims);
+            d["view_margin"] = new List<object> { viewMargin.x, viewMargin.y, viewMargin.z };
+            return d;
+        }
 
         public static Dictionary<string, object> RegionQuery(string player = null)
         {

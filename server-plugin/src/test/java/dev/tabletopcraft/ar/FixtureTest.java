@@ -112,7 +112,7 @@ class FixtureTest {
         assertEquals(SkinLookup.model(true), p.get("skin_model").getAsString());
     }
 
-    /** PROTOCOL.md 4.17: block_edit (place, break) and the error reply that carries the edit's op and pos. */
+    /** PROTOCOL.md 4.20: block_edit (place, break) and the error reply that carries the edit's op and pos. */
     @Test void blockEditFixturesParseAndErrorMatchesBuilder() throws Exception {
         BlockEdit p = BlockEdit.parse(fixture("block_edit"));
         assertEquals(new BlockEdit(BlockEdit.Op.PLACE, 105, 64, -35, "minecraft:oak_log[axis=x]", "east"), p);

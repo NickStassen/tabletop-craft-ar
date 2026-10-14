@@ -82,6 +82,46 @@ def test_parse_region_forms():
         parse_region("1,2,3")
 
 
+def test_sections_snapshot_and_delta():
+    """sections_v1 (PROTOCOL.md 4.18): full fixture, then the delta fixture against it."""
+    m = WorldMirror()
+    assert m.apply_snapshot(json.loads((FIX / "chunk_snapshot_sections.json").read_text()))
+    assert m.dims == (32, 16, 16) and m.view_margin == (8, 0, 0)
+    assert m.at_world(3, 67, 9) == "minecraft:stone" and m.at_world(3, 68, 9).startswith("minecraft:grass_block")
+    assert m.at_world(20, 63, 15) == "minecraft:stone" and m.at_world(20, 64, 0) == "minecraft:air"
+    delta = json.loads((FIX / "chunk_snapshot_delta.json").read_text())
+    assert m.apply_snapshot(delta)
+    assert m.origin == (16, 60, 0) and m.sections_sent == 1
+    assert m.at_world(20, 63, 15) == "minecraft:stone"          # copied from the base
+    assert m.at_world(32, 60, 0).startswith("minecraft:oak_log")  # new section
+    assert m.at_world(32, 60, 1) == "minecraft:air"
+    with pytest.raises(ValueError):
+        m.apply_snapshot(delta)  # base 8 is no longer the current snapshot
+
+
+def test_sections_parts_wait_for_the_last_one():
+    full = json.loads((FIX / "chunk_snapshot_sections.json").read_text())
+    a, b = dict(full), dict(full)
+    a["parts"] = b["parts"] = 2
+    b["part"] = 1
+    a["sections"], b["sections"] = full["sections"][:1], full["sections"][1:]
+    m = WorldMirror()
+    assert not m.apply_snapshot(a)
+    assert m.apply_snapshot(b) and m.count("minecraft:stone") == 2048 + 1024
+
+
+def test_sections_validation():
+    full = json.loads((FIX / "chunk_snapshot_sections.json").read_text())
+    validate(full)
+    broken = dict(full)
+    del broken["sections"]
+    with pytest.raises(ValueError):
+        validate(broken)
+    short = dict(full, sections=full["sections"][:1])
+    with pytest.raises(ValueError):
+        WorldMirror().apply_snapshot(short)
+
+
 def test_snapshot_extras_light_and_biomes():
     m = WorldMirror()
     m.apply_snapshot(json.loads((FIX / "chunk_snapshot_extras.json").read_text()))
@@ -120,6 +160,21 @@ def test_decode_light_rejects_bad_data():
 def test_caps_in_hello_and_welcome_fixtures():
     assert {CAP_LIGHT, CAP_BIOMES} <= set(json.loads((FIX / "hello.json").read_text())["caps"])
     assert json.loads((FIX / "welcome.json").read_text())["caps"] == [CAP_LIGHT, CAP_BIOMES]
+
+
+def test_sections_with_light_and_biomes():
+    """sections_v1 + light_v1/biomes_v1: per-section light, biomes on part 0, deltas keep the base light."""
+    m = WorldMirror()
+    full = json.loads((FIX / "chunk_snapshot_sections_light.json").read_text())
+    assert m.apply_snapshot(full)
+    assert m.light_at_world(0, 60, 0) == (0, 0) and m.light_at_world(0, 61, 0) == (15, 0) and m.light_at_world(15, 63, 15) == (15, 14)
+    assert m.biomes.at_world(5, 61, 5) == "minecraft:plains"
+    # A delta with no sections listed: blocks and light carried over (here: shift 0, same region).
+    delta = dict(full, snapshot_id=4, base={"snapshot_id": 3, "shift": [0, 0, 0]}, sections=[], biomes=None)
+    assert m.apply_snapshot(delta) and m.light_at_world(15, 63, 15) == (15, 14) and m.at_world(3, 60, 3) == "minecraft:stone"
+    no_light = dict(full, sections=[{"s": [0, 0, 0], "data": [1, 256, 0, 768]}])
+    with pytest.raises(ValueError):
+        WorldMirror().apply_snapshot(no_light)   # light announced but a section has none
 
 
 def test_block_edit_fixtures_and_builder():

@@ -32,6 +32,15 @@ class RegionRequestTest {
         assertThrows(IllegalArgumentException.class, () -> p("{\"center\":[0,0],\"size\":[1,1,1]}"));
     }
 
+    @Test void viewMargin() {
+        var m = JsonParser.parseString("{\"origin\":[0,0,0],\"dims\":[96,128,96],\"view_margin\":[16,16,16]}").getAsJsonObject();
+        assertArrayEquals(new int[] { 16, 16, 16 }, RegionRequest.viewMargin(m));
+        assertArrayEquals(new int[3], RegionRequest.viewMargin(JsonParser.parseString("{\"origin\":[0,0,0],\"dims\":[1,1,1]}").getAsJsonObject()));
+        assertThrows(IllegalArgumentException.class, () -> RegionRequest.viewMargin(JsonParser.parseString("{\"view_margin\":[-1,0,0]}").getAsJsonObject()));
+        // The visible box keeps at least one block.
+        assertArrayEquals(new int[] { 15, 0, 16 }, RegionRequest.clampMargin(new int[] { 16, 16, 16 }, 32, 1, 64));
+    }
+
     @Test void caps() {
         RegionCaps c = new RegionCaps(128, 384, 128, 1L << 20, 4_000_000);
         assertNull(c.check(128, 64, 128));

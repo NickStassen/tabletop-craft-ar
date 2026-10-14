@@ -6,7 +6,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** block_edit parsing, error replies and the per-session rate limit (PROTOCOL.md 4.17). */
+/** block_edit parsing, error replies and the per-session rate limit (PROTOCOL.md 4.20). */
 class BlockEditTest {
     private static JsonObject j(String s) { return JsonParser.parseString(s).getAsJsonObject(); }
 
