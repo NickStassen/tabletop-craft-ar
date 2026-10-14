@@ -23,6 +23,8 @@ namespace TabletopCraft.Net
         CancellationTokenSource _cts;
         ClientWebSocket _ws;
         uint _seq;
+        readonly object _seqLock = new object();   // [talk] SendTracked reserves seqs on the caller's thread
+        const string ReservedSeq = "\u0001seq";      // [talk] a seq SendTracked took; becomes "seq" when the message goes out
         volatile bool _welcomed;
 
         public LinkClient(string url, string token) { _uri = new Uri(url); _token = token; }
@@ -40,7 +42,8 @@ namespace TabletopCraft.Net
                     _ws.Options.KeepAliveInterval = TimeSpan.FromSeconds(10);
                     Status = "connecting " + _uri;
                     await _ws.ConnectAsync(_uri, ct);
-                    _seq = 0; _welcomed = false;
+                    lock (_seqLock) _seq = 0;
+                    _welcomed = false;
                     await SendAsync(Protocol.Hello(_token), force: true);
                     Status = "connected";
                     backoffMs = 500;
@@ -84,6 +87,19 @@ namespace TabletopCraft.Net
         /// <summary>Fire-and-forget send; adds the envelope (v, seq, t). Dropped while not connected.</summary>
         public void Send(Dictionary<string, object> body) { if (Connected) _ = SendAsync(body, false); }
 
+        /// <summary>[talk] Like Send, but takes the envelope seq now and returns it (-1 when not connected), so a reply's
+        /// ref_seq can be matched (commands, completions, queries). Under contention the wire order may differ from the
+        /// seq order; the server doesn't depend on it.</summary>
+        public long SendTracked(Dictionary<string, object> body)
+        {
+            if (!Connected) return -1;
+            uint s;
+            lock (_seqLock) s = _seq++;
+            body[ReservedSeq] = s;
+            _ = SendAsync(body, false);
+            return s;
+        }
+
         async Task SendAsync(Dictionary<string, object> body, bool force)
         {
             var ws = _ws;
@@ -93,7 +109,8 @@ namespace TabletopCraft.Net
             try
             {
                 body["v"] = Protocol.Version;
-                body["seq"] = _seq++;
+                if (body.TryGetValue(ReservedSeq, out var reserved)) { body.Remove(ReservedSeq); body["seq"] = reserved; }   // [talk] SendTracked
+                else lock (_seqLock) body["seq"] = _seq++;
                 body["t"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                 var bytes = Encoding.UTF8.GetBytes(Json.Write(body));
                 await ws.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, CancellationToken.None);
