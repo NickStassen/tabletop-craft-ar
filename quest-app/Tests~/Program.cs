@@ -808,6 +808,20 @@ static class Program
                 oriented = Enumerable.Range(i, 4).All(k => Near(m.Uvs[k].y - m.Uvs[i].y, m.Verts[k].y - m.Verts[i].y) && Near(m.Uvs[k].x - m.Uvs[i].x, -(m.Verts[k].z - m.Verts[i].z)));
         Check(oriented, "mesh: greedy east face of grass is upright (fringe on top)");
 
+        // Tints only where vanilla's BlockColors registers one: a tintindex on any other block is ignored (drawn white).
+        bool Untinted(string s) { var mm = B(s); return mm != null && mm.Quads.Length > 0 && mm.Quads.All(q => q.Tint == TintKind.None && !q.Tinted && (q.T0.z < 0 || (q.Color.r == 255 && q.Color.g == 255 && q.Color.b == 255))); }
+        var notTinted = new[] { "minecraft:cherry_leaves[distance=1,persistent=false,waterlogged=false]", "minecraft:pale_oak_leaves[distance=1,persistent=false,waterlogged=false]",
+                                "minecraft:bamboo[age=0,leaves=large,stage=0]", "minecraft:bamboo_sapling", "minecraft:lava_cauldron", "minecraft:powder_snow_cauldron[level=3]",
+                                "minecraft:stonecutter[facing=north]", "minecraft:azalea_leaves[distance=1,persistent=false,waterlogged=false]" };
+        var wrong = notTinted.Where(s => !Untinted(s)).ToList();
+        Check(wrong.Count == 0, "tints: cherry/pale oak leaves, bamboo, bamboo sapling, lava/powder snow cauldrons, stonecutter untinted" + (wrong.Count > 0 ? ": TINTED " + string.Join(", ", wrong) : ""));
+        var oakLeaves = B("minecraft:oak_leaves[distance=1,persistent=false,waterlogged=false]");
+        var petals = B("minecraft:pink_petals[facing=north,flower_amount=4]");
+        Check(oakLeaves.Quads.All(q => q.Tint == TintKind.Foliage) && B("minecraft:birch_leaves[distance=1,persistent=false,waterlogged=false]").Quads.All(q => q.Tint == TintKind.None && q.Color.g == 0xA7) &&
+              B("minecraft:water_cauldron[level=3]").Quads.Any(q => q.Tint == TintKind.Water) &&
+              petals.Quads.Any(q => q.Tint == TintKind.Grass) && petals.Quads.Any(q => q.Tint == TintKind.None && (int)q.T0.z == assets.LayerOf("block/pink_petals")),
+              "tints: oak leaves foliage, birch fixed, water cauldron water, pink petals tint only their stems (index 1)");
+
         // Grass block sides: the tinted grass_block_side_overlay is a second whole face per side (vanilla draws it over
         // the plain side). The greedy path keeps it as FaceKey.Overlay and emits it on exactly the base quad's corners,
         // right after it in the same submesh; snowy grass has no overlay.

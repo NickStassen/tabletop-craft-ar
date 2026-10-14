@@ -114,7 +114,7 @@ namespace TabletopCraft.World
                 var f = faceDefs.O(DirNames[i]);
                 if (f == null) continue;
                 string tex = Lookup(textures, f.S("texture"));
-                if (tex != null) faces[i] = Key(tex, f.ContainsKey("tintindex"), state);
+                if (tex != null) faces[i] = Key(tex, f.ContainsKey("tintindex") && BiomeColors.Tinted(state, f.I("tintindex", -1)), state);
             }
         }
 
@@ -161,7 +161,7 @@ namespace TabletopCraft.World
             if (tinted || p == "water" || p == "bubble_column")
             {
                 kind = BiomeColors.BlockTint(state, out var fixedTint);
-                tint = fixedTint ?? (kind == TintKind.Water ? WaterTint : kind == TintKind.Foliage ? FoliageTint : GrassTint);
+                tint = fixedTint ?? (kind == TintKind.Water ? WaterTint : kind == TintKind.Foliage ? FoliageTint : kind == TintKind.None ? tint : GrassTint);
             }
             return new FaceKey { Layer = layer, Color = layer < 0 ? BlockRules.FlatColor(state) : tint, Tint = layer < 0 ? TintKind.None : kind };
         }

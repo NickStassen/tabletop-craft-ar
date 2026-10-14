@@ -375,7 +375,8 @@ namespace TabletopCraft.World
             {
                 var f = faces.O(DirNames[d]);
                 if (f == null || !Lookup(r, f.S("texture"), out var tex, out bool force)) continue;
-                bool tinted = f.ContainsKey("tintindex") && f.I("tintindex", -1) >= 0;
+                // Only vanilla's tinted blocks (BlockColors) honour a tintindex; for the rest it is ignored (untinted).
+                bool tinted = f.ContainsKey("tintindex") && BiomeColors.Tinted(state, f.I("tintindex", -1));
                 var key = _assets.Texture(tex, tinted && !_hasBlockColor, state);
                 if (tinted && _hasBlockColor) { if (key.Layer >= 0) key.Color = _blockColor; tinted = false; }   // not a biome tint
                 if (inverted && key.Layer >= 0 && _assets.AlphaClass(key.Layer) == 0) continue;
