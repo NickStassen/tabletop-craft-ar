@@ -124,6 +124,20 @@ class FixtureTest {
         for (String k : new String[] { "type", "code", "message", "ref_seq", "fatal", "op", "pos" }) assertEquals(fx.get(k), built.get(k), k);
     }
 
+    /** PROTOCOL.md 4.24: block_registry, built from the same blocks as the fixture (BlockRegistryTest.sample). */
+    @Test void blockRegistryFixtureMatchesBuilder() throws Exception {
+        JsonObject fx = fixture("block_registry");
+        JsonObject built = BlockRegistry.build(BlockRegistryTest.sample(), java.util.Set.of("minecraft:command_block")).message();
+        for (String k : new String[] { "type", "count", "categories", "items", "variants" }) assertEquals(fx.get(k), built.get(k), k);
+        int n = 0;
+        var cats = fx.getAsJsonArray("categories");
+        for (int i = 0; i < cats.size(); i++) {
+            assertEquals(BlockRegistry.CATEGORIES.get(i)[0], cats.get(i).getAsJsonObject().get("id").getAsString());
+            n += cats.get(i).getAsJsonObject().getAsJsonArray("blocks").size();
+        }
+        assertEquals(fx.get("count").getAsInt(), n);
+    }
+
     @Test void avatarConfigFixtureParses() throws Exception {
         AvatarConfig c = AvatarConfig.parse(fixture("avatar_config"));
         assertEquals(0.01, c.blockSizeM());

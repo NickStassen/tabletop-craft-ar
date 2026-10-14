@@ -10,6 +10,7 @@ from tabletop_protocol import (
     CAP_EDIT,
     CAP_ENTITIES,
     CAP_LIGHT,
+    REGISTRY_CATEGORIES,
     EntityMirror,
     Envelope,
     WorldMirror,
@@ -17,6 +18,8 @@ from tabletop_protocol import (
     decode_light,
     decode_rle,
     parse_region,
+    registry_id,
+    registry_states,
     scripted_pose,
     validate,
 )
@@ -271,3 +274,30 @@ def test_block_edit_break_needs_no_state_and_edit_errors_are_known():
     for code in ("edit_denied", "out_of_region", "bad_state", "rate_limited"):
         validate({"v": 1, "type": "error", "seq": 0, "t": 0, "code": code, "message": "x", "pos": [0, 0, 0]})
     assert CAP_EDIT == "edit_v1"
+
+
+def test_block_registry_fixture():
+    msg = json.loads((FIX / "block_registry.json").read_text())
+    validate(msg)
+    assert [c["id"] for c in msg["categories"]] == list(REGISTRY_CATEGORIES)
+    states = registry_states(msg)
+    assert len(states) == msg["count"] == 13
+    assert states["minecraft:oak_log"] == "minecraft:oak_log[axis=y]"
+    assert registry_id("minecraft:stone") == "minecraft:stone"
+    assert msg["items"]["minecraft:redstone_wire"] == "minecraft:redstone"
+    assert msg["variants"]["minecraft:wall_torch"] in states
+
+
+@pytest.mark.parametrize("patch", [
+    {"count": 12},
+    {"categories": [{"id": "building", "blocks": ["minecraft:stone", "minecraft:stone"]}]},
+    {"categories": [{"id": "building", "blocks": [""]}]},
+    {"categories": [{"blocks": []}]},
+    {"variants": {"minecraft:wall_torch": "minecraft:nothing"}},
+    {"items": {"minecraft:wheat": 3}},
+])
+def test_block_registry_rejects_bad_fields(patch):
+    msg = json.loads((FIX / "block_registry.json").read_text())
+    msg.update(patch)
+    with pytest.raises(ValueError):
+        validate(msg)

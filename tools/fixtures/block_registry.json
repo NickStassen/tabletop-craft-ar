@@ -1,0 +1,11 @@
+{"v":1,"type":"block_registry","seq":1,"t":1760370000013,
+ "count":13,
+ "categories":[
+  {"id":"building","label":"Building Blocks","blocks":["minecraft:diamond_block","minecraft:oak_log[axis=y]","minecraft:oak_stairs[facing=north,half=bottom,shape=straight,waterlogged=false]","minecraft:stone"]},
+  {"id":"colored","label":"Colored Blocks","blocks":["minecraft:white_wool","minecraft:glass"]},
+  {"id":"natural","label":"Natural Blocks","blocks":["minecraft:grass_block[snowy=false]","minecraft:poppy","minecraft:wheat[age=0]"]},
+  {"id":"functional","label":"Functional Blocks","blocks":["minecraft:chest[facing=north,type=single,waterlogged=false]","minecraft:torch"]},
+  {"id":"redstone","label":"Redstone Blocks","blocks":["minecraft:rail[shape=north_south,waterlogged=false]","minecraft:redstone_wire[east=none,north=none,power=0,south=none,west=none]"]},
+  {"id":"other","label":"Other","blocks":[]}],
+ "items":{"minecraft:wheat":"minecraft:wheat_seeds","minecraft:redstone_wire":"minecraft:redstone"},
+ "variants":{"minecraft:wall_torch":"minecraft:torch"}}
