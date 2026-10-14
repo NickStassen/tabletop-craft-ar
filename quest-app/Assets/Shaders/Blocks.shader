@@ -21,8 +21,11 @@ Shader "TabletopCraft/Blocks"
             {
                 v2f o; UNITY_SETUP_INSTANCE_ID(v); UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
                 o.pos = UnityObjectToClipPos(v.vertex); o.uv = v.uv;
+                // Vanilla face shading (CardinalLighting.DEFAULT): up 1.0, down 0.5, north/south 0.8, east/west 0.6.
+                // Faces not aligned to an axis (cross plants, 45 degree elements; zero normals on double-sided quads)
+                // stay unshaded, as vanilla draws them. Z is mirrored in Unity, which doesn't change |n.z|.
                 float3 n = abs(v.normal);
-                float shade = n.y > 0.5 ? (v.normal.y > 0 ? 1.0 : 0.5) : (n.x > 0.5 ? 0.8 : 0.65); // Minecraft-like face shading
+                float shade = n.y > 0.9 ? (v.normal.y > 0 ? 1.0 : 0.5) : (n.z > 0.9 ? 0.8 : (n.x > 0.9 ? 0.6 : 1.0));
                 o.color = v.color; o.color.rgb *= shade;
                 // Tints, flat colours and shading are sRGB values; vertex colours aren't converted in linear colour space.
                 #ifndef UNITY_COLORSPACE_GAMMA
