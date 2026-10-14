@@ -419,6 +419,20 @@ The quad counts above were measured before block models and the fluid mesher exi
 
 **Headset to check:** the new face shading (east/west sides darker and north/south sides brighter than before, crosses at full brightness), cave darkness at brightness 0.5, AO on stairs/slabs/fences, water colour and light at depth (deep water faces darken: water light follows vanilla's sky attenuation), and FPS with about 25% more faces.
 
+### Dark faces in AR: light floor, Bright default, open-sky edges (after the first lit headset session; 2026-10-13)
+
+The headset showed near-black faces in caves and around a mineshaft cut by the region edge, and a very dark seabed. Changes in `BlockShading`: the lightmap uses vanilla's "Bright" setting (was the game's default 0.5) and is rescaled so light level 0 shows at `min_light` = 0.2 and full light stays 1, keeping vanilla's falloff shape in between; and every light/AO sample outside the region is open sky-lit air (before: clamped to the nearest cell inside, which copied the cave's darkness to the cut). `Tests~ dotnet run -- --light-report` (brightness of a white face before the shader's face shading):
+
+| face | before | after |
+|---|---|---|
+| floor of a light-0 cave | 0.094 | 0.200 |
+| the same cave floor at the region edge (corner at the cut .. corner inside) | 0.094 .. 0.094 | 0.686 .. 0.200 |
+| cut face (front cell outside the region) | 1.000 | 1.000 |
+| seabed 10 blocks under water (sky light 5) | 0.314 | 0.510 |
+| full daylight | 1.000 | 1.000 |
+
+Levels 10-15 now differ by under 2% (Bright compresses the top), so slightly more faces merge, but the total barely moves: 64×96×64 23,317 faces, 128×96×128 83,055, 128×128×128 159,947, 64×384×64 89,116 (pack mode, smooth light; +0.1-0.3% against the table above). `tabletop.json` `min_light` and `brightness` tune it on the headset (`min_light: -1` = vanilla's curve).
+
 ## Navigation and bigger areas (Paper 26.3, seed 12345, 2026-10-13)
 
 A separate headless test server (Paper 26.3 build 181, JDK 25, offline, normal world seed 12345, its own ports) running this plugin, with `max_region` raised for the big runs. Numbers are from second runs, with chunks already generated. All on the x86 box: no headset.
@@ -429,7 +443,7 @@ A separate headless test server (Paper 26.3 build 181, JDK 25, offline, normal w
 |---|---|
 | Plugin (JUnit) | 45 tests, 0 failures. Nav additions: `SectionCodecTest` (7: section round trip with partial edges, delta lists only new/changed sections, part splitting, size estimate, fixtures rebuild snapshot 9 from 8, per-section light and light-aware deltas, diff index limit) and `RegionRequestTest.viewMargin`. |
 | Tools (pytest + ruff) | 38 passed, ruff clean. Nav additions: the four fixtures, `sections_v1` full/delta, parts, validation, and sections with light and biomes. |
-| Quest scripts (`Tests~`, .NET 8) | 207 checks PASS without a client jar, 241 with `MC_CLIENT_JAR` (the block-model tests). Nav additions in `NavTests.cs`: NavState (window, RegionRoot placement, trigger and shift requests, clamp while pending, seamless re-centre, reverse and diagonal moves, refusal back-off, timeout, far jumps, build height, padding with and without the server cap, speed curve and stream cap, latency until meshed), SectionPlan (re-key with a permuted palette, changed, stale and re-lit sections, delta lists, unaligned shifts, new dims, partial edge sections), `sections_v1` (full, delta, light and biomes, wrong base, missing section, bad totals, delta without its new section, light delta without base light), SnapshotAssembler (parts, delta plan, v1 still works), CapMesher, and area setup with margins and the section budget. |
+| Quest scripts (`Tests~`, .NET 8) | 215 checks PASS without a client jar, 249 with `MC_CLIENT_JAR` (the block-model tests). Nav additions in `NavTests.cs`: NavState (window, RegionRoot placement, trigger and shift requests, clamp while pending, seamless re-centre, reverse and diagonal moves, refusal back-off, timeout, far jumps, build height, padding with and without the server cap, speed curve and stream cap, latency until meshed), SectionPlan (re-key with a permuted palette, changed, stale and re-lit sections, delta lists, unaligned shifts, new dims, partial edge sections), `sections_v1` (full, delta, light and biomes, wrong base, missing section, bad totals, delta without its new section, light delta without base light), SnapshotAssembler (parts, delta plan, v1 still works), CapMesher, and area setup with margins and the section budget; caps take the biome tint and the same UVs as the faces next to them. |
 | `Tests~ --live` against the server | All PASS with `light_v1` + `biomes_v1` granted: area setup 48×64×48 window + 16 margin → an 80×96×80 region; a one-section shift arrives as a delta (30 of 150 sections); `bad_snapshot` → the server's full resend matches the delta-assembled grid, blocks and light. |
 | Unity 6000.0.84f1 batch compile | 0 errors; the only warning in our code is the existing CS0618 (`overlayType`). |
 | `Editor/ShaderCheck` (headless, `-executeMethod TabletopCraft.EditorTools.ShaderCheck.Run`) | 60 variants (Blocks, BlocksTransparent and PlayerSkin × Vulkan and GLES3 × no keyword, `STEREO_MULTIVIEW_ON`, `STEREO_INSTANCING_ON`, `INSTANCING_ON`, `UNITY_SINGLE_PASS_STEREO` × vertex and fragment), 0 errors. A deliberately broken shader is reported, so the check is real. |

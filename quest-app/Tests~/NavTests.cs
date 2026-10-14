@@ -342,6 +342,22 @@ static class NavTests
         Check(m.Verts.Count == 0, "caps: no caps for non-full blocks");
         CapMesher.Build(w, 2, 0, keys, caps, m);   // bottom: 8x4 stone = one quad
         Check(m.Verts.Count == 4, "caps: bottom merges into one quad");
+        // Caps use the same UV layout as the mesher's faces (vanilla orientation per side), so a cut looks like the side next to it.
+        var one = Terrain(new Vector3Int(0, 0, 0), new Vector3Int(1, 1, 1), new[] { "minecraft:air", "minecraft:stone" }, (x, y, z) => "minecraft:stone");
+        var gm = new MeshData(); GreedyMesher.Build(one, new Vector3Int(0, 0, 0), flat, gm);
+        bool uvSame = true;
+        for (int f = 0; f < 6; f++)
+        {
+            var cm = new MeshData();
+            CapMesher.Build(one, f, 0, keys, caps, cm);   // same palette order: 0 air, 1 stone
+            var capUv = cm.Uvs.Select(u => (u.x, u.y)).OrderBy(t => t).ToList();
+            // The greedy quad for this side: the 4 vertices whose position sits on that face's plane.
+            int axis = f / 2; float plane = (f & 1) == 1 ? 1 : 0;
+            var faceUv = Enumerable.Range(0, gm.Verts.Count / 4).Select(q => Enumerable.Range(q * 4, 4).ToList())
+                .First(ix => ix.All(i => gm.Verts[i][axis] == plane)).Select(i => (gm.Uvs[i].x, gm.Uvs[i].y)).OrderBy(t => t).ToList();
+            uvSame &= capUv.SequenceEqual(faceUv);
+        }
+        Check(uvSame, "caps: UVs match the mesher's faces on all six sides");
         Check(CapMesher.Slice(0, 2.3f, 9f) == 2 && CapMesher.Slice(1, 0f, 5f) == 4 && CapMesher.Slice(1, 0f, 5.2f) == 5 && CapMesher.Slice(0, 3f, 9f) == 3, "caps: slice under each plane");
     }
 }

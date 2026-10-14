@@ -40,7 +40,12 @@ namespace TabletopCraft.World
                     int k = u + v * nu;
                     int id = grid[(p.y * d.z + p.z) * d.x + p.x];
                     has[k] = id < pal && caps[id];
-                    if (has[k]) mask[k] = keys[id * 6 + face];
+                    if (!has[k]) continue;
+                    var key = keys[id * 6 + face];
+                    // Biome tint per cell (BlockShading.Tint), folded into the key so merging respects it. No light or
+                    // AO: the cut reads like a daylight cross-section, like the region's own open-sky edges.
+                    if (key.Tint != TintKind.None) { key.Color = BlockShading.Tint(w, key, p.x, p.y, p.z); key.Tint = TintKind.None; }
+                    mask[k] = key;
                 }
             for (int v = 0; v < nv; v++)
                 for (int u = 0; u < nu;)
@@ -56,19 +61,19 @@ namespace TabletopCraft.World
                         for (int i = 0; i < wdt; i++) { int kk = u + i + (v + hgt) * nu; if (!has[kk] || !mask[kk].Equals(key)) { ok = false; break; } }
                         if (ok) hgt++;
                     }
-                    Emit(m, axis, ua, va, (face & 1) == 1, u, v, wdt, hgt, key);
+                    Emit(m, face, axis, ua, va, (face & 1) == 1, u, v, wdt, hgt, key);
                     for (int j = 0; j < hgt; j++) for (int i = 0; i < wdt; i++) has[u + i + (v + j) * nu] = false;
                     u += wdt;
                 }
         }
 
-        static void Emit(MeshData m, int axis, int ua, int va, bool positive, int u, int v, int w, int h, FaceKey key)
+        static void Emit(MeshData m, int face, int axis, int ua, int va, bool positive, int u, int v, int w, int h, FaceKey key)
         {
             Vector3 Corner(float cu, float cv) { var c = new Vector3(); c[ua] = cu; c[va] = cv; return c; }
             int start = m.Verts.Count;
             m.Verts.Add(Corner(u, v)); m.Verts.Add(Corner(u + w, v)); m.Verts.Add(Corner(u + w, v + h)); m.Verts.Add(Corner(u, v + h));
-            float layer = key.Layer;
-            m.Uvs.Add(new Vector3(0, 0, layer)); m.Uvs.Add(new Vector3(w, 0, layer)); m.Uvs.Add(new Vector3(w, h, layer)); m.Uvs.Add(new Vector3(0, h, layer));
+            // Same UVs as GreedyMesher's faces (vanilla orientation per side, tiled per block, the model's UvMap).
+            for (int i = start; i < start + 4; i++) m.Uvs.Add(CubeUv.Greedy(face, m.Verts[i], key));
             for (int i = 0; i < 4; i++) m.Colors.Add(key.Color);
             var tris = key.Transparent ? m.Transparent : m.Opaque;
             // Same winding rule as GreedyMesher.EmitQuad (right-handed, CCW seen from outside); the uploader flips it after mirroring Z.

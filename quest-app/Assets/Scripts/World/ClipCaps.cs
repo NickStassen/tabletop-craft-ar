@@ -82,7 +82,7 @@ namespace TabletopCraft.World
                 if (c.Job == null && inRange && (slice != c.Slice || c.Version != ModelVersion || c.BuiltOrigin != Model.Origin || c.KeysVersion != _keysVersion))
                 {
                     // Grid and dims are captured together: a snapshot applied meanwhile can't mix them.
-                    var w = new WorldModel { Dims = Model.Dims, Grid = Model.Grid };
+                    var w = new WorldModel { Dims = Model.Dims, Grid = Model.Grid, Origin = Model.Origin, Tints = Model.Tints };
                     var keys = _keys; var table = _capsTable; int ver = ModelVersion, kv = _keysVersion; var org = Model.Origin; int face = f, sl = slice;
                     c.Job = Task.Run(() =>
                     {

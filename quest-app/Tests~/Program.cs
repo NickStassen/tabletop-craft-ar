@@ -153,6 +153,8 @@ static class Program
 
         LightAndBiomeTests(jar);   // lighting, AO, biome colours (colour maps from the jar when given)
 
+        if (args.Contains("--light-report")) LightReport();
+
         int measIdx = Array.IndexOf(args, "--measure");
         if (measIdx >= 0)
         {
@@ -185,6 +187,28 @@ static class Program
     {
         var w = Box(dx, dy, dz, (x, y, z) => y == 0 || walls.Contains((x, y, z)) ? 1 : 0, "minecraft:air", "minecraft:stone");
         return WithLight(w, (x, y, z) => w.Grid[w.Index(x, y, z)] == 1 ? 0 : 0xF0);
+    }
+
+    // Test worlds for dark and boundary lighting: a stone floor (y=0) under dark cave air (y=1..2) under a stone roof,
+    // and a sand floor under 10 blocks of water (sky light 14 at the surface down to 5 at the bottom, as the server sends).
+    static WorldModel Cave() =>
+        WithLight(Box(5, 4, 5, (x, y, z) => y == 0 || y == 3 ? 1 : 0, "minecraft:air", "minecraft:stone"), (x, y, z) => 0);
+    static WorldModel UnderWater() =>
+        WithLight(Box(3, 13, 3, (x, y, z) => y == 0 ? 1 : y <= 10 ? 2 : 0, "minecraft:air", "minecraft:sand", "minecraft:water[level=0]"),
+                  (x, y, z) => y == 0 ? 0 : y <= 10 ? (y + 4) << 4 : 0xF0);
+
+    /// <summary>Brightness (0..1, before the shader's face shading) of the reference faces, for tuning in AR.</summary>
+    static void LightReport()
+    {
+        var white = new FaceKey { Layer = -1, Color = new Color32(255, 255, 255, 255) };
+        float B(Color32 c) => c.g / 255f;
+        var cave = BlockShading.FaceCorners(Cave(), white, 2, 0, 2, 3);
+        var edge = BlockShading.FaceCorners(Cave(), white, 0, 0, 2, 3);
+        var cut = BlockShading.FaceCorners(Cave(), white, 0, 0, 2, 0);    // -X side of the floor at x=0: front cell outside
+        var sea = BlockShading.FaceCorners(UnderWater(), white, 1, 0, 1, 3);
+        Console.WriteLine($"LIGHT_REPORT brightness={BlockShading.Brightness} min_light={BlockShading.MinLight}: " +
+                          $"light-0 cave floor {B(cave.C0):F3} | cave floor at the region edge {B(edge.C0):F3}..{B(edge.C2):F3} | cut face {B(cut.C0):F3} | " +
+                          $"sea floor 10 blocks under water (sky 5) {B(sea.C0):F3} | full daylight {BlockShading.Lightmap(15, 0).y:F3}");
     }
 
     /// <summary>Light and biome tints through the real pack models (grass block cube faces, short grass cross, stairs).</summary>
@@ -228,7 +252,17 @@ static class Program
         // Lightmap: 26.x lightmap.fsh with the overworld at noon and brightness 0.5.
         var full = BlockShading.Lightmap(15, 0); var dark = BlockShading.Lightmap(0, 0);
         Check(Near(full.x, 1) && Near(full.y, 1) && Near(full.z, 1), $"lightmap: full daylight is white ({full})");
-        Check(dark.x > 0.05f && dark.x < 0.15f && Near(dark.x, dark.z), $"lightmap: level 0 is dark grey, not black ({dark.x:F3})");
+        Check(Near(dark.x, BlockShading.MinLight) && Near(dark.z, BlockShading.MinLight) && Near(BlockShading.MinLight, 0.2f) && Near(BlockShading.Brightness, 1f),
+              $"lightmap: level 0 sits at the AR floor MinLight 0.2 with vanilla Bright ({dark.x:F3})");
+        BlockShading.MinLight = -1;
+        float vanillaBright = BlockShading.Lightmap(0, 0).y;
+        BlockShading.Brightness = 0.5f;
+        float vanillaDefault = BlockShading.Lightmap(0, 0).y;
+        BlockShading.Brightness = 1f; BlockShading.MinLight = 0.2f;
+        Check(Near(vanillaBright, 0.148f) && Near(vanillaDefault, 0.094f) && Near(BlockShading.Lightmap(0, 0).y, 0.2f),
+              $"lightmap: min_light < 0 = vanilla's own curve (level 0 = {vanillaBright:F3} Bright, {vanillaDefault:F3} at the game's default)");
+        float p5 = BlockShading.Lightmap(5, 0).y;
+        Check(p5 > 0.45f && p5 < 0.55f, $"lightmap: sky 5 (10 blocks under water) at about half of daylight ({p5:F3})");
         float prev = -1; bool mono = true;
         for (int s = 0; s <= 15; s++) { float l = BlockShading.Lightmap(s, 0).x; if (l < prev) mono = false; prev = l; }
         Check(mono, "lightmap: brightness rises with sky light");
@@ -262,6 +296,22 @@ static class Program
         q = BlockShading.FaceCorners(dim, grey, 1, 0, 1, 3);
         var wantDim = BlockShading.Lightmap(0, 1.5f);
         Check(Near(q.C2, (int)(200 * wantDim.x * 0.8f + 0.5f), (int)(200 * wantDim.y * 0.8f + 0.5f), (int)(200 * wantDim.z * 0.8f + 0.5f)), $"smooth light: dark centre keeps zero neighbours ({Hex(q.C2)})");
+        // Dark caves and the cutaway sides of the miniature (outside the region = open sky-lit air).
+        var whiteKey = new FaceKey { Layer = -1, Color = new Color32(255, 255, 255, 255) };
+        var dark0 = BlockShading.FaceCorners(Cave(), whiteKey, 2, 0, 2, 3);
+        Check(Near(dark0.C0, 51, 51, 51) && Near(dark0.C2, 51, 51, 51), $"light 0 cave floor shows at the floor (0.2), not black ({Hex(dark0.C0)})");
+        var edgeQ = BlockShading.FaceCorners(Cave(), whiteKey, 0, 0, 2, 3);   // corners c2/c3 (x+) inside, c0/c1 (x-) at the cut
+        Check(edgeQ.C0.g > 150 && edgeQ.C1.g > 150 && Near(edgeQ.C2, 51, 51, 51) && Near(edgeQ.C3, 51, 51, 51),
+              $"cave floor at the region edge brightens towards the cut ({Hex(edgeQ.C0)} at the cut, {Hex(edgeQ.C2)} inside)");
+        var cutQ = BlockShading.FaceCorners(Cave(), whiteKey, 0, 0, 2, 0);
+        Check(Near(cutQ.C0, 255, 255, 255) && Near(cutQ.C2, 255, 255, 255), "cut face (front cell outside the region) = daylight");
+        var openEdge = BlockShading.FaceCorners(Floor(3, 3, 3, (1, 1, 1)), whiteKey, 2, 0, 1, 3);   // block at the +x edge, wall at (1,1,1)
+        Check(Near(openEdge.C2, 255, 255, 255) && Near(openEdge.C3, 255, 255, 255) && openEdge.C0.g < 255,
+              $"AO samples outside the region don't occlude (edge corners {Hex(openEdge.C2)}, wall corner {Hex(openEdge.C0)})");
+        var seabed = BlockShading.FaceCorners(UnderWater(), whiteKey, 1, 0, 1, 3);
+        var l5 = BlockShading.Lightmap(5, 0);
+        Check(Near(seabed.C0, (int)(255 * l5.x + 0.5f), (int)(255 * l5.y + 0.5f), (int)(255 * l5.z + 0.5f)) && seabed.C0.g > 115 && seabed.C0.g < 140,
+              $"seabed 10 blocks under water: sky 5 at about half of daylight ({seabed.C0.g / 255f:F2})");
         var noLight = Box(3, 3, 3, (x, y, z) => y == 0 ? 1 : 0, "minecraft:air", "minecraft:stone");
         q = BlockShading.FaceCorners(noLight, grey, 1, 0, 1, 3);
         Check(Near(q.C0, 200, 200, 200) && Near(q.C2, 200, 200, 200), "no light data (old server): colours = key colour, no AO");
@@ -278,7 +328,7 @@ static class Program
         var slab = Floor(4, 2, 4);
         GreedyMesher.Build(slab, new Vector3Int(0, 0, 0), new Flat(), m);
         Check(m.Verts.Count / 4 == 6, $"greedy+light: uniform daylight still merges (got {m.Verts.Count / 4} quads)");
-        slab.Light[slab.Index(1, 1, 1)] = 0xA0; // sky 10 above (1,0,1)
+        slab.Light[slab.Index(1, 1, 1)] = 0x40; // sky 4 above (1,0,1) (Bright compresses levels 10-15 to within 1/255)
         GreedyMesher.Build(slab, new Vector3Int(0, 0, 0), new Flat(), m);
         int quads = m.Verts.Count / 4;
         bool consistent = true;
