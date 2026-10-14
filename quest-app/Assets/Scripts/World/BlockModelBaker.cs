@@ -36,7 +36,8 @@ namespace TabletopCraft.World
         public bool FullCube;
         /// <summary>FullCube whose six base faces have opaque textures (hides neighbour faces like stone does).</summary>
         public bool Opaque;
-        /// <summary>FullCube only: the first face per direction as a greedy FaceKey (texture, tint, UV rotation).</summary>
+        /// <summary>FullCube only: the first face per direction as a greedy FaceKey (texture, tint, UV rotation), with a
+        /// second whole face on that side as its Overlay (the grass side overlay).</summary>
         public FaceKey[] CubeFaces;
         /// <summary>Per direction, 4 x 64 bits: which 1/16 cells of that side of the block are covered by opaque
         /// boundary faces. A neighbour's face with a cullface towards this block is hidden if its cells are covered.</summary>
@@ -553,6 +554,7 @@ namespace TabletopCraft.World
         {
             var m = new BakedModel { Quads = quads.ToArray(), CullCells = new ulong[quads.Count * 4] };
             var first = new int[] { -1, -1, -1, -1, -1, -1 };
+            var second = new int[] { -1, -1, -1, -1, -1, -1 };   // a whole face over the first one: an overlay (grass sides)
             bool onlyShell = true, inside = true;
             for (int i = 0; i < m.Quads.Length; i++)
             {
@@ -564,6 +566,7 @@ namespace TabletopCraft.World
                 bool whole = boundary && a0 < 1e-4f && b0 < 1e-4f && a1 > 1 - 1e-4f && b1 > 1 - 1e-4f;
                 if (!(whole && q.Cull == d)) onlyShell = false;
                 if (whole && q.Cull == d && first[d] < 0) first[d] = i;
+                else if (whole && q.Cull == d && second[d] < 0) second[d] = i;
                 for (int a = 0; a < 3; a++)
                     if (Math.Min(Math.Min(q.P0[a], q.P1[a]), Math.Min(q.P2[a], q.P3[a])) < -1e-4f || Math.Max(Math.Max(q.P0[a], q.P1[a]), Math.Max(q.P2[a], q.P3[a])) > 1 + 1e-4f) inside = false;
                 if (boundary && IsOpaque(q))
@@ -594,6 +597,14 @@ namespace TabletopCraft.World
                 {
                     var q = m.Quads[first[d]];
                     m.CubeFaces[d] = new FaceKey { Layer = (int)q.T0.z, Color = q.Color, UvMap = CubeUv.MapOf(q, d), Tint = q.Tint };
+                    // A second whole face on the same side is drawn over the first (grass_block_side_overlay, tinted):
+                    // the greedy mesher emits it as a coplanar second quad (FaceKey.Overlay).
+                    if (second[d] >= 0 && (int)m.Quads[second[d]].T0.z >= 0)
+                    {
+                        var o = m.Quads[second[d]];
+                        m.CubeFaces[d].Overlay = (int)o.T0.z + 1;
+                        m.CubeFaces[d].OverlayColor = o.Color; m.CubeFaces[d].OverlayTint = o.Tint; m.CubeFaces[d].OverlayUvMap = CubeUv.MapOf(o, d);
+                    }
                 }
             }
             return m;

@@ -807,6 +807,36 @@ static class Program
             if (Enumerable.Range(i, 4).All(k => m.Verts[k].x == 1))
                 oriented = Enumerable.Range(i, 4).All(k => Near(m.Uvs[k].y - m.Uvs[i].y, m.Verts[k].y - m.Verts[i].y) && Near(m.Uvs[k].x - m.Uvs[i].x, -(m.Verts[k].z - m.Verts[i].z)));
         Check(oriented, "mesh: greedy east face of grass is upright (fringe on top)");
+
+        // Grass block sides: the tinted grass_block_side_overlay is a second whole face per side (vanilla draws it over
+        // the plain side). The greedy path keeps it as FaceKey.Overlay and emits it on exactly the base quad's corners,
+        // right after it in the same submesh; snowy grass has no overlay.
+        int overlayLayer = assets.LayerOf("block/grass_block_side_overlay");
+        Check(Enumerable.Range(0, 6).All(d => (d == 2 || d == 3) ? grass.CubeFaces[d].Overlay == 0
+                  : grass.CubeFaces[d].Overlay == overlayLayer + 1 && grass.CubeFaces[d].OverlayTint == TintKind.Grass && grass.CubeFaces[d].Layer == assets.LayerOf("block/grass_block_side")),
+              "model: grass_block sides carry the tinted side overlay, top and bottom don't");
+        var snowy = B("minecraft:grass_block[snowy=true]");
+        Check(snowy.FullCube && snowy.CubeFaces.All(f => f.Overlay == 0) && snowy.CubeFaces[4].Layer == assets.LayerOf("block/grass_block_snow"), "model: snowy grass keeps its snowy side, no overlay");
+        m.Clear();
+        GreedyMesher.Build(w4, new Vector3Int(0, 0, 0), pf, m);
+        int quads = m.Verts.Count / 4, overlays = 0; bool coplanar = true, after = true;
+        for (int q = 0; q < quads; q++)
+            if ((int)m.Uvs[q * 4].z == overlayLayer)
+            {
+                overlays++;
+                coplanar &= Enumerable.Range(0, 4).All(i => { var a = m.Verts[q * 4 + i]; var b = m.Verts[(q - 1) * 4 + i]; return a.x == b.x && a.y == b.y && a.z == b.z; });
+                after &= (int)m.Uvs[(q - 1) * 4].z == assets.LayerOf("block/grass_block_side");
+            }
+        // The overlay's triangles follow the base's in the opaque list (index order = draw order).
+        int baseTri = m.Opaque.IndexOf(m.Verts.Count - 8), overTri = m.Opaque.IndexOf(m.Verts.Count - 4);
+        Check(quads == 10 && overlays == 4 && coplanar && after && m.Transparent.Count == 0 && overTri > baseTri,
+              $"mesh: one grass block = 6 faces + 4 side overlays on the same corners, drawn after the sides (got {quads} quads, {overlays} overlays)");
+        // Two grass blocks side by side still merge their sides, overlays included.
+        var w5 = Box(2, 1, 1, (x, y, z) => 1, "minecraft:air", "minecraft:grass_block[snowy=false]");
+        pf.Prewarm(w5);
+        m.Clear();
+        GreedyMesher.Build(w5, new Vector3Int(0, 0, 0), pf, m);
+        Check(m.Verts.Count / 4 == 10, $"mesh: two grass blocks merge into 6 faces + 4 overlays (got {m.Verts.Count / 4})");
         BlockRules.ResetShapes();
     }
 }
