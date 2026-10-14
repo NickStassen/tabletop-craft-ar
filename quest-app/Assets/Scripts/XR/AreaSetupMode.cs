@@ -30,6 +30,7 @@ namespace TabletopCraft.XR
         public Action<float> ApplyBlockSize;   // called with the fitted block size after a confirmed resize
         public bool AutoFit = true;
         public Material MarkerMaterial;
+        public NavState Nav;                   // [nav] visible window, build height
 
         public bool Active { get; private set; }
         public readonly AreaSetupState State = new AreaSetupState();
@@ -67,7 +68,14 @@ namespace TabletopCraft.XR
             if (Active) { Exit("area setup cancelled"); return; }
             var w = World();
             if (w == null || !w.Loaded) { Status = "area setup: waiting for the first snapshot"; return; }
-            State.Begin(w.World, w.Origin, w.Dims);
+            // [nav] start from the visible window (the region minus its view margin), not the whole region.
+            if (Nav != null && Nav.Loaded)
+            {
+                var lo = Nav.WindowMin;
+                State.MinY = Nav.MinY; State.MaxY = Nav.MaxY;
+                State.Begin(w.World, new Vector3Int(Mathf.FloorToInt(lo.x), Mathf.FloorToInt(lo.y), Mathf.FloorToInt(lo.z)), Nav.Window);
+            }
+            else State.Begin(w.World, w.Origin, w.Dims);
             Active = true;
             if (Placement) Placement.Suspended = true;
             _box.gameObject.SetActive(true);

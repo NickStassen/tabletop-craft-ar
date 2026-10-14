@@ -28,12 +28,30 @@ public final class Session {
     public RegionSpec region;
     public int snapshotId;
     public int[] lastGrid;                 // global palette ids, as last sent
+    // The session palette and its map are used only on the outbound executor thread (message order).
     public final List<String> palette = new ArrayList<>();
     private final Map<Integer, Integer> globalToLocal = new HashMap<>();
     public final Set<UUID> skinSent = new HashSet<>();
     public boolean lastPlayersNonEmpty;
     /** True while following the server's shared region (default); false after a private subscribe. */
     public volatile boolean shared = true;
+    /** hello.caps (e.g. "sections_v1"). Written once before READY. */
+    public volatile Set<String> caps = Set.of();
+    /** Region that lastGrid describes (what the client has), for delta snapshots. Main thread. */
+    public RegionSpec gridRegion;
+    /** Recent snapshot id -> region, so a pose is mapped with the origin the client used (pose.snapshot_id). Main thread. */
+    private final Map<Integer, RegionSpec> recentRegions = new java.util.LinkedHashMap<>() {
+        @Override protected boolean removeEldestEntry(Map.Entry<Integer, RegionSpec> e) { return size() > 8; }
+    };
+    public long lastFullResendMs;
+
+    public void rememberRegion(int snapshotId, RegionSpec r) { recentRegions.put(snapshotId, r); }
+
+    /** The region a pose with this snapshot_id refers to; the current region if unknown or absent (&lt; 0). */
+    public RegionSpec regionFor(int snapshotId) {
+        RegionSpec r = snapshotId < 0 ? null : recentRegions.get(snapshotId);
+        return r != null ? r : region;
+    }
     /** Opted into light_v1 / biomes_v1 in hello.caps (and enabled in config); PROTOCOL.md 4.4.1. */
     public volatile boolean wantsLight, wantsBiomes;
     public byte[] lastLight;               // packed light, as last sent (main thread), null without light_v1
@@ -56,12 +74,18 @@ public final class Session {
         if (!conn.isOpen()) return 0;
         body.addProperty("seq", seq.getAndIncrement() & 0xffffffffL);
         body.addProperty("t", System.currentTimeMillis());
-        byte[] b = Protocol.GSON.toJson(body).getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        conn.send(b.length <= Protocol.MAX_OUTBOUND_BYTES ? new String(b, java.nio.charset.StandardCharsets.UTF_8) : Protocol.GSON.toJson(Protocol.error("region_too_large", "snapshot " + b.length + " bytes exceeds 4 MiB", null, false)));
-        return b.length;
+        String json = Protocol.GSON.toJson(body);
+        int n = json.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+        if (n <= Protocol.MAX_OUTBOUND_BYTES) conn.send(json);
+        // Too big for one frame: tell the client (with a proper envelope). Clients with "sections_v1" never get here.
+        else send(Protocol.error("region_too_large", "snapshot " + n + " bytes exceeds the 4 MiB frame limit (smaller region, or a client with sections_v1)", null, false));
+        return n;
     }
 
-    public void resetPalette() { palette.clear(); globalToLocal.clear(); }
+    /** Palette size, readable from any thread (the palette itself belongs to the outbound executor thread). */
+    public volatile int paletteSize;
+
+    public void resetPalette() { palette.clear(); globalToLocal.clear(); paletteSize = 0; }
 
     /** Returns the session palette index for a global id, appending to palette (and to added) if new. */
     public int localIndex(int globalId, Palette global, List<String> added) {
@@ -70,6 +94,7 @@ public final class Session {
         int idx = palette.size();
         String s = global.state(globalId);
         palette.add(s);
+        paletteSize = palette.size();
         globalToLocal.put(globalId, idx);
         if (added != null) added.add(s);
         return idx;

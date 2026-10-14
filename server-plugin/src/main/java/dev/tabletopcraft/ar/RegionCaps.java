@@ -4,7 +4,7 @@ import com.google.gson.JsonObject;
 
 /** Server-side limits for regions (config.yml max_region). */
 public record RegionCaps(int maxX, int maxY, int maxZ, long maxBlocks, long maxBytes) {
-    public static final RegionCaps DEFAULT = new RegionCaps(128, 384, 128, 1L << 21, 4L * 1024 * 1024);
+    public static final RegionCaps DEFAULT = new RegionCaps(288, 384, 288, 1L << 24, 32L * 1024 * 1024);
 
     /** Returns null if allowed, else a human-readable reason. */
     public String check(int dx, int dy, int dz) {

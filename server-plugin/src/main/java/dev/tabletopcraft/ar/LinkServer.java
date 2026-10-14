@@ -97,11 +97,14 @@ public final class LinkServer extends WebSocketServer {
                 case "pose" -> {
                     Pose head = Pose.parse(m.get("head"));
                     if (head == null) throw new IllegalArgumentException("pose.head required");
-                    plugin.offerPose(s, head, Pose.parse(m.get("left")), Pose.parse(m.get("right")), refSeq == null ? -1 : refSeq);
+                    // Optional snapshot_id: the snapshot whose origin the tabletop frame refers to (PROTOCOL.md 4.7).
+                    int snap = m.has("snapshot_id") && m.get("snapshot_id").isJsonPrimitive() ? m.get("snapshot_id").getAsInt() : -1;
+                    plugin.offerPose(s, head, Pose.parse(m.get("left")), Pose.parse(m.get("right")), refSeq == null ? -1 : refSeq, snap);
                 }
                 case "region_request" -> {
                     RegionRequest q = RegionRequest.parse(m);
-                    plugin.enqueue(() -> plugin.onRegionRequest(s, q, refSeq));
+                    int[] margin = RegionRequest.viewMargin(m);
+                    plugin.enqueue(() -> plugin.onRegionRequest(s, q, margin, refSeq));
                 }
                 case "region_query" -> {
                     String player = m.has("player") && !m.get("player").isJsonNull() ? m.get("player").getAsString() : null;
@@ -119,7 +122,11 @@ public final class LinkServer extends WebSocketServer {
                 }
                 case "pong" -> { /* server-initiated pings are not used in v0.1 */ }
                 case "bye" -> s.conn.close(1000, "bye");
-                case "error" -> plugin.getLogger().warning("Client error from " + s.client + ": " + m);
+                case "error" -> {
+                    plugin.getLogger().warning("Client error from " + s.client + ": " + m);
+                    // The client couldn't apply a snapshot (e.g. a delta against a snapshot it doesn't have): resend in full.
+                    if (m.has("code") && "bad_snapshot".equals(m.get("code").getAsString())) plugin.enqueue(() -> plugin.onBadSnapshot(s));
+                }
                 default -> s.send(Protocol.error("unknown_type", "unknown type: " + type, refSeq, false));
             }
         } catch (RuntimeException e) {
@@ -136,6 +143,11 @@ public final class LinkServer extends WebSocketServer {
         String t = m.has("token") && !m.get("token").isJsonNull() ? m.get("token").getAsString() : "";
         if (!token.isEmpty() && !token.equals(t)) { fatal(s, "auth_failed", "bad or missing token", refSeq, Protocol.CLOSE_AUTH); return; }
         s.client = m.has("client") ? m.get("client").getAsString() : "unknown";
+        if (m.has("caps") && m.get("caps").isJsonArray()) {
+            java.util.Set<String> caps = new java.util.HashSet<>();
+            for (var e : m.getAsJsonArray("caps")) if (e.isJsonPrimitive()) caps.add(e.getAsString());
+            s.caps = java.util.Set.copyOf(caps);
+        }
         if (m.has("caps") && m.get("caps").isJsonArray())
             for (var e : m.getAsJsonArray("caps")) {
                 if (!e.isJsonPrimitive()) continue;

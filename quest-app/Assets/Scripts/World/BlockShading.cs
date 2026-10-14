@@ -5,11 +5,14 @@
 //   light:  each vertex averages the packed (sky, block) light of the 4 cells around it in the layer the face points
 //           into (vanilla smoothBlend: a dark neighbour inside an opaque block takes the centre's value), then looks it
 //           up in the lightmap at noon (bilinear between levels, like the GPU sampling vanilla's 16x16 lightmap).
+//           Defaults for AR: vanilla's "Bright" setting, and the lightmap rescaled so light level 0 shows at MinLight
+//           (0.2) instead of near black, because dark faces read as holes over passthrough. Full light stays 1.
 //   AO:     (side1 + side2 + corner + centre) / 4 with 0.2 for full-cube cells and 1.0 otherwise; the corner cell is
 //           skipped (side1 reused) when neither side lets light through, as vanilla does.
 //   no light data (old server, or no light_v1): white light and no AO, i.e. exactly the old look.
-//   region edges: a face whose front cell is outside the region (the cut sides of the miniature) is lit as open sky;
-//           other lookups outside the region clamp to the nearest cell inside it.
+//   region edges: the miniature's sides are cutaways, so everything outside the region counts as open, sky-lit air
+//           (sky 15, no AO occluder): a face whose front cell is outside is lit as daylight, and light/AO samples
+//           outside the region add daylight and no occlusion, so caves cut by the edge brighten towards the cut.
 using UnityEngine;
 
 namespace TabletopCraft.World
@@ -24,9 +27,17 @@ namespace TabletopCraft.World
 
     public static class BlockShading
     {
-        /// <summary>Vanilla "Brightness" option: 0 = Moody, 0.5 = default, 1 = Bright.</summary>
+        /// <summary>Vanilla "Brightness" option: 0 = Moody, 0.5 = the game's default, 1 = Bright (our default: AR).</summary>
         public static float Brightness { get => _brightness; set { _brightness = Mathf.Clamp01(value); BuildLightmap(); } }
-        static float _brightness = 0.5f;
+        static float _brightness = 1f;
+
+        /// <summary>
+        /// Brightness of light level 0 (0..1). The lightmap is rescaled linearly so its level-0 value lands here and full
+        /// light stays 1, keeping every step between them. Negative = vanilla's own curve (level 0 = 0.148 at Bright,
+        /// 0.094 at the game's default). tabletop.json "min_light".
+        /// </summary>
+        public static float MinLight { get => _minLight; set { _minLight = Mathf.Min(value, 1f); BuildLightmap(); } }
+        static float _minLight = 0.2f;
         /// <summary>Vanilla "Smooth Lighting". Off = one light value per face (the cell in front) and no AO: on real terrain
         /// about 26% fewer greedy quads (21% fewer in total) because more faces merge. Set before meshing (tabletop.json
         /// "smooth_lighting"); it applies to sections meshed afterwards.</summary>
@@ -38,10 +49,12 @@ namespace TabletopCraft.World
 
         /// <summary>
         /// 26.x lightmap.fsh with the overworld at noon: ambient #0a0a0a, sky light colour white x factor 1, block light
-        /// factor 1.4 (flicker averages out), block light tint #ffd88c fading to white at the extremes, brightness 0.5.
+        /// factor 1.4 (flicker averages out), block light tint #ffd88c fading to white at the extremes, then the
+        /// Brightness setting's notGamma mix, then the MinLight rescale.
         /// </summary>
         static void BuildLightmap()
         {
+            float floor = 0;
             float amb = 10f / 255f;
             float tr = 1f, tg = 216f / 255f, tb = 140f / 255f;
             for (int sky = 0; sky < 16; sky++)
@@ -59,6 +72,12 @@ namespace TabletopCraft.World
                     {
                         float inv = 1f - max, scaled = 1f - inv * inv * inv * inv, k = scaled / max; // notGamma
                         r = Mathf.Lerp(r, r * k, _brightness); g = Mathf.Lerp(g, g * k, _brightness); b = Mathf.Lerp(b, b * k, _brightness);
+                    }
+                    if (sky == 0 && block == 0) floor = g;   // ambient only: grey, the darkest entry
+                    if (_minLight >= 0 && floor < 1)
+                    {
+                        float k = (1f - _minLight) / (1f - floor);
+                        r = _minLight + (r - floor) * k; g = _minLight + (g - floor) * k; b = _minLight + (b - floor) * k;
                     }
                     int i = sky * 16 + block;
                     LmR[i] = r; LmG[i] = g; LmB[i] = b;
@@ -196,12 +215,8 @@ namespace TabletopCraft.World
             var n = Dir[dir];
             if (!w.InBounds(x + n.x, y + n.y, z + n.z)) return Shade(tint, Lightmap(15, 0), 1f);
             Cell(w, light, new Vector3Int(x, y, z), out int s0, out int b0, out _);
-            if (w.InBounds(x, y + 1, z))
-            {
-                Cell(w, light, new Vector3Int(x, y + 1, z), out int s1, out int b1, out _);
-                s0 = Mathf.Max(s0, s1); b0 = Mathf.Max(b0, b1);
-            }
-            return Shade(tint, Lightmap(s0, b0), 1f);
+            Cell(w, light, new Vector3Int(x, y + 1, z), out int s1, out int b1, out _);   // above the region: open sky
+            return Shade(tint, Lightmap(Mathf.Max(s0, s1), Mathf.Max(b0, b1)), 1f);
         }
 
         /// <summary>26.x LightCoordsUtil.smoothBlend on (sky, block) pairs; d is the centre.</summary>
@@ -217,10 +232,12 @@ namespace TabletopCraft.World
             block = (aB + bB + cB + dB) * 0.25f;
         }
 
+        /// <summary>Light and shape of a cell; outside the region it is open sky-lit air (the cutaway sides).</summary>
         static void Cell(WorldModel w, byte[] light, Vector3Int p, out int sky, out int block, out BlockShape shape)
         {
             var d = w.Dims;
-            int x = Mathf.Clamp(p.x, 0, d.x - 1), y = Mathf.Clamp(p.y, 0, d.y - 1), z = Mathf.Clamp(p.z, 0, d.z - 1);
+            int x = p.x, y = p.y, z = p.z;
+            if (x < 0 || y < 0 || z < 0 || x >= d.x || y >= d.y || z >= d.z) { sky = 15; block = 0; shape = BlockShape.Air; return; }
             int i = (y * d.z + z) * d.x + x;
             var grid = w.Grid;
             if ((uint)i >= (uint)light.Length || (uint)i >= (uint)grid.Length) { sky = 15; block = 0; shape = BlockShape.Air; return; }

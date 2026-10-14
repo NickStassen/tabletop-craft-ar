@@ -16,15 +16,17 @@ Shader "TabletopCraft/PlayerSkin"
             #pragma fragment frag
             #include "UnityCG.cginc"
             #include "TabletopFog.cginc"   // eye-in-fluid fog (EyeEffects.cs)
+            #include "TabletopClip.cginc"   // [nav] clip volume: figures outside the visible box are hidden
             sampler2D _MainTex;
             float _Cutoff;
             struct appdata { float4 vertex : POSITION; float3 normal : NORMAL; float2 uv : TEXCOORD0; UNITY_VERTEX_INPUT_INSTANCE_ID };
-            struct v2f { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; half shade : TEXCOORD1; float3 fogPos : TEXCOORD5; UNITY_VERTEX_OUTPUT_STEREO };
+            struct v2f { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; half shade : TEXCOORD1; float3 fogPos : TEXCOORD5; TABLETOP_CLIP_COORDS(7) UNITY_VERTEX_OUTPUT_STEREO };
             v2f vert (appdata v)
             {
                 v2f o; UNITY_SETUP_INSTANCE_ID(v); UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
                 o.pos = UnityObjectToClipPos(v.vertex); o.uv = v.uv;
                 o.fogPos = TabletopFogPos(v.vertex);   // eye-in-fluid fog
+                TABLETOP_TRANSFER_CLIP(o, v.vertex)   // [nav] clip volume
                 // Lighting.setupFor3DItems-style entity light: two fixed directions, 0.4 ambient + 0.6 diffuse.
                 float3 n = normalize(UnityObjectToWorldNormal(v.normal));
                 float3 l0 = normalize(float3(0.2, 1.0, -0.7)), l1 = normalize(float3(-0.2, 1.0, 0.7));
@@ -38,6 +40,7 @@ Shader "TabletopCraft/PlayerSkin"
             }
             fixed4 frag (v2f i) : SV_Target
             {
+                TABLETOP_CLIP(i)   // [nav] clip volume
                 fixed4 c = tex2D(_MainTex, i.uv);
                 clip(c.a - _Cutoff);
                 return fixed4(TabletopFog(c.rgb * i.shade, i.fogPos), 1);   // eye-in-fluid fog

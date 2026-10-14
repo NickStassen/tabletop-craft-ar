@@ -15,7 +15,7 @@ Versions follow [ironman-quest3-hud's SETUP.md](https://github.com/NickStassen/i
    Make sure the PC's Wi-Fi/Ethernet network profile is **Private**, and that the router has AP/client isolation **off**.
 6. **PC IP**: `ipconfig` and note the IPv4 address of the LAN adapter, e.g. `192.168.1.50`.
 7. **Pick the region**: join the server from the Java launcher (**version 26.3**, the "Latest release", multiplayer, `localhost`). In the server console: `op <yourname>`. Stand at the north-west bottom corner of what you want on the table and run `/tabletop setorigin`, then `/tabletop setsize 32 64 32` (or smaller to start, e.g. `32 32 32`). `/tabletop status` confirms.
-8. **Smoke test without the headset** (optional): `pip install -r tools/requirements.txt`, then `python tools/fake_quest.py --url ws://127.0.0.1:8765/tabletop --avatar -v --duration 15`. In game you should see the giant circling the middle of the region.
+8. **Smoke test without the headset** (optional): `pip install -r tools/requirements.txt`, then `python tools/fake_quest.py --url ws://127.0.0.1:8765/tabletop --avatar -v --duration 15`. In game you should see the giant head (25 blocks wide) circling 45 blocks above the middle of the region, with two hands below it.
 
 ## Part B: Unity project
 
@@ -74,7 +74,7 @@ Then relaunch the app. Alternatively set **ServerUrl** on the TabletopApp compon
 
 **Java players' skins on the table.** Each player's skin comes from their game profile, which only an `online-mode=true` server has. On an offline-mode server, everyone gets the default skin the game would show for their UUID (Steve, Alex and the others), read from your `pack.zip` (Part E). Without a pack they get plain colours.
 
-Optional lighting keys (the server sends light and biomes when its config has `stream.light` / `stream.biomes` on, the default): `"smooth_lighting": false` gives one light value per face and no ambient occlusion (about 15-18% fewer faces than smooth lighting on real terrain), and `"brightness"` is Minecraft's Brightness slider, 0 (Moody) to 1 (Bright), default 0.5.
+Optional lighting keys (the server sends light and biomes when its config has `stream.light` / `stream.biomes` on, the default): `"smooth_lighting": false` gives one light value per face and no ambient occlusion (about 15-18% fewer faces than smooth lighting on real terrain), and `"brightness"` is Minecraft's Brightness slider, 0 (Moody) to 1 (Bright), default 1 (Bright, so caves stay readable over passthrough). `"min_light"` (default 0.2) is how bright light level 0 is drawn, 0..1; everything brighter is rescaled up to full daylight, so a cave reads as dark but visible and the seabed 10 blocks down at about half of daylight. A negative value gives vanilla's own curve (level 0 = 0.15 at Bright).
 
 ## Part E: textures (resource pack)
 
@@ -89,15 +89,15 @@ Don't commit or redistribute the jar or pack.
 
 1. On another PC on the same LAN (or a second launcher profile on the same PC), start Minecraft **26.3** -> Multiplayer -> Direct Connection -> `192.168.1.50`. The player must be whitelisted, or `white-list=false` (Part A step 4).
 2. Walk around inside the region: a small Minecraft figure with your skin and name walks on the table. Its legs and arms swing with your speed, its head turns and tilts with your view, the body follows like in the game, and it crouches when you sneak. The skin appears once it has downloaded (a second or so). Until then the figure shows the default skin. Break and place blocks: the miniature updates within a second (events are applied next tick, a full diff runs every second).
-3. Look for the giant (up to 28.8 blocks tall, scale 16, wearing the `skin_player` skin). With the default `avatar.placement: ground`, it stands on the terrain inside the region, below where the headset is. When you stand back from the table it waits at the region's edge, facing where you look. Its head turns with yours, and the two white blocks move like your controllers or hands relative to your head, scaled up to its size. For the old behaviour, where the head is exactly where the headset is above the table, run `/tabletop avatar placement exact`. At 1 cm/block that puts it far off and high up.
+3. Look up for the giant. With the default `avatar.placement: floating` it is a huge player head wearing the `skin_player` skin, plus two hands, exactly where the headset and controllers are relative to the table. The head turns, tilts and rolls with yours, and the hands follow the controllers. Sizes match a real head (0.25 m) and hand (0.1 m) at the table's scale: a 25-block head and 10-block hands at 1 cm/block, capped at 64 blocks by `avatar.max-head-blocks`. The hands are flat boxes in the block colour closest to your skin's hands (`avatar.hand-block` to override). Standing 1.6 m tall at a table puts the head about 100-160 blocks above the terrain, so look up. Java players more than 128 blocks away horizontally don't receive the entities; raise `entity-tracking-range.display` in `spigot.yml` if needed. For a body instead, `/tabletop avatar placement ground` puts a Mannequin (up to 28.8 blocks tall) on the terrain below you, and `exact` hangs one from the mapped head position.
 
-Headset controls: **A** (right) = re-place the world at the right controller; hold **both grips** and move the right hand = drag/rotate; **right thumbstick up/down** = scale the miniature (also changes the giant's mapping).
+Headset controls: **left thumbstick** = glide across the world (hold the **left grip** and push up/down to move up/down; see Part H); **right thumbstick left/right** = turn the table; **right thumbstick up/down** = scale the miniature (also changes the giant's mapping); **A** (right) = re-place the world at the right controller; hold **both grips** and move the right hand = drag/rotate; **Y** (left) = area setup (Part G).
 
 ## Part G: setting up a play area in the headset
 
 The server picks the starting region (config.yml `region`). You can change it from the headset at any time. The new area is shared: every connected headset switches to it, and the last request wins.
 
-1. Press **Y** (left controller) to enter area setup. A cyan wireframe box shows the area you're about to request, drawn at the current scale relative to the terrain on the table. The status panel shows its size, how many blocks it contains, the estimated face/vertex count, and the block size it would use.
+1. Press **Y** (left controller) to enter area setup. A cyan wireframe box shows the area you're about to request, drawn at the current scale relative to the terrain on the table. The status panel shows its size, how many blocks it contains, the estimated face/vertex count, and the block size it would use. The box is what you will **see**; the headset also asks for a 16-block view margin around it (shown as `+16/16 margin`) so you can glide smoothly (Part H). The margin shrinks when the box gets close to the server's limits.
 2. Choose where the area is centred, using **X** (left) to cycle through these modes:
    - **CurrentOrigin**: the area currently shown.
    - **Player**: an online player. Push the **right stick left/right** to step through players; their feet end up about a third of the way up the box.
@@ -107,15 +107,38 @@ The server picks the starting region (config.yml `region`). You can change it fr
    - **Right stick up/down**: height, in 16-block steps.
    - Or point at one of the yellow handle spheres (+X face, +Z face, top) and hold the **right trigger** to drag that face. The box grows symmetrically around its centre.
 
-   Sizes are clamped to the server's limits (by default 128×384×128 and at most 2,097,152 blocks).
+   Sizes are clamped to the server's limits (by default 288×384×288 including the margin, and at most 16,777,216 blocks; a server with an older config.yml keeps its own `max_region`, e.g. 128×384×128).
 4. Block size: **auto-fit** is on by default. It sets block size = min(table width/X, table depth/Z) × 0.95, so the area fills the table detected by MRUK; without a detected table it assumes a 0.8 × 0.6 m table. Click the **right stick** to switch to keeping your manual scale; outside setup, the right stick still scales the model.
-5. Press **A** to confirm. The server answers with `region_changed` and a new snapshot, and the terrain reloads in the background ("N sections pending" in the status panel). Tap **B** to cancel.
-6. If the estimate is over the headset budget (about 250k faces by default), the box turns red and A won't confirm. **Hold B for 1 s** to override the warning. If the server rejects the request (`region_too_large`), the panel shows the server's limits.
+5. Press **A** to confirm. The server answers with `region_changed` and a new snapshot. The old terrain stays on the table while the new area is meshed in the background ("N sections pending" in the status panel), then the new one replaces it in one go. Tap **B** to cancel.
+6. If the estimate is over the headset budget, the box turns red and A won't confirm. There are two budgets: about 250k faces, and about 600 section meshes (each 16×16×16 block section with something in it is its own mesh, so roughly one or two draw calls). **Hold B for 1 s** to override the warning. If the server rejects the request (`region_too_large`), the panel shows the server's limits.
 
-Recommended sizes (estimates; see TESTING.md "Real terrain"):
+Recommended sizes (estimates from seed 12345 terrain; see TESTING.md "Navigation and bigger areas"), all with the 16-block margin on top:
 - 64×96×64 is a comfortable area to start with.
-- 128×96×128 is the recommended maximum for normal terrain.
+- 128×96×128 is the recommended maximum: about 113k faces (roughly 150k with smooth lighting) and 330 section meshes for the 160×128×160 region it loads.
+- 192×96×192 (about 240k faces, about 700 meshes) and 256×96×256 (about 400k faces, about 1,200 meshes) go over the budgets. Try them with the override and watch the frame rate; they need draw-call batching to be comfortable.
 - Taller areas work, but snapshots and load times grow.
+
+## Part H: moving around
+
+You can glide across the whole world without leaving the table. The miniature stays a neat box: terrain slides through it, and the cut sides show the blocks inside, like a cross-section.
+
+| Control | Action |
+|---|---|
+| **Left thumbstick** | Glide. Forward moves the view away from you (relative to where you look), sideways strafes. Speed is about 0.12 m of table per second at full tilt, so it feels the same at any scale, and ramps up to 3× while you hold the stick. |
+| **Left grip (hold) + left thumbstick** | Up/down (stick forward = up); sideways still strafes. Holding both grips drags the table instead, as before. |
+| **Right thumbstick left/right** | Turn the table about its centre (push right = turn right). |
+| **Right thumbstick up/down** | Scale, as before. |
+
+Moving around only uses the thumbsticks and grips (outside area setup, which owns the sticks while it is open). The index triggers and **B** are left free for editing blocks from the headset.
+
+How it works:
+- The server sends a region a bit bigger than what you see: a 16-block **view margin** on every side. The headset shows only the inner box and clips everything outside it, so terrain from the margin slides in smoothly by fractional blocks.
+- When you've moved about 4 blocks past the region's centre, the headset asks for the region moved by one 16-block section in that direction. The server answers with a **delta**: only the new slice of sections (about 80 of 800 for a 128-wide view). The headset keeps all other meshes, moves them, and meshes only the new slice. Nothing on the table blinks or goes empty.
+- If you outrun the stream, the view stops at the edge of the margin until the next region arrives. The status panel shows `VIEW` (window size and position), the margin, `loading...` while a request is in flight, and the measured round trip. The speed limit adapts to it: about 12 blocks of slack divided by the round trip.
+- The region is shared: other headsets on the same server move with you (the last request wins).
+- The giant and the player figures stay where they belong in the world while the region moves (each pose says which snapshot's origin it's relative to).
+- An area set up before this version has no margin. The first push asks the server for the same view plus a margin (needs a server that advertises `view_margin` in `welcome.caps`; older servers step 16 blocks at a time instead).
+- Vertical moves stop at the world's build height.
 
 ## Logs
 
@@ -135,6 +158,7 @@ The floating status text shows `LINK`, `RTT`, `WORLD`, `PACK`, `LIGHT` (`smooth`
 | Pink/black blocks | Shader not found: make sure `Assets/Shaders/Blocks.shader` compiled, or assign the two materials on TabletopApp. |
 | World appears but mirrored | The Z mirror is in TabletopRenderer (vertices) and PlayerMarkers; both must stay. |
 | No table found | Redo Space Setup and mark the table; or press A to place it manually. |
-| Giant floats high or is far away | `avatar.placement` is `exact` (see ARCHITECTURE 3.5): positions are mapped exactly and the body is clamped to scale 16. Use `/tabletop avatar placement ground`. |
+| Giant head is high up or far away | Expected in `floating` (the default): it is exactly where your headset is, scaled by the block size. Lean in over the table to bring it down, or use a larger block size. `/tabletop avatar placement ground` puts a body on the terrain instead (ARCHITECTURE 3.5). |
+| Giant not visible from far away | Display entities are only sent within `entity-tracking-range.display` (spigot.yml, default 128 blocks horizontally) of a player. |
 | Giant has the default skin | No `skin_player` in tabletop.json and no `avatar.skin-player`, a misspelt name (`skin_failed` in the status text), or no internet on the server PC. Check `/tabletop avatar status` (`skin_resolved`). |
 | Players are plain-coloured figures | They have no skin URL (offline-mode server) and there's no `pack.zip` to take the default skins from (Part E). |

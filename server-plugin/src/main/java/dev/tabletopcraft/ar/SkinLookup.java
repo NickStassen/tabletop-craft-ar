@@ -43,6 +43,22 @@ final class SkinLookup {
         return o.has("id") ? dashed(o.get("id").getAsString()) : null;
     }
 
+    /**
+     * Blocking (call off the main thread): downloads the skin PNG (textures.minecraft.net only, over https) and
+     * returns the plain block closest to its hand colour, or null if it can't be read.
+     */
+    static String handBlock(java.net.URL skin, boolean slim) throws IOException, InterruptedException {
+        if (skin == null || !"textures.minecraft.net".equalsIgnoreCase(skin.getHost())) return null;
+        HttpRequest req = HttpRequest.newBuilder(URI.create("https://textures.minecraft.net" + skin.getPath())).timeout(Duration.ofSeconds(10)).GET().build();
+        HttpResponse<byte[]> res = HTTP.send(req, HttpResponse.BodyHandlers.ofByteArray());
+        if (res.statusCode() != 200) throw new IOException("skin download HTTP " + res.statusCode());
+        java.awt.image.BufferedImage img = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(res.body()));
+        if (img == null) return null;
+        int w = img.getWidth(), h = img.getHeight();
+        int c = HandColour.handColour(img.getRGB(0, 0, w, h, null, 0, w), w, h, slim);
+        return c < 0 ? null : HandColour.nearest(c);
+    }
+
     /** "0123456789abcdef0123456789abcdef" -> UUID (Mojang returns ids without dashes). */
     static UUID dashed(String hex) {
         if (hex.length() != 32) return UUID.fromString(hex);

@@ -26,6 +26,25 @@ public record RegionRequest(String world, int ox, int oy, int oz, int dx, int dy
         return new RegionRequest(world, origin[0], origin[1], origin[2], dims[0], dims[1], dims[2]);
     }
 
+    /**
+     * Optional view_margin [mx, my, mz] (PROTOCOL.md 4.17): blocks per side the client keeps loaded around the box it
+     * shows. Missing = [0,0,0]. Negative values are bad_message; the plugin clamps them to the dims.
+     */
+    public static int[] viewMargin(JsonObject m) {
+        if (!m.has("view_margin") || m.get("view_margin").isJsonNull()) return new int[3];
+        int[] v = three(m, "view_margin");
+        for (int x : v) if (x < 0) throw new IllegalArgumentException("view_margin must be >= 0");
+        return v;
+    }
+
+    /** Margin per axis clamped so the visible box (dims - 2 * margin) is at least one block. */
+    public static int[] clampMargin(int[] m, int dx, int dy, int dz) {
+        int[] d = { dx, dy, dz };
+        int[] r = new int[3];
+        for (int a = 0; a < 3; a++) r[a] = Math.max(0, Math.min(m == null ? 0 : m[a], (d[a] - 1) / 2));
+        return r;
+    }
+
     private static int[] three(JsonObject m, String k) {
         JsonArray a = m.getAsJsonArray(k);
         if (a == null || a.size() != 3) throw new IllegalArgumentException(k + " must be [x,y,z]");

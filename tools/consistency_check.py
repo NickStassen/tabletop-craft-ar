@@ -11,6 +11,8 @@ from tabletop_protocol import Envelope, WorldMirror  # noqa: E402
 
 URL = os.environ.get("TABLETOP_URL", "ws://127.0.0.1:8765/tabletop")
 FIFO = os.environ.get("SERVER_FIFO", "run/server/stdin.fifo")
+# TABLETOP_CAPS=sections_v1 runs the live mirror as a sectioned client (snapshots and same-region deltas, PROTOCOL.md 4.18).
+CAPS = [c for c in os.environ.get("TABLETOP_CAPS", "").split(",") if c]
 
 
 def cmd(c: str) -> None:
@@ -18,10 +20,10 @@ def cmd(c: str) -> None:
         f.write(c + "\n")
 
 
-async def mirror(secs: float):
+async def mirror(secs: float, caps: list[str] | None = None):
     env, m, changes, msgs = Envelope(), WorldMirror(), 0, 0
     async with websockets.connect(URL, max_size=1 << 23) as ws:
-        await ws.send(json.dumps(env.wrap("hello", client="consistency", protocols=[1])))
+        await ws.send(json.dumps(env.wrap("hello", client="consistency", protocols=[1], caps=caps or [])))
         loop = asyncio.get_event_loop()
         end = loop.time() + secs
         while loop.time() < end:
@@ -39,12 +41,14 @@ async def mirror(secs: float):
 
 
 async def main() -> int:
-    live = asyncio.create_task(mirror(8))
+    live = asyncio.create_task(mirror(11, CAPS))
     await asyncio.sleep(2)
     for c in ("fill 0 -59 0 3 -57 3 minecraft:glass", "setblock 20 -59 21 minecraft:torch",
-              "setblock 0 -58 0 minecraft:air", "fill 10 -59 10 12 -59 12 minecraft:oak_planks"):
+              "setblock 0 -58 0 minecraft:air", "fill 10 -59 10 12 -59 12 minecraft:oak_planks",
+              # More than 4096 changes in one diff: the server sends a snapshot instead (a delta for sectioned clients).
+              "fill 0 -50 0 31 -46 31 minecraft:stone", "fill 0 -50 0 31 -46 31 minecraft:air"):
         cmd(c)
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(1.2)
     m, changes, msgs = await live
     f, _, _ = await mirror(1.5)
     a = [m.palette[g] for g in m.grid]

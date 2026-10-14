@@ -74,6 +74,7 @@ async def main() -> int:
     a, b = Client("headset-A"), Client("headset-B")
     await a.open()
     await b.open()
+    welcome = await a.wait("welcome")
     for c in (a, b):
         await c.wait("chunk_snapshot")
     rows, fails = [], 0
@@ -96,9 +97,13 @@ async def main() -> int:
         rows.append({"dims": f"{n}x64x{n}", "blocks": n * n * 64, "bytes": sa["_bytes"], "runs": len(sa["data"]) // 2,
                      "palette": len(sa["palette"]), "server_timing": sa.get("server_timing"), "request_to_snapshot_ms": round(rtt, 1),
                      "client_decode_ms": round(sa["_decode_ms"], 1), "B_bytes": sb["_bytes"], "ok": not errs, "errors": errs})
-    # Over the caps: dims, then a private subscribe over the cap.
+    # Over the server's caps (from welcome.limits): one axis too wide, too tall, and too many blocks.
     rejects = []
-    for spec in ("c:0,0,0,256,64,256,-64", "c:0,0,0,129,64,128,-64", "c:0,0,0,128,384,128,-64"):
+    mx, my, mz = welcome["limits"]["max_dims"]
+    specs = [f"c:0,0,0,{mx + 1},64,{min(mz, 64)},-64", f"c:0,0,0,16,{my + 1},16,-64"]
+    if mx * my * mz > welcome["limits"]["max_blocks"]:
+        specs.append(f"c:0,0,0,{mx},{my},{mz},-64")
+    for spec in specs:
         await a.send("region_request", world="world", **parse_region(spec))
         e = await a.wait("error", "chunk_snapshot", timeout=10)
         ok = e["type"] == "error" and e["code"] == "region_too_large" and "max_dims" in e

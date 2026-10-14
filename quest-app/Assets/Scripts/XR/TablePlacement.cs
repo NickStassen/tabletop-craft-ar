@@ -1,6 +1,6 @@
 // Places the TabletopAnchor on the nearest MRUK TABLE surface after the scene loads (ARCHITECTURE.md section 4).
 // Fallback: 0.75 m high, 0.5 m in front of the user. Right-hand A button re-places it at the right controller;
-// both grips held = drag (move + yaw). Thumbstick Y on the right controller scales the miniature.
+// both grips held = drag (move + yaw). Thumbstick Y on the right controller scales the miniature, X turns it.
 using System.Collections;
 using Meta.XR.MRUtilityKit;
 using UnityEngine;
@@ -19,6 +19,7 @@ namespace TabletopCraft.XR
         public Vector2 TableSize = new Vector2(0.8f, 0.6f);
         /// <summary>Set by AreaSetupMode: the controllers belong to area setup, so placement/scale input is ignored.</summary>
         public bool Suspended;
+        public float TurnDegPerSecond = 90f;   // right stick left/right at full deflection
 
         bool _placed;
         Vector3 _grabOffset; float _grabYaw, _anchorYaw0; bool _grabbing;
@@ -86,8 +87,15 @@ namespace TabletopCraft.XR
                 Anchor.rotation = Quaternion.Euler(0, _anchorYaw0 + Mathf.DeltaAngle(_grabYaw, yaw), 0);
             }
             else _grabbing = false;
-            float stick = OVRInput.Get(OVRInput.Axis2D.PrimaryThumbstick, OVRInput.Controller.RTouch).y;
-            if (Mathf.Abs(stick) > 0.5f) OnScaleChanged?.Invoke(1f + Mathf.Sign(stick) * 0.5f * Time.deltaTime);
+            // Right stick: up/down scales, left/right turns the table about its centre (whichever axis dominates).
+            Vector2 rs = OVRInput.Get(OVRInput.Axis2D.PrimaryThumbstick, OVRInput.Controller.RTouch);
+            if (Mathf.Abs(rs.y) > 0.5f && Mathf.Abs(rs.y) >= Mathf.Abs(rs.x)) OnScaleChanged?.Invoke(1f + Mathf.Sign(rs.y) * 0.5f * Time.deltaTime);
+            else if (Mathf.Abs(rs.x) > 0.25f && !_grabbing)
+            {
+                // Push right = turn right: the world turns counter-clockwise seen from above (like a VR turn).
+                float k = (Mathf.Abs(rs.x) - 0.25f) / 0.75f;
+                Anchor.rotation = Quaternion.AngleAxis(-Mathf.Sign(rs.x) * TurnDegPerSecond * k * k * Time.deltaTime, Vector3.up) * Anchor.rotation;
+            }
         }
     }
 }

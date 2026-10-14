@@ -248,7 +248,11 @@ Sent after each `avatar_config`, and when the server changes something by itself
 ```
 
 - `skin_resolved`: the server holds signed textures for `skin_player` (it also sends a fresh `avatar_state` when a lookup finishes). `false` doesn't always mean Java players see the default skin: their clients may still resolve the name.
-- Where the giant stands is server policy (ARCHITECTURE.md §3.5, `config.yml` `avatar.placement`): by default on the terrain under the headset's X/Z, clamped into the region, with hand offsets scaled to its size; `exact` maps the head and hands as in §4.7. With `debug.avatar-state` on, the `debug` object also reports `placement`, `ground_y`, `body_yaw` and `skin_player`.
+- What the giant looks like and where it is are server policy (ARCHITECTURE.md §3.5, `config.yml` `avatar.placement`):
+  - `floating` (default): a player head and two hands, no body, at exactly the mapped head and hand poses of §4.7 (position and full orientation), sized like a real head and hands at `block_size_m`. Here `scale` is the head's scale relative to a player's 0.5-block head, `world_height_blocks` is the head's size in blocks, `entity_uuid` is the head display, and `note` reports a capped head size.
+  - `ground`: a Mannequin standing on the terrain under the headset's X/Z, clamped into the region, with hand offsets scaled to its size.
+  - `exact`: a Mannequin whose head and hands are at the mapped poses.
+- With `debug.avatar-state` on, the `debug` object also reports `placement` and `skin_player`. Floating adds `head`, `head_q`, `head_size_blocks`, `hand_size_blocks` and `hand_block`. Ground and exact add `feet`, `ground_y` and `body_yaw`.
 
 ### 4.10 `ping` / `pong` (both directions)
 
@@ -326,3 +330,48 @@ Then it closes with code 1000. When the Quest client disconnects (with or withou
 - Fixtures: `tools/fixtures/region_request.json`, `region_query.json`, `region_changed.json`, `region_info.json`, `error_region_too_large.json` (also parsed by the C# tests).
 - Changelog: v1.1 adds the messages above. v1 clients are unaffected.
 - Changelog (additive, no version bump): adds `player_positions[].skin_model` (§4.6) and documents the giant's placement and skin lookup (§4.8, §4.9). Fixture: `tools/fixtures/player_positions.json`.
+
+## 4.17–4.19 Moving around: view margin, sectioned and delta snapshots (v1.2, additive)
+
+These let a headset glide across the world while the miniature stays a box on the table. Everything here is optional: a peer that doesn't know a field ignores it, and the server only uses the new snapshot encoding with clients that ask for it. `v` stays 1.
+
+### 4.17 View margin, build height, server caps, pose frame
+
+- `region_request` MAY carry `view_margin: [mx, my, mz]` (ints ≥ 0): blocks on each side of the region that the client keeps loaded but doesn't show. The visible box (the "window") is `dims − 2·view_margin`, and the client slides it inside the region by fractional blocks; terrain from the margin slides into view while the next region loads. The server clamps each value to `⌊(dims − 1) / 2⌋`, keeps it with the shared region (config.yml `region.view_margin`) and echoes it as `view_margin` in `region_changed`, `welcome.region`, `region_info.region` and every `chunk_snapshot`. Missing means `[0,0,0]` (the window is the whole region, as in v1).
+- `welcome.caps` (§4.5.1) lists what is in effect for the session: the optional client caps it granted (`light_v1`, `biomes_v1`, and `sections_v1` when the client asked for it and `stream.sections-v1` is on) plus `view_margin` and `pose_snapshot_id`, which this server always supports. A client only asks for a region with a margin it added itself (padding the region) when `caps` has `view_margin`; otherwise the margin would be lost and the region would look bigger after every request.
+- `welcome.limits` and `region_info.limits` MAY carry `build_height: [minY, maxY)` of the region's world. Clients never request a region outside it (the server would clamp `dims.y`).
+- `pose` MAY carry `snapshot_id`: the snapshot whose `origin` the tabletop frame refers to. A headset moves its region root only when it applies a new snapshot, so poses sent while a moved region is in flight are still relative to the old origin. The server maps a pose with the origin of that snapshot (it remembers the last 8 per connection), or the current region if the id is unknown or absent. Without it, the giant jumps by the shift for a round trip.
+
+```json
+{"v":1,"type":"region_request","seq":51,"t":1760370002500,"world":"world","origin":[16,60,0],"dims":[32,16,16],"view_margin":[8,0,0]}
+```
+
+Navigation (Quest app, docs/QUEST_SETUP.md "Moving around"): when the window has moved more than a few blocks past the region centre in the direction of motion, the client sends `region_request` with the same `dims` and `view_margin` and the `origin` moved by 16 blocks (one section) on that axis. Origins always move by whole 16-block sections, so the client can keep its section meshes and the server can send a delta (4.18). One request is in flight at a time. The region is shared (4.13), so other headsets follow; the last writer wins.
+
+### 4.18 `chunk_snapshot` encoding `sections_v1` (cap `sections_v1`)
+
+A client that puts `"sections_v1"` in `hello.caps` MAY receive `chunk_snapshot` with `"encoding":"sections_v1"` instead of `rle_palette_v1`. The server MUST NOT send it to other clients (`stream.sections-v1: false` in config.yml turns it off).
+
+```json
+{"v":1,"type":"chunk_snapshot","seq":30,"t":1760370003000,"snapshot_id":9,"world":"world",
+ "origin":[16,60,0],"dims":[32,16,16],"view_margin":[8,0,0],"order":"yzx",
+ "palette":["minecraft:air","minecraft:stone","minecraft:grass_block[snowy=false]","minecraft:oak_log[axis=y]"],
+ "encoding":"sections_v1","base":{"snapshot_id":8,"shift":[16,0,0]},"part":0,"parts":1,
+ "sections":[{"s":[1,0,0],"data":[3,16,0,4080]}],"biomes":null,"light":null}
+```
+
+- The region is cut into 16×16×16 **sections**: section `s = [sx,sy,sz]` covers region-local blocks `16·s` up to `min(16·s + 16, dims)` on each axis (edge sections are smaller when `dims` isn't a multiple of 16). `data` is `rle_palette_v1` pairs (§4.4) over that box, in yzx order inside the section (x fastest, then z, then y). The runs MUST sum to the section's volume.
+- `part` (0-based) and `parts` (≥ 1): one snapshot MAY be split over several messages with the same `snapshot_id`, sent in order. Each part carries the full `palette`, `origin`, `dims` and (if any) `base`; together the parts list each section at most once. The server keeps each message under `stream.max-message-bytes` (default 1 MiB), so regions bigger than the 4 MiB frame limit (§1) can be sent. Other message types MAY arrive between parts; `block_update`s for this `snapshot_id` only follow the last part. The client applies the snapshot when it has all parts.
+- Without `base`, every section of the region is listed (a full snapshot).
+- With `base: {snapshot_id, shift}` it is a **delta** against the client's current snapshot `snapshot_id` (as updated by the `block_update`s it got for it). `shift` is new `origin` − old `origin`, each component a multiple of 16, and `dims` are the same. The client first copies every block of the new region that was in the old one (new local `p` = old local `p + shift`), then decodes the listed sections over it. The server only leaves out sections that lie fully inside the old region and whose blocks are all unchanged. The base palette stays valid: `palette` starts with the client's current palette, unchanged, followed by new entries.
+- **Light and biomes** (§4.5.1). With `light_v1` granted, the top-level `light` is `{"encoding":"rle_v1","in_sections":true}` and every listed section also carries `light`: pairs `[value, run]` of packed light (`sky·16 + block`, 0..255) over the section's box, in the same order as `data`. A delta lists a section when its blocks *or* its light changed, and unlisted sections keep the base's light (the base must have light). With `biomes_v1`, part 0 carries the region's whole `biomes` object as in §4.5.1, deltas included, and the other parts have `biomes: null`. Fixture: `tools/fixtures/chunk_snapshot_sections_light.json`.
+- A client that can't apply a snapshot (unknown base, wrong totals, a missing section) drops it and sends `error` `bad_snapshot`, optionally with `snapshot_id`. The server then sends the region again as a full snapshot (at most every 2 s per connection).
+- `server_timing` (if present) is on part 0.
+- Sizes on real terrain (docs/TESTING.md "Navigation and bigger areas"): a full sectioned snapshot is about 15% bigger than the same region as one `rle_palette_v1` message, and a one-section shift of a 160×128×160 region is a delta of about 90–160 KB instead of about 800 KB.
+
+### 4.19 Fixtures and tests
+
+- `tools/fixtures/chunk_snapshot_sections.json` (full, snapshot 8), `chunk_snapshot_delta.json` (snapshot 9 as a delta against 8, one section), `region_request_nav.json` (origin form with `view_margin`) and `chunk_snapshot_sections_light.json` (per-section light, biomes on part 0). Java `SectionCodecTest`, Python `test_tabletop_protocol.py` and C# `Tests~/NavTests.cs` decode them and rebuild snapshot 9 from 8.
+- `tools/nav_e2e.py` runs a `sections_v1` headset across the world on a live server and checks each delta-assembled region block by block against a v1 client's full snapshot of the same region.
+- Changelog: v1.2 (2026-10-13) adds `view_margin`, the server features in `welcome.caps`, `limits.build_height`, `pose.snapshot_id`, the `sections_v1` encoding (with per-section light), and the full resend after `bad_snapshot`. v1 and v1.1 clients are unaffected.
+- Changelog (no field changes): the default giant is now `floating` (a head and two hands at the exact poses); `avatar_state.scale` and `world_height_blocks` describe the head in that mode (§4.9).

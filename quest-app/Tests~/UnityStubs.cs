@@ -25,6 +25,10 @@ namespace UnityEngine
         public static Vector3Int right => new Vector3Int(1, 0, 0);
         public static Vector3Int up => new Vector3Int(0, 1, 0);
         public static Vector3Int down => new Vector3Int(0, -1, 0);
+        public static bool operator ==(Vector3Int a, Vector3Int b) => a.x == b.x && a.y == b.y && a.z == b.z;
+        public static bool operator !=(Vector3Int a, Vector3Int b) => !(a == b);
+        public override bool Equals(object o) => o is Vector3Int v && v == this;
+        public override int GetHashCode() => x * 73856093 ^ y * 19349663 ^ z * 83492791;
         public override string ToString() => $"({x}, {y}, {z})";
     }
     public struct Quaternion
@@ -36,6 +40,7 @@ namespace UnityEngine
     public static class Mathf
     {
         public static int Min(int a, int b) => Math.Min(a, b);
+        public static float Min(float a, float b) => Math.Min(a, b);
         public static float Max(float a, float b) => Math.Max(a, b);
         public static int Max(int a, int b) => Math.Max(a, b);
         public static int Clamp(int v, int lo, int hi) => v < lo ? lo : v > hi ? hi : v;

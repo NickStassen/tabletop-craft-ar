@@ -184,6 +184,30 @@ Paper 26.3 build 181 test server (offline mode, seed 12345, region 64x96x64 from
 
 Still needs the headset and a Java client: the figures' look on the table (size at 1 cm/block, shading, label), skin downloads on the Quest (https from the headset), the giant's movement as seen by Java players (Mannequin interpolation plus server smoothing), and `skin_model`/`skin` from an online-mode server.
 
+### 7.1 Floating head and hands (the new default, 2026-10-13)
+
+Same test server, merged with master (water, block models, light). This replaces ground placement as the default, after the headset session's feedback (ARCHITECTURE 3.5).
+
+- **Unit tests**: plugin 45 JUnit tests, 0 failures. New:
+  - `GiantPlacementTest` +5: floating maps head and hands exactly; sizes and the cap; head face direction equals `Pose.forward()` for a yawed, pitched and rolled pose (identity faces north, a 90° yaw faces west); hand box axes; quaternion rotate against `Pose.forward()`.
+  - `HandColourTest` 3.
+
+  pytest 30 passed, ruff clean. `Tests~` 146/146 PASS (Quest code unchanged by this step).
+- **Live, scripted poses** (`giant_float.py`, not committed: holds each pose 4 s, then compares the debug `avatar_state` with `origin + p / block_size_m` and the sent quaternion). The head is yawed 30°, pitched −20° and rolled 10°; the hands are rotated differently:
+  ```
+  A: bs 0.01   head [32, 92, 32] (want [32, 92, 32])  left [12, 67, 22]  right [52, 62, 20]  pos_err 0.0000  head_q = pose q (err 0.0005, 3-decimal rounding)
+               head 25 blocks, hands 10, hand_block cherry_planks (from the skin), scale 50
+  B: bs 0.01   user 1 m back from the table, 1.6 m up: head [-100, 192, 32] exact; its chunk was loaded async and ticketed
+  C: bs 0.002  head [50, 282, 50] exact; head capped at 64 blocks (from 125), hands 25.6, note "head size capped from 125.0 to 64.0 blocks"
+  ALL OK
+  ```
+  `tools/fake_quest.py --avatar` (head circling 0.45 m above the table): head y 77 = 32 + 0.45 / 0.01, `head_q` = the scripted yaw quaternions, hands ±5 blocks.
+- **Second player**: the mineflayer bot (joining as 26.1 through ViaBackwards 5.12.0) receives the three `item_display` entities at spawn, then at the exact phase-C positions `(50, 282, 50)`, `(0, 182, 0)`, `(100, 182, 0)`. While the head was at x −100 in phase B, 188 blocks from the bot, the server stopped sending the entities (display tracking range 128) and sent them again in phase C.
+- **Skin**: `skin_player` resolved on the offline-mode server, the head switched to the signed profile and the hand block changed from the default skin's (`raw_copper_block`) to the closest match for the skin's hands (`cherry_planks`).
+- **Orientation conventions** come from the 26.3 client classes, read without a game client: `DisplayRenderer$ItemDisplayRenderer` rotates 180° about Y, `player_head.json` has a special-model transform of x 180° plus (0.5, 0, 0.5), `template_skull`'s `fixed` transform has y 180° plus 4/16 up, `ItemTransform.apply` then subtracts 0.5, and the head cube is (−4, −8, −4, 8, 8, 8). Together these put the FIXED head centred and facing +Z, which the unit test above builds on.
+
+Still needs a Java client by eye: that the head's face points where the headset looks (the convention above), the hand boxes' look, interpolation smoothness, and the view from far away.
+
 ## Not verified (and why)
 
 - **On the Quest** (see "First headset session"): MRUK table detection, area setup and live block edits haven't been checked yet.
@@ -418,6 +442,85 @@ The quad counts above were measured before block models and the fluid mesher exi
 **Tests after the merge:** plugin 37 tests, 0 failures; pytest 30 passed, ruff clean; `Tests~ dotnet run -- --jar …/26.3.jar` 180/180 PASS (adds model quads lit like cube faces, rotated quads with own-cell light, tinted model quads, fluid light and merge splitting, WaterColor per biome with the atlas alpha, and with the jar: grass_block top, short_grass cross and oak_stairs through the real models); Unity 6000.0.84f1 batch compile clean (no errors, no shader errors, no new warnings).
 
 **Headset to check:** the new face shading (east/west sides darker and north/south sides brighter than before, crosses at full brightness), cave darkness at brightness 0.5, AO on stairs/slabs/fences, water colour and light at depth (deep water faces darken: water light follows vanilla's sky attenuation), and FPS with about 25% more faces.
+
+### Dark faces in AR: light floor, Bright default, open-sky edges (after the first lit headset session; 2026-10-13)
+
+The headset showed near-black faces in caves and around a mineshaft cut by the region edge, and a very dark seabed. Changes in `BlockShading`: the lightmap uses vanilla's "Bright" setting (was the game's default 0.5) and is rescaled so light level 0 shows at `min_light` = 0.2 and full light stays 1, keeping vanilla's falloff shape in between; and every light/AO sample outside the region is open sky-lit air (before: clamped to the nearest cell inside, which copied the cave's darkness to the cut). `Tests~ dotnet run -- --light-report` (brightness of a white face before the shader's face shading):
+
+| face | before | after |
+|---|---|---|
+| floor of a light-0 cave | 0.094 | 0.200 |
+| the same cave floor at the region edge (corner at the cut .. corner inside) | 0.094 .. 0.094 | 0.686 .. 0.200 |
+| cut face (front cell outside the region) | 1.000 | 1.000 |
+| seabed 10 blocks under water (sky light 5) | 0.314 | 0.510 |
+| full daylight | 1.000 | 1.000 |
+
+Levels 10-15 now differ by under 2% (Bright compresses the top), so slightly more faces merge, but the total barely moves: 64×96×64 23,317 faces, 128×96×128 83,055, 128×128×128 159,947, 64×384×64 89,116 (pack mode, smooth light; +0.1-0.3% against the table above). `tabletop.json` `min_light` and `brightness` tune it on the headset (`min_light: -1` = vanilla's curve).
+
+## Navigation and bigger areas (Paper 26.3, seed 12345, 2026-10-13)
+
+A separate headless test server (Paper 26.3 build 181, JDK 25, offline, normal world seed 12345, its own ports) running this plugin, with `max_region` raised for the big runs. Numbers are from second runs, with chunks already generated. All on the x86 box: no headset.
+
+### Tests (after merging master: players, water, block models, light)
+
+| Suite | Result |
+|---|---|
+| Plugin (JUnit) | 45 tests, 0 failures. Nav additions: `SectionCodecTest` (7: section round trip with partial edges, delta lists only new/changed sections, part splitting, size estimate, fixtures rebuild snapshot 9 from 8, per-section light and light-aware deltas, diff index limit) and `RegionRequestTest.viewMargin`. |
+| Tools (pytest + ruff) | 38 passed, ruff clean. Nav additions: the four fixtures, `sections_v1` full/delta, parts, validation, and sections with light and biomes. |
+| Quest scripts (`Tests~`, .NET 8) | 215 checks PASS without a client jar, 249 with `MC_CLIENT_JAR` (the block-model tests). Nav additions in `NavTests.cs`: NavState (window, RegionRoot placement, trigger and shift requests, clamp while pending, seamless re-centre, reverse and diagonal moves, refusal back-off, timeout, far jumps, build height, padding with and without the server cap, speed curve and stream cap, latency until meshed), SectionPlan (re-key with a permuted palette, changed, stale and re-lit sections, delta lists, unaligned shifts, new dims, partial edge sections), `sections_v1` (full, delta, light and biomes, wrong base, missing section, bad totals, delta without its new section, light delta without base light), SnapshotAssembler (parts, delta plan, v1 still works), CapMesher, and area setup with margins and the section budget; caps take the biome tint and the same UVs as the faces next to them. |
+| `Tests~ --live` against the server | All PASS with `light_v1` + `biomes_v1` granted: area setup 48×64×48 window + 16 margin → an 80×96×80 region; a one-section shift arrives as a delta (30 of 150 sections); `bad_snapshot` → the server's full resend matches the delta-assembled grid, blocks and light. |
+| Unity 6000.0.84f1 batch compile | 0 errors; the only warning in our code is the existing CS0618 (`overlayType`). |
+| `Editor/ShaderCheck` (headless, `-executeMethod TabletopCraft.EditorTools.ShaderCheck.Run`) | 60 variants (Blocks, BlocksTransparent and PlayerSkin × Vulkan and GLES3 × no keyword, `STEREO_MULTIVIEW_ON`, `STEREO_INSTANCING_ON`, `INSTANCING_ON`, `UNITY_SINGLE_PASS_STEREO` × vertex and fragment), 0 errors. A deliberately broken shader is reported, so the check is real. |
+| Flat-world e2e tools on the nav server (before the merge) | fake Quest expectations OK; `consistency_check.py` 0/65,536 differing cells as a v1 client and as a `sections_v1` client (the 5,120-block fills arrive as same-region deltas, 8 of 16 sections); `error_paths.py` as expected; `region_e2e.py` ok with over-cap requests derived from `welcome.limits`. |
+
+### Gliding across the world (`tools/nav_e2e.py`; blocks only, measured before the merge)
+
+A `sections_v1` "headset" asks for a window plus a 16-block margin, then shifts the region by one section 4 times (east, then south). With `--no-v1` it is alone on the server (latency below); otherwise a v1 client on the same shared region gets every region in full, and each delta-assembled grid is compared with it block for block.
+
+| visible window (y range) | region loaded | first snapshot, `sections_v1` | same region, one v1 message | one-section shift (delta) | sections sent | request→snapshot, headset alone | server walk (async) |
+|---|---|---|---|---|---|---|---|
+| 128×96×128 (y 32..128) | 160×128×160 | 835 KB, 1 part, 369 ms | 730–845 KB | 86–156 KB | 80 of 800 | 144–183 ms | 42 ms |
+| 192×96×192 (y 32..128) | 224×128×224 | 1.84 MB, 2 parts, 643 ms | 1.60–1.84 MB | 122–279 KB | 112 of 1,568 | 227–256 ms | 83 ms |
+| 256×96×256 (y 32..128) | 288×128×288 | 3.37 MB, 4 parts, 1.0 s | 2.90–3.25 MB | 169–365 KB | 145 of 2,592 | 350–398 ms | 138 ms |
+| 256×128×256 (y 0..128) | 288×160×288 | 6.54 MB, 7 parts, 1.3 s | 5.6–5.95 MB: over the 4 MiB frame, the v1 client gets `region_too_large` | 327–543 KB | 180 of 3,240 | 401–454 ms | 172 ms |
+
+- **Cross-check**: every delta-assembled region matched the v1 client's full snapshot (4 shifts per size, then 8 more at 256×96×256). The only difference ever seen was transient: kelp grew between the two clients' `block_update`s, and it matched after 1.5 s.
+- **Server main thread** per region change: about 3 ms at 288×288 (361 chunk snapshots). The walk, the diff compare, the `region_request` size estimate, the palette remap and the encoding all run off the main thread now.
+- **Faster walk**: block ids are cached by `BlockData` instead of building a state string per block. The same 128×96×128 box (y 32..128) read in 121 ms before and about 20 ms after; 224×128×224 (6.4M blocks) reads in 83 ms.
+- A sectioned snapshot is about 15% bigger than one `rle_palette_v1` message for the same region (per-section headers, runs cut at section borders), but it splits into parts under 1 MiB and, while gliding, only the new slice is sent: 11–20% of a full region.
+
+**With light and biomes (after the merge).** Both clients ask for `light_v1` + `biomes_v1`; light travels inside the sections and the cross-check compares light too (every step matched).
+
+| visible window | region loaded | first snapshot, `sections_v1` | same region, one v1 message | one-section shift (delta) | sections sent | request→snapshot, headset alone | server walk (async, with light) |
+|---|---|---|---|---|---|---|---|
+| 128×96×128 (y 32..128) | 160×128×160 | 1.13 MB, 2 parts | 1.0–1.2 MB | 145–240 KB | 80 of 800 | 231–305 ms | 50–81 ms |
+| 192×96×192 (y 32..128) | 224×128×224 | 2.69 MB, 5 parts, 1.5 s | (not run) | 158–462 KB | 112–114 of 1,568 | 343–439 ms | 101–158 ms |
+| 256×96×256 (y 32..128) | 288×128×288 | 4.94 MB, 13 parts, 1.8 s | over the 4 MiB frame | 224–600 KB | 144–147 of 2,592 | 458–515 ms | 170–192 ms |
+
+Light adds about 40–60% to snapshots and deltas, and reading it about 20–30 ms per million blocks.
+
+### Meshing the same regions (`Tests~ dotnet run -c Release -- --measure-nav DIR`, x86, one thread, before the merge)
+
+"Texture-like" keys merge faces only within one block's top, bottom or side texture, which approximates a resource pack; flat colours merge more. "Non-empty" sections are the ones that become meshes. These counts are without the block models and light of the merged branches; with smooth light expect about +24–38% faces ("Lighting with models and water" above). The section counts barely change. These are without the block models and light of the merged branches; with smooth light expect about +24–38% faces ("Lighting with models and water" above). The section counts barely change.
+
+| region (window + margin) | sections | non-empty | quads, flat | quads, texture-like | vertices | mesh, 1 thread | worst section | re-key compare (1-section shift) | 6 clip caps | `AreaMath.Estimate` |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 160×128×160 | 800 | 328 | 108k | 113k | 452k | 542 ms (incl. JIT warm-up) | 8 ms | 4 ms | 6.0k quads, 2.1 ms | 118k |
+| 224×128×224 | 1,568 | 706 | 234k | 243k | 973k | 770 ms | 1.2 ms | 5 ms | 10.9k quads, 1.4 ms | 232k |
+| 288×128×288 | 2,592 | 1,223 | 380k | 396k | 1.58M | 1.3 s | 33 ms | 8 ms | 16.5k quads, 1.9 ms | 383k |
+| 288×160×288 | 3,240 | 1,808 | 544k | 566k | 2.26M | 1.8 s | 59 ms | 10 ms | 20.8k quads, 2.2 ms | 476k |
+
+### Quest 3 capacity guidance (ESTIMATES; only 64×96×64 has run on the headset)
+
+- **Draw calls are the likely limit.** Every non-empty 16³ section is its own mesh (one draw call, two when it has water, glass or plants). The headset has only been measured at 64×96×64: about 50 meshes, 72 FPS, 2.5 ms app GPU time. A 128-wide window loads about 330 meshes; 192 about 700; 256 about 1,200–1,800. Area setup now warns above about 600 estimated meshes (and still above 250k faces); hold B to try bigger areas anyway. Bigger areas need the section meshes batched (for example 2×2×2 sections per mesh), which is the next step.
+- **Defaults**: the plugin's `max_region` is now 288×384×288 / 16,777,216 blocks / 32 MiB in total, so a 256-wide window with its margin fits. The recommended maximum window stays 128×96×128, now with a margin to glide; you can move anywhere in the world.
+- **Streaming**: a 128-wide window needs one delta of about 90–160 KB per 16 blocks travelled, so gliding at 30 blocks/s is about 0.3 MB/s. The headset assembles it on a worker (copy plus a few dozen sections) and meshes about 80 new sections, plus about 80 neighbours refreshed when idle; the old meshes stay up the whole time.
+- **Speed limit**: the view can't leave the loaded margin, so the glide speed is capped at about 12 blocks of slack divided by 1.3 × the measured round trip until the new terrain is meshed. On this box that's about 50 blocks/s for a 128 window; the headset's meshing time adds to it.
+
+### Not verified (needs the headset)
+
+Clipping and the cut-face caps on screen, turning, the glide speed and feel, how long the headset takes to assemble and mesh a delta, the giant staying put while the region moves (`pose.snapshot_id`), and frame rates above 64×96×64.
+
 
 ## Eye in water, lava, powder snow or a block (Quest, 2026-10-13, no headset yet)
 

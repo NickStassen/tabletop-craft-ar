@@ -15,7 +15,7 @@ namespace TabletopCraft.Net
         {
             ["type"] = "hello", ["client"] = ClientName, ["client_version"] = ClientVersion,
             ["protocols"] = new List<object> { Version }, ["token"] = token ?? "",
-            ["caps"] = new List<object> { "rle_palette_v1", "avatar", CapLight, CapBiomes },
+            ["caps"] = new List<object> { "rle_palette_v1", "avatar", CapLight, CapBiomes, SectionedSnapshot.Cap },
         };
 
         /// <summary>Optional snapshot extras (PROTOCOL.md 4.4.1): per-block light and 4x4x4 biomes.</summary>
@@ -52,6 +52,14 @@ namespace TabletopCraft.Net
             ["type"] = "region_request", ["world"] = world,
             ["origin"] = new List<object> { origin.x, origin.y, origin.z }, ["dims"] = new List<object> { dims.x, dims.y, dims.z },
         };
+
+        /// <summary>region_request, origin form, with the view margin kept around the visible box (PROTOCOL.md 4.17).</summary>
+        public static Dictionary<string, object> RegionRequest(string world, Vector3Int origin, Vector3Int dims, Vector3Int viewMargin)
+        {
+            var d = RegionRequest(world, origin, dims);
+            d["view_margin"] = new List<object> { viewMargin.x, viewMargin.y, viewMargin.z };
+            return d;
+        }
 
         public static Dictionary<string, object> RegionQuery(string player = null)
         {
