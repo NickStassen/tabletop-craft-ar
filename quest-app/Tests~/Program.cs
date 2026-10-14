@@ -161,6 +161,7 @@ static class Program
         string jar = JarPath(args);
         if (jar != null) ModelTests(jar);
         else Console.WriteLine("SKIP block model tests: set MC_CLIENT_JAR or pass --jar PATH (a client jar or resource pack zip)");
+        RenderTests.Run(Check, jar);   // 0.3.1 vanilla look: randomness, offsets, random UV tables (RenderTests.cs)
 
         int sceneIdx = Array.IndexOf(args, "--scene");
         if (sceneIdx >= 0 && jar != null) SceneDump.Run(jar, args[sceneIdx + 1], args);
@@ -245,7 +246,7 @@ static class Program
         int greedyVerts = m.Verts.Count;
         bool cherryTop = false;
         for (int i = 0; i < greedyVerts; i += 4)
-            if (m.Verts[i].y == 1 && m.Verts[i + 2].y == 1 && (int)m.Uvs[i].z == assets.LayerOf("block/grass_block_top") && Near(m.Colors[i], 0xB6, 0xDB, 0x61, 0)) cherryTop = true;
+            if (m.Verts[i].y == 1 && m.Verts[i + 2].y == 1 && (int)m.Uvs[i].z % RandomUv.LayerStride == assets.LayerOf("block/grass_block_top") && Near(m.Colors[i], 0xB6, 0xDB, 0x61, 0)) cherryTop = true;
         Check(cherryTop, "pack: grass_block top (model cube face, tintindex) takes the biome grass colour");
         GreedyMesher.BuildSpecials(w, new Vector3Int(0, 0, 0), faces, m);
         int grassLayer = assets.LayerOf("block/short_grass");

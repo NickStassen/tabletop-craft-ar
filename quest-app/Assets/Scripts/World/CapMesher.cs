@@ -53,6 +53,7 @@ namespace TabletopCraft.World
                     // [water] Water keeps its tint kind (colour already folded in): Emit gives it inside faces.
                     if (key.Tint != TintKind.None) { key.Color = BlockShading.Tint(w, key, p.x, p.y, p.z); if (key.Tint != TintKind.Water) key.Tint = TintKind.None; }
                     if (key.Overlay != 0 && key.OverlayTint != TintKind.None) { key.OverlayColor = BlockShading.Tint(w, key.OverlayKey(), p.x, p.y, p.z); key.OverlayTint = TintKind.None; }
+                    key.Random = 0;   // [random] cuts are cross-sections: plain tiling (the cap renderers carry no block origin)
                     mask[k] = key;
                 }
             for (int v = 0; v < nv; v++)

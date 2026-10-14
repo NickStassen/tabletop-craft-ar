@@ -231,6 +231,23 @@ namespace TabletopCraft.World
                 OpaqueMaterial.SetTexture("_Blocks", Atlas.Array); OpaqueMaterial.SetFloat("_HasTex", 1);
                 TransparentMaterial.SetTexture("_Blocks", Atlas.Array); TransparentMaterial.SetFloat("_HasTex", 1);
             }
+            if (_randomVersion != RandomUv.Version) UploadRandomTables();
+        }
+
+        // [random] Per-block texture rotation of greedy cubes (RandomUv, Shaders/TabletopRandom.cginc): the tables are a
+        // global array (fixed size: Unity can't grow a shader array after its first upload), and every batch carries the
+        // world block of its mesh origin so the shader can hash world positions (stable when the region moves).
+        static readonly int RandomUvId = Shader.PropertyToID("_TabletopRandomUv"), Cell0Id = Shader.PropertyToID("_TabletopCell0");
+        int _randomVersion = -1;
+        Vector4[] _randomTables;
+
+        void UploadRandomTables()
+        {
+            _randomVersion = RandomUv.Version;
+            var p = RandomUv.Packed();
+            if (_randomTables == null) _randomTables = new Vector4[RandomUv.MaxTables + 1];
+            for (int i = 0; i < _randomTables.Length; i++) _randomTables[i] = new Vector4(p[i * 4], p[i * 4 + 1], p[i * 4 + 2], p[i * 4 + 3]);
+            Shader.SetGlobalVectorArray(RandomUvId, _randomTables);
         }
 
         void Update()
@@ -365,6 +382,12 @@ namespace TabletopCraft.World
             b.Renderer.sharedMaterials = Materials();
             b.Renderer.shadowCastingMode = ShadowCastingMode.Off; b.Renderer.receiveShadows = false;
             b.Renderer.lightProbeUsage = LightProbeUsage.Off; b.Renderer.reflectionProbeUsage = ReflectionProbeUsage.Off;
+            // [random] World block of the mesh origin: Blocks-local (x, y, -z) is region-local, plus the region origin. Batch
+            // keys are world-aligned, so this stays true when the region moves and the batch is only repositioned.
+            var lp = go.transform.localPosition;
+            var mpb = new MaterialPropertyBlock();
+            mpb.SetVector(Cell0Id, new Vector4(_layout.Origin.x + Mathf.Round(lp.x), _layout.Origin.y + Mathf.Round(lp.y), _layout.Origin.z - Mathf.Round(lp.z), 0));
+            b.Renderer.SetPropertyBlock(mpb);
             go.SetActive(false);
             _batches[key] = b;
             return b;

@@ -2,8 +2,9 @@
 // "Block models"). Engine-free, so Tests~ runs it against a real client jar. It reads JSON and resolves textures,
 // so it runs on the main thread only (BlockModels.Prepare); worker threads only read the finished BakedModel.
 //
-// Supported: blockstate "variants" (property match; a weighted list takes its first entry; x/y rotation; uvlock)
-// and "multipart" (every part whose "when" matches, including OR/AND and "a|b" alternatives); model "parent"
+// Supported: blockstate "variants" (property match; x/y rotation; uvlock; weighted random lists are baked per
+// combination and picked per block like vanilla, see BlockRandom) and "multipart" (every part whose "when" matches,
+// including OR/AND and "a|b" alternatives); model offsets of flowers and grass (BlockRandom.Offset); model "parent"
 // chains with "#texture" variables (26.x {"sprite": ..., "force_translucent": ...} objects too); elements with
 // from/to, per-face uv (default from the element bounds), texture, cullface, rotation and tintindex; element
 // rotation as axis/angle/origin/rescale or as 26.x x/y/z angles. Block entities (chests, banners, heads, shulker
@@ -49,6 +50,101 @@ namespace TabletopCraft.World
         {
             int c = dir * 4, q = quad * 4;
             return (cells[q] & ~Cover[c]) == 0 && (cells[q + 1] & ~Cover[c + 1]) == 0 && (cells[q + 2] & ~Cover[c + 2]) == 0 && (cells[q + 3] & ~Cover[c + 3]) == 0;
+        }
+
+        // [random] Weighted random blockstate entries (bamboo, fire, chorus plants, lily pads, turtle eggs, sea pickles,
+        // and the rotated full cubes like stone and dirt): every combination is baked, vanilla's pick chooses per block.
+        /// <summary>Per-position alternatives (this model is Variants[0]), or null when the state has one look.</summary>
+        public BakedModel[] Variants;
+        /// <summary>Total weights of the random lists in pick order (Variants index = mixed radix over these).</summary>
+        public int[] RandomTotals;
+        /// <summary>Multipart (MultiPartModel draws one long and reseeds every part with it) or a plain weighted list.</summary>
+        public bool RandomMultipart;
+        // [random] Model offset (BlockBehaviour.OffsetType of flowers, grass, bamboo, dripstone...): 0 none, 1 XZ, 2 XYZ.
+        public byte OffsetKind;
+        public float MaxHorizontalOffset = 0.25f, MaxVerticalOffset = 0.2f;
+
+        /// <summary>The look vanilla picks for the block at world (x, y, z): ModelBlockRenderer seeds its random with
+        /// BlockState.getSeed(pos) (Mth.getSeed) before collecting the model's parts.</summary>
+        public BakedModel Pick(int x, int y, int z) => Variants == null ? this : Variants[BlockRandom.Pick(this, x, y, z)];
+    }
+
+    /// <summary>[random] Vanilla's per-position randomness for block models, from the 26.3 bytecode: Mth.getSeed,
+    /// the java.util.Random LCG of SingleThreadedRandomSource/BitRandomSource, WeightedVariants and MultiPartModel
+    /// picks, and BlockBehaviour.Properties.offsetType (XZ / XYZ model offsets). Engine-free.</summary>
+    public static class BlockRandom
+    {
+        /// <summary>Mth.getSeed(x, y, z).</summary>
+        public static long Seed(int x, int y, int z)
+        {
+            long l = (long)(x * 3129871) ^ (long)z * 116129781L ^ (long)y;
+            l = l * l * 42317861L + l * 11L;
+            return l >> 16;
+        }
+
+        /// <summary>java.util.Random's LCG as BitRandomSource uses it (setSeed scrambles, next(bits), nextInt(bound), nextLong).</summary>
+        public struct JavaRandom
+        {
+            const long Mask = (1L << 48) - 1;
+            long _s;
+            public JavaRandom(long seed) { _s = (seed ^ 0x5DEECE66DL) & Mask; }
+            public void SetSeed(long seed) { _s = (seed ^ 0x5DEECE66DL) & Mask; }
+            public int Next(int bits) { _s = (_s * 0x5DEECE66DL + 0xBL) & Mask; return (int)(_s >> (48 - bits)); }
+            public int NextInt(int bound)
+            {
+                if ((bound & (bound - 1)) == 0) return (int)((bound * (long)Next(31)) >> 31);
+                int bits, val;
+                do { bits = Next(31); val = bits % bound; } while (bits - val + (bound - 1) < 0);
+                return val;
+            }
+            public long NextLong() => ((long)Next(32) << 32) + Next(32);
+        }
+
+        /// <summary>Index into m.Variants for the block at world (x, y, z). A plain weighted list draws nextInt(total) from
+        /// the position's seed (WeightedVariants); a multipart model draws one long and reseeds every part with it
+        /// (MultiPartModel), so lists with equal totals pick the same index.</summary>
+        public static int Pick(BakedModel m, int x, int y, int z)
+        {
+            var t = m.RandomTotals;
+            var r = new JavaRandom(Seed(x, y, z));
+            if (!m.RandomMultipart) return r.NextInt(t[0]);
+            long partSeed = r.NextLong();
+            int idx = 0;
+            foreach (int total in t) { r.SetSeed(partSeed); idx = idx * total + r.NextInt(total); }
+            return idx;
+        }
+
+        // Blocks.<clinit> offsetType(XZ / XYZ) in 26.3. Pointed dripstone and sulfur spikes (SpeleothemBlock) move at
+        // most 0.125 sideways, the small dripleaf at most 0.1 down; everything else 0.25 and 0.2.
+        static readonly HashSet<string> OffsetXyz = new HashSet<string> { "short_grass", "fern", "short_dry_grass", "tall_dry_grass", "small_dripleaf" };
+        static readonly HashSet<string> OffsetXz = new HashSet<string>
+        {
+            "mangrove_propagule", "tall_seagrass", "dandelion", "golden_dandelion", "torchflower", "poppy", "blue_orchid", "allium", "azure_bluet",
+            "red_tulip", "orange_tulip", "white_tulip", "pink_tulip", "oxeye_daisy", "cornflower", "wither_rose", "lily_of_the_valley", "sunflower",
+            "lilac", "rose_bush", "peony", "tall_grass", "large_fern", "pitcher_plant", "bamboo_sapling", "bamboo", "warped_roots", "nether_sprouts",
+            "crimson_roots", "pointed_dripstone", "sulfur_spike", "hanging_roots", "open_eyeblossom", "closed_eyeblossom",
+        };
+
+        public static void SetOffset(BakedModel m, string path)
+        {
+            m.OffsetKind = (byte)(OffsetXyz.Contains(path) ? 2 : OffsetXz.Contains(path) ? 1 : 0);
+            if (m.OffsetKind == 0) return;
+            if (path == "pointed_dripstone" || path == "sulfur_spike") m.MaxHorizontalOffset = 0.125f;
+            if (path == "small_dripleaf") m.MaxVerticalOffset = 0.1f;
+            if (m.Variants != null) foreach (var v in m.Variants) { v.OffsetKind = m.OffsetKind; v.MaxHorizontalOffset = m.MaxHorizontalOffset; v.MaxVerticalOffset = m.MaxVerticalOffset; }
+        }
+
+        /// <summary>BlockBehaviour.Properties.offsetType's functions: the seed of (x, 0, z), so both halves of a tall plant
+        /// move together; x from bits 0-3, z from bits 8-11, y (XYZ) from bits 4-7, in blocks.</summary>
+        public static Vector3 Offset(BakedModel m, int x, int z)
+        {
+            if (m.OffsetKind == 0) return new Vector3(0, 0, 0);
+            long seed = Seed(x, 0, z);
+            double h = m.MaxHorizontalOffset;
+            double dx = Math.Min(h, Math.Max(-h, ((double)((float)(seed & 15L) / 15f) - 0.5) * 0.5));
+            double dz = Math.Min(h, Math.Max(-h, ((double)((float)(seed >> 8 & 15L) / 15f) - 0.5) * 0.5));
+            double dy = m.OffsetKind == 2 ? ((double)((float)(seed >> 4 & 15L) / 15f) - 1.0) * m.MaxVerticalOffset : 0;
+            return new Vector3((float)dx, (float)dy, (float)dz);
         }
     }
 
@@ -96,7 +192,8 @@ namespace TabletopCraft.World
             if ((m & 1) != 0) { float t = u; u = v; v = t; }
             if ((m & 2) != 0) u = -u;
             if ((m & 4) != 0) v = -v;
-            return new Vector3(u, v, key.Layer);
+            // [random] the shader decodes layer + LayerStride * table (TabletopRandom.cginc) and rotates per block cell.
+            return new Vector3(u, v, key.Layer >= 0 && key.Random != 0 ? key.Layer + RandomUv.LayerStride * key.Random : key.Layer);
         }
 
         /// <summary>The UvMap that turns the canonical mapping into this axis-aligned quad's own UVs.</summary>
@@ -196,7 +293,7 @@ namespace TabletopCraft.World
             if (!_blockstates.TryGetValue(key, out var bs)) { bs = _assets.ReadJson($"assets/{ns}/blockstates/{path}.json"); _blockstates[key] = bs; }
             if (bs == null) return null;
             var props = Props(state);
-            var applies = new List<Dictionary<string, object>>();
+            var slots = new List<Slot>();
             var variants = bs.O("variants");
             if (variants != null)
             {
@@ -207,34 +304,91 @@ namespace TabletopCraft.World
                     if (VariantMatches(kv.Key, props)) { pick = kv.Value; break; }
                 }
                 if (pick == null) pick = fallback;   // properties from another game version: better the default look than nothing
-                var a = First(pick);
-                if (a != null) applies.Add(a);
+                var s = Slot.Of(pick);
+                if (s != null) slots.Add(s);
             }
             var multipart = bs.A("multipart");
             if (multipart != null)
                 foreach (var p in multipart)
                     if (p is Dictionary<string, object> part && (!part.TryGetValue("when", out var w) || When(w, props)))
                     {
-                        var a = First(part.TryGetValue("apply", out var ap) ? ap : null);
-                        if (a != null) applies.Add(a);
+                        var s = Slot.Of(part.TryGetValue("apply", out var ap) ? ap : null);
+                        if (s != null) slots.Add(s);
                     }
 
             _hasBlockColor = BlockColor(path, props, out _blockColor);
             _tintKind = BiomeColors.BlockTint(state, out _);
-            var quads = new List<BakedQuad>();
-            Resolved firstModel = null;
-            foreach (var a in applies)
+            // Weighted random lists: vanilla picks one entry per position (BlockRandom.Pick). Every combination a
+            // position can pick is baked here; the mesher chooses per block. The picks only depend on each list's total
+            // weight (MultiPartModel reseeds every part with the same seed), so the combinations are the products of the
+            // distinct totals.
+            var totals = new List<int>();
+            foreach (var s in slots) if (s.Entries.Count > 1 && !totals.Contains(s.Total)) totals.Add(s.Total);
+            int combos = 1;
+            foreach (var t in totals) combos *= t;
+            if (totals.Count == 0 || combos > MaxRandomCombos) { totals.Clear(); combos = 1; }
+            var all = new BakedModel[combos];
+            var digits = new int[totals.Count];
+            for (int c = 0; c < combos; c++)
             {
-                var model = a.S("model");
-                var r = model == null ? null : Resolve(model);
-                if (r == null) continue;
-                if (firstModel == null) firstModel = r;
-                var rot = M3.Model(a.D("x"), a.D("y"));
-                bool uvlock = a.B("uvlock");
-                if (r.Elements != null) foreach (var el in r.Elements) if (el is Dictionary<string, object> e) BakeElement(e, r, rot, uvlock, state, quads);
+                for (int i = totals.Count - 1, rest = c; i >= 0; i--) { digits[i] = rest % totals[i]; rest /= totals[i]; }
+                var quads = new List<BakedQuad>();
+                Resolved firstModel = null;
+                foreach (var s in slots)
+                {
+                    var a = s.Entries.Count == 1 || totals.Count == 0 ? s.Entries[0] : s.Pick(digits[totals.IndexOf(s.Total)]);
+                    var model = a.S("model");
+                    var r = model == null ? null : Resolve(model);
+                    if (r == null) continue;
+                    if (firstModel == null) firstModel = r;
+                    var rot = M3.Model(a.D("x"), a.D("y"));
+                    bool uvlock = a.B("uvlock");
+                    if (r.Elements != null) foreach (var el in r.Elements) if (el is Dictionary<string, object> e) BakeElement(e, r, rot, uvlock, state, quads);
+                }
+                BlockEntityBoxes.Add(this, path, props, firstModel, state, quads);
+                all[c] = Finish(quads);
             }
-            BlockEntityBoxes.Add(this, path, props, firstModel, state, quads);
-            return Finish(quads);
+            var m = all[0];
+            if (combos > 1)
+            {
+                m.Variants = all; m.RandomTotals = totals.ToArray(); m.RandomMultipart = multipart != null;
+                // Neighbours are culled against the base model: only what every variant covers.
+                for (int k = 1; k < combos; k++) for (int i = 0; i < m.Cover.Length; i++) m.Cover[i] &= all[k].Cover[i];
+            }
+            BlockRandom.SetOffset(m, path);
+            return m;
+        }
+
+        /// <summary>At most this many baked combinations per state (26.3 needs 8: fire's 2 x 4).</summary>
+        public const int MaxRandomCombos = 64;
+
+        /// <summary>A blockstate entry: one model, or a weighted random list ("weight", default 1).</summary>
+        sealed class Slot
+        {
+            public readonly List<Dictionary<string, object>> Entries = new List<Dictionary<string, object>>();
+            public readonly List<int> Weights = new List<int>();
+            public int Total;
+
+            public static Slot Of(object v)
+            {
+                var s = new Slot();
+                if (v is List<object> l) { foreach (var o in l) if (o is Dictionary<string, object> d) s.Add(d); }
+                else if (v is Dictionary<string, object> d) s.Add(d);
+                return s.Entries.Count > 0 ? s : null;
+            }
+
+            void Add(Dictionary<string, object> d)
+            {
+                int w = Math.Max(1, d.I("weight", 1));
+                Entries.Add(d); Weights.Add(w); Total += w;
+            }
+
+            /// <summary>WeightedList.getRandom's selector for a drawn index 0..Total-1.</summary>
+            public Dictionary<string, object> Pick(int r)
+            {
+                for (int i = 0; i < Entries.Count; i++) { r -= Weights[i]; if (r < 0) return Entries[i]; }
+                return Entries[Entries.Count - 1];
+            }
         }
 
         /// <summary>[menu] Bakes one model by id with no blockstate rotation, e.g. an item's inventory model
@@ -249,12 +403,6 @@ namespace TabletopCraft.World
             var quads = new List<BakedQuad>();
             foreach (var el in r.Elements) if (el is Dictionary<string, object> e) BakeElement(e, r, M3.Identity, false, state, quads);
             return Finish(quads);
-        }
-
-        static Dictionary<string, object> First(object v)
-        {
-            if (v is List<object> l) v = l.Count > 0 ? l[0] : null;   // weighted random list: vanilla picks per position; we take the first
-            return v as Dictionary<string, object>;
         }
 
         static bool VariantMatches(string key, Dictionary<string, string> props)

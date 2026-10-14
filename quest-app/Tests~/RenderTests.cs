@@ -1,0 +1,214 @@
+// Engine-free tests for the 0.3.1 look-like-vanilla rendering work: vanilla's per-position randomness (BlockRandom:
+// Mth.getSeed, the java.util.Random LCG, weighted variant picks, model offsets) against golden values computed with
+// the real 26.3 classes, and with a client jar (--jar) the baked random variants and the greedy cubes' per-block UV
+// tables (RandomUv).
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using TabletopCraft.World;
+using UnityEngine;
+
+static class RenderTests
+{
+    /// <summary>Golden values from the 26.3 client classes (Mth.getSeed, RandomSource.createThreadLocalInstance =
+    /// SingleThreadedRandomSource): the seed of (x, y, z), nextInt(4/16/5) after setSeed(seed), the multipart part seed
+    /// (nextLong) and nextInt(2/4/5) after reseeding with it, and the XYZ model offset of (x, 0, z).</summary>
+    readonly struct G
+    {
+        public readonly int X, Y, Z, V4, V16, V5, M2, M4, M5; public readonly long Seed, PartSeed; public readonly float Dx, Dy, Dz;
+        public G(int x, int y, int z, long seed, int v4, int v16, int v5, long partSeed, int m2, int m4, int m5, float dx, float dy, float dz)
+        { X = x; Y = y; Z = z; Seed = seed; V4 = v4; V16 = v16; V5 = v5; PartSeed = partSeed; M2 = m2; M4 = m4; M5 = m5; Dx = dx; Dy = dy; Dz = dz; }
+    }
+
+    static readonly G[] Gold =
+    {
+        new G(0, 0, 0, 0L, 2, 11, 0, -4962768465676381896L, 0, 1, 3, -0.250000000f, -0.200000003f, -0.250000000f),
+        new G(1, 64, -1, 51075559105168L, 2, 9, 0, -7656025847503286258L, 0, 1, 2, 0.050000012f, -0.186666667f, -0.183333337f),
+        new G(-37, 70, 123, 127394479219720L, 0, 2, 1, 3149645818009156871L, 0, 1, 2, 0.050000012f, -0.039999999f, -0.183333337f),
+        new G(1000, -12, -999, -89076087406270L, 2, 10, 0, -6563781731044010084L, 1, 3, 3, 0.050000012f, -0.039999999f, 0.116666675f),
+        new G(12345, 100, -54321, -94259506441571L, 1, 5, 0, 6437769178289409417L, 0, 1, 2, -0.183333337f, -0.200000003f, -0.049999997f),
+        new G(-30000000, 319, 29999999, -20892113470306L, 0, 1, 0, 1896228282024270181L, 1, 2, 0, -0.250000000f, -0.013333333f, 0.150000006f),
+    };
+
+    public static void Run(Action<bool, string> check, string jar)
+    {
+        Randomness(check);
+        UvCodes(check);
+        if (jar != null) Pack(check, jar);
+        else Console.WriteLine("SKIP render pack tests: set MC_CLIENT_JAR or pass --jar PATH");
+    }
+
+    static void Randomness(Action<bool, string> check)
+    {
+        var bad = new List<string>();
+        var xyz = new BakedModel { OffsetKind = 2 };
+        foreach (var g in Gold)
+        {
+            long seed = BlockRandom.Seed(g.X, g.Y, g.Z);
+            var r = new BlockRandom.JavaRandom(seed);
+            int v4 = r.NextInt(4); r.SetSeed(seed); int v16 = r.NextInt(16); r.SetSeed(seed); int v5 = r.NextInt(5);
+            r.SetSeed(seed); long part = r.NextLong();
+            r.SetSeed(part); int m2 = r.NextInt(2); r.SetSeed(part); int m4 = r.NextInt(4); r.SetSeed(part); int m5 = r.NextInt(5);
+            var off = BlockRandom.Offset(xyz, g.X, g.Z);
+            if (seed != g.Seed || v4 != g.V4 || v16 != g.V16 || v5 != g.V5 || part != g.PartSeed || m2 != g.M2 || m4 != g.M4 || m5 != g.M5 ||
+                Math.Abs(off.x - g.Dx) > 1e-6f || Math.Abs(off.y - g.Dy) > 1e-6f || Math.Abs(off.z - g.Dz) > 1e-6f)
+                bad.Add($"({g.X},{g.Y},{g.Z}) seed {seed} picks {v4}/{v16}/{v5} part {m2}/{m4}/{m5} off {off.x},{off.y},{off.z}");
+        }
+        check(bad.Count == 0, $"block randomness matches the 26.3 classes at {Gold.Length} positions (Mth.getSeed, Random LCG, weighted and multipart picks, XYZ offsets)" +
+                              (bad.Count > 0 ? ": " + string.Join("; ", bad) : ""));
+        // Picks through a model: a 4-entry list picks nextInt(4); a multipart model with totals 2 and 4 combines its parts.
+        var plain = new BakedModel { RandomTotals = new[] { 4 }, Variants = new BakedModel[4] };
+        var multi = new BakedModel { RandomTotals = new[] { 2, 4 }, RandomMultipart = true, Variants = new BakedModel[8] };
+        check(Gold.All(g => BlockRandom.Pick(plain, g.X, g.Y, g.Z) == g.V4 && BlockRandom.Pick(multi, g.X, g.Y, g.Z) == g.M2 * 4 + g.M4),
+              "variant picks: plain lists draw nextInt(total), multipart parts share one reseeded long (fire: 2 x 4 combinations)");
+        // XZ offsets ignore y (both halves of a tall flower move together) and stay within +-0.25 (dripstone 0.125).
+        var xz = new BakedModel { OffsetKind = 1 }; var drip = new BakedModel { OffsetKind = 1, MaxHorizontalOffset = 0.125f };
+        bool ok = true;
+        for (int x = -20; x < 20; x++) for (int z = -20; z < 20; z++)
+        {
+            var o = BlockRandom.Offset(xz, x, z); var d = BlockRandom.Offset(drip, x, z);
+            ok &= o.y == 0 && Math.Abs(o.x) <= 0.25f && Math.Abs(o.z) <= 0.25f && Math.Abs(d.x) <= 0.125f + 1e-6f && Math.Abs(d.z) <= 0.125f + 1e-6f;
+        }
+        check(ok && BlockRandom.Offset(new BakedModel(), 5, 7).x == 0, "model offsets: XZ never moves up or down, within 0.25 (speleothems 0.125); no offset type = none");
+    }
+
+    /// <summary>RandomUv codes: Relative(a, b) maps a's UVs onto b's, and Apply does in C# what the shader does.</summary>
+    static void UvCodes(Action<bool, string> check)
+    {
+        bool ok = true;
+        for (byte a = 0; a < 8; a++)
+            for (byte b = 0; b < 8; b++)
+            {
+                byte r = RandomUv.Relative(a, b);
+                RandomUv.Matrix(a, out int a00, out int a01, out int a10, out int a11);
+                RandomUv.Matrix(b, out int b00, out int b01, out int b10, out int b11);
+                RandomUv.Matrix(r, out int r00, out int r01, out int r10, out int r11);
+                // R * A == B
+                ok &= r00 * a00 + r01 * a10 == b00 && r00 * a01 + r01 * a11 == b01 && r10 * a00 + r11 * a10 == b10 && r10 * a01 + r11 * a11 == b11;
+            }
+        float u = 0.2f, v = 0.7f;
+        RandomUv.Apply(2, ref u, ref v);   // negate u: mirrored
+        float u2 = 0.2f, v2 = 0.7f;
+        RandomUv.Apply(1 | 2, ref u2, ref v2);   // swap, then negate u: a quarter turn
+        check(ok && Math.Abs(u - 0.8f) < 1e-6f && Math.Abs(v - 0.7f) < 1e-6f && Math.Abs(u2 - 0.3f) < 1e-6f && Math.Abs(v2 - 0.2f) < 1e-6f,
+              "random UV codes: Relative composes with UvMap for all 64 pairs; Apply mirrors and turns the in-block coordinate");
+    }
+
+    static void Pack(Action<bool, string> check, string jar)
+    {
+        using var assets = new ZipAssets(jar);
+        var baker = new BlockModelBaker(assets);
+        BakedModel B(string s) => baker.Bake(s);
+
+        // Weighted variants are baked per combination and picked per position like vanilla.
+        var lily = B("minecraft:lily_pad");
+        var fire = B("minecraft:fire[age=0,east=false,north=false,south=false,up=false,west=false]");
+        var fireSides = B("minecraft:fire[age=0,east=true,north=true,south=false,up=false,west=false]");
+        var chorus = B("minecraft:chorus_plant[down=false,east=false,north=true,south=false,up=false,west=false]");
+        var poppy = B("minecraft:poppy");
+        check(lily.Variants?.Length == 4 && !lily.RandomMultipart && fire.Variants?.Length == 8 && fire.RandomMultipart && fireSides.Variants?.Length == 4 &&
+              chorus.Variants?.Length == 5 && poppy.Variants == null,
+              $"random variants baked: lily pad 4, fire on the ground floor x sides 2x4={fire.Variants?.Length}, fire on two walls 4, chorus plant 5 (weights 2+1+1+1), poppy none");
+        // The lily pad's variants are its model turned 0/90/180/270 degrees; the pick follows the seed (V4 above).
+        var turned = Enumerable.Range(0, 4).Select(k => Corner(lily.Variants[k])).ToList();
+        check(turned.Distinct().Count() == 4 && Gold.All(g => lily.Pick(g.X, g.Y, g.Z) == lily.Variants[g.V4]),
+              "lily pad: four turned variants, picked by nextInt(4) of the block's seed");
+        check(poppy.OffsetKind == 1 && B("minecraft:short_grass").OffsetKind == 2 && B("minecraft:small_dripleaf[facing=north,half=lower,waterlogged=false]").MaxVerticalOffset == 0.1f &&
+              B("minecraft:pointed_dripstone[thickness=tip,vertical_direction=up,waterlogged=false]").MaxHorizontalOffset == 0.125f && B("minecraft:stone").OffsetKind == 0,
+              "offset types: poppy XZ, short grass XYZ, small dripleaf 0.1 down, pointed dripstone 0.125 sideways, stone none");
+
+        // Meshing: a poppy moves by its offset, the lily pad turns per block.
+        BlockRules.ResetShapes();
+        RandomUv.Reset();
+        var pf = new PackFaces(assets);
+        var w = new WorldModel { SnapshotId = 1, Dims = new Vector3Int(1, 1, 1), Origin = new Vector3Int(1000, -12, -999) };
+        w.Palette.AddRange(new[] { "minecraft:air", "minecraft:poppy" });
+        w.Grid = new ushort[] { 1 };
+        pf.Prewarm(w);
+        var m = new MeshData();
+        GreedyMesher.BuildSpecials(w, new Vector3Int(0, 0, 0), pf, m);
+        var plain = new MeshData();
+        BlockModelMesher.Emit(plain, new WorldModel { SnapshotId = 1, Dims = new Vector3Int(1, 1, 1), Grid = new ushort[] { 1 }, Palette = { "minecraft:air", "minecraft:poppy" } },
+                              0, 0, 0, "minecraft:poppy", new BakedModel { Quads = poppy.Quads }, null);
+        var g4 = Gold[3];   // (1000, -12, -999): XZ offset 0.05, 0.1167
+        bool moved = m.Verts.Count == plain.Verts.Count && m.Verts.Count > 0 &&
+                     Enumerable.Range(0, m.Verts.Count).All(i => Math.Abs(m.Verts[i].x - plain.Verts[i].x - g4.Dx) < 1e-5f && Math.Abs(m.Verts[i].z - plain.Verts[i].z - g4.Dz) < 1e-5f && m.Verts[i].y == plain.Verts[i].y);
+        check(moved, $"mesh: a poppy at (1000, -12, -999) is offset by ({g4.Dx}, 0, {g4.Dz}) like vanilla");
+
+        // Greedy cubes with random rotations get per-side UV tables; sides that look the same in every variant don't.
+        var stone = Face6(pf, "minecraft:stone"); var dirt = Face6(pf, "minecraft:dirt"); var grassF = Face6(pf, "minecraft:grass_block[snowy=false]");
+        var nether = Face6(pf, "minecraft:netherrack"); var plainCube = Face6(pf, "minecraft:cobblestone");
+        check(stone.All(f => f.Random != 0) && dirt[3].Random != 0 && dirt[2].Random != 0 && dirt[0].Random == 0 && dirt[4].Random == 0 &&
+              grassF[3].Random != 0 && grassF[0].Random == 0 && nether.All(f => f.Random != 0) && plainCube.All(f => f.Random == 0) &&
+              RandomUv.Table(nether[3].Random).Length == 16 && RandomUv.Table(dirt[3].Random).Length == 4,
+              $"random UV tables: stone all sides (mirrored), dirt and grass top/bottom only (turned), netherrack 16 variants, cobblestone none ({RandomUv.Count} tables)");
+        // Each table entry turns variant 0's UVs into that variant's UVs (checked on the baked faces).
+        var bad = new List<string>();
+        foreach (var s in new[] { "minecraft:stone", "minecraft:dirt", "minecraft:netherrack", "minecraft:grass_block[snowy=false]", "minecraft:deepslate[axis=x]", "minecraft:sand" })
+        {
+            Face6(pf, s);
+            var bm = pf.Model(s);
+            for (int d = 0; d < 6; d++)
+            {
+                var codes = RandomUv.Table(bm.CubeFaces[d].Random);
+                for (int k = 0; k < bm.Variants.Length; k++)
+                {
+                    byte code = codes == null ? (byte)0 : codes[k];
+                    if (!SameUv(bm.Variants[0], bm.Variants[k], d, code)) bad.Add($"{s} dir {d} variant {k}");
+                }
+            }
+        }
+        check(bad.Count == 0, "random UV tables reproduce every variant's baked face UVs" + (bad.Count > 0 ? ": " + string.Join(", ", bad.Take(6)) : ""));
+        // The greedy mesher still merges a floor of stone into one quad per side (the rotation is per block in the shader),
+        // and encodes the table in uv.z = layer + 4096 * table.
+        var floor = new WorldModel { SnapshotId = 1, Dims = new Vector3Int(4, 1, 4), Origin = new Vector3Int(0, 0, 0) };
+        floor.Palette.AddRange(new[] { "minecraft:air", "minecraft:stone" });
+        floor.Grid = Enumerable.Repeat((ushort)1, 16).ToArray();
+        pf.Prewarm(floor);
+        m.Clear();
+        GreedyMesher.Build(floor, new Vector3Int(0, 0, 0), pf, m);
+        int stoneLayer = assets.LayerOf("block/stone");
+        check(m.Verts.Count / 4 == 6 && m.Uvs.All(t => (int)t.z % RandomUv.LayerStride == stoneLayer && stone.Any(f => f.Random == (int)t.z / RandomUv.LayerStride && f.Random != 0)),
+              $"mesh: a 4x4 stone floor still merges into 6 quads, each carrying its random table in uv.z (got {m.Verts.Count / 4})");
+        var packed = RandomUv.Packed();
+        var dt = RandomUv.Table(dirt[3].Random);
+        int lo = (int)packed[dirt[3].Random * 4 + 1];
+        check(packed[dirt[3].Random * 4] == dt.Length && Enumerable.Range(0, dt.Length).All(k => ((lo >> (3 * k)) & 7) == dt[k]), "random UV tables pack into the shader's float4 layout");
+        BlockRules.ResetShapes();
+    }
+
+    static FaceKey[] Face6(PackFaces pf, string s) => Enumerable.Range(0, 6).Select(d => pf.Face(s, d)).ToArray();
+
+    /// <summary>A model's first quad's first corner, rounded (tells turned variants apart).</summary>
+    static string Corner(BakedModel m)
+    {
+        var q = m.Quads[0];
+        return $"{Math.Round(q.P0.x, 3)},{Math.Round(q.P0.y, 3)},{Math.Round(q.P0.z, 3)}:{Math.Round(q.T0.x, 3)},{Math.Round(q.T0.y, 3)}";
+    }
+
+    /// <summary>On side d, does variant k's face show variant 0's texture moved by code (compared at a point inside the face)?</summary>
+    static bool SameUv(BakedModel v0, BakedModel vk, int d, byte code)
+    {
+        var a = WholeFace(v0, d); var b = WholeFace(vk, d);
+        if (a == null || b == null) return false;
+        // A point inside the face: weights on a's corners; find the same point on b by matching corner positions.
+        float[] wts = { 0.55f, 0.25f, 0.15f, 0.05f };
+        var pa = new[] { a.Value.P0, a.Value.P1, a.Value.P2, a.Value.P3 }; var ta = new[] { a.Value.T0, a.Value.T1, a.Value.T2, a.Value.T3 };
+        var pb = new[] { b.Value.P0, b.Value.P1, b.Value.P2, b.Value.P3 }; var tb = new[] { b.Value.T0, b.Value.T1, b.Value.T2, b.Value.T3 };
+        float ua = 0, va = 0, ub = 0, vb = 0;
+        for (int i = 0; i < 4; i++)
+        {
+            int j = Enumerable.Range(0, 4).FirstOrDefault(n => Math.Abs(pb[n].x - pa[i].x) < 1e-4f && Math.Abs(pb[n].y - pa[i].y) < 1e-4f && Math.Abs(pb[n].z - pa[i].z) < 1e-4f);
+            ua += wts[i] * ta[i].x; va += wts[i] * ta[i].y; ub += wts[i] * tb[j].x; vb += wts[i] * tb[j].y;
+        }
+        RandomUv.Apply(code, ref ua, ref va);
+        float Frac(float x) => x - (float)Math.Floor(x);
+        return Math.Abs(Frac(ua) - Frac(ub)) < 1e-3f && Math.Abs(Frac(va) - Frac(vb)) < 1e-3f;
+    }
+
+    static BakedQuad? WholeFace(BakedModel m, int d)
+    {
+        foreach (var q in m.Quads) if (q.Dir == d && q.Cull == d) return q;
+        return null;
+    }
+}

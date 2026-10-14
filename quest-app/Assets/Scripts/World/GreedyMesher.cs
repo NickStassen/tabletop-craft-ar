@@ -33,7 +33,8 @@ namespace TabletopCraft.World
         public Color32 OverlayColor;
         public TintKind OverlayTint;
         public byte OverlayUvMap;
-        public bool Equals(FaceKey o) => Layer == o.Layer && Color.r == o.Color.r && Color.g == o.Color.g && Color.b == o.Color.b && Color.a == o.Color.a && Transparent == o.Transparent && Tint == o.Tint && UvMap == o.UvMap
+        public byte Random;      // [random] per-block texture rotation table (RandomUv in BlockModels.cs), 0 = none
+        public bool Equals(FaceKey o) => Layer == o.Layer && Color.r == o.Color.r && Color.g == o.Color.g && Color.b == o.Color.b && Color.a == o.Color.a && Transparent == o.Transparent && Tint == o.Tint && UvMap == o.UvMap && Random == o.Random
             && Overlay == o.Overlay && (Overlay == 0 || (OverlayTint == o.OverlayTint && OverlayUvMap == o.OverlayUvMap && OverlayColor.r == o.OverlayColor.r && OverlayColor.g == o.OverlayColor.g && OverlayColor.b == o.OverlayColor.b && OverlayColor.a == o.OverlayColor.a));
 
         /// <summary>The overlay layer as a face key of its own (for colours and UVs), or default when there is none.</summary>
