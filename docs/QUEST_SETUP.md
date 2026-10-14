@@ -78,6 +78,8 @@ Then relaunch the app. Alternatively set **ServerUrl** on the TabletopApp compon
 
 Optional lighting keys (the server sends light and biomes when its config has `stream.light` / `stream.biomes` on, the default): `"smooth_lighting": false` gives one light value per face and no ambient occlusion (about 15-18% fewer faces than smooth lighting on real terrain), and `"brightness"` is Minecraft's Brightness slider, 0 (Moody) to 1 (Bright), default 1 (Bright, so caves stay readable over passthrough). `"min_light"` (default 0.2) is how bright light level 0 is drawn, 0..1; everything brighter is rescaled up to full daylight, so a cave reads as dark but visible and the seabed 10 blocks down at about half of daylight. A negative value gives vanilla's own curve (level 0 = 0.15 at Bright).
 
+Optional operator keys (Part L): `"operator_name"` is your name in game chat, `"quick_commands"` adds Console buttons. The `token` also unlocks server commands from the headset (Part L).
+
 Optional area keys (Part K): `"area_width"` starts the app at a width preset with the block size fitted to the table, and `"batch_columns"` sets the mesh batch size.
 
 ## Part E: textures (resource pack)
@@ -200,6 +202,7 @@ The old status text in the middle of the view is gone:
 - **Short messages** (2–3 s, fading, low in your view): link lost and restored, server errors (refused edits, area too large...), local refusals ("Can't place fire"), and area setup results ("Area set", "Requested 64x96x64...", "Area setup cancelled").
 - **Area setup panel**: above your left hand while setup (Y) runs (Part G).
 - **Selected block**: floats above the right controller (Part I), with the small hotbar.
+- **Chat**: the last lines above the left wrist, bubbles over players, and the operator panel on **X** (Part L).
 - **Small HUD** (for debugging): turn on **Show HUD** in the Info tab, or add `"show_hud": true` to `tabletop.json`. It's the same status as the Info tab, about a third of the old size, low and to the left.
 
 ## Part K: seeing a wider area (width presets)
@@ -218,6 +221,51 @@ For measurements, `tabletop.json` can start the app at a preset: `"area_width": 
 - `AREA_REQUEST width 128 -> 192 ...` and `AREA_RESIZED width 128 -> 192 (asked 192) block 2.97 mm in 640 ms` when a resize is sent and arrives.
 - `AREA_LOADED width=192 region=224x128x224 load_s=1.8 faces=... batches=64 renderers=64 draw_calls~128 sections=706/1568 verts=... tris=... gpu_kb=...` once the new area is fully meshed and uploaded.
 - `PERF width=192 frames=360 fps=72.0 frame_ms p50=13.9 p90=14.1 p99=16.2 max=22.0 over15ms=3 faces=... pending=0 batches=...` every 5 s: Unity's frame times (`Time.unscaledDeltaTime`) next to VrApi's own FPS lines.
+
+## Part L: the operator panel: chat, console, players, world, server
+
+You are the server's operator without a game account. The operator panel lets you chat with Java players, run server commands and watch the server. Chat and the status work on any server; commands need a token (security, below).
+
+**Server side (once):** set a token in the plugin's `config.yml` and the same one in `tabletop.json`, then restart or `/tabletop reload` and reconnect:
+
+```yaml
+auth:
+  token: "pick-a-long-random-string"
+```
+
+```json
+{"server": "ws://192.168.1.50:8765/tabletop", "token": "pick-a-long-random-string", "operator_name": "YourName",
+ "quick_commands": ["time set day", "gamerule advance_time false"]}
+```
+
+`operator_name` is the name Java players see in chat (letters, digits and `_`, at most 16; without it your `skin_player`, else the server's `chat.default-name`). Java players see your lines as `[Giant] YourName: hello` (config.yml `chat.format`), never as a real player. `quick_commands` adds buttons to the Console tab after the server's `commands.quick`.
+
+| Control | Action |
+|---|---|
+| **X** (left controller), tap | Open or close the operator panel. It floats beside your left hand like the block menu. |
+| **X**, hold 0.6 s | Open the **Chat** tab with the input ready (from closed or from another tab). |
+| **Menu button ≡** | While the operator panel is open: switch to the block menu. **X** while the block menu is open switches back. |
+| **Right controller ray** on the panel | Hover; the **right trigger** clicks (tabs, buttons, keys, chips, rows). Editing, gliding, turning and scaling pause while the ray is on it, as with the block menu. |
+| **Right thumbstick up/down** on the panel | Scroll the chat, the console output, the player list or the game rules (hold to keep scrolling). |
+| **Right thumbstick click** on the panel | Console: accept the first suggestion (like Tab). |
+
+The tabs:
+- **Chat:** the last 200 lines: player chat (`<Alex> hi`), joins and quits (yellow), deaths (red), advancements (green), `/say` and plugin broadcasts (blue), whispers (pink, from `/tabletop tell <message>`, which every Java player may use) and your own lines (gold). Type on the panel keyboard and press **enter** or **Send**. When the server has `chat.send: false` the tab is read-only.
+- **Console:** type a command (with or without `/`) and press enter. The output shows each command (`> /time set day`) with the server's answer under it, failures in red. While you type, up to 6 **suggestions** from the server appear above the field: click one (or the stick click / **tab**) to complete the word. **^ / v** walk the history (the last 100 commands, kept in the app's files folder as `history.json`, so they survive a restart). **@ pointer** runs the command at the block the right controller last aimed at (block editing's outline, so it needs editing allowed on the server, Part I; the block stays the pointer for a minute after the ray moves to the panel): `~ ~ ~` is that block, `~ ~1 ~` the cell on top, `@p` the nearest player to it. So aim at the terrain, then point at the panel and press enter: `summon minecraft:pig ~ ~1 ~`, `setblock ~ ~ ~ minecraft:gold_block`, `fill ~-2 ~ ~-2 ~2 ~ ~2 minecraft:glass`. The quick buttons run their command at once. `say` and `me` are sent as your chat.
+- **Players:** everyone online (any world) with game mode, health, food and ping, refreshed every second. Select a player, then: **Here @** teleports them on top of the block you last aimed at (in its dimension), **Heal**, **Feed**, **Kick** (type a reason, enter kicks; **Cancel** backs out) and the four game modes.
+- **World:** the region's world: time, day, weather, difficulty, tick state. **Time** day/noon/night/midnight, **Weather** clear/rain/thunder, **Bolt @** (lightning on the block you last aimed at), **Freeze/Unfreeze** and **Step 20** (the game's `/tick`), **Difficulty**, and every game rule the server has, as toggles (a lit toggle is on), with the server's own names (26.x: `advance_time`, `mob_griefing`...). Numeric rules are in the Console (`gamerule random_tick_speed 0`).
+- **Server:** TPS (1, 5, 15 min), MSPT, memory, players, the tick state and, per world, loaded chunks, entities, players, the time and the weather, every 2 s.
+
+Without the token the command buttons are greyed and the note line says **needs auth.token**; chat, Players, World and Server still show their information. The line at the bottom of the panel says what happened last (the last command's answer, or why a button did nothing). The **Info** tab of the block menu has a `TALK` line: chat (as which name, or read-only), commands on or off, status.
+
+**Outside the panel:** the last 5 chat lines float just above your left wrist and fade 10 s after they arrive (hidden while a panel is open). A player's chat also appears as a bubble above their figure on the table for about 6 s (up to 3 lines). Joins and deaths also show as short messages low in your view. Java players see your chat line above the giant's head for 5 s (`chat.bubble-seconds`).
+
+**Security.** A headset command runs with operator rights, like the server console. Keep these in mind:
+- Commands are off without `auth.token` (`commands.require-token: true` is the default). With a token, every headset that presents it may run commands.
+- The link is plain `ws://`. The token and every command travel **unencrypted** on the LAN; anyone who can capture the traffic can replay the token. Use it on a network you trust. Beyond the LAN, put a TLS reverse proxy (`wss://`) in front (ARCHITECTURE.md §6).
+- `commands.deny` refuses the dangerous roots by default (`stop`, `restart`, `reload`, `op`, `deop`, `ban`, `ban-ip`, `pardon`, `pardon-ip`, `whitelist`, `save-off`, `debug`, `jfr`, `perf`, `transfer`), also behind aliases, `minecraft:` prefixes and `execute ... run`. A non-empty `commands.allow` lets only its commands run. Plugin commands that run other commands (and datapack functions) can't be looked into.
+- Every command is logged (`CMD session=... /line ok (ms)`), and ops see `[Tabletop: /line]` in game (`commands.notify-ops`).
+- Limits: 2 commands and 2 chat lines per second per headset (bursts of 5), 256 characters.
 
 ## Logs
 
@@ -246,4 +294,7 @@ The Info tab (Part J) shows `LINK`, `RTT`, `WORLD`, `PACK`, `EDIT` (the selected
 | Menu icons are coloured cubes | No `pack.zip` (Part E), or the pack failed to open (Info tab: `icons flat`). |
 | Old icons after changing `pack.zip` | Shouldn't happen (the cache folder is named after the pack's size and date); delete the app's `files/icons/` folder to force a redraw. |
 | Blocks I break come back after a moment | The server refused the edit (a short message shows why) or never got it (link down: edits aren't queued). |
+| Operator panel buttons greyed, "needs auth.token" | The server has no `auth.token` (commands need one by default), or `tabletop.json` has a different token (then the link would be refused with 4003). Set both (Part L) and reconnect. |
+| A command says "refused: /... is in commands.deny" | The plugin's `commands.deny` (or a non-empty `commands.allow`) refuses it; edit config.yml and `/tabletop reload` if you really want it from the headset. |
+| No chat on the wrist or in the Chat tab | The plugin is older than the app, or `chat.enabled: false`; the Info tab's `TALK` line says what the server granted. |
 | Players are plain-coloured figures | They have no skin URL (offline-mode server) and there's no `pack.zip` to take the default skins from (Part E). |

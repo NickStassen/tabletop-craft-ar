@@ -59,6 +59,14 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 | `bye` | both | graceful close |
 | `block_edit` | C→S | break or place one block from the headset (§4.20, needs `edit_v1`) |
 | `block_registry` | S→C | every block the headset may place, by menu category (§4.24), once after `welcome` |
+| `chat` | S→C | a chat, join, quit, death, advancement, broadcast, say/me, whisper or headset line (§4.26, needs `chat_v1`) |
+| `chat_send` | C→S | the headset says something in game chat (§4.26) |
+| `command` | C→S | run a server command, optionally at the block the headset points at (§4.27, needs `command_v1`) |
+| `command_result` / `command_output` | S→C | a command's captured feedback, then any late output (§4.27) |
+| `command_complete` / `command_suggestions` | C→S / S→C | tab completion for a partial command line (§4.27) |
+| `server_status` | S→C | TPS, MSPT, memory, players, worlds, every 2 s (§4.28, needs `status_v1`) |
+| `world_query` / `world_info` | C→S / S→C | a world's time, weather, difficulty, tick state and game rules (§4.28) |
+| `players_query` / `players_info` | C→S / S→C | every online player with health, food, game mode, ping (§4.28) |
 
 ### 4.1 `hello` (C→S)
 
@@ -73,7 +81,8 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 - `client`: free string, e.g. `quest-app` or `fake-quest`.
 - `protocols`: protocol versions the client speaks. The server picks the highest one it also supports.
 - `token`: shared secret from the plugin `config.yml` (`auth.token`). If it's empty in config, auth is disabled (LAN dev only). A wrong token gets `error` `auth_failed` and then close code 4003.
-- `caps`: capability strings. v1 defines `rle_palette_v1` (required) and `avatar` (client will send poses). Optional extras: `light_v1` and `biomes_v1` (§4.5.1), `edit_v1` (§4.20), `entities_v1` (§4.21), `actions_v1` (§4.22); unknown caps are ignored.
+- `caps`: capability strings. v1 defines `rle_palette_v1` (required) and `avatar` (client will send poses). Optional extras: `light_v1` and `biomes_v1` (§4.5.1), `edit_v1` (§4.20), `entities_v1` (§4.21), `actions_v1` (§4.22), `chat_v1`, `command_v1` and `status_v1` (§4.26–4.28); unknown caps are ignored.
+- `operator_name` (optional string): the name the headset wants in game chat (§4.26). The server keeps `[A-Za-z0-9_]`, at most 16 characters.
 - The client MUST NOT send anything else before it gets `welcome`. The server closes with 4002 if `hello` doesn't arrive within 5 s.
 
 ### 4.2 `welcome` (S→C)
@@ -300,6 +309,8 @@ Codes (strings, closed set in v1):
 | `edit_denied` | no | a `block_edit` was refused: no `edit_v1`, occupied cell, denied state (§4.20) |
 | `out_of_region` | no | a `block_edit` outside the session's region (§4.20) |
 | `bad_state` | no | a `block_edit` state that isn't a placeable block state (§4.20) |
+| `chat_denied` | no | a `chat_send` without `chat_v1`, or `chat.send` is off (§4.26) |
+| `command_denied` | no | a `command` or `command_complete` without `command_v1`, or a command the server's policy refuses (§4.27) |
 
 `ref_seq` is the `seq` of the offending message, if any. When `fatal` is true, the sender closes the socket right after.
 
@@ -335,6 +346,7 @@ Then it closes with code 1000. When the Quest client disconnects (with or withou
 - **v1, light and biomes (2026-10-13, additive):** optional per-block light and 4x4x4 biomes in `chunk_snapshot`, light changes in `block_update`, opted into with the `light_v1` / `biomes_v1` caps and echoed in `welcome.caps` (§4.5.1). Peers without the caps are unaffected.
 - **v1, block editing (2026-10-13, additive):** `block_edit` (C→S) breaks or places one block inside the region, opted into with the `edit_v1` cap; error codes `edit_denied`, `out_of_region`, `bad_state`; an error about an edit carries its `op` and `pos` (§4.20). Peers without the cap are unaffected.
 - **v0.2.0: block menu (2026-10-14, required, not backwards compatible):** the server sends `block_registry` (§4.24) to every client right after `welcome`, and a `block_edit` `place` must name a registry block or variant (else `bad_state`, §4.20). No cap: plugin, Quest app and tools must match.
+- **next version: chat, commands and server status (§4.26–4.28).** New caps `chat_v1`, `command_v1` (needs `auth.token` by default) and `status_v1`; messages `chat`, `chat_send`, `command`, `command_result`, `command_output`, `command_complete`, `command_suggestions`, `server_status`, `world_query`, `world_info`, `players_query`, `players_info`; `hello.operator_name`; `welcome.chat` and `welcome.commands`; errors `chat_denied`, `command_denied`. Fixtures `hello_control.json`, `welcome_control.json`, `chat*.json`, `command*.json`, `error_command_denied.json`, `server_status.json`, `world_query.json`, `world_info.json`, `players_query.json`, `players_info.json`.
 - **v0.3.0: visible width presets (§4.25).** `limits.max_view_width` (required in `welcome.limits`, `region_info.limits` and `region_too_large`); a `region_request` whose visible width is over it is narrowed around its centre instead of refused; `sections_v1` deltas may change `dims` (a section-aligned resize, §4.18). Fixtures `chunk_snapshot_grow.json`, `chunk_snapshot_shrink.json`, `region_request_resize.json`.
 
 ## 4.13–4.16 Runtime region control (v1, additive)
@@ -566,3 +578,135 @@ With `max_view_width` 256 this window of 320 is narrowed to 256: the server sets
 Client guidance (non-normative; Quest `World/AreaSizing.cs`, `World/SectionPlan.cs`): keep the view where it is in the world when the resized region arrives; re-key the section meshes by `shift / 16` exactly as for a navigation shift, mesh only new or listed sections, and refresh kept sections that touch them or lost neighbours. Scale the block size by old width / new width so the miniature keeps its size on the table.
 
 Fixtures and tests: `chunk_snapshot_grow.json`, `chunk_snapshot_shrink.json`, `region_request_resize.json`, and `max_view_width` in `welcome.json`, `region_info.json`, `error_region_too_large.json`. Java `SectionCodecTest` (resize deltas, fixtures rebuilt from snapshot 8) and `RegionRequestTest.viewWidthIsClampedAroundTheCentre`, Python `test_resize_deltas_grow_and_shrink` / `test_limits_carry_max_view_width`, C# `Tests~/AreaTests.cs`. Live: `tools/area_e2e.py` (each resize compared block by block, light included, with a fresh client's full snapshot) and `Tests~ --live-resize ws://…`.
+
+## 4.26–4.28 Chat, commands and server status (next version; caps `chat_v1`, `command_v1`, `status_v1`)
+
+The headset user is the server's operator without a game account: these let them talk with Java players, run server commands and watch the server. Each is a cap the client lists in `hello.caps`; the server grants it from config.yml (sections `chat`, `commands`, `status`) and echoes it in `welcome.caps`. Clients without a cap never get its messages. Docs: QUEST_SETUP.md Part L (the operator panel), ARCHITECTURE.md §3.9.
+
+### 4.26 Chat (`chat_v1`)
+
+Granted when `chat.enabled` (default true). `welcome` then carries:
+
+```json
+"chat":{"send":true,"name":"Nick","max_len":256}
+```
+
+- `send`: the headset may talk (`chat.send`, default true); otherwise it only reads.
+- `name`: the name Java players see, from `hello.operator_name` (the Quest sends tabletop.json `operator_name`, else its `skin_player`), keeping `[A-Za-z0-9_]` and at most 16 characters; empty → config `chat.default-name`.
+
+**`chat` (S→C)**, to every `chat_v1` session:
+
+```json
+{"v":1,"type":"chat","seq":40,"t":1760370005000,"kind":"chat","from":{"name":"Alex","uuid":"0f1e…","id":7},"text":"hi giant"}
+{"v":1,"type":"chat","seq":41,"t":1760370005100,"kind":"death","from":{"name":"Alex","uuid":"0f1e…","id":7},"text":"Alex was slain by Zombie"}
+{"v":1,"type":"chat","seq":42,"t":1760370005200,"kind":"operator","from":{"name":"Nick","session":"6f1c"},"text":"hello from the table","line":"[Giant] Nick: hello from the table"}
+```
+
+| `kind` | source | `text` |
+|---|---|---|
+| `chat` | a player's chat message (`AsyncChatEvent`, after other plugins changed it) | the message |
+| `join`, `quit`, `death`, `advancement` | the game's join, quit, death and advancement lines (none when the game shows none, e.g. `show_death_messages` off) | the whole line, flattened to plain text in en_us (`Alex was slain by Zombie`, `Alex has made the advancement [Stone Age]`) |
+| `broadcast` | a plugin's `Bukkit#broadcast` | the whole line |
+| `say`, `me` | `/say` or `/me` by a player allowed to run it, or by the console (`from.name` `Server`); best effort: selectors in the text aren't expanded | the text after the command |
+| `operator` | a headset's line (`chat_send`, or `say`/`me` from the console tab), echoed to every `chat_v1` session including the sender | the message; `line` is the whole line as Java players saw it |
+| `whisper` | `/tabletop tell <message>` by a Java player (permission `tabletop.tell`, default everyone) or the console | the message |
+
+`from` (optional): `name`, plus `uuid` and `id` (the entity id of `player_positions[].id`) for players, or `session` for a headset. Clients match players by `uuid`, never by name. Messages from `/msg`, `/tellraw` and similar fire no server event and aren't mirrored.
+
+**`chat_send` (C→S)**:
+
+```json
+{"v":1,"type":"chat_send","seq":60,"t":1760370005150,"text":"hello from the table"}
+```
+
+- The server removes control characters and `§`, collapses whitespace, and refuses an empty text or one over `max_len` (`bad_message`). Without `chat_v1`, or with `chat.send` off: `error` `chat_denied`. At most `chat.max-per-second` (2) per session with a burst of `chat.burst` (5); more get `rate_limited`.
+- Java players see config `chat.format` (MiniMessage, default `<gold>[Giant]</gold> <name>: <message>`) with `<name>` and `<message>` inserted as plain text (tags typed on the headset stay literal). The fixed prefix keeps a headset from passing for a real player. It is a server (system) message: not signed, and chat bridges that listen to player chat don't see it. The plugin logs `CHAT session=… <line>`.
+- For `chat.bubble-seconds` (5; 0 = off) the line also floats above the giant's head as a text display for Java players. It carries the scoreboard tag `tabletop_avatar`, so `entities` (§4.21) never lists it.
+
+### 4.27 Commands (`command_v1`)
+
+Granted when `commands.enabled` (default true) and, with `commands.require-token` (default **true**), `auth.token` is set, so every connected headset presented the token. A headset command runs with operator rights. `welcome` then carries:
+
+```json
+"commands":{"quick":["time set day","weather clear","tick freeze","tick unfreeze"],"max_len":256}
+```
+
+`quick`: config `commands.quick`, shown as buttons. `max_len`: `commands.max-length`.
+
+**`command` (C→S)**:
+
+```json
+{"v":1,"type":"command","seq":80,"t":1760370006000,"line":"summon minecraft:lightning_bolt ~ ~1 ~","at":{"world":"world","pos":[105,64,-35]}}
+```
+
+- `line`: one command, with or without a leading `/`, at most `max_len` characters, no control characters (else `bad_message`).
+- `at` (optional): the block the headset points at (`world`, default the session's region world; `pos`, integer world block coordinates). The server runs `execute in <dimension> positioned <x+0.5> <y> <z+0.5> run <line>`, so `~ ~ ~` is that block, `~ ~1 ~` the cell on top of it, and `@p`, `@e[distance=..5]` are relative to it. Plugin commands work through it too. An unknown `world` gets `world_not_found`.
+- Policy, checked before anything runs (`command_denied` with the reason): the root word, without `/` or a `namespace:` prefix and resolved through aliases, must not be in `commands.deny` (default `stop, restart, reload, op, deop, ban, ban-ip, pardon, pardon-ip, whitelist, save-off, debug, jfr, perf, transfer`), and must be in `commands.allow` when that list is non-empty. `execute … run <command>` and `return run <command>` are checked for every split after a `run` word (nested up to 8 deep), so `execute as @a run stop` is refused.
+- At most `commands.max-per-second` (2) per session with a burst of `commands.burst` (5); more get `rate_limited`.
+- `say` and `me` are not dispatched: they go out as the headset's chat (§4.26, `chat.format` / `chat.me-format`) and the result has `as_chat: true`.
+- Ops with the permission `tabletop.notify` (default op) see `[Tabletop: /<line>]` in grey italics when `commands.notify-ops` is on. The plugin logs `CMD session=… /<line> ok|failed (<ms> ms)` (a warning over 50 ms) and `CMD_DENIED`.
+
+**`command_result` (S→C)**, once per `command`:
+
+```json
+{"v":1,"type":"command_result","seq":90,"t":1760370006010,"ref_seq":80,"ok":true,"ms":0.42,"lines":["Summoned new Lightning Bolt"]}
+```
+
+- `lines`: the feedback the command sent to its sender, flattened to plain text (at most 200 lines of 1000 characters). Syntax errors come back as the game's message (`Incorrect argument for command at position 5: time <--[HERE]`), an unknown command as `Unknown command: /<root>`.
+- `ok`: the command exists, ran, and none of its feedback was an error (vanilla shows those in red). `ms`: main-thread time of the dispatch. `as_chat`: see `say`/`me`.
+
+**`command_output` (S→C)**: feedback that arrives after the result (asynchronous plugin commands), for 5 s, grouped per tick:
+
+```json
+{"v":1,"type":"command_output","seq":95,"t":1760370007200,"ref_seq":81,"lines":["Backup finished in 1.2 s"]}
+```
+
+**`command_complete` (C→S) → `command_suggestions` (S→C)**:
+
+```json
+{"v":1,"type":"command_complete","seq":82,"t":1760370006500,"line":"gamerule adv"}
+{"v":1,"type":"command_suggestions","seq":96,"t":1760370006505,"ref_seq":82,"start":9,"items":["advance_time","advance_weather"]}
+```
+
+- From the server's own tab completion (`CommandMap#tabComplete` with operator rights; brigadier for vanilla commands). `items` (at most 50) replace the line from `start`: after its last space, or the command name (without a slash; `start` 1 when the line has one). Needs `command_v1` (else `command_denied`); at most `commands.completions-per-second` (10), and clients wait about 150 ms after the last keystroke before asking.
+
+### 4.28 Server status (`status_v1`)
+
+Granted when `status.enabled` (default true). Without it `world_query` and `players_query` get `unsupported`.
+
+**`server_status` (S→C)**, every `status.every-ticks` (40 = 2 s), about 600 bytes:
+
+```json
+{"v":1,"type":"server_status","seq":98,"t":1760370008000,"tps":[20.0,19.98,20.0],"mspt":3.21,
+ "memory":{"used_mb":812,"max_mb":2048},"players":{"online":1,"max":20},
+ "tick":{"rate":20.0,"frozen":false,"stepping":false,"sprinting":false},
+ "worlds":[{"name":"world","env":"normal","chunks":441,"entities":118,"players":1,"time":6000,"day":12,"weather":"clear"}]}
+```
+
+`tps`: the 1, 5 and 15 minute averages (capped at the tick rate). `mspt`: average tick time. `tick`: the server tick manager (`/tick`). Per world: loaded chunks, entities, players, `time` (time of day, 0..23999), `day` (full time / 24000), `weather` `clear`, `rain` or `thunder`.
+
+**`world_query` (C→S) → `world_info` (S→C)**:
+
+```json
+{"v":1,"type":"world_query","seq":84,"t":1760370008100}
+{"v":1,"type":"world_info","seq":99,"t":1760370008110,"ref_seq":84,"world":"world","env":"normal","time":6000,"day":12,"weather":"rain",
+ "difficulty":"normal","spawn":[0,64,0],"tick":{"rate":20.0,"frozen":true,"stepping":false,"sprinting":false},
+ "gamerules":{"advance_time":true,"advance_weather":true,"keep_inventory":false,"max_entity_cramming":24,"mob_griefing":true,"random_tick_speed":3}}
+```
+
+- `world` (optional in the query): default the session's region world; unknown → `world_not_found`.
+- `gamerules`: every game rule of that world by the name the `gamerule` command takes (26.x: snake_case registry keys such as `advance_time`; a datapack's rules as `namespace:path`), booleans as JSON booleans and numbers as numbers. Clients build `gamerule <name> <value>` from these names and never hard-code them.
+
+**`players_query` (C→S) → `players_info` (S→C)**: every online player, any world, sorted by name:
+
+```json
+{"v":1,"type":"players_info","seq":100,"t":1760370008210,"ref_seq":85,"players":[
+ {"name":"Alex","uuid":"0f1e…","id":7,"world":"world","pos":[112.5,64.0,-30.25],"gamemode":"survival","health":18.5,"max_health":20.0,"food":17,"ping":23,"op":false}]}
+```
+
+Client guidance (non-normative; the Quest's operator panel): the World and Players tabs ask once a second while they are open, and their buttons are command templates on top of §4.27 (`time set day`, `weather thunder`, `summon minecraft:lightning_bolt ~ ~1 ~` at the pointer, `tick freeze`, `difficulty hard`, `gamerule <name> <value>`, `tp <name> ~ ~1 ~` at the pointer, `gamemode creative <name>`, `effect give <name> minecraft:instant_health 1 10`, `effect give <name> minecraft:saturation 1 10`, `kick <name> <reason>`). Without `command_v1` they are greyed out.
+
+### 4.26–4.28 Fixtures and tests
+
+- Fixtures: `hello_control.json` (the caps and `operator_name`), `welcome_control.json` (`chat`, `commands`), `chat.json`, `chat_death.json`, `chat_operator.json`, `chat_send.json`, `command.json`, `command_result.json`, `command_output.json`, `command_complete.json`, `command_suggestions.json`, `error_command_denied.json`, `server_status.json`, `world_query.json`, `world_info.json`, `players_query.json`, `players_info.json`. Java `ControlFixtureTest` builds them with the plugin's builders (`CommandPolicyTest`, `ChatTextTest` cover the policy and the text rules), Python `test_tabletop_protocol.py` validates them, C# `Tests~/ControlTests.cs` parses them.
+- Live: `tools/control_check.py` (a headset plus a mineflayer Java player: caps, results, syntax errors, denied roots, the `at` pointer, completion, status, the chat round trip, the bubble, rate limits) and `Tests~ --live-control URL TOKEN` (the app's own classes).
