@@ -119,6 +119,8 @@ static class Program
         Check(err.MaxX == 128 && err.MaxBlocks == 2097152, "region_too_large limits parse");
         Check(Protocol.RegionQuery("Bob").S("player") == "Bob" && !Protocol.RegionQuery().ContainsKey("player"), "region_query builder");
 
+        WaterTests.Run(Check, args);   // fluids, waterlogging, texture animation (WaterTests.cs)
+
         int measIdx = Array.IndexOf(args, "--measure");
         if (measIdx >= 0) { Measure(args[measIdx + 1]); return 0; }
 
