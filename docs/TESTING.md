@@ -222,3 +222,47 @@ With a resource pack, faces only merge when they share a texture, so expect more
 - **33/33 PASS.** This adds tests for `AreaMath` (block-size fit, clamping, the estimate, soft cap and override, clamping to server caps), `AreaSetupState` (centre on origin/player, resize clamps, request matches the fixture, warn/override), and `region_info`/`region_too_large` fixture parsing.
 - **`--live`** against the real-terrain server: all checks PASS, including the area-setup resize. The live test uses the same `AreaSetupState`: it requests +16 x/z, which the server's `max_blocks` limit clamps to 80×327×80, and gets back `region_changed` from its own session plus a snapshot with the new dims.
 - **`tools/e2e.sh`:** re-run after the async reader change and PASS. The block_update check found 0/65536 cells differing between the live and fresh snapshots, error paths returned the expected codes, and the avatar entities spawned. The earlier hang was caused by a stray test server still holding ports 25565/8765. The script now checks those ports before it starts and exits with an error if either is in use.
+
+## Lighting and biome colours (`light_v1` / `biomes_v1`, PROTOCOL §4.5.1; 2026-10-13, no headset)
+
+Paper 26.3 build 181 (Java 25), normal world seed 12345, regions centred on 0,0 with y 32..128 (the same regions as "Real terrain" above; mostly ocean with lush caves and dark forest). Every number is the median of 3 runs with chunks already generated (`tools/measure_regions.py [--extras]` and the plugin's `REGION_SET`/`SNAPSHOT` log lines). "Before" is the plugin from master on the same world.
+
+| region | plugin / client | snapshot bytes | light part | biome part | main-thread snapshot | async walk | extras encode (outbound thread) | client decode (Python) |
+|---|---|---|---|---|---|---|---|---|
+| 64×96×64 | before | 65.5 KB | – | – | 0.23 ms | 24.0 ms | – | 4 ms |
+| 64×96×64 | new, client without caps | 65.5 KB | – | – | 0.08 ms | 24.1 ms | – | 4 ms |
+| 64×96×64 | new, `light_v1`+`biomes_v1` | 75.1 KB (+15%) | 9.4 KB, 2,010 runs | 0.2 KB, 2 biomes | 0.17 ms | 25.5 ms | 0.17 ms | 10 ms |
+| 128×96×128 | before | 239.8 KB | – | – | 0.94 ms | 98.3 ms | – | 16 ms |
+| 128×96×128 | new, client without caps | 239.7 KB | – | – | 0.24 ms | 96.4 ms | – | 16 ms |
+| 128×96×128 | new, `light_v1`+`biomes_v1` | 301.1 KB (+26%) | 60.0 KB, 10,913 runs | 1.3 KB, 3 biomes | 0.76 ms | 98.9 ms | 0.75 ms | 34 ms |
+| 128×128×128 (y 0..128) | new, extras | 915 KB (728 KB without) | 175 KB, 36,892 runs | | | | | |
+| 64×384×64 (full height) | new, extras | 562 KB (407 KB without) | 151 KB, 34,490 runs | | | | | |
+
+- The main-thread step stays far under 3 ms. Old clients now cost *less* main-thread time than before, because the reader asks Paper for light only when a session wants it (`getChunkSnapshot(false, biomes, false, light)`; the old 3-argument call always copied light).
+- The largest snapshots stay well under the 4 MiB frame cap, and `max_bytes` now includes the light/biome estimate (computed off-thread; 294,006 estimated vs 294,969 sent for 128×96×128).
+
+**Live light updates** (`tools/light_check.py`, private 16³ region in the sky at 200,100,200): the console builds a stone room with a torch, then opens the roof above the torch. The client mirrors blocks + light from `block_update`, and afterwards a fresh snapshot is compared cell by cell:
+
+```
+updates 4, block changes 239, light changes 2,344, largest block_update 10.6 KB
+torch cell (sky, block) = (15, 14) after the roof opened; corner under the roof (13, 8); outside (15, 0)
+live vs fresh: 0/4096 blocks differ, 0/4096 light values differ  -> OK
+```
+
+A client without the caps (`fake_quest.py` without `--extras`) gets `light: null`, `biomes: null` and the same bytes as before; with `--extras` it gets both and `welcome.caps = ["light_v1","biomes_v1"]`.
+
+**Quad counts** (`Tests~ dotnet run -- --measure DIR [--no-light | --flat-light]`, the real `GreedyMesher` + `BlockShading` on the snapshots above, flat colours with the biome tint kinds a pack gives grass/leaves/water; x86 box):
+
+| region | no light (old look) greedy / total | flat light (`smooth_lighting:false`) | smooth light + AO (default) | mesh time no light → smooth |
+|---|---|---|---|---|
+| 64×96×64 | 9,383 / 12,805 | 12,113 / 15,535 (×1.21) | 16,378 / 19,800 (×1.55) | 139 → 155 ms |
+| 128×96×128 | 33,322 / 45,886 | 42,951 / 55,515 (×1.21) | 58,081 / 70,645 (×1.54) | 580 → 625 ms |
+| 128×128×128 | 68,737 / 85,159 | 89,292 / 105,714 (×1.24) | 122,021 / 138,443 (×1.63) | 869 → 960 ms |
+| 64×384×64 | 39,024 / 48,010 | 52,628 / 61,614 (×1.28) | 67,626 / 76,612 (×1.60) | 545 → 597 ms |
+
+- Smooth lighting costs about +55–63% quads (faces with an AO gradient or a different light level can't merge), flat lighting +21–28%. The recommended 128×96×128 area is about 71k faces, 128×128×128 about 138k: still under the 250k soft cap. `AreaMath.LightFactor` (×1.6 smooth, ×1.25 flat, set from `welcome.caps`) scales the area-setup estimate to match; it still underestimates 128×128×128 by about 12%, as the base estimator already did.
+- Meshing time grows about 8–12%: the light lookups are cheap next to the face walk.
+
+**Unit tests** after this change: plugin `./gradlew build` 25 tests, 0 failures (FixtureTest 7: light/biome fixture round trip through `BlockCodec`/`BiomeGrid`, negative-origin quart grid, `block_update.light` builder = fixture, extras stay null without caps); Python `pytest` 29 passed, ruff clean; `Tests~ dotnet run` 75/75 PASS, adding: lightmap (full daylight = white, level 0 = 0.094, monotonic, warm block light, interpolated fractional levels), brightness curve, AO (open floor, wall side 0.8, diagonal 0.8, 1-high inner corner 0.6, 2-high inner corner 0.4), smooth light averaging and vanilla `smoothBlend` zero handling, partial-face bilinear weights, greedy merging with a dimmer cell (merged quads reproduce each face's own colour), no-light fallback = old colours, swamp noise = vanilla (reference values from the 26.3 client classes), colour maps from the real 26.3 jar (plains 91BD59/77AB2F/A37546, forest, jungle, taiga, snowy, desert, birch, meadow, dark forest 507A32; skipped if the jar is missing), biome blend 5×5, block tint rules, `chunk_snapshot`/`block_update` light + biome parsing, section dirtying for AO. `--live` against the test server: snapshot carries light + 2 biomes, all checks PASS. Unity 6000.0.84f1 batch compile: no errors, no new warnings.
+
+**Not verified yet (needs the headset):** how it looks (brightness of caves at Moody brightness 0.5, the warm torch tint, AO strength on the table under passthrough), the cost of the extra ~55% vertices on the Quest GPU, and colour-map loading through `Texture2D.LoadImage` on Android. `tools/e2e.sh` (ports 25565/8765) was not run because those ports belong to the live session.

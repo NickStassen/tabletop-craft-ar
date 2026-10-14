@@ -70,6 +70,8 @@ adb shell am force-stop com.tabletopcraft.ar
 
 Then relaunch the app. Alternatively set **ServerUrl** on the TabletopApp component before building. `block_size_m` 0.01 makes a 32-block region 32 cm wide; `skin_player` is resolved by the server (online lookups; an offline-mode server shows the default skin). The token must match `auth.token` in the plugin config (empty = off).
 
+Optional lighting keys (the server sends light and biomes when its config has `stream.light` / `stream.biomes` on, the default): `"smooth_lighting": false` gives one light value per face and no ambient occlusion (about 20% fewer faces than smooth lighting), and `"brightness"` is Minecraft's Brightness slider, 0 (Moody) to 1 (Bright), default 0.5.
+
 ## Part E: textures (resource pack)
 
 Without a pack the app uses flat colours. To use textures you already own:
@@ -117,7 +119,7 @@ Recommended sizes (estimates; see TESTING.md "Real terrain"):
 adb logcat -s Unity | findstr Tabletop
 ```
 
-The floating status text shows `LINK`, `RTT`, `WORLD`, `PACK`, `TABLE`, `POSES` and the last server error.
+The floating status text shows `LINK`, `RTT`, `WORLD`, `PACK`, `LIGHT` (`smooth`/`flat`, or `off` when the server sends no light; then `BIOMES n`, with `(no colormap)` if the pack lacks `colormap/grass.png`), `TABLE`, `POSES` and the last server error. Biome colours (grass, leaves, water per biome) need both biomes from the server and a pack with the colour maps; without them the old fixed tints are used.
 
 ## Troubleshooting
 
