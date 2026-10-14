@@ -71,12 +71,12 @@ Ordered by how much each adds to the feeling of a living world on the table that
 - Working MRUK table detection; the log shows OpenXR binding warnings.
 - A persistent spatial anchor.
 - A diorama plinth and a soft shadow on the real table.
-- Status text on a wrist panel.
+- (Done, not yet tried on the headset) Status text off the view: the full status is the block menu's Info tab, events are short toasts, area setup has a small panel on the left hand, and a small HUD is optional (`show_hud`).
 
 **4. Sound.** Spatial audio from the miniature: blocks, footsteps, mobs, water, rain. It needs the user's sound assets from the launcher's asset index on the headset, plus server sound events.
 
 **5. God powers.**
-- A block palette, hotbar and creative inventory.
+- (Done, not yet tried on the headset) A block palette, hotbar and creative inventory: the server's `block_registry` (PROTOCOL.md 4.24), the block menu on the left hand with categories, search and icons from the user's pack, a 9-slot hotbar (QUEST_SETUP.md Part J).
 - Interacting with doors, levers, buttons and TNT.
 - Undo.
 - Lightning, time and weather gestures.

@@ -187,6 +187,9 @@ namespace TabletopCraft.World
         /// <summary>Last thing that happened, for the status text.</summary>
         public string Result = "";
         public int Sent;
+        /// <summary>[menu] The server's block_registry check (PROTOCOL.md 4.24): only these states can be placed. Null = no
+        /// registry yet (an older server), everything goes.</summary>
+        public Func<string, bool> Placeable;
 
         /// <summary>block_edit op "break" for the hit block, or null (Result says why).</summary>
         public Dictionary<string, object> Break(WorldModel w, BlockHit h, double now)
@@ -206,6 +209,7 @@ namespace TabletopCraft.World
             var c = h.Adjacent;
             if (!h.AdjacentInView) { Result = "can't place outside the area"; return null; }
             if (!BlockRaycast.CanPlaceInto(w, c)) { Result = "can't place: cell is occupied"; return null; }
+            if (Placeable != null && !Placeable(Selected)) { Result = "can't place " + BlockEditRules.Label(Selected); return null; }   // [menu]
             string state = BlockEditRules.Orient(Selected, h.Face, rayDir);
             Optimistic(w, c, BlockEditRules.PlaceResult(state, w.State(w.Get(c.x, c.y, c.z))), now);
             Sent++;
@@ -217,7 +221,9 @@ namespace TabletopCraft.World
         public bool Pick(WorldModel w, BlockHit h)
         {
             if (w == null || !w.Loaded || !h.Hit) return false;
-            Selected = w.State(w.Get(h.Block.x, h.Block.y, h.Block.z));
+            string picked = w.State(w.Get(h.Block.x, h.Block.y, h.Block.z));
+            if (Placeable != null && !Placeable(picked)) { Result = "can't place " + BlockEditRules.Label(picked); return false; }   // [menu]
+            Selected = picked;
             Result = "picked " + BlockEditRules.Label(Selected);
             return true;
         }

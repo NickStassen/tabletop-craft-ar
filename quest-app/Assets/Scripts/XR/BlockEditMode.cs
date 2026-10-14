@@ -27,6 +27,7 @@ namespace TabletopCraft.XR
         public Func<bool> Blocked;    // another mode owns the controllers (area setup)
         public NavState Nav;          // visible window inside the region (navigation); null = the whole region is shown
         public Action ModelChanged;   // an optimistic edit or its revert changed the grid (clip caps re-slice)
+        public Action<string> Picked; // [menu] B picked this state (the block menu puts it into its hotbar)
         public float MaxRayM = 2f;
         public float RepeatSeconds = 0.25f, FirstRepeatSeconds = 0.35f;
 
@@ -117,7 +118,7 @@ namespace TabletopCraft.XR
                 if (online) Do(Editor.Place(w, Target, d, Time.unscaledTimeAsDouble), OVRInput.Controller.LTouch);
                 else Editor.Result = "not connected";
             }
-            if (OVRInput.GetDown(OVRInput.Button.Two, OVRInput.Controller.RTouch) && Editor.Pick(w, Target)) Haptic(OVRInput.Controller.RTouch, 0.15f);
+            if (OVRInput.GetDown(OVRInput.Button.Two, OVRInput.Controller.RTouch) && Editor.Pick(w, Target)) { Haptic(OVRInput.Controller.RTouch, 0.15f); Picked?.Invoke(Editor.Selected); }   // [menu] hotbar
         }
 
         // After every Update (TabletopApp handles server errors there): grid changes from guesses and reverts.

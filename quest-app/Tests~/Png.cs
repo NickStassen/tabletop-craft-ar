@@ -69,6 +69,38 @@ static class Png
         return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
     }
 
+    /// <summary>RGBA PNG (8-bit, filter 0) of bottom-up Color32 pixels, for looking at rendered icons (--icons DIR).</summary>
+    public static byte[] EncodeRgba(UnityEngine.Color32[] px, int width, int height)
+    {
+        var raw = new MemoryStream();
+        for (int y = height - 1; y >= 0; y--)
+        {
+            raw.WriteByte(0);
+            for (int x = 0; x < width; x++) { var c = px[y * width + x]; raw.WriteByte(c.r); raw.WriteByte(c.g); raw.WriteByte(c.b); raw.WriteByte(c.a); }
+        }
+        var z = new MemoryStream();
+        using (var zs = new ZLibStream(z, CompressionLevel.Optimal, true)) raw.WriteTo(zs);
+        var o = new MemoryStream();
+        o.Write(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A });
+        var ihdr = new byte[13];
+        BE(ihdr, 0, width); BE(ihdr, 4, height); ihdr[8] = 8; ihdr[9] = 6;
+        Chunk(o, "IHDR", ihdr); Chunk(o, "IDAT", z.ToArray()); Chunk(o, "IEND", new byte[0]);
+        return o.ToArray();
+    }
+
+    static void BE(byte[] b, int i, int v) { b[i] = (byte)(v >> 24); b[i + 1] = (byte)(v >> 16); b[i + 2] = (byte)(v >> 8); b[i + 3] = (byte)v; }
+
+    static void Chunk(Stream o, string type, byte[] data)
+    {
+        var len = new byte[4]; BE(len, 0, data.Length); o.Write(len);
+        var td = new byte[4 + data.Length];
+        System.Text.Encoding.ASCII.GetBytes(type).CopyTo(td, 0); data.CopyTo(td, 4);
+        o.Write(td);
+        uint crc = 0xFFFFFFFF;
+        foreach (byte bt in td) { crc ^= bt; for (int k = 0; k < 8; k++) crc = (crc >> 1) ^ (0xEDB88320u & (uint)-(int)(crc & 1)); }
+        var c = new byte[4]; BE(c, 0, (int)~crc); o.Write(c);
+    }
+
     /// <summary>Reads one entry of a zip (e.g. the client jar) and decodes it; null if the entry is missing.</summary>
     public static int[] FromZip(string zipPath, string entry)
     {

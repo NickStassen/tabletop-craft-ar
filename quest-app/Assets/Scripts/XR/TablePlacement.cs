@@ -19,6 +19,8 @@ namespace TabletopCraft.XR
         public Vector2 TableSize = new Vector2(0.8f, 0.6f);
         /// <summary>Set by AreaSetupMode: the controllers belong to area setup, so placement/scale input is ignored.</summary>
         public bool Suspended;
+        /// <summary>[menu] True while the right ray is on the block menu: the right stick scrolls the menu instead.</summary>
+        public System.Func<bool> StickBlocked;
         public float TurnDegPerSecond = 90f;   // right stick left/right at full deflection
 
         bool _placed;
@@ -88,6 +90,7 @@ namespace TabletopCraft.XR
             }
             else _grabbing = false;
             // Right stick: up/down scales, left/right turns the table about its centre (whichever axis dominates).
+            if (StickBlocked != null && StickBlocked()) return;   // [menu] the stick scrolls the block menu
             Vector2 rs = OVRInput.Get(OVRInput.Axis2D.PrimaryThumbstick, OVRInput.Controller.RTouch);
             if (Mathf.Abs(rs.y) > 0.5f && Mathf.Abs(rs.y) >= Mathf.Abs(rs.x)) OnScaleChanged?.Invoke(1f + Mathf.Sign(rs.y) * 0.5f * Time.deltaTime);
             else if (Mathf.Abs(rs.x) > 0.25f && !_grabbing)

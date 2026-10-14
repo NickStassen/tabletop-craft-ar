@@ -74,6 +74,8 @@ Then relaunch the app. Alternatively set **ServerUrl** on the TabletopApp compon
 
 **Java players' skins on the table.** Each player's skin comes from their game profile, which only an `online-mode=true` server has. On an offline-mode server, everyone gets the default skin the game would show for their UUID (Steve, Alex and the others), read from your `pack.zip` (Part E). Without a pack they get plain colours.
 
+`"show_hud": true` brings back a small head-locked status for debugging (off by default; also the **Show HUD** toggle in the block menu's Info tab, Part J).
+
 Optional lighting keys (the server sends light and biomes when its config has `stream.light` / `stream.biomes` on, the default): `"smooth_lighting": false` gives one light value per face and no ambient occlusion (about 15-18% fewer faces than smooth lighting on real terrain), and `"brightness"` is Minecraft's Brightness slider, 0 (Moody) to 1 (Bright), default 1 (Bright, so caves stay readable over passthrough). `"min_light"` (default 0.2) is how bright light level 0 is drawn, 0..1; everything brighter is rescaled up to full daylight, so a cave reads as dark but visible and the seabed 10 blocks down at about half of daylight. A negative value gives vanilla's own curve (level 0 = 0.15 at Bright).
 
 ## Part E: textures (resource pack)
@@ -81,14 +83,14 @@ Optional lighting keys (the server sends light and biomes when its config has `s
 Without a pack the app uses flat colours. To use textures you already own:
 
 1. Copy your client jar, e.g. `%APPDATA%\.minecraft\versions\26.3\26.3.jar` (Linux: `~/.minecraft/versions/26.3/26.3.jar`), or any Java resource pack `.zip`, to a temp folder and rename it `pack.zip` (a jar is a zip). The atlas loader was checked offline against the 26.3 jar; on the headset it's still untested.
-2. `adb push pack.zip /sdcard/Android/data/com.tabletopcraft.ar/files/pack.zip`, then restart the app. The status text shows `PACK yes`.
+2. `adb push pack.zip /sdcard/Android/data/com.tabletopcraft.ar/files/pack.zip`, then restart the app. The menu's Info tab (Part J) shows `PACK yes`.
 3. Entity models (boats, minecarts, mobs, armour). The app ships no model data; generate it from the same client jar with JDK 25 from the repo root, then push it next to `pack.zip`:
    ```
    java tools/entity_models/DumpEntityModels.java %APPDATA%\.minecraft 26.3 entity_models.json     (Windows)
    java tools/entity_models/DumpEntityModels.java ~/.minecraft 26.3 entity_models.json            (Linux)
    adb push entity_models.json /sdcard/Android/data/com.tabletopcraft.ar/files/entity_models.json
    ```
-   It reads the game's own model definitions out of `versions/26.3/26.3.jar` and the libraries the launcher downloaded (the game doesn't start) and writes about 80 KB of box sizes, pivots and skin offsets plus the dye colours. Regenerate it after a game update. The app loads it in the background at start; logcat shows `[Tabletop] entity_models.json: 185 models (Minecraft 26.3)`. Without it, entities are boxes of their real size in the average colour of their texture, and the status text shows `ENTITIES n (boxes)`.
+   It reads the game's own model definitions out of `versions/26.3/26.3.jar` and the libraries the launcher downloaded (the game doesn't start) and writes about 80 KB of box sizes, pivots and skin offsets plus the dye colours. Regenerate it after a game update. The app loads it in the background at start; logcat shows `[Tabletop] entity_models.json: 185 models (Minecraft 26.3)`. Without it, entities are boxes of their real size in the average colour of their texture, and the Info tab shows `ENTITIES n (boxes)`.
 
 Don't commit or redistribute the jar, the pack or `entity_models.json` (all three are git-ignored).
 
@@ -96,16 +98,16 @@ Don't commit or redistribute the jar, the pack or `entity_models.json` (all thre
 
 1. On another PC on the same LAN (or a second launcher profile on the same PC), start Minecraft **26.3** -> Multiplayer -> Direct Connection -> `192.168.1.50`. The player must be whitelisted, or `white-list=false` (Part A step 4).
 2. Walk around inside the region: a small Minecraft figure with your skin and name walks on the table. Its legs and arms swing with your speed, its head turns and tilts with your view, the body follows like in the game, and it crouches when you sneak. The skin appears once it has downloaded (a second or so). Until then the figure shows the default skin. Break and place blocks: the miniature updates within a second (events are applied next tick, a full diff runs every second).
-3. Entities and actions (needs the plugin and app from the entities work; `ENTITIES n` in the status text counts them). Mobs, boats, minecarts, dropped items, item frames, paintings and falling blocks in the region show on the table with their Minecraft models and textures from `pack.zip` (babies, variants and colours included; types the app doesn't know show as a box of their size). Get in a boat or minecart or on a horse: your figure sits in it, legs forward, and moves with it. What you hold shows in your figure's hands (and in a zombie's or skeleton's), and armour shows on the body. Swinging, digging and placing: the figure's arm swings, the block being dug shows the game's growing cracks, and a broken block bursts into small particles of its texture. Hit a mob (or get hit): it flashes red. The models need `entity_models.json` (Part E step 3); without it entities are boxes of their size. Without `pack.zip` the models are plain white and items don't show. Server side, `entities.*` and `actions.*` in `config.yml` turn this off or cap it; `/tabletop entities` prints counts, main-thread time and bytes/s.
+3. Entities and actions (needs the plugin and app from the entities work; `ENTITIES n` in the Info tab counts them). Mobs, boats, minecarts, dropped items, item frames, paintings and falling blocks in the region show on the table with their Minecraft models and textures from `pack.zip` (babies, variants and colours included; types the app doesn't know show as a box of their size). Get in a boat or minecart or on a horse: your figure sits in it, legs forward, and moves with it. What you hold shows in your figure's hands (and in a zombie's or skeleton's), and armour shows on the body. Swinging, digging and placing: the figure's arm swings, the block being dug shows the game's growing cracks, and a broken block bursts into small particles of its texture. Hit a mob (or get hit): it flashes red. The models need `entity_models.json` (Part E step 3); without it entities are boxes of their size. Without `pack.zip` the models are plain white and items don't show. Server side, `entities.*` and `actions.*` in `config.yml` turn this off or cap it; `/tabletop entities` prints counts, main-thread time and bytes/s.
 4. Look up for the giant. With the default `avatar.placement: floating` it is a huge player head wearing the `skin_player` skin, plus two hands, exactly where the headset and controllers are relative to the table. The head turns, tilts and rolls with yours, and the hands follow the controllers. Sizes match a real head (0.25 m) and hand (0.1 m) at the table's scale: a 25-block head and 10-block hands at 1 cm/block, capped at 64 blocks by `avatar.max-head-blocks`. The hands are flat boxes in the block colour closest to your skin's hands (`avatar.hand-block` to override). Standing 1.6 m tall at a table puts the head about 100-160 blocks above the terrain, so look up. Java players more than 128 blocks away horizontally don't receive the entities; raise `entity-tracking-range.display` in `spigot.yml` if needed. For a body instead, `/tabletop avatar placement ground` puts a Mannequin (up to 28.8 blocks tall) on the terrain below you, and `exact` hangs one from the mapped head position.
 
-Headset controls: **left thumbstick** = glide across the world (hold the **left grip** and push up/down to move up/down; see Part H); **right thumbstick left/right** = turn the table; **right thumbstick up/down** = scale the miniature (also changes the giant's mapping); **A** (right) = re-place the world at the right controller; hold **both grips** and move the right hand = drag/rotate; **Y** (left) = area setup (Part G). Editing blocks (Part I): **right trigger** = break, **left trigger** = place, **B** = pick block.
+Headset controls: **left thumbstick** = glide across the world (hold the **left grip** and push up/down to move up/down; see Part H); **right thumbstick left/right** = turn the table; **right thumbstick up/down** = scale the miniature (also changes the giant's mapping); **A** (right) = re-place the world at the right controller; hold **both grips** and move the right hand = drag/rotate; **Y** (left) = area setup (Part G). Editing blocks (Part I): **right trigger** = break, **left trigger** = place, **B** = pick block. Block menu (Part J): **menu button ≡** (left) = open/close, **right thumbstick click** = next hotbar slot. The **left thumbstick click** is reserved for area controls.
 
 ## Part G: setting up a play area in the headset
 
 The server picks the starting region (config.yml `region`). You can change it from the headset at any time. The new area is shared: every connected headset switches to it, and the last request wins.
 
-1. Press **Y** (left controller) to enter area setup. A cyan wireframe box shows the area you're about to request, drawn at the current scale relative to the terrain on the table. The status panel shows its size, how many blocks it contains, the estimated face/vertex count, and the block size it would use. The box is what you will **see**; the headset also asks for a 16-block view margin around it (shown as `+16/16 margin`) so you can glide smoothly (Part H). The margin shrinks when the box gets close to the server's limits.
+1. Press **Y** (left controller) to enter area setup. A cyan wireframe box shows the area you're about to request, drawn at the current scale relative to the terrain on the table. A small panel above your left hand shows its size, how many blocks it contains, the estimated face/vertex count, the block size it would use, warnings, and `A confirm  B cancel` (the panel is there only while setup runs; the block menu closes and can't be opened meanwhile). The box is what you will **see**; the headset also asks for a 16-block view margin around it (shown as `+16/16 margin`) so you can glide smoothly (Part H). The margin shrinks when the box gets close to the server's limits.
 2. Choose where the area is centred, using **X** (left) to cycle through these modes:
    - **CurrentOrigin**: the area currently shown.
    - **Player**: an online player. Push the **right stick left/right** to step through players; their feet end up about a third of the way up the box.
@@ -117,7 +119,7 @@ The server picks the starting region (config.yml `region`). You can change it fr
 
    Sizes are clamped to the server's limits (by default 288×384×288 including the margin, and at most 16,777,216 blocks; a server with an older config.yml keeps its own `max_region`, e.g. 128×384×128).
 4. Block size: **auto-fit** is on by default. It sets block size = min(table width/X, table depth/Z) × 0.95, so the area fills the table detected by MRUK; without a detected table it assumes a 0.8 × 0.6 m table. Click the **right stick** to switch to keeping your manual scale; outside setup, the right stick still scales the model.
-5. Press **A** to confirm. The server answers with `region_changed` and a new snapshot. The old terrain stays on the table while the new area is meshed in the background ("N sections pending" in the status panel), then the new one replaces it in one go. Tap **B** to cancel.
+5. Press **A** to confirm. The server answers with `region_changed` and a new snapshot, and a short "Area set" message appears low in your view. The old terrain stays on the table while the new area is meshed in the background ("N sections pending" in the menu's Info tab), then the new one replaces it in one go. Tap **B** to cancel.
 6. If the estimate is over the headset budget, the box turns red and A won't confirm. There are two budgets: about 250k faces, and about 600 section meshes (each 16×16×16 block section with something in it is its own mesh, so roughly one or two draw calls). **Hold B for 1 s** to override the warning. If the server rejects the request (`region_too_large`), the panel shows the server's limits.
 
 Recommended sizes (estimates from seed 12345 terrain; see TESTING.md "Navigation and bigger areas"), all with the 16-block margin on top:
@@ -142,7 +144,7 @@ Moving around only uses the thumbsticks and grips (outside area setup, which own
 How it works:
 - The server sends a region a bit bigger than what you see: a 16-block **view margin** on every side. The headset shows only the inner box and clips everything outside it, so terrain from the margin slides in smoothly by fractional blocks.
 - When you've moved about 4 blocks past the region's centre, the headset asks for the region moved by one 16-block section in that direction. The server answers with a **delta**: only the new slice of sections (about 80 of 800 for a 128-wide view). The headset keeps all other meshes, moves them, and meshes only the new slice. Nothing on the table blinks or goes empty.
-- If you outrun the stream, the view stops at the edge of the margin until the next region arrives. The status panel shows `VIEW` (window size and position), the margin, `loading...` while a request is in flight, and the measured round trip. The speed limit adapts to it: about 12 blocks of slack divided by the round trip.
+- If you outrun the stream, the view stops at the edge of the margin until the next region arrives. The menu's Info tab (Part J) shows `VIEW` (window size and position), the margin, `loading...` while a request is in flight, and the measured round trip. The speed limit adapts to it: about 12 blocks of slack divided by the round trip.
 - The region is shared: other headsets on the same server move with you (the last request wins).
 - The giant and the player figures stay where they belong in the world while the region moves (each pose says which snapshot's origin it's relative to).
 - An area set up before this version has no margin. The first push asks the server for the same view plus a margin (needs a server that advertises `view_margin` in `welcome.caps`; older servers step 16 blocks at a time instead).
@@ -155,12 +157,48 @@ Break and place blocks in the miniature like a creative-mode player. The plugin 
 1. Point the **right controller** at the terrain. A thin dark outline marks the block you're aiming at (like the game's selection box), and a faint laser runs from the controller to it. The ray goes through air and water, so you can aim at the sea floor. Plants, slabs, torches and other non-full blocks are targeted by their whole cell. Only blocks inside the visible box count: the hidden margin around it (Part H) can't be hit or built on, and blocks cut by the box's sides can be hit on their visible part.
 2. **Right trigger**: break the outlined block. Hold it to keep breaking every quarter second while you sweep.
 3. **Left trigger**: place the selected block against the outlined face (on top when you aim at a top face, beside it for a side face). Hold to keep placing. Placing into water works and waterlogs slabs, stairs and the like. You can't place outside the area or into an occupied cell.
-4. **B** (right): pick the outlined block as the selected block, like middle-click. The selection starts as stone. It floats above the right controller as a small textured cube with its name, and the status text shows it too (`EDIT stone  R-trig break  L-trig place  B pick`).
+4. **B** (right): pick the outlined block as the selected block, like middle-click; it also goes to the front of the hotbar (Part J). The selection starts as stone. It floats above the right controller as a small textured cube with its name. Any other block comes from the block menu (Part J). A block the server won't place (fire, a potted plant) isn't picked: "Can't place fire" appears briefly instead.
 5. Orientation: logs and other pillars line up with the face you click, and blocks that have a horizontal facing turn toward you (stairs, doors, fence gates and beds face the way you look, as in the game). Everything else keeps the picked block's state exactly.
 
-Each edit gives a short buzz. Breaking and placing blocks that already appear in the area shows up at once; a block that's new to the area appears when the server confirms it (about 0.2 s). If the server refuses an edit, the block snaps back and the status text says why (for example `edit_denied: cell is occupied by ...`). Editing is paused while area setup (Y) is open, because setup uses the right trigger and B. Moving around (Part H) uses only the thumbsticks and grips, so you can glide and edit at the same time.
+Each edit gives a short buzz. Breaking and placing blocks that already appear in the area shows up at once; a block that's new to the area appears when the server confirms it (about 0.2 s). If the server refuses an edit, the block snaps back and a short message low in your view says why (for example `Edit refused: cell is occupied by ...`). Editing is paused while area setup (Y) is open, because setup uses the right trigger and B, and while the right controller points at the block menu. Moving around (Part H) uses only the thumbsticks and grips, so you can glide and edit at the same time.
 
 Server options (config.yml `edit`): `enabled`, `require-token` (only allow edits when `auth.token` is set), `max-per-second` (20), `physics` (sand falls, water flows) and `deny` (blocks that can't be placed: command blocks, structure blocks, jigsaws). Each edit is logged as `EDIT session=... break|place world x,y,z ... old -> new`. Edits don't go through protection plugins.
+
+## Part J: the block menu and the hotbar
+
+Build with any block, like the creative inventory. The server sends its list of placeable blocks when the headset connects (every block with an item form, minus air, barriers, light and structure voids and config.yml `edit.deny`); the icons are drawn on the headset from your own `pack.zip`.
+
+| Control | Action |
+|---|---|
+| **Menu button ≡** (left controller) | Open or close the menu. It floats beside your left hand, turned toward you, and follows the hand. |
+| **Right controller ray** on the menu | Hover: the item lights up and its name shows under the grid. A thin laser and a dot show where you point. |
+| **Right trigger** on the menu | Click: choose a block (it becomes the selected block and goes to the front of the hotbar, with a short buzz), switch tabs, press a key, choose a hotbar slot, or press the arrows. |
+| **Right thumbstick up/down** on the menu | Scroll the grid a row at a time (hold to keep scrolling). |
+| **Right thumbstick click** (menu closed) | Select the next hotbar slot. |
+| **B** (right) | Pick a block from the miniature (Part I); it goes to the front of the hotbar. |
+| **Left trigger** | Place the selected block, as before (Part I). |
+
+While the ray is on the menu, the right trigger doesn't break blocks, the right stick scrolls the menu instead of scaling or turning the table, and gliding, turning and editing pause. Everything works normally again the moment the ray leaves the menu or the menu closes. Area setup (Y) closes the menu.
+
+The menu, top to bottom:
+- **Tabs:** Build, Color, Nature, Use (functional), Redst. (redstone), Other: the server's categories, close to the game's creative tabs. Then **Search** and **Info**.
+- **Grid:** 9 blocks per row, 5 rows; arrows and a scroll bar on the right. Blocks of a family sit together (oak log, wood, planks, stairs, slab, fence...; colored blocks by kind, in the game's dye order). The selected block is framed.
+- **Search:** a keyboard on the panel (QWERTY, space, delete, clear) and 3 rows of results. Every word you type must appear in the name or id (`oak st` finds oak stairs); names that start with what you typed come first. An empty search lists every block. The menu uses its own keyboard rather than the Quest system keyboard: the system keyboard needs an extra Android manifest flag, takes focus from the app (passthrough and tracking pause behind it) and can't be tested in a headless build, while the panel keyboard is the same code path as every other button.
+- **Info:** the full status (link, RTT, world, pack, light, table, poses, mesh, entities, view, area, edit, block list, icons), refreshed 4 times a second, and the **Show HUD** toggle (below).
+- **Name line:** the hovered block's name, otherwise the selected block.
+- **Hotbar:** your 9 most recent blocks, newest first, one slot per block (picking oak stairs again moves them to the front). The same hotbar floats small just above the right controller while the menu is closed; the selected slot is framed.
+- **Area size:** a row of 5 sizes, only when the app provides area presets.
+
+Icons: blocks whose inventory icon is flat in the game (flowers, torches, rails, doors, panes, signs, candles...) show the item sprite; everything else is the item's 3D model seen from the game's inventory angle. They are drawn on a background thread from `pack.zip` (visible ones first, the rest afterwards) and stored under the app's files folder (`icons/`, one folder per pack), so the next start shows them at once; a new `pack.zip` gets a new folder. Names come from the pack's `en_us.json` (Block of Diamond, Redstone Dust). Without `pack.zip` the blocks are flat-coloured cubes with their names written on the tiles.
+
+## What's where (status and messages)
+
+The old status text in the middle of the view is gone:
+- **Info tab** in the block menu: the full status.
+- **Short messages** (2–3 s, fading, low in your view): link lost and restored, server errors (refused edits, area too large...), local refusals ("Can't place fire"), and area setup results ("Area set", "Requested 64x96x64...", "Area setup cancelled").
+- **Area setup panel**: above your left hand while setup (Y) runs (Part G).
+- **Selected block**: floats above the right controller (Part I), with the small hotbar.
+- **Small HUD** (for debugging): turn on **Show HUD** in the Info tab, or add `"show_hud": true` to `tabletop.json`. It's the same status as the Info tab, about a third of the old size, low and to the left.
 
 ## Logs
 
@@ -168,7 +206,7 @@ Server options (config.yml `edit`): `enabled`, `require-token` (only allow edits
 adb logcat -s Unity | findstr Tabletop
 ```
 
-The floating status text shows `LINK`, `RTT`, `WORLD`, `PACK`, `EDIT` (the selected block, or `off` when the server doesn't allow editing), `LIGHT` (`smooth`/`flat`, or `off` when the server sends no light; then `BIOMES n`, with `(no colormap)` if the pack lacks `colormap/grass.png`), `TABLE`, `POSES` and the last server error. Biome colours (grass, leaves, water per biome) need both biomes from the server and a pack with the colour maps; without them the old fixed tints are used.
+The Info tab (Part J) shows `LINK`, `RTT`, `WORLD`, `PACK`, `EDIT` (the selected block, or `off` when the server doesn't allow editing), `LIGHT` (`smooth`/`flat`, or `off` when the server sends no light; then `BIOMES n`, with `(no colormap)` if the pack lacks `colormap/grass.png`), `TABLE`, `POSES`, the last server error, `BLOCKS n placeable` and the icon counts. Biome colours (grass, leaves, water per biome) need both biomes from the server and a pack with the colour maps; without them the old fixed tints are used. Logcat has `[Tabletop] block registry: N blocks in 6 categories`.
 
 ## Troubleshooting
 
@@ -183,7 +221,10 @@ The floating status text shows `LINK`, `RTT`, `WORLD`, `PACK`, `EDIT` (the selec
 | No table found | Redo Space Setup and mark the table; or press A to place it manually. |
 | Giant head is high up or far away | Expected in `floating` (the default): it is exactly where your headset is, scaled by the block size. Lean in over the table to bring it down, or use a larger block size. `/tabletop avatar placement ground` puts a body on the terrain instead (ARCHITECTURE 3.5). |
 | Giant not visible from far away | Display entities are only sent within `entity-tracking-range.display` (spigot.yml, default 128 blocks horizontally) of a player. |
-| Giant has the default skin | No `skin_player` in tabletop.json and no `avatar.skin-player`, a misspelt name (`skin_failed` in the status text), or no internet on the server PC. Check `/tabletop avatar status` (`skin_resolved`). |
-| `EDIT off (server)` | The plugin is older than the headset app, `edit.enabled: false`, or `edit.require-token: true` without an `auth.token`. Update the plugin or change config.yml `edit`, then `/tabletop reload` and reconnect. |
-| Blocks I break come back after a moment | The server refused the edit (the status text shows the error) or never got it (link down: edits aren't queued). |
+| Giant has the default skin | No `skin_player` in tabletop.json and no `avatar.skin-player`, a misspelt name (a `Skin lookup failed` message), or no internet on the server PC. Check `/tabletop avatar status` (`skin_resolved`). |
+| `EDIT off (server)` (Info tab) | The plugin is older than the headset app, `edit.enabled: false`, or `edit.require-token: true` without an `auth.token`. Update the plugin or change config.yml `edit`, then `/tabletop reload` and reconnect. |
+| Block menu says "waiting for the server's block list" | The plugin is older than the app (no `block_registry`). Update the plugin. |
+| Menu icons are coloured cubes | No `pack.zip` (Part E), or the pack failed to open (Info tab: `icons flat`). |
+| Old icons after changing `pack.zip` | Shouldn't happen (the cache folder is named after the pack's size and date); delete the app's `files/icons/` folder to force a redraw. |
+| Blocks I break come back after a moment | The server refused the edit (a short message shows why) or never got it (link down: edits aren't queued). |
 | Players are plain-coloured figures | They have no skin URL (offline-mode server) and there's no `pack.zip` to take the default skins from (Part E). |

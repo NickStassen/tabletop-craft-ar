@@ -68,6 +68,8 @@ public final class TabletopPlugin extends JavaPlugin {
     private volatile boolean editEnabled = true, editRequireToken, editTokenSet, editPhysics = true;
     private volatile int editRate = 20;
     private volatile Set<String> editDeny = Set.of();
+    // [menu] Placeable blocks for the headset's block menu (block_registry, PROTOCOL.md 4.24), built on start/reload.
+    private volatile BlockRegistry blockRegistry = BlockRegistry.empty();
 
     @Override public void onEnable() {
         saveDefaultConfig();
@@ -108,6 +110,7 @@ public final class TabletopPlugin extends JavaPlugin {
         Set<String> deny = new HashSet<>();
         for (String id : c.getStringList("edit.deny")) deny.add(BlockEdit.blockId(id));
         editDeny = Set.copyOf(deny);
+        buildBlockRegistry();   // [menu]
         outbound = Executors.newSingleThreadExecutor(r -> { Thread t = new Thread(r, "tabletop-outbound"); t.setDaemon(true); return t; });
         link = new LinkServer(this, c.getString("bind.host", "0.0.0.0"), c.getInt("bind.port", 8765), c.getString("bind.path", "/tabletop"), c.getString("auth.token", ""));
         link.start();
@@ -222,7 +225,25 @@ public final class TabletopPlugin extends JavaPlugin {
         if (s.canEdit) sc.add(Protocol.CAP_EDIT);   // block editing (PROTOCOL.md 4.20)
         w.add("caps", sc);
         send(s, w);
+        send(s, blockRegistry.message());   // [menu] every placeable block, once per connection (PROTOCOL.md 4.24)
         subscribe(s, r, null);
+    }
+
+    /** [menu] Reads the placeable blocks (item registry order, categories from tags and names) and logs the message size. */
+    private void buildBlockRegistry() {
+        long t0 = System.nanoTime();
+        World rw = Bukkit.getWorld(defaultRegion().world());
+        if (rw == null && !Bukkit.getWorlds().isEmpty()) rw = Bukkit.getWorlds().get(0);
+        try {
+            blockRegistry = BlockRegistry.build(RegistryScan.candidates(rw), editDeny);
+        } catch (RuntimeException e) {
+            getLogger().warning("block registry: " + e);
+            blockRegistry = BlockRegistry.empty();
+            return;
+        }
+        int bytes = Protocol.GSON.toJson(blockRegistry.message()).getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+        getLogger().info(String.format("REGISTRY %d placeable blocks %s, %d variants, %d bytes, %.1f ms", blockRegistry.size(),
+            blockRegistry.counts(), blockRegistry.variants().size(), bytes, (System.nanoTime() - t0) / 1e6));
     }
 
     void onSubscribe(Session s, String world, int[] origin, int[] dims, Long refSeq, boolean follow) {
@@ -651,6 +672,8 @@ public final class TabletopPlugin extends JavaPlugin {
             String id = BlockEdit.blockId(next.getAsString());
             if (next.getMaterial().isAir()) { denyEdit(s, e, "bad_state", "use op break to remove a block", refSeq); return; }
             if (editDeny.contains(id)) { denyEdit(s, e, "edit_denied", id + " can't be placed from the headset (edit.deny)", refSeq); return; }
+            String notPlaceable = blockRegistry.refusePlace(id);   // [menu] only blocks from block_registry (PROTOCOL.md 4.24)
+            if (notPlaceable != null) { denyEdit(s, e, "bad_state", notPlaceable, refSeq); return; }
             if (!b.isReplaceable()) { denyEdit(s, e, "edit_denied", "cell is occupied by " + old.getAsString(), refSeq); return; }
             if (next instanceof Waterlogged wl && old.getMaterial() == Material.WATER && old instanceof Levelled lv && lv.getLevel() == 0) wl.setWaterlogged(true);
         }

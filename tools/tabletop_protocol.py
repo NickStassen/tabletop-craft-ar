@@ -31,7 +31,10 @@ REQUIRED = {
     "entities": ["full", "entities"],
     "actions": ["actions"],
     "block_edit": ["op", "pos"],
+    "block_registry": ["count", "categories"],
 }
+# block_registry categories (PROTOCOL.md 4.24), in tab order.
+REGISTRY_CATEGORIES = ("building", "colored", "natural", "functional", "redstone", "other")
 ERROR_CODES = {"version_mismatch", "auth_failed", "bad_message", "unknown_type", "unsupported", "region_too_large",
                "world_not_found", "bad_snapshot", "rate_limited", "skin_failed", "internal",
                "edit_denied", "out_of_region", "bad_state"}   # the last three: block_edit (PROTOCOL.md 4.20)
@@ -107,6 +110,44 @@ def validate(msg: dict) -> None:
                 raise ValueError(f"{k} action needs a block state")
     if t == "block_edit":
         validate_block_edit(msg)
+    if t == "block_registry":
+        validate_block_registry(msg)
+
+
+def validate_block_registry(msg: dict) -> None:
+    """block_registry (PROTOCOL.md 4.24): categories with default states, count, items and variants maps."""
+    cats = msg["categories"]
+    if not isinstance(cats, list) or not all(isinstance(c, dict) and isinstance(c.get("id"), str) for c in cats):
+        raise ValueError("block_registry categories must be objects with an id")
+    seen: set[str] = set()
+    for c in cats:
+        blocks = c.get("blocks")
+        if not isinstance(blocks, list) or not all(isinstance(s, str) and s.strip() for s in blocks):
+            raise ValueError(f"block_registry category {c['id']} needs a list of block states")
+        for s in blocks:
+            bid = registry_id(s)
+            if bid in seen:
+                raise ValueError(f"block_registry lists {bid} twice")
+            seen.add(bid)
+    if msg["count"] != len(seen):
+        raise ValueError(f"block_registry count {msg['count']} but {len(seen)} blocks listed")
+    for k in ("items", "variants"):
+        v = msg.get(k)
+        if v is not None and not (isinstance(v, dict) and all(isinstance(a, str) and isinstance(b, str) for a, b in v.items())):
+            raise ValueError(f"block_registry {k} must map block ids to ids")
+    for var, home in (msg.get("variants") or {}).items():
+        if home not in seen:
+            raise ValueError(f"block_registry variant {var} points at {home}, which isn't listed")
+
+
+def registry_id(state: str) -> str:
+    """Block id of a registry entry (its default state): 'minecraft:oak_log[axis=y]' -> 'minecraft:oak_log'."""
+    return state.split("[", 1)[0]
+
+
+def registry_states(msg: dict) -> dict[str, str]:
+    """block_registry -> {block id: default state}, in menu order."""
+    return {registry_id(s): s for c in msg["categories"] for s in c["blocks"]}
 
 
 def _check_equipment(eq: dict | None) -> None:

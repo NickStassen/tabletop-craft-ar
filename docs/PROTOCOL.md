@@ -58,6 +58,7 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 | `error` | both | problem report |
 | `bye` | both | graceful close |
 | `block_edit` | C→S | break or place one block from the headset (§4.20, needs `edit_v1`) |
+| `block_registry` | S→C | every block the headset may place, by menu category (§4.24), once after `welcome` |
 
 ### 4.1 `hello` (C→S)
 
@@ -333,6 +334,7 @@ Then it closes with code 1000. When the Quest client disconnects (with or withou
 - **v1 (2026-10-13):** initial.
 - **v1, light and biomes (2026-10-13, additive):** optional per-block light and 4x4x4 biomes in `chunk_snapshot`, light changes in `block_update`, opted into with the `light_v1` / `biomes_v1` caps and echoed in `welcome.caps` (§4.5.1). Peers without the caps are unaffected.
 - **v1, block editing (2026-10-13, additive):** `block_edit` (C→S) breaks or places one block inside the region, opted into with the `edit_v1` cap; error codes `edit_denied`, `out_of_region`, `bad_state`; an error about an edit carries its `op` and `pos` (§4.20). Peers without the cap are unaffected.
+- **next version: block menu (2026-10-14, required, not backwards compatible):** the server sends `block_registry` (§4.24) to every client right after `welcome`, and a `block_edit` `place` must name a registry block or variant (else `bad_state`, §4.20). No cap: plugin, Quest app and tools must match.
 
 ## 4.13–4.16 Runtime region control (v1, additive)
 
@@ -411,6 +413,7 @@ Server behaviour:
 - Edits are applied on the main thread in arrival order. Each session may make `edit.max-per-second` edits (default 20): a token bucket holding one second's worth, so a burst of 20 passes and the rest get `rate_limited`.
 - `break` of air does nothing. Breaking a block that holds water (waterlogged, kelp, seagrass) leaves a water source, and placing a waterloggable state into a water source sets `waterlogged=true`, as in vanilla. Block physics run after the edit (`edit.physics`), so sand falls and water flows into a gap.
 - `place` needs a replaceable cell (air, fluids, short grass and the like: `Block#isReplaceable`) and a state that isn't air or listed in `edit.deny` (by default the operator blocks: command blocks, structure blocks, jigsaws, test blocks). Two-block structures (doors, beds, tall plants) are placed as the one state given.
+- Next version: the state's block must also be in the session's `block_registry` (§4.24), or be one of its `variants` (a wall torch picked from a wall is placed as is). Anything else (fire, water, portals, piston heads, potted plants: blocks without an item form) gets `bad_state` with the message "`<id>` is not a placeable block (not in block_registry)".
 - There is no acknowledgement. The change reaches every session through the normal `block_update` diff (the edit marks the region dirty), typically 100–200 ms after the edit arrives. Protection plugins are not consulted (no `BlockPlaceEvent`/`BlockBreakEvent`), so only the region bounds, the rate limit and the deny list restrict edits.
 - A refused edit gets an `error` with `ref_seq` and, additively, the edit's `op` and `pos`:
 
@@ -418,7 +421,7 @@ Server behaviour:
 |---|---|
 | `edit_denied` | no `edit_v1` grant, occupied cell, a state from `edit.deny`, chunk not loaded |
 | `out_of_region` | `pos` is outside the session's region |
-| `bad_state` | `state` isn't a block state, or is air (use `break`) |
+| `bad_state` | `state` isn't a block state, is air (use `break`), or (next version) isn't a `block_registry` block or variant |
 | `rate_limited` | over `edit.max-per-second` |
 | `bad_message` | malformed: no `op`/`pos`, non-integer `pos`, unknown `face` (this reply has no `pos`) |
 
@@ -495,3 +498,49 @@ At most one per tick, to sessions with `actions_v1`, with what happened inside t
 - Fixtures: `tools/fixtures/entities.json` (a full list: a boat carrying a player and a baby pig, a sheep, an armed zombie, a dropped stack, an item frame), `entities_delta.json` (moves, a turned boat, changed equipment, a removal), `player_positions_riding.json` (a player in that boat with full equipment) and `actions.json`. Java `EntityDeltaTest` and `ActionBatchTest` build them from server-side state; Python `test_tabletop_protocol.py` and C# `Tests~/EntityTests.cs` apply them.
 - `tools/entities_check.py` checks a live server: types, positions, the vehicle link, equipment, a removal, hurt and explosion actions, and bytes/s.
 - Changelog (additive, no version bump, 2026-10-13): adds the `entities_v1` and `actions_v1` caps with the `entities` and `actions` messages, and `player_positions[].id`, `vehicle`, `pose` and `equipment` (§4.6). Clients without the caps are unaffected.
+
+## 4.24 `block_registry` (S→C): the blocks the headset can place
+
+The headset's block menu (docs/QUEST_SETUP.md "Block menu") lists every block the server lets it place, so the giant can build with any block, not only ones already in the region. The server sends this once per connection, right after `welcome` and before the first `chunk_snapshot`. Every client gets it (no cap; pre-1.0, plugin, app and tools change together).
+
+```json
+{"v":1,"type":"block_registry","seq":1,"t":1760370000013,
+ "count":13,
+ "categories":[
+  {"id":"building","label":"Building Blocks","blocks":["minecraft:diamond_block","minecraft:oak_log[axis=y]","minecraft:oak_stairs[facing=north,half=bottom,shape=straight,waterlogged=false]","minecraft:stone"]},
+  {"id":"colored","label":"Colored Blocks","blocks":["minecraft:white_wool","minecraft:glass"]},
+  {"id":"natural","label":"Natural Blocks","blocks":["minecraft:grass_block[snowy=false]","minecraft:poppy","minecraft:wheat[age=0]"]},
+  {"id":"functional","label":"Functional Blocks","blocks":["minecraft:chest[facing=north,type=single,waterlogged=false]","minecraft:torch"]},
+  {"id":"redstone","label":"Redstone Blocks","blocks":["minecraft:rail[shape=north_south,waterlogged=false]","minecraft:redstone_wire[east=none,north=none,power=0,south=none,west=none]"]},
+  {"id":"other","label":"Other","blocks":[]}],
+ "items":{"minecraft:wheat":"minecraft:wheat_seeds","minecraft:redstone_wire":"minecraft:redstone"},
+ "variants":{"minecraft:wall_torch":"minecraft:torch"}}
+```
+
+| field | type | meaning |
+|---|---|---|
+| `count` | int | number of blocks listed over all categories |
+| `categories` | array | menu tabs in display order: `id` (`building`, `colored`, `natural`, `functional`, `redstone`, `other`), `label`, and `blocks` |
+| `categories[].blocks` | string[] | each block's **default state** (`BlockData#getAsString()` of `BlockType#createBlockData()`), in menu order. The block id is the part before `[`. A block appears in one category only. |
+| `items` | object | block id → item id, only where the block is placed with a differently named item (`redstone_wire` with `redstone`, crops with their seeds). Clients use it for icons and names. |
+| `variants` | object | block id → registry block id, for blocks that aren't listed but are placed with a listed block's item: wall torches, wall signs and hanging signs, wall heads, wall banners, wall coral fans, filled cauldrons. A `block_edit` may place them (a B pick from a wall). |
+
+Which blocks (server, `BlockRegistry` + `RegistryScan`):
+- every item with a block form (`ItemType#getBlockType`), keeping blocks whose item is their own (not the variants above), that are enabled by the world's feature flags;
+- minus air, `barrier`, `light`, `structure_void` and the legacy `petrified_oak_slab`, and minus config.yml `edit.deny` (command blocks, structure blocks, jigsaws, test blocks).
+
+Categories follow vanilla's creative tabs as closely as the API allows. Paper exposes no tab data (`ItemType#getCreativeCategory` is deprecated and answers one value for everything), so the server assigns them from block tags and names, first match wins:
+1. **redstone**: tags `rails`, `buttons`, `pressure_plates`; redstone wire, torch and block, repeater, comparator, target, lever, tripwire (hook), daylight detector, pistons, slime and honey blocks, dispenser, dropper, crafter, hopper, observer, note block, redstone lamp, TNT, sculk sensors, trapped chest, lightning rods and copper bulbs.
+2. **colored**: tags `wool`, `wool_carpets`, `terracotta`, `candles`, `beds`, `banners`, `shulker_boxes`; a dye colour prefix followed by wool, carpet, terracotta, concrete, stained glass, shulker box, bed, candle or banner (their stairs and slabs too); plain glass, glass pane, tinted glass, terracotta, shulker box and candle.
+3. **functional**: tags `all_signs`, `anvil`, `cauldrons`, `campfires`, `flower_pots`; workstations (crafting table, furnaces, smithing, loom, stonecutter, grindstone, enchanting table, brewing stand...), storage (chests, barrel, ender chest, shelves), bookshelves, lectern, beacon, conduit, bell, jukebox, ladder, scaffolding, torches and lanterns (not jack o'lanterns or sea lanterns), heads and skulls, copper golem statues, spawners and vaults, infested and suspicious blocks, end rod, end portal frame, dragon egg, heavy core, cake, creaking heart.
+4. **natural**: tags `leaves`, `saplings`, `flowers`, `small_flowers`, `crops`, `dirt`, `sand`, `ice`, `nylium`, `corals`, `coral_blocks`, `wall_corals`, `wart_blocks`, `cave_vines`; ores, raw ore blocks, amethyst buds and clusters, mushrooms, fungi, roots, propagules, dead coral, shrubs, and a list of soils and plants (grass block, podzol, mud, clay, gravel, snow, moss, sculk, netherrack, end stone, kelp, vines, bamboo, cactus, pumpkins, melons...).
+5. **building**: tags `logs`, `planks`, `stairs`, `slabs`, `walls`, `fences`, `fence_gates`, `doors`, `trapdoors`, `base_stone_overworld`, `base_stone_nether`; names containing brick, stone, planks, wood, hyphae, stem, log, copper, quartz, purpur, prismarine, deepslate, tuff, granite, diorite, andesite, basalt, `_block`, bars, chain, grate, tiles, pillar, polished/smooth/chiseled/cut, sandstone, resin...
+6. **other**: anything left (0 blocks on 26.3).
+
+Order inside a category: Paper doesn't expose vanilla's registry order either, so families are grouped (`BlockRegistry.sortKey`): oak log, stripped oak log, oak wood, stripped oak wood, oak planks, oak stairs, slab, fence, fence gate, door, trapdoor...; stone, its stairs and slab, stone bricks, mossy stone bricks...; all copper blocks by weathering, then waxed; colored blocks by kind (wool, carpet, terracotta, glazed terracotta, concrete, concrete powder, glass, panes, shulker boxes, beds, candles, banners), each in vanilla's dye order (white, light gray, gray, black, brown, red, orange, yellow, lime, green, cyan, light blue, blue, purple, magenta, pink). Families are alphabetical.
+
+Size on Paper 26.3: 1130 blocks (building 433, colored 263, natural 228, functional 129, redstone 77, other 0), 67 variants, 14 items, **66.9 KB** of JSON; built once on plugin start and on `/tabletop reload` (about 100–170 ms on the main thread, logged as `REGISTRY ...`).
+
+Client guidance (non-normative; the Quest's `Net/BlockRegistry.cs`): a state is placeable when its block id, or the block its `variants` entry names, is listed. Check before sending a `place` and before accepting a B pick, so the user sees "can't place fire" at once instead of a revert. Names come from the user's own pack (`assets/minecraft/lang/en_us.json`: `block.<ns>.<path>`, or `item.<ns>.<path>` of the `items` entry); without it the client derives "Oak Stairs" from the id.
+
+Fixture: `tools/fixtures/block_registry.json`. Java `BlockRegistryTest` (filtering, categories, order, placement check) and `FixtureTest` build it from the same blocks; Python `test_tabletop_protocol.py` validates it (`validate_block_registry`: unique blocks, `count`, variants pointing at listed blocks); C# `Tests~/MenuTests.cs` parses it. `tools/edit_check.py` checks a live server: the message arrives between `welcome` and the first snapshot, a registry block new to the region (diamond block) is placed and comes back through `palette_add`, and fire is refused with `bad_state`.

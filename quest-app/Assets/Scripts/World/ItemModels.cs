@@ -32,6 +32,10 @@ namespace TabletopCraft.World
         public readonly bool[] Tinted = new bool[6];
         /// <summary>Display transforms from the model chain: held in the right hand, lying on the ground, in a frame.</summary>
         public ItemDisplay ThirdPersonRight = ItemDisplay.Identity, Ground = ItemDisplay.Identity, Fixed = ItemDisplay.Identity;
+        /// <summary>[menu] The inventory view (block menu icons): "gui" from the model chain, unset for flat items.</summary>
+        public ItemDisplay Gui = ItemDisplay.Identity;
+        /// <summary>[menu] The model chain ends in builtin/entity (chests, beds, banners, heads): no geometry of its own.</summary>
+        public bool BuiltinEntity;
 
         public string Key => Kind == ItemVisualKind.Sprite ? "sprite:" + Sprite + "+" + Overlay + "#" + SpriteTint.r + "," + SpriteTint.g + "," + SpriteTint.b
                            : Kind == ItemVisualKind.Cube ? "cube:" + string.Join(",", Faces) + "#" + string.Join("", Array.ConvertAll(Tinted, t => t ? "1" : "0")) : "none";
@@ -75,6 +79,9 @@ namespace TabletopCraft.World
                 {
                     object v = t0.TryGetValue("default", out var dv) ? dv : t0.TryGetValue("value", out var vv) ? vv : null;
                     if (v is double d) { long c = (long)d & 0xFFFFFF; tint = new Color32((byte)(c >> 16), (byte)(c >> 8), (byte)c, 255); }
+                    // [menu] biome-coloured items (short grass, ferns): the inventory shows the default grass/foliage colour
+                    else if ((t0.S("type") ?? "").EndsWith("grass")) tint = new Color32(124, 189, 107, 255);
+                    else if ((t0.S("type") ?? "").EndsWith("foliage")) tint = new Color32(72, 181, 24, 255);
                 }
                 return node.S("model");
             }
@@ -115,6 +122,7 @@ namespace TabletopCraft.World
                     Display(disp.O("thirdperson_righthand"), ref r.ThirdPersonRight);
                     Display(disp.O("ground"), ref r.Ground);
                     Display(disp.O("fixed"), ref r.Fixed);
+                    Display(disp.O("gui"), ref r.Gui);   // [menu]
                 }
                 if (m.O("textures") is Dictionary<string, object> t)
                     foreach (var kv in t) if (!textures.ContainsKey(kv.Key)) textures[kv.Key] = TextureRef(kv.Value);
@@ -122,6 +130,7 @@ namespace TabletopCraft.World
                 cur = m.S("parent");
             }
             if (!found) return false;
+            r.BuiltinEntity = builtinEntity;   // [menu]
             if (elements != null && !generated)
             {
                 var faces = (elements[0] as Dictionary<string, object>)?.O("faces");
