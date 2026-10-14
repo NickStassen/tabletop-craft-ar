@@ -486,6 +486,13 @@ static class Program
                         link.Send(Protocol.AvatarConfig(true, 0.01f, "", true, "Tabletop Giant")); link.Send(Protocol.Ping(1)); break;
                     case "chunk_snapshot":
                         encoding = m.S("encoding");
+                        if (navPhase == 2 && m.I("part") == 0)
+                        {
+                            // What we have right before the resend: the delta plus every block_update since. The server
+                            // resends exactly that (PROTOCOL.md 4.18); newer changes follow as updates to the resend.
+                            afterDelta = world.Grid.Select(id => world.State(id)).ToArray();
+                            lightAfterDelta = world.Light == null ? null : (byte[])world.Light.Clone();
+                        }
                         asm.Offer(m, world, new HashSet<Vector3Int>());
                         if (!asm.Busy) break;   // more parts to come
                         var res = asm.Wait();
@@ -501,16 +508,17 @@ static class Program
                         else if (navPhase == 1)
                         {
                             delta = res; navPhase = 2;
-                            afterDelta = world.Grid.Select(id => world.State(id)).ToArray();
-                            lightAfterDelta = world.Light == null ? null : (byte[])world.Light.Clone();
                             // Pretend we lost it: the server must answer with a full snapshot of the same region.
                             link.Send(new Dictionary<string, object> { ["type"] = "error", ["code"] = "bad_snapshot", ["message"] = "live test", ["snapshot_id"] = world.SnapshotId, ["fatal"] = false });
                         }
                         else if (navPhase == 2)
                         {
                             navPhase = 3;
-                            fullMatches = !res.Delta && afterDelta != null && afterDelta.Length == world.Grid.Length && world.Grid.Select(id => world.State(id)).SequenceEqual(afterDelta)
-                                          && (world.Light == null) == (lightAfterDelta == null) && (world.Light == null || world.Light.SequenceEqual(lightAfterDelta));
+                            var now = world.Grid.Select(id => world.State(id)).ToArray();
+                            int blockDiff = afterDelta == null || afterDelta.Length != now.Length ? -1 : now.Where((st, i) => st != afterDelta[i]).Count();
+                            int lightDiff = world.Light == null || lightAfterDelta == null ? 0 : world.Light.Where((v, i) => v != lightAfterDelta[i]).Count();
+                            fullMatches = !res.Delta && blockDiff == 0 && (world.Light == null) == (lightAfterDelta == null) && lightDiff == 0;
+                            if (!fullMatches) Console.WriteLine($"live: resend differs: {blockDiff} blocks, {lightDiff} light cells (delta={res.Delta})");
                         }
                         break;
                     case "region_info":

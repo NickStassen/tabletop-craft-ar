@@ -242,6 +242,7 @@ public final class TabletopPlugin extends JavaPlugin {
             ? SectionCodec.deltaShift(s.gridRegion, r) : null;
         s.lastGrid = grid;
         s.lastLight = light;
+        s.lastBiomes = biomes;
         s.gridRegion = r;
         s.snapshotId++;
         s.rememberRegion(s.snapshotId, r);
@@ -331,6 +332,14 @@ public final class TabletopPlugin extends JavaPlugin {
         if (now - s.lastFullResendMs < 2000) return;
         s.lastFullResendMs = now;
         RegionSpec r = s.region;
+        if (s.lastGrid != null && r.equals(s.gridRegion)) {
+            // Resend exactly what the client should have: the last snapshot plus every block_update sent since. A
+            // fresh read would race the update stream (changes not yet diffed would be in the resend and also in
+            // nothing the client can check against). Newer changes follow as block_updates for the new snapshot id.
+            getLogger().info("BAD_SNAPSHOT from session " + s.id + ": resending what it should have, in full");
+            sendSnapshot(s, new RegionData(s.lastGrid, s.lastLight, s.lastBiomes, 0), true);
+            return;
+        }
         getLogger().info("BAD_SNAPSHOT from session " + s.id + ": resending in full");
         reader.readAsync(r, s.readExtras(), d -> { if (r.equals(s.region) && s.state == Session.State.READY) sendSnapshot(s, d, true); });
     }
