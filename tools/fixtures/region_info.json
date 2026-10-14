@@ -6,5 +6,5 @@
  "ref_seq": 6,
  "region": {"world": "world", "origin": [0, -64, 0], "dims": [32, 64, 32]},
  "players": [{"name": "PlayerName", "uuid": "00000000-0000-0000-0000-000000000001", "world": "world", "pos": [12.5, 70.0, -40.5], "yaw": 90.0}],
- "limits": {"max_dims": [128, 384, 128], "max_blocks": 2097152, "max_bytes": 4194304}
+ "limits": {"max_dims": [128, 384, 128], "max_blocks": 2097152, "max_bytes": 4194304, "max_view_width": 96}
 }

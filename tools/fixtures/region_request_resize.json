@@ -1,0 +1,10 @@
+{
+ "v": 1,
+ "type": "region_request",
+ "seq": 52,
+ "t": 1760370002600,
+ "world": "world",
+ "origin": [-176, 32, -176],
+ "dims": [352, 128, 352],
+ "view_margin": [16, 16, 16]
+}

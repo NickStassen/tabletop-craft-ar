@@ -269,8 +269,9 @@ class WorldMirror:
         n = [(d + SECTION - 1) // SECTION for d in dims]
         listed = set()
         if base is not None:
+            # The base may have other dims (a resize, PROTOCOL.md 4.25): copy the overlap, new local p = old p + shift.
             sx, sy, sz = base["shift"]
-            if base["snapshot_id"] != self.snapshot_id or self.dims != dims or self.world != m0["world"]:
+            if base["snapshot_id"] != self.snapshot_id or self.world != m0["world"]:
                 raise ValueError("delta against a snapshot we don't have")
             moved = (self.origin[0] + sx, self.origin[1] + sy, self.origin[2] + sz)
             if any(s % SECTION for s in (sx, sy, sz)) or moved != tuple(m0["origin"]):
@@ -279,20 +280,20 @@ class WorldMirror:
                 raise ValueError("delta palette must extend the base palette")
             if with_light and self.light is None:
                 raise ValueError("delta with light against a snapshot without light")
+            odx, ody, odz = self.dims
+            x0, x1 = max(0, -sx), min(dx, odx - sx)
             for y in range(dy):
                 oy = y + sy
-                if not 0 <= oy < dy:
+                if not 0 <= oy < ody:
                     continue
                 for z in range(dz):
                     oz = z + sz
-                    if not 0 <= oz < dz:
+                    if not 0 <= oz < odz or x1 <= x0:
                         continue
-                    x0, x1 = max(0, -sx), min(dx, dx - sx)
-                    if x1 > x0:
-                        dst, src = (y * dz + z) * dx, (oy * dz + oz) * dx + sx
-                        grid[dst + x0:dst + x1] = self.grid[src + x0:src + x1]
-                        if light is not None:
-                            light[dst + x0:dst + x1] = self.light[src + x0:src + x1]
+                    dst, src = (y * dz + z) * dx, (oy * odz + oz) * odx + sx
+                    grid[dst + x0:dst + x1] = self.grid[src + x0:src + x1]
+                    if light is not None:
+                        light[dst + x0:dst + x1] = self.light[src + x0:src + x1]
         for i, m in enumerate(parts):
             if m["part"] != i or m["snapshot_id"] != m0["snapshot_id"]:
                 raise ValueError("parts out of order")
@@ -308,6 +309,18 @@ class WorldMirror:
                     decode_section(sec["light"], light, dims, (kx, ky, kz), 256)
         if base is None and len(listed) != n[0] * n[1] * n[2]:
             raise ValueError("full sectioned snapshot is missing sections")
+        if base is not None:
+            # Unlisted sections must lie fully inside the base region, or their blocks would be missing.
+            shift, odims = base["shift"], self.dims
+            for kx in range(n[0]):
+                for ky in range(n[1]):
+                    for kz in range(n[2]):
+                        if (kx, ky, kz) in listed:
+                            continue
+                        for a, k in enumerate((kx, ky, kz)):
+                            lo = k * SECTION + shift[a]
+                            if lo < 0 or min(dims[a], k * SECTION + SECTION) + shift[a] > odims[a]:
+                                raise ValueError(f"section {(kx, ky, kz)} is neither listed nor inside the base")
         self.world, self.origin, self.dims = m0["world"], tuple(m0["origin"]), dims
         self.snapshot_id, self.palette, self.grid = m0["snapshot_id"], palette, grid
         self.light = light

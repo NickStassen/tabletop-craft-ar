@@ -82,7 +82,8 @@ public final class TabletopPlugin extends JavaPlugin {
         var c = getConfig();
         RegionCaps d0 = RegionCaps.DEFAULT;
         caps = new RegionCaps(c.getInt("max_region.x", d0.maxX()), c.getInt("max_region.y", d0.maxY()), c.getInt("max_region.z", d0.maxZ()),
-            c.getLong("max_region.blocks", d0.maxBlocks()), c.getLong("max_region.bytes", d0.maxBytes()));
+            c.getLong("max_region.blocks", d0.maxBlocks()), c.getLong("max_region.bytes", d0.maxBytes()),
+            Math.max(1, c.getInt("max_region.view_width", d0.maxViewWidth())));   // [area] PROTOCOL.md 4.25
         avatar.blockSizeM = c.getDouble("avatar.block-size-m", 0.01);
         avatar.maxScale = c.getDouble("avatar.max-scale", 16.0);
         avatar.userHeightM = c.getDouble("avatar.user-height-m", 1.75);
@@ -270,8 +271,9 @@ public final class TabletopPlugin extends JavaPlugin {
         int baseId = s.snapshotId;
         // A delta keeps the session palette (base indices stay valid); cap its growth with an occasional full snapshot.
         // With light, the client's light must be known too (lastLight), since unlisted sections keep theirs.
+        RegionSpec oldRegion = s.gridRegion;   // [area] may have other dims (a resize delta, PROTOCOL.md 4.25)
         int[] shift = sectioned && !forceFull && oldGrid != null && s.paletteSize < 4096 && (light == null || oldLight != null)
-            ? SectionCodec.deltaShift(s.gridRegion, r) : null;
+            ? SectionCodec.deltaShift(oldRegion, r) : null;
         s.lastGrid = grid;
         s.lastLight = light;
         s.lastBiomes = biomes;
@@ -311,7 +313,8 @@ public final class TabletopPlugin extends JavaPlugin {
             timing.addProperty("remap_ms", Math.round(remapNs / 1e4) / 100.0);
             if (sectioned) {
                 int dx = r.sx(), dy = r.sy(), dz = r.sz();
-                List<int[]> keys = shift != null ? SectionCodec.changedSections(oldGrid, grid, light != null ? oldLight : null, light, dx, dy, dz, shift)
+                List<int[]> keys = shift != null ? SectionCodec.changedSections(oldGrid, grid, light != null ? oldLight : null, light,
+                                                       new int[] { oldRegion.sx(), oldRegion.sy(), oldRegion.sz() }, new int[] { dx, dy, dz }, shift)
                                                  : SectionCodec.allSections(dx, dy, dz);
                 List<SectionCodec.Section> secs = new ArrayList<>(keys.size());
                 for (int[] k : keys)
@@ -544,6 +547,11 @@ public final class TabletopPlugin extends JavaPlugin {
         String wn = q.world() == null ? defaultRegion().world() : q.world();
         World w = Bukkit.getWorld(wn);
         if (w == null) { send(s, Protocol.error("world_not_found", "no world " + wn, refSeq, false)); return; }
+        // [area] A visible width over max_region.view_width is narrowed around its centre, not refused (PROTOCOL.md 4.25).
+        RegionRequest asked = q;
+        q = caps.clampView(q, viewMargin);
+        if (q != asked) getLogger().info(String.format("REGION_CLAMP by=%s dims=%dx%dx%d -> %dx%dx%d (view width max %d)",
+            s.id, asked.dx(), asked.dy(), asked.dz(), q.dx(), q.dy(), q.dz(), caps.maxViewWidth()));
         String why = caps.check(q.dx(), q.dy(), q.dz());
         if (why != null) { getLogger().info("REGION_REJECT " + why); send(s, tooLarge(why, refSeq)); return; }
         int y0 = Math.max(q.oy(), w.getMinHeight()), y1 = Math.min(q.oy() + q.dy(), w.getMaxHeight());

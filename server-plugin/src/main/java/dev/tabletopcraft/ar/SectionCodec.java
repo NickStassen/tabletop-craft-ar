@@ -8,7 +8,8 @@ import java.util.List;
  * {@code chunk_snapshot} encoding {@code sections_v1} (PROTOCOL.md 4.18): the region as 16x16x16 sections, each an
  * RLE of [paletteIndex, runLength] pairs over the section's box (clamped to the region) in yzx order. A snapshot can
  * be split over several messages, and can be a delta against the client's current snapshot: sections that are
- * unchanged after a whole-section shift are left out and the client copies them. Pure functions, no Bukkit.
+ * unchanged after a whole-section shift (or a section-aligned resize) are left out and the client copies them.
+ * Pure functions, no Bukkit.
  */
 public final class SectionCodec {
     public static final int S = 16;
@@ -33,14 +34,14 @@ public final class SectionCodec {
 
     /**
      * Shift (in blocks) to send {@code to} as a delta against {@code from}, or null when it can't be one: other
-     * world or dims, an origin move that isn't whole sections, or no overlap.
+     * world, an origin move that isn't whole sections, or no overlap. [area] The dims may differ (a resize, PROTOCOL.md
+     * 4.25): the client copies the overlap and the delta lists the sections that aren't fully inside the old region.
      */
     public static int[] deltaShift(RegionSpec from, RegionSpec to) {
         if (from == null || to == null || !from.world().equals(to.world())) return null;
-        if (from.sx() != to.sx() || from.sy() != to.sy() || from.sz() != to.sz()) return null;
         int[] sh = { to.ox() - from.ox(), to.oy() - from.oy(), to.oz() - from.oz() };
-        int[] d = { to.sx(), to.sy(), to.sz() };
-        for (int a = 0; a < 3; a++) if (sh[a] % S != 0 || Math.abs(sh[a]) >= d[a]) return null;
+        int[] od = { from.sx(), from.sy(), from.sz() }, nd = { to.sx(), to.sy(), to.sz() };
+        for (int a = 0; a < 3; a++) if (sh[a] % S != 0 || sh[a] >= od[a] || sh[a] + nd[a] <= 0) return null;
         return sh;
     }
 
@@ -119,32 +120,41 @@ public final class SectionCodec {
 
     /** As above; with light (both arrays non-null) a section whose light changed is listed too. */
     public static List<int[]> changedSections(int[] oldGrid, int[] newGrid, byte[] oldLight, byte[] newLight, int dx, int dy, int dz, int[] shiftBlocks) {
+        return changedSections(oldGrid, newGrid, oldLight, newLight, new int[] { dx, dy, dz }, new int[] { dx, dy, dz }, shiftBlocks);
+    }
+
+    /**
+     * [area] As above for a resize: the old grid has dims od, the new one nd, and new local p is old local p + shift.
+     * A section is left out only when its whole box lies inside the old region and its blocks (and light) are unchanged.
+     */
+    public static List<int[]> changedSections(int[] oldGrid, int[] newGrid, byte[] oldLight, byte[] newLight, int[] od, int[] nd, int[] shiftBlocks) {
         List<int[]> keys = new ArrayList<>();
         int ox = shiftBlocks[0], oy = shiftBlocks[1], oz = shiftBlocks[2];
+        int dx = nd[0], dy = nd[1], dz = nd[2];
         boolean light = oldLight != null && newLight != null;
         for (int[] k : allSections(dx, dy, dz)) {
             int x0 = k[0] * S, y0 = k[1] * S, z0 = k[2] * S;
             int sx = Math.min(S, dx - x0), sy = Math.min(S, dy - y0), sz = Math.min(S, dz - z0);
-            boolean inside = x0 + ox >= 0 && x0 + sx + ox <= dx && y0 + oy >= 0 && y0 + sy + oy <= dy && z0 + oz >= 0 && z0 + sz + oz <= dz;
-            if (!inside || !same(oldGrid, newGrid, dx, dz, x0, y0, z0, sx, sy, sz, ox, oy, oz)
-                || (light && !sameLight(oldLight, newLight, dx, dz, x0, y0, z0, sx, sy, sz, ox, oy, oz))) keys.add(k);
+            boolean inside = x0 + ox >= 0 && x0 + sx + ox <= od[0] && y0 + oy >= 0 && y0 + sy + oy <= od[1] && z0 + oz >= 0 && z0 + sz + oz <= od[2];
+            if (!inside || !same(oldGrid, newGrid, od, nd, x0, y0, z0, sx, sy, sz, ox, oy, oz)
+                || (light && !sameLight(oldLight, newLight, od, nd, x0, y0, z0, sx, sy, sz, ox, oy, oz))) keys.add(k);
         }
         return keys;
     }
 
-    private static boolean sameLight(byte[] oldL, byte[] newL, int dx, int dz, int x0, int y0, int z0, int sx, int sy, int sz, int ox, int oy, int oz) {
+    private static boolean sameLight(byte[] oldL, byte[] newL, int[] od, int[] nd, int x0, int y0, int z0, int sx, int sy, int sz, int ox, int oy, int oz) {
         for (int y = 0; y < sy; y++)
             for (int z = 0; z < sz; z++) {
-                int ni = ((y0 + y) * dz + z0 + z) * dx + x0, oi = ((y0 + y + oy) * dz + z0 + z + oz) * dx + x0 + ox;
+                int ni = ((y0 + y) * nd[2] + z0 + z) * nd[0] + x0, oi = ((y0 + y + oy) * od[2] + z0 + z + oz) * od[0] + x0 + ox;
                 if (!Arrays.equals(newL, ni, ni + sx, oldL, oi, oi + sx)) return false;
             }
         return true;
     }
 
-    private static boolean same(int[] oldGrid, int[] newGrid, int dx, int dz, int x0, int y0, int z0, int sx, int sy, int sz, int ox, int oy, int oz) {
+    private static boolean same(int[] oldGrid, int[] newGrid, int[] od, int[] nd, int x0, int y0, int z0, int sx, int sy, int sz, int ox, int oy, int oz) {
         for (int y = 0; y < sy; y++)
             for (int z = 0; z < sz; z++) {
-                int ni = ((y0 + y) * dz + z0 + z) * dx + x0, oi = ((y0 + y + oy) * dz + z0 + z + oz) * dx + x0 + ox;
+                int ni = ((y0 + y) * nd[2] + z0 + z) * nd[0] + x0, oi = ((y0 + y + oy) * od[2] + z0 + z + oz) * od[0] + x0 + ox;
                 if (!Arrays.equals(newGrid, ni, ni + sx, oldGrid, oi, oi + sx)) return false;
             }
         return true;

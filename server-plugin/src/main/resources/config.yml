@@ -107,3 +107,9 @@ max_region:
   # Max estimated snapshot JSON size in bytes, all parts together. One message is at most 4 MiB, so a client
   # without "sections_v1" gets region_too_large for anything bigger than that.
   bytes: 33554432
+  # [area] Largest visible width (x and z) a headset may ask for: the region minus its view_margin on both sides
+  # (PROTOCOL.md 4.25). The headset's width presets are 64/96/128/192/256 (left stick click); a wider request is
+  # narrowed to this around its centre (moved by whole 16-block sections, so the reply is still a delta) instead of
+  # refused, and the reply carries the accepted size. Keep it a multiple of 32 so a narrowed preset stays exactly
+  # centred, and keep view_width + 2 * 16 (the headset's margin) within x/z above: 256 + 32 = 288.
+  view_width: 256

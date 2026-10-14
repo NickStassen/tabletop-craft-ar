@@ -1,0 +1,23 @@
+{
+ "v": 1,
+ "type": "chunk_snapshot",
+ "seq": 31,
+ "t": 1760370003100,
+ "snapshot_id": 9,
+ "world": "world",
+ "origin": [-16, 60, 0],
+ "dims": [64, 16, 16],
+ "view_margin": [8, 0, 0],
+ "order": "yzx",
+ "palette": ["minecraft:air", "minecraft:stone", "minecraft:grass_block[snowy=false]"],
+ "encoding": "sections_v1",
+ "base": {"snapshot_id": 8, "shift": [-16, 0, 0]},
+ "part": 0,
+ "parts": 1,
+ "sections": [
+  {"s": [0, 0, 0], "data": [1, 2048, 2, 256, 0, 1792]},
+  {"s": [3, 0, 0], "data": [1, 1024, 0, 3072]}
+ ],
+ "biomes": null,
+ "light": null
+}
