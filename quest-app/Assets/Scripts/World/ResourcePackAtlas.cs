@@ -201,16 +201,34 @@ namespace TabletopCraft.World
             return dst;
         }
 
+        /// <summary>Mip-mapped, trilinear block textures (TextureMips: vanilla's mip chains, coverage-kept for cut-out
+        /// textures); the block shaders still draw texels crisp up close. tabletop.json "mipmaps": false = the old
+        /// single level with point sampling. Set before the first Commit.</summary>
+        public static bool Mipmaps = true;
+        readonly List<Color32[][]> _mips = new List<Color32[][]>();   // per layer: its mip chain (level 0 solidified)
+        static readonly int BlocksSizeId = Shader.PropertyToID("_TabletopBlocksSize");
+
+        /// <summary>Bytes of the texture array on the GPU (status / logs).</summary>
+        public long ArrayBytes => Array == null ? 0 : (long)Array.depth * TextureMips.Bytes(TileSize, Array.mipmapCount > 1);
+
         /// <summary>Call after meshing on the main thread: (re)creates the array if new textures were added.</summary>
         public void Commit()
         {
             if (!_arrayDirty || _pixels.Count == 0) return;
             if (Array != null) UnityEngine.Object.Destroy(Array);
-            Array = new Texture2DArray(TileSize, TileSize, _pixels.Count, TextureFormat.RGBA32, false)
-            { filterMode = FilterMode.Point, wrapMode = TextureWrapMode.Repeat, anisoLevel = 0 };
-            for (int i = 0; i < _pixels.Count; i++) Array.SetPixels32(_pixels[i], i);
+            Array = new Texture2DArray(TileSize, TileSize, _pixels.Count, TextureFormat.RGBA32, Mipmaps)
+            { filterMode = Mipmaps ? FilterMode.Trilinear : FilterMode.Point, wrapMode = TextureWrapMode.Repeat, anisoLevel = 0 };
+            for (int i = 0; i < _pixels.Count; i++)
+            {
+                if (!Mipmaps) { Array.SetPixels32(_pixels[i], i); continue; }
+                while (_mips.Count <= i) _mips.Add(null);
+                if (_mips[i] == null) _mips[i] = TextureMips.Chain(_pixels[i], TileSize);
+                for (int k = 0; k < _mips[i].Length && k < Array.mipmapCount; k++) Array.SetPixels32(_mips[i][k], i, k);
+            }
             Array.Apply(false, true);
+            Shader.SetGlobalFloat(BlocksSizeId, TileSize);   // texels per block: the shaders keep them crisp when magnified
             _arrayDirty = false;
+            Debug.Log($"[Tabletop] ATLAS {_pixels.Count} layers {TileSize}px mips={Array.mipmapCount} {ArrayBytes / 1024} KB");
             CommitAnimations();   // frame store + current frames into the new array
         }
 

@@ -15,7 +15,7 @@ Shader "TabletopCraft/Blocks"
             #include "UnityCG.cginc"
             #include "TabletopFog.cginc"   // eye-in-fluid fog (EyeEffects.cs)
             #include "TabletopClip.cginc"   // [nav] clip volume (XR/NavController)
-            #include "TabletopRandom.cginc"   // [random] per-block texture rotation of greedy cubes; declares _Blocks
+            #include "TabletopBlocks.cginc"   // _Blocks sampling: [random] per-block rotation, crisp texels up close, mips far away
             float _HasTex, _Cutoff;
             struct appdata { float4 vertex : POSITION; float3 normal : NORMAL; float3 uv : TEXCOORD0; fixed4 color : COLOR; UNITY_VERTEX_INPUT_INSTANCE_ID };
             struct v2f { float4 pos : SV_POSITION; float3 uv : TEXCOORD0; half4 color : COLOR; float3 fogPos : TEXCOORD5; TABLETOP_CLIP_COORDS(7) TABLETOP_RANDOM_COORDS(1, 2) UNITY_VERTEX_OUTPUT_STEREO };

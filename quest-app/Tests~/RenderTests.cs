@@ -36,6 +36,7 @@ static class RenderTests
         UvCodes(check);
         Pistons(check, jar);
         Blocks(check, jar);
+        Mips(check, jar);
         if (jar != null) Pack(check, jar);
         else Console.WriteLine("SKIP render pack tests: set MC_CLIENT_JAR or pass --jar PATH");
     }
@@ -306,6 +307,69 @@ static class RenderTests
         GreedyMesher.Build(leaves, new Vector3Int(0, 0, 0), pf, m);
         check(inner == 8 && culled == 6 && m.Verts.Count / 4 == 6, $"leaves: two oak leaves draw the 2 faces between them (8 faces, {culled} with leaves_inner off); two glass blocks join (6)");
         BlockRules.ResetShapes();
+    }
+
+    /// <summary>Mip chains (TextureMips, vanilla MipmapGenerator): sizes, linear-light means, solidified cut-outs, and
+    /// leaves that keep their coverage instead of thinning out; the atlas memory with and without mips.</summary>
+    static void Mips(Action<bool, string> check, string jar)
+    {
+        var black = new Color32(0, 0, 0, 255); var white = new Color32(255, 255, 255, 255);
+        var checker = new Color32[16 * 16];
+        for (int i = 0; i < checker.Length; i++) checker[i] = ((i % 16) + (i / 16)) % 2 == 0 ? black : white;
+        var chain = TextureMips.Chain(checker, 16);
+        // Black and white average to 50% linear light = sRGB 188, not 128.
+        check(TextureMips.Levels(16) == 5 && chain.Length == 5 && chain[4].Length == 1 && chain[1][0].r == 188 && chain[4][0].a == 255,
+              $"mips: 16 px -> 5 levels to 1x1, averaged in linear light (black+white -> {chain[1][0].r}), opaque stays opaque");
+        var hole = new Color32[4 * 4];
+        for (int i = 0; i < hole.Length; i++) hole[i] = i == 5 ? new Color32(200, 10, 10, 255) : new Color32(0, 0, 0, 0);
+        var solid = TextureMips.Solidify(hole, 4);
+        check(solid.All(p => p.r == 200 && p.g == 10) && solid.Count(p => p.a == 255) == 1, "mips: a cut-out's transparent pixels take the nearest opaque colour (no dark fringes), alpha unchanged");
+        check(TextureMips.Bytes(16, false) == 1024 && TextureMips.Bytes(16, true) == 1364, "mips: a 16 px layer is 1 KB, 1.33 KB with its mips");
+        if (jar == null) return;
+        using var zip = System.IO.Compression.ZipFile.OpenRead(jar);
+        Color32[] Tex(string name, out int size)
+        {
+            using var s = zip.GetEntry($"assets/minecraft/textures/block/{name}.png").Open();
+            using var ms = new System.IO.MemoryStream(); s.CopyTo(ms);
+            var px = PngDecoder.Decode(ms.ToArray(), out int w, out int h);
+            size = w;
+            return px.Take(w * w).ToArray();   // first frame
+        }
+        // Coverage at the shader's cutoff, level by level, against a plain box filter: a sparse cut-out (a poppy) must not
+        // vanish in the distance, and leaves stay closer to their real coverage.
+        float[] Cov(string name, bool keep)
+        {
+            var px = Tex(name, out int size);
+            var r = new float[TextureMips.Levels(size) - 1];
+            var chain = keep ? TextureMips.Chain(px, size) : null;
+            var lvl = px; int s = size;
+            for (int k = 0; k < r.Length; k++)
+            {
+                if (keep) lvl = chain[k];
+                else if (k > 0) { lvl = TextureMips.Mean(lvl, s); s >>= 1; }
+                r[k] = TextureMips.Coverage(lvl, Math.Max(1, size >> k), TextureMips.Cutoff, 1);
+            }
+            return r;
+        }
+        var poppyKept = Cov("poppy", true); var poppyBox = Cov("poppy", false);
+        var leavesKept = Cov("oak_leaves", true); var leavesBox = Cov("oak_leaves", false);
+        check(poppyBox[3] == 0 && poppyKept[3] > 0.2f && Math.Abs(leavesKept[1] - leavesKept[0]) < Math.Abs(leavesBox[1] - leavesBox[0]),
+              $"mips keep cut-out coverage: a poppy at 2x2 {poppyKept[3]:F2} (box filter {poppyBox[3]:F2}: gone), oak leaves at 8x8 {leavesKept[1]:F2} (box {leavesBox[1]:F2}, level 0 {leavesKept[0]:F2})");
+        // Atlas memory for every 16 px block texture of the pack, and its animation frames, with and without mips.
+        int layers = 0, frames = 0;
+        foreach (var e in zip.Entries)
+        {
+            if (!e.FullName.StartsWith("assets/minecraft/textures/block/") || !e.FullName.EndsWith(".png")) continue;
+            layers++;
+            var meta = zip.GetEntry(e.FullName + ".mcmeta");
+            if (meta == null) continue;
+            using var s = e.Open(); using var ms = new System.IO.MemoryStream(); s.CopyTo(ms);
+            PngDecoder.Decode(ms.ToArray(), out int w, out int h);
+            if (w > 0) frames += h / w;
+        }
+        long plain = (long)(layers + frames) * TextureMips.Bytes(16, false), withMips = (long)(layers + frames) * TextureMips.Bytes(16, true);
+        Console.WriteLine($"MIPS every block texture: {layers} layers + {frames} animation frames = {plain / 1024} KB, {withMips / 1024} KB with mips (+{(withMips - plain) / 1024} KB)");
+        check(withMips < plain * 4 / 3 + 1024, $"mips: the whole pack's block textures and frames take {withMips / 1024} KB with mips (+33%)");
     }
 
     static FaceKey[] Face6(PackFaces pf, string s) => Enumerable.Range(0, 6).Select(d => pf.Face(s, d)).ToArray();

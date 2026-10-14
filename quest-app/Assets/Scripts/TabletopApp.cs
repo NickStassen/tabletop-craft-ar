@@ -196,6 +196,7 @@ namespace TabletopCraft
                 BlockShading.Brightness = (float)c.D("brightness", BlockShading.Brightness);   // vanilla slider, default 1 = Bright
                 BlockShading.MinLight = (float)c.D("min_light", BlockShading.MinLight);         // brightness of light level 0
                 GreedyMesher.LeavesInner = c.B("leaves_inner", true);                           // faces between leaves, like vanilla
+                ResourcePackAtlas.Mipmaps = c.B("mipmaps", true);                               // mip-mapped block textures
                 _showHud = c.B("show_hud", false);   // [menu] small head-locked status (also "Show HUD" in the menu's Info tab)
                 _areaWidth = c.I("area_width", 0);                                              // [area] starting width preset
                 BatchRules.Columns = Math.Max(1, c.I("batch_columns", BatchRules.Columns));     // [area] sections per batch side
