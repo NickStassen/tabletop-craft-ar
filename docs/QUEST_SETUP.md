@@ -80,6 +80,8 @@ Optional lighting keys (the server sends light and biomes when its config has `s
 
 Optional area keys (Part K): `"area_width"` starts the app at a width preset with the block size fitted to the table, and `"batch_columns"` sets the mesh batch size.
 
+Optional look keys: `"mipmaps": false` turns off the block textures' mipmaps (on by default: distant terrain stops shimmering, about 33% more texture memory), and `"leaves_inner": false` stops drawing the faces between two leaves blocks (vanilla draws them, so canopies look full; on by default, about 0.5-4% more faces in forests).
+
 ## Part E: textures (resource pack)
 
 Without a pack the app uses flat colours. To use textures you already own:

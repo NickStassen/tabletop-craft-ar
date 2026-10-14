@@ -180,7 +180,8 @@ static class RenderTests
         BlockRules.ResetShapes();
     }
 
-    /// <summary>Moving pistons (PistonGhosts): the block_updates 26.3 sends for a push, a retraction and a sticky pull,
+    /// <summary>Moving pistons (PistonGhosts): the block_updates a Paper 26.3 server sends for a push, a retraction and a
+    /// sticky pull (the same change sets were recorded live: one update starts the move, one 2 ticks later ends it),
     /// and what each moving_piston cell draws meanwhile.</summary>
     static void Pistons(Action<bool, string> check, string jar)
     {
@@ -213,9 +214,10 @@ static class RenderTests
         Update(pull, new[] { 0, 5 }, new[] { 1, 0 });
         bool retracted = Shown(pull, 0) == pal[4] && Shown(pull, 1) == null;
         Update(pull, new[] { 0, 1 });
-        // Sticky pull: base and head cell move, the stone two cells out is pulled into the head cell.
+        // Sticky pull: the base cell moves (type=sticky), the head cell carries the pulled stone (a moving_piston of
+        // type=normal) and the stone's cell turns to air, all in one update (as recorded from a Paper 26.3 server).
         var sticky = Row(7, 9, 2, 0);
-        Update(sticky, new[] { 0, 8 }, new[] { 1, 8 }, new[] { 2, 0 });
+        Update(sticky, new[] { 0, 8 }, new[] { 1, 5 }, new[] { 2, 0 });
         bool pulled = Shown(sticky, 0) == pal[7] && Shown(sticky, 1) == pal[2];
         check(retracted && pull.MovingShown.IsEmpty && pulled, "piston retract: the base keeps its extended look; a sticky piston's pulled block shows in the head cell");
         // A world without pistons never records anything (cheap path).
