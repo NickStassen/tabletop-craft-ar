@@ -49,6 +49,28 @@ namespace TabletopCraft.World
         bool _staging; float _stagingSince;
         public float StagingTimeout = 20f;
 
+        // Water faces seen from inside (MeshData.WaterBack) are a third submesh. A renderer draws only as many submeshes as
+        // it has materials, so they are switched on by giving every section a third material while the eye is under water.
+        Material[] _mats2, _mats3;
+        bool _underwater;
+
+        /// <summary>Draw the water's inside faces (EyeEffects sets this while the eye is in water).</summary>
+        public bool Underwater
+        {
+            get => _underwater;
+            set
+            {
+                if (_underwater == value) return;
+                _underwater = value;
+                foreach (var e in _sections.Values) e.go.GetComponent<MeshRenderer>().sharedMaterials = Materials();
+                foreach (var e in _retired) if (e.go) e.go.GetComponent<MeshRenderer>().sharedMaterials = Materials();   // old region while staging
+            }
+        }
+
+        Material[] Materials() => _underwater
+            ? _mats3 ?? (_mats3 = new[] { OpaqueMaterial, TransparentMaterial, TransparentMaterial })
+            : _mats2 ?? (_mats2 = new[] { OpaqueMaterial, TransparentMaterial });
+
         public void Clear()
         {
             foreach (var s in _sections.Values) { Destroy(s.mesh); Destroy(s.go); }
@@ -240,10 +262,10 @@ namespace TabletopCraft.World
                 var mesh = new Mesh { indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
                 mesh.MarkDynamic();
                 go.GetComponent<MeshFilter>().sharedMesh = mesh;
-                go.GetComponent<MeshRenderer>().sharedMaterials = new[] { OpaqueMaterial, TransparentMaterial };
+                go.GetComponent<MeshRenderer>().sharedMaterials = Materials();
                 entry = (mesh, go, 0);
             }
-            int quads = data.Verts.Count / 4;
+            int quads = data.Verts.Count / 4 - data.WaterBack.Count / 6;   // faces drawn from outside (inside copies not counted)
             Quads += quads - entry.quads;
             entry.quads = quads;
             _sections[s] = entry;
@@ -257,9 +279,10 @@ namespace TabletopCraft.World
             m.SetVertices(_tmp);
             m.SetUVs(0, data.Uvs);
             m.SetColors(data.Colors);
-            m.subMeshCount = 2;
+            m.subMeshCount = 3;
             m.SetTriangles(Flip(data.Opaque), 0, false);
             m.SetTriangles(Flip(data.Transparent), 1, false);
+            m.SetTriangles(Flip(data.WaterBack), 2, false);
             m.RecalculateNormals();
             m.RecalculateBounds();
             entry.go.SetActive(quads > 0 && !_staging);

@@ -32,6 +32,24 @@ namespace TabletopCraft.World
         int _keysVersion, _keysSnapshot = -1, _keysCount;
         bool _visible;
 
+        // [water] Water cuts seen from inside are a third submesh (MeshData.WaterBack), drawn only while the eye is under
+        // water: a renderer draws only as many submeshes as it has materials (same scheme as TabletopRenderer.Underwater).
+        Material[] _mats2, _mats3;
+        bool _underwater;
+        public bool Underwater
+        {
+            get => _underwater;
+            set
+            {
+                if (_underwater == value) return;
+                _underwater = value;
+                foreach (var c in _caps) c.Go.GetComponent<MeshRenderer>().sharedMaterials = Materials();
+            }
+        }
+        Material[] Materials() => _underwater
+            ? _mats3 ?? (_mats3 = new[] { OpaqueMaterial, TransparentMaterial, TransparentMaterial })
+            : _mats2 ?? (_mats2 = new[] { OpaqueMaterial, TransparentMaterial });
+
         void Awake()
         {
             for (int f = 0; f < 6; f++)
@@ -111,8 +129,11 @@ namespace TabletopCraft.World
             {
                 string st = Model.Palette[i];
                 var shape = BlockRules.Shape(st);
-                table[i] = CapMesher.Caps(shape);
+                // [water] waterlogged models, kelp and seagrass are cut as water (CapMesher.CapState)
+                string cut = CapMesher.CapState(st, shape);
+                table[i] = cut != null;
                 if (!table[i]) continue;
+                if (cut != st) { st = cut; shape = BlockShape.Fluid; }
                 for (int f = 0; f < 6; f++)
                 {
                     var k = Faces != null ? Faces.Face(st, f) : new FaceKey { Layer = -1, Color = BlockRules.FlatColor(st) };
@@ -137,7 +158,7 @@ namespace TabletopCraft.World
         {
             var go = c.Go;
             var r = go.GetComponent<MeshRenderer>();
-            if (r.sharedMaterials.Length != 2) r.sharedMaterials = new[] { OpaqueMaterial, TransparentMaterial };
+            if (r.sharedMaterials.Length != Materials().Length) r.sharedMaterials = Materials();
             _tmp.Clear();
             foreach (var v in data.Verts) _tmp.Add(new Vector3(v.x, v.y, -v.z));   // mirror Z like TabletopRenderer
             var m = c.Mesh;
@@ -145,9 +166,10 @@ namespace TabletopCraft.World
             m.SetVertices(_tmp);
             m.SetUVs(0, data.Uvs);
             m.SetColors(data.Colors);
-            m.subMeshCount = 2;
+            m.subMeshCount = 3;
             m.SetTriangles(Flip(data.Opaque), 0, false);
             m.SetTriangles(Flip(data.Transparent), 1, false);
+            m.SetTriangles(Flip(data.WaterBack), 2, false);   // [water] inside faces of water cuts
             m.RecalculateNormals();
             m.RecalculateBounds();
         }

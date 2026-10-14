@@ -79,6 +79,10 @@ namespace TabletopCraft
             _players = playersT.gameObject.AddComponent<PlayerMarkers>();
             _players.Model = _world; _players.MarkerMaterial = MarkerMaterial; _players.Atlas = _atlas;
 
+            // Eye in water/lava/powder snow/inside a block: fog, passthrough tint, the water's inside faces (EyeEffects.cs).
+            var eye = gameObject.AddComponent<EyeEffects>();
+            eye.Head = Head; eye.Blocks = _blocks; eye.Model = _world; eye.BlockRenderer = _renderer;
+
             _placement = gameObject.AddComponent<TablePlacement>();
             _placement.Anchor = _anchor; _placement.Head = Head; _placement.RightHand = RightHand;
             _placement.OnScaleChanged = k => SetBlockSize(Mathf.Clamp(BlockSizeM * k, 0.002f, 0.1f), false);
@@ -97,6 +101,7 @@ namespace TabletopCraft
             _nav.Anchor = _anchor; _nav.RegionRoot = _regionRoot; _nav.Head = Head; _nav.Renderer = _renderer; _nav.Caps = _caps;
             _nav.BlockSize = () => BlockSizeM; _nav.Suspended = () => _area.Active; _nav.Send = b => _link.Send(b);
             _area.Nav = _nav.State;
+            eye.Caps = _caps;   // water cuts of the visible window get inside faces too (EyeEffects.cs)
 
             // Block editing: right trigger break, left trigger place, B pick (XR/BlockEditMode.cs, PROTOCOL.md 4.20).
             _edit = gameObject.AddComponent<BlockEditMode>();
