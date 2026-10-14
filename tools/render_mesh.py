@@ -16,7 +16,8 @@ import zipfile
 import numpy as np
 from PIL import Image
 
-VIEWS = {"se": (1.0, 1.0), "sw": (-1.0, 1.0), "ne": (1.0, -1.0), "nw": (-1.0, -1.0)}
+VIEWS = {"se": (1.0, 1.0), "sw": (-1.0, 1.0), "ne": (1.0, -1.0), "nw": (-1.0, -1.0),
+         "s": (0.0, 1.0), "n": (0.0, -1.0), "e": (1.0, 0.0), "w": (-1.0, 0.0)}
 
 
 def load_textures(jar: str, names: list[str]) -> list[np.ndarray]:
@@ -90,11 +91,11 @@ def render(mesh: dict, tex: list[np.ndarray], view: str, px: int, box: list[floa
         layer = int(round(uv[i0, 2]))
         if layer >= 0:
             t = tex[layer]
-            size = t.shape[0]
+            th, tw = t.shape[0], t.shape[1]                  # entity textures aren't square (64x32, 128x64)
             tu = b0 * uv[i0, 0] + b1 * uv[i1, 0] + b2 * uv[i2, 0]
             tv = b0 * uv[i0, 1] + b1 * uv[i1, 1] + b2 * uv[i2, 1]
-            cx = np.clip(np.floor((tu - np.floor(tu)) * size), 0, size - 1).astype(int)
-            cy = np.clip(size - 1 - np.floor((tv - np.floor(tv)) * size), 0, size - 1).astype(int)
+            cx = np.clip(np.floor((tu - np.floor(tu)) * tw), 0, tw - 1).astype(int)
+            cy = np.clip(th - 1 - np.floor((tv - np.floor(tv)) * th), 0, th - 1).astype(int)
             rgba = t[cy, cx] * c
         else:
             rgba = np.broadcast_to(c, gx.shape + (4,)).copy()

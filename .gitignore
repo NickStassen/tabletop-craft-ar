@@ -15,5 +15,7 @@ __pycache__/
 .venv/
 # User-supplied game assets
 *.zip
+# Entity models generated from the user's own client jar (tools/entity_models/DumpEntityModels.java)
+entity_models.json
 # Claude Code agent worktrees
 .claude/worktrees/

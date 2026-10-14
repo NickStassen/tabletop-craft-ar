@@ -141,6 +141,13 @@ static class Program
         if (navMeasIdx >= 0) { NavTests.MeasureNav(args[navMeasIdx + 1]); return 0; }
         PlayerTests.Run(Check, Fixture);
         WaterTests.Run(Check, args);   // fluids, waterlogging, texture animation (WaterTests.cs)
+        // entities, items, actions (EntityTests.cs); models from the user's generated entity_models.json, never committed
+        int modelsIdx = Array.IndexOf(args, "--entity-models");
+        string modelsPath = modelsIdx >= 0 && modelsIdx + 1 < args.Length ? args[modelsIdx + 1] : Environment.GetEnvironmentVariable("TABLETOP_ENTITY_MODELS");
+        EntityTests.Run(Check, Fixture, JarPath(args), string.IsNullOrEmpty(modelsPath) ? null : modelsPath);
+        int entSceneIdx = Array.IndexOf(args, "--entity-scene");
+        if (entSceneIdx >= 0 && JarPath(args) != null && EntityModels.Loaded) EntityScene.Run(JarPath(args), args[entSceneIdx + 1]);
+        else if (entSceneIdx >= 0) Console.WriteLine("SKIP --entity-scene: needs --jar and --entity-models");
         EditTests.Run(Check, Fixture);  // block editing: DDA targeting, Z mirror, optimistic edits (EditTests.cs)
         EyeTests.Run(Check);            // eye in water/lava/powder snow/blocks, water inside faces (EyeTests.cs)
 
@@ -473,6 +480,7 @@ static class Program
         var world = new WorldModel();
         var area = new AreaSetupState(); bool requested = false, changed = false; string session = null; Vector3Int resized = default;
         int updates = 0, playerMsgs = 0, posesSent = 0; long rtt = -1; string avatarNote = null; List<object> serverCaps = null;
+        var ents = new EntityStore(); var acts = new List<GameAction>(); int entityMsgs = 0;   // [entities] PROTOCOL.md 4.21-4.22
         // Navigation: after the resize, shift by one section (expect a delta), then ask for a full resend and compare.
         var asm = new SnapshotAssembler(); var nav = new NavState(); int navPhase = 0;
         SnapshotAssembler.Result delta = null; string[] afterDelta = null; byte[] lightAfterDelta = null; bool fullMatches = false; string encoding = null;
@@ -533,6 +541,8 @@ static class Program
                     case "region_changed": changed = m.S("by_session") == session; break;
                     case "block_update": if (world.ApplyBlockUpdate(m)) updates++; break;
                     case "player_positions": playerMsgs++; break;
+                    case "entities": ents.Apply(m, null); entityMsgs++; break;
+                    case "actions": GameAction.Parse(m, acts); break;
                     case "pong": rtt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - (long)m.D("echo_t"); break;
                     case "avatar_state": avatarNote = $"enabled={m.B("enabled")} scale={m.D("scale")}"; break;
                     case "error": Console.WriteLine("server error " + m.S("code") + " " + m.S("message")); fails++; break;
@@ -562,6 +572,14 @@ static class Program
         Check(rtt >= 0, $"live: ping/pong rtt {rtt} ms");
         Check(avatarNote != null, $"live: avatar_state {avatarNote}");
         Console.WriteLine($"live: poses sent {posesSent}, player msgs {playerMsgs}, block updates {updates}");
+        if (serverCaps != null && serverCaps.Contains(Protocol.CapEntities))
+        {
+            var types = ents.All.Values.GroupBy(e => e.Path).Select(g => $"{g.Key} x{g.Count()}");
+            var looks = ents.All.Values.Select(EntityCatalog.Resolve).ToList();
+            Check(entityMsgs > 0 && ents.Fulls >= 1, $"live: {entityMsgs} entities messages, {ents.All.Count} entities ({string.Join(", ", types)}); " +
+                  $"{looks.Count(l => l.Kind == EntityKind.Model)} models, {looks.Count(l => l.Kind == EntityKind.Box)} boxes; {acts.Count} actions");
+        }
+        else Console.WriteLine("live: server did not grant entities_v1 (old plugin?)");
         link.Dispose();
     }
 

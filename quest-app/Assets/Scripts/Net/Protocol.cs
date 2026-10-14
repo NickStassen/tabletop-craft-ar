@@ -15,11 +15,13 @@ namespace TabletopCraft.Net
         {
             ["type"] = "hello", ["client"] = ClientName, ["client_version"] = ClientVersion,
             ["protocols"] = new List<object> { Version }, ["token"] = token ?? "",
-            ["caps"] = new List<object> { "rle_palette_v1", "avatar", CapLight, CapBiomes, SectionedSnapshot.Cap, CapEdit },
+            ["caps"] = new List<object> { "rle_palette_v1", "avatar", CapLight, CapBiomes, SectionedSnapshot.Cap, CapEdit, CapEntities, CapActions },
         };
 
         /// <summary>Optional snapshot extras (PROTOCOL.md 4.4.1): per-block light and 4x4x4 biomes.</summary>
         public const string CapLight = "light_v1", CapBiomes = "biomes_v1";
+        /// <summary>Non-player entities (PROTOCOL.md 4.21) and swings/digging/breaks/damage (4.22); EntityProtocol.cs.</summary>
+        public const string CapEntities = "entities_v1", CapActions = "actions_v1";
         /// <summary>Block editing from the headset (PROTOCOL.md 4.20); granted in welcome.caps when the server allows it.</summary>
         public const string CapEdit = "edit_v1";
 
@@ -184,6 +186,10 @@ namespace TabletopCraft.Net
         public Vector3 Pos; // world coords (feet)
         public float Yaw, Pitch;
         public bool Sneaking;
+        // Additive (PROTOCOL.md 4.6, entities work): entity id, vehicle id (-1 = none), pose (null = standing), equipment.
+        public int Id, Vehicle;
+        public string Pose;
+        public Dictionary<string, string> Equipment;
 
         /// <summary>One entry of player_positions.players.</summary>
         public static PlayerInfo From(Dictionary<string, object> p)
@@ -194,6 +200,7 @@ namespace TabletopCraft.Net
                 Uuid = p.S("uuid"), Name = p.S("name"), Pos = new Vector3((float)pos[0], (float)pos[1], (float)pos[2]),
                 Yaw = (float)p.D("yaw"), Pitch = (float)p.D("pitch"), Sneaking = p.B("sneaking"),
                 HasSkin = p.ContainsKey("skin"), Skin = p.S("skin"), SkinModel = p.S("skin_model"),
+                Id = p.I("id", -1), Vehicle = p.I("vehicle", -1), Pose = p.S("pose"), Equipment = EntityStore.Equipment(p.O("equipment")),
             };
         }
     }
