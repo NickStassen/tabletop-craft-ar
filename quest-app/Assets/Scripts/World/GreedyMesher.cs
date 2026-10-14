@@ -34,11 +34,12 @@ namespace TabletopCraft.World
         public TintKind OverlayTint;
         public byte OverlayUvMap;
         public byte Random;      // [random] per-block texture rotation table (RandomUv in BlockModels.cs), 0 = none
-        public bool Equals(FaceKey o) => Layer == o.Layer && Color.r == o.Color.r && Color.g == o.Color.g && Color.b == o.Color.b && Color.a == o.Color.a && Transparent == o.Transparent && Tint == o.Tint && UvMap == o.UvMap && Random == o.Random
+        public byte Shade;       // BakedModel.Shade: 0 smooth light + AO, 1 flat (no AO), 2 full bright (magma)
+        public bool Equals(FaceKey o) => Layer == o.Layer && Color.r == o.Color.r && Color.g == o.Color.g && Color.b == o.Color.b && Color.a == o.Color.a && Transparent == o.Transparent && Tint == o.Tint && UvMap == o.UvMap && Random == o.Random && Shade == o.Shade
             && Overlay == o.Overlay && (Overlay == 0 || (OverlayTint == o.OverlayTint && OverlayUvMap == o.OverlayUvMap && OverlayColor.r == o.OverlayColor.r && OverlayColor.g == o.OverlayColor.g && OverlayColor.b == o.OverlayColor.b && OverlayColor.a == o.OverlayColor.a));
 
         /// <summary>The overlay layer as a face key of its own (for colours and UVs), or default when there is none.</summary>
-        public FaceKey OverlayKey() => Overlay == 0 ? default : new FaceKey { Layer = Overlay - 1, Color = OverlayColor, Tint = OverlayTint, UvMap = OverlayUvMap, Transparent = Transparent };
+        public FaceKey OverlayKey() => Overlay == 0 ? default : new FaceKey { Layer = Overlay - 1, Color = OverlayColor, Tint = OverlayTint, UvMap = OverlayUvMap, Transparent = Transparent, Shade = Shade };
     }
 
     public interface IFaceSource
@@ -63,10 +64,16 @@ namespace TabletopCraft.World
     {
         static readonly Vector3Int[] Dirs = { new Vector3Int(-1, 0, 0), new Vector3Int(1, 0, 0), new Vector3Int(0, -1, 0), new Vector3Int(0, 1, 0), new Vector3Int(0, 0, -1), new Vector3Int(0, 0, 1) };
 
+        /// <summary>Vanilla's default leaves (cutoutLeaves, LeavesBlock.skipRendering): faces between two leaves blocks are
+        /// drawn even when the blocks are identical, so canopies look full from every side. False culls them like glass
+        /// (fewer faces). tabletop.json "leaves_inner".</summary>
+        public static bool LeavesInner = true;
+
         public static void Build(WorldModel w, Vector3Int section, IFaceSource faces, MeshData m)
         {
             m.Clear();
             int S = WorldModel.Section;
+            bool[] keepSame = LeavesInner ? LeavesOf(w) : null;   // palette ids whose faces against themselves are drawn
             Vector3Int b0 = section * S;
             Vector3Int size = new Vector3Int(Mathf.Min(S, w.Dims.x - b0.x), Mathf.Min(S, w.Dims.y - b0.y), Mathf.Min(S, w.Dims.z - b0.z));
             var mask = new FaceKey[S * S];
@@ -98,7 +105,8 @@ namespace TabletopCraft.World
                             {
                                 var ns = BlockRules.Shape(w.State(nid));
                                 if (ns == BlockShape.Cube) continue;                 // hidden by an opaque neighbour
-                                if (nid == id && shape != BlockShape.Cube) continue; // glass next to same glass, water next to water
+                                // glass next to same glass, water next to water; not leaves (vanilla draws those, LeavesInner)
+                                if (nid == id && shape != BlockShape.Cube && !(keepSame != null && id < keepSame.Length && keepSame[id])) continue;
                             }
                             mask[k] = faces.Face(st, dir);
                             mask[k].Transparent |= shape != BlockShape.Cube;
@@ -137,6 +145,16 @@ namespace TabletopCraft.World
                         }
                 }
             }
+        }
+
+        /// <summary>Per palette index: a leaves block (every *_leaves; vanilla's LeavesBlock subclasses).</summary>
+        static bool[] LeavesOf(WorldModel w)
+        {
+            var pal = w.Palette;
+            int n = pal.Count;
+            var r = new bool[n];
+            for (int i = 0; i < n && i < pal.Count; i++) r[i] = BlockRules.Path(pal[i]).EndsWith("_leaves", System.StringComparison.Ordinal);
+            return r;
         }
 
         static bool Eq(Color32 a, Color32 b) => a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;

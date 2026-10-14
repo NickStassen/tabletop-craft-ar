@@ -135,6 +135,7 @@ static class Program
         Check(err.MaxX == 128 && err.MaxBlocks == 2097152, "region_too_large limits parse");
         Check(Protocol.RegionQuery("Bob").S("player") == "Bob" && !Protocol.RegionQuery().ContainsKey("player"), "region_query builder");
 
+        if (args.Contains("--no-leaves-inner")) GreedyMesher.LeavesInner = false;   // measure the leaves option (tabletop.json "leaves_inner")
         fails += NavTests.Run(Fixture);   // navigation, streaming, clip caps (Tests~/NavTests.cs)
         AreaTests.Run(Check, Fixture);    // [area] width presets, resize re-keying, mesh batching (Tests~/AreaTests.cs)
         int batchMeasIdx = Array.IndexOf(args, "--measure-batches");

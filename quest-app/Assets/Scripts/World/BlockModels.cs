@@ -165,7 +165,7 @@ namespace TabletopCraft.World
             {
                 int c = quads[i].Cull;
                 if (c >= 0 && Hidden(w, x + DX[c], y + DY[c], z + DZ[c], c, state, model, i, models)) continue;
-                AddQuad(m, at, quads[i], BlockShading.Model(w, x, y, z, quads[i]));   // lit at the block's own cell, as vanilla
+                AddQuad(m, at, quads[i], BlockShading.Model(w, x, y, z, quads[i], model.Shade));   // lit at the block's own cell, as vanilla
             }
         }
 

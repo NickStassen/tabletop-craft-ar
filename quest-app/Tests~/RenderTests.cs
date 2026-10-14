@@ -35,6 +35,7 @@ static class RenderTests
         Randomness(check);
         UvCodes(check);
         Pistons(check, jar);
+        Blocks(check, jar);
         if (jar != null) Pack(check, jar);
         else Console.WriteLine("SKIP render pack tests: set MC_CLIENT_JAR or pass --jar PATH");
     }
@@ -232,6 +233,78 @@ static class RenderTests
         int In(float lo, float hi) => Enumerable.Range(0, m.Verts.Count / 4).Count(q => Enumerable.Range(0, 4).All(i => m.Verts[q * 4 + i].x >= lo - 1e-4f && m.Verts[q * 4 + i].x <= hi + 1e-4f));
         int head = In(1, 2), stoneQuads = In(2, 3), dirtQuads = In(3, 4);
         check(head > 0 && stoneQuads >= 5 && dirtQuads >= 5, $"piston push meshes the head and both blocks in their moving cells (quads {head}/{stoneQuads}/{dirtQuads})");
+        BlockRules.ResetShapes();
+    }
+
+    /// <summary>Small block fixes: light_emission faces, emissive blocks, "ambientocclusion": false, bare texture slots,
+    /// faces between leaves.</summary>
+    public static void Blocks(Action<bool, string> check, string jar)
+    {
+        if (jar == null) return;
+        using var assets = new ZipAssets(jar);
+        var baker = new BlockModelBaker(assets);
+        BakedModel B(string s) => baker.Bake(s);
+        var eye = B("minecraft:open_eyeblossom");
+        var heavy = B("minecraft:heavy_core[waterlogged=false]");
+        check(eye.Quads.Count(q => q.Emission == 15) == 4 && eye.Quads.Count(q => q.Emission == 0) == 4 && B("minecraft:firefly_bush").Quads.Any(q => q.Emission == 15),
+              "light_emission: open eyeblossom's and the firefly bush's emissive layer faces carry 15");
+        check(heavy.Quads.Length == 6 && heavy.Quads.All(q => (int)q.T0.z == assets.LayerOf("block/heavy_core")), "heavy core: bare \"texture\": \"all\" resolves to its slot (heavy_core texture, not a flat colour)");
+        check(B("minecraft:magma_block").Shade == BakedModel.ShadeFullBright && B("minecraft:magma_block").CubeFaces.All(f => f.Shade == BakedModel.ShadeFullBright) &&
+              B("minecraft:sculk_sensor[power=0,sculk_sensor_phase=active,waterlogged=false]").Shade == BakedModel.ShadeFullBright &&
+              B("minecraft:sculk_sensor[power=0,sculk_sensor_phase=inactive,waterlogged=false]").Shade != BakedModel.ShadeFullBright &&
+              B("minecraft:oak_door[facing=north,half=lower,hinge=left,open=false,powered=false]").Shade == BakedModel.ShadeFlat &&
+              B("minecraft:rail[shape=north_south,waterlogged=false]").Shade == BakedModel.ShadeFlat && B("minecraft:stone").Shade == BakedModel.ShadeSmooth,
+              "shading: magma and active sculk sensors full bright, doors and rails flat (ambientocclusion false), stone smooth");
+
+        // Lit in the dark: a stone box with no light at all around a one-block air pocket, an open eyeblossom standing
+        // on a magma block in it. Magma's top face is full bright, the stone walls of the pocket dark, the eyeblossom's
+        // emissive faces glow and its plain faces stay dark.
+        BlockRules.ResetShapes();
+        var pf = new PackFaces(assets);
+        var w = new WorldModel { SnapshotId = 1, Dims = new Vector3Int(5, 5, 5) };
+        w.Palette.AddRange(new[] { "minecraft:air", "minecraft:magma_block", "minecraft:stone", "minecraft:open_eyeblossom" });
+        w.Grid = new ushort[125];
+        for (int y = 0; y < 5; y++) for (int z = 0; z < 5; z++) for (int x = 0; x < 5; x++)
+            w.Grid[w.Index(x, y, z)] = (ushort)(x == 2 && z == 2 && y == 2 ? 3 : x == 2 && z == 2 && y == 1 ? 1 : 2);
+        w.Light = new byte[125];
+        pf.Prewarm(w);
+        var m = new MeshData();
+        GreedyMesher.Build(w, new Vector3Int(0, 0, 0), pf, m);
+        int magmaLayer = assets.LayerOf("block/magma"), stoneLayer = assets.LayerOf("block/stone");
+        var full = BlockShading.Lightmap(15, 15); var dark = BlockShading.Lightmap(0, 0);
+        bool Inside(int q) => Enumerable.Range(0, 4).All(i => m.Verts[q * 4 + i].x > 0.5f && m.Verts[q * 4 + i].x < 4.5f && m.Verts[q * 4 + i].y > 0.5f && m.Verts[q * 4 + i].y < 4.5f && m.Verts[q * 4 + i].z > 0.5f && m.Verts[q * 4 + i].z < 4.5f);
+        int magmaTop = -1, stoneMax = -1;
+        for (int q = 0; q < m.Verts.Count / 4; q++)
+        {
+            if (!Inside(q)) continue;   // the box's outside faces are on the region border: open sky
+            int layer = (int)m.Uvs[q * 4].z % RandomUv.LayerStride;
+            if (layer == magmaLayer) magmaTop = m.Colors[q * 4].g;
+            if (layer == stoneLayer) for (int i = 0; i < 4; i++) stoneMax = Math.Max(stoneMax, m.Colors[q * 4 + i].g);
+        }
+        bool magmaBright = magmaTop >= full.y * 255 * 0.99f, stoneDark = stoneMax >= 0 && stoneMax <= dark.y * 255 * 1.05f + 1;
+        m.Clear();
+        GreedyMesher.BuildSpecials(w, new Vector3Int(0, 0, 0), pf, m);
+        int eLayer = assets.LayerOf("block/open_eyeblossom_emissive"), pLayer = assets.LayerOf("block/open_eyeblossom");
+        var quads = Enumerable.Range(0, m.Verts.Count / 4).ToList();
+        bool glow = quads.Any(q => (int)m.Uvs[q * 4].z == eLayer) && quads.Where(q => (int)m.Uvs[q * 4].z == eLayer).All(q => m.Colors[q * 4].g >= full.y * 255 * 0.99f) &&
+                    quads.Where(q => (int)m.Uvs[q * 4].z == pLayer).All(q => m.Colors[q * 4].g <= dark.y * 255 * 1.05f + 1);
+        check(magmaBright && stoneDark && glow, $"lighting in the dark: magma's top full bright ({magmaTop}), the pocket's stone walls dark ({stoneMax}), the eyeblossom's emissive faces glow ({glow})");
+
+        // Leaves: faces between two identical leaves are drawn (vanilla cutoutLeaves); glass still joins up.
+        var leaves = new WorldModel { SnapshotId = 1, Dims = new Vector3Int(2, 1, 1) };
+        leaves.Palette.AddRange(new[] { "minecraft:air", "minecraft:oak_leaves[distance=1,persistent=false,waterlogged=false]", "minecraft:glass" });
+        leaves.Grid = new ushort[] { 1, 1 };
+        pf.Prewarm(leaves);
+        m.Clear();
+        GreedyMesher.Build(leaves, new Vector3Int(0, 0, 0), pf, m);
+        int inner = m.Verts.Count / 4;
+        GreedyMesher.LeavesInner = false;
+        GreedyMesher.Build(leaves, new Vector3Int(0, 0, 0), pf, m);
+        int culled = m.Verts.Count / 4;
+        GreedyMesher.LeavesInner = true;
+        leaves.Grid = new ushort[] { 2, 2 };
+        GreedyMesher.Build(leaves, new Vector3Int(0, 0, 0), pf, m);
+        check(inner == 8 && culled == 6 && m.Verts.Count / 4 == 6, $"leaves: two oak leaves draw the 2 faces between them (8 faces, {culled} with leaves_inner off); two glass blocks join (6)");
         BlockRules.ResetShapes();
     }
 

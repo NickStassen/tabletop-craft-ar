@@ -28,6 +28,7 @@ namespace TabletopCraft.World
         public bool Tinted;       // tintindex present (grass, foliage, water...)
         public TintKind Tint;     // biome colour of a tinted face (BlockShading resolves it per block), None otherwise
         public bool Translucent;  // alpha-blended submesh; otherwise the alpha-tested opaque submesh
+        public byte Emission;     // 26.x element "light_emission": the face's sky and block light are at least this
     }
 
     public sealed class BakedModel
@@ -60,6 +61,10 @@ namespace TabletopCraft.World
         public int[] RandomTotals;
         /// <summary>Multipart (MultiPartModel draws one long and reseeds every part with it) or a plain weighted list.</summary>
         public bool RandomMultipart;
+        /// <summary>Lighting (BlockModelBaker.ShadeOf): ShadeSmooth (smooth light + AO), ShadeFlat (one light per face, no
+        /// AO: "ambientocclusion": false) or ShadeFullBright (emissive rendering: magma, active sculk sensors).</summary>
+        public byte Shade;
+        public const byte ShadeSmooth = 0, ShadeFlat = 1, ShadeFullBright = 2;
         // [random] Model offset (BlockBehaviour.OffsetType of flowers, grass, bamboo, dripstone...): 0 none, 1 XZ, 2 XYZ.
         public byte OffsetKind;
         public float MaxHorizontalOffset = 0.25f, MaxVerticalOffset = 0.2f;
@@ -235,6 +240,7 @@ namespace TabletopCraft.World
         bool _hasBlockColor;
         TintKind _tintKind;   // which biome colour this state's tinted faces take (BiomeColors.BlockTint)
         Color32 _blockColor;
+        byte _emission;       // the element being baked: "light_emission" (0..15)
 
         public BlockModelBaker(IModelAssets assets) { _assets = assets; }
 
@@ -244,6 +250,7 @@ namespace TabletopCraft.World
         {
             public readonly Dictionary<string, TexRef> Textures = new Dictionary<string, TexRef>();
             public List<object> Elements;
+            public bool? Ao;   // "ambientocclusion" from the nearest model in the parent chain that sets it
         }
 
         /// <summary>Model rotation from a blockstate entry (x/y in degrees) about the block centre.</summary>
@@ -347,6 +354,7 @@ namespace TabletopCraft.World
                 }
                 BlockEntityBoxes.Add(this, path, props, firstModel, state, quads);
                 all[c] = Finish(quads);
+                SetShade(all[c], ShadeOf(state, props, firstModel));
             }
             var m = all[0];
             if (combos > 1)
@@ -357,6 +365,23 @@ namespace TabletopCraft.World
             }
             BlockRandom.SetOffset(m, path);
             return m;
+        }
+
+        /// <summary>How vanilla lights the block (ModelBlockRenderer.tesselateBlock): emissive blocks (magma, an active
+        /// sculk sensor) at full brightness, models with "ambientocclusion": false (doors, ladders, rails, crops,
+        /// repeaters...; the first part decides) flat, everything else with smooth light and AO.</summary>
+        static byte ShadeOf(string state, Dictionary<string, string> props, Resolved first)
+        {
+            string p = BlockRules.Path(state);
+            if (p == "magma_block") return BakedModel.ShadeFullBright;
+            if ((p == "sculk_sensor" || p == "calibrated_sculk_sensor") && props.TryGetValue("sculk_sensor_phase", out var ph) && ph == "active") return BakedModel.ShadeFullBright;
+            return first != null && first.Ao == false ? BakedModel.ShadeFlat : BakedModel.ShadeSmooth;
+        }
+
+        static void SetShade(BakedModel m, byte shade)
+        {
+            m.Shade = shade;
+            if (m.CubeFaces != null) for (int d = 0; d < 6; d++) m.CubeFaces[d].Shade = shade;
         }
 
         /// <summary>At most this many baked combinations per state (26.3 needs 8: fire's 2 x 4).</summary>
@@ -479,6 +504,7 @@ namespace TabletopCraft.World
                             else if (kv.Value is Dictionary<string, object> o) r.Textures[kv.Key] = new TexRef { Value = o.S("sprite"), Force = o.B("force_translucent") };
                         }
                 if (r.Elements == null && mj.A("elements") is List<object> el) r.Elements = el;
+                if (r.Ao == null && mj.TryGetValue("ambientocclusion", out var ao) && ao is bool aob) r.Ao = aob;
                 cur = mj.S("parent");
             }
             _resolved[model] = r;
@@ -516,13 +542,17 @@ namespace TabletopCraft.World
             var er = ElementRotation(el.O("rotation"));
             var faces = el.O("faces");
             if (faces == null) return;
+            _emission = (byte)Math.Max(0, Math.Min(15, el.I("light_emission", 0)));
             // Inside-out elements (from > to) are faces meant to be seen from inside the block (the inner cage of a
             // spawner, the underside of a snow layer). Keep them only for see-through textures.
             bool inverted = from.x > to.x || from.y > to.y || from.z > to.z;
             for (int d = 0; d < 6; d++)
             {
                 var f = faces.O(DirNames[d]);
-                if (f == null || !Lookup(r, f.S("texture"), out var tex, out bool force)) continue;
+                // 26.x face textures are texture slots with or without the '#' (the heavy core uses "texture": "all").
+                string texRef = f?.S("texture");
+                if (texRef != null && !texRef.StartsWith("#") && r.Textures.ContainsKey(texRef)) texRef = "#" + texRef;
+                if (f == null || !Lookup(r, texRef, out var tex, out bool force)) continue;
                 // Only vanilla's tinted blocks (BlockColors) honour a tintindex; for the rest it is ignored (untinted).
                 bool tinted = f.ContainsKey("tintindex") && BiomeColors.Tinted(state, f.I("tintindex", -1));
                 var key = _assets.Texture(tex, tinted && !_hasBlockColor, state);
@@ -654,7 +684,7 @@ namespace TabletopCraft.World
             {
                 P0 = p[0] * k, P1 = p[1] * k, P2 = p[2] * k, P3 = p[3] * k,
                 T0 = t[0], T1 = t[1], T2 = t[2], T3 = t[3],
-                Color = key.Color, Cull = (sbyte)cull, Dir = (sbyte)dir, Tinted = tinted, Translucent = translucent,
+                Color = key.Color, Cull = (sbyte)cull, Dir = (sbyte)dir, Tinted = tinted, Translucent = translucent, Emission = _emission,
                 Tint = tinted ? _tintKind : TintKind.None,
             });
         }
@@ -665,6 +695,7 @@ namespace TabletopCraft.World
         {
             var rot = M3.Model(0, yaw);
             bool rightAngle = Math.Abs(yaw % 90) < 1e-6;
+            _emission = 0;
             for (int d = 0; d < 6; d++)
             {
                 float plane = d % 2 == 0 ? from[d / 2] : to[d / 2];
