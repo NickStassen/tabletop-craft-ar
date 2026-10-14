@@ -6,6 +6,7 @@
 //   {"server":"ws://192.168.1.50:8765/tabletop","token":"","block_size_m":0.01,"skin_player":""}
 // [area] optional: "area_width": 192 (start at that width preset, block size fitted to the table),
 //   "batch_columns": 4 (sections per mesh batch side, TabletopRenderer)
+// [talk] optional: "operator_name": "Nick" (the name in chat, else skin_player), "quick_commands": ["time set day"]
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -69,6 +70,11 @@ namespace TabletopCraft
         // [area] visible-width presets (left stick click; Presets/Current/Request for a menu), tabletop.json "area_width"
         public AreaSizeControl AreaSize { get; private set; }
         int _areaWidth;
+        // [talk] operator panel on X (chat, console, players, world, server) and chat on the wrist / over players
+        OperatorPanel _ops;
+        ChatView _chatView;
+        string _operatorName;
+        readonly List<string> _quickCommands = new List<string>();
 
         void Start()
         {
@@ -154,20 +160,36 @@ namespace TabletopCraft
             _icons = new BlockIconAtlas(ResourcePackAtlas.DefaultPath, Path.Combine(Application.persistentDataPath, "icons"));
             _menu = gameObject.AddComponent<BlockMenu>();
             _menu.Head = Head; _menu.LeftHand = LeftHand; _menu.RightHand = RightHand; _menu.Icons = _icons;
-            _menu.Blocked = () => _area.Active; _menu.CanEdit = () => _edit.Editor.ServerAllows; _menu.InfoText = StatusText;
+            _menu.Blocked = () => _area.Active || (_ops != null && _ops.Open); _menu.CanEdit = () => _edit.Editor.ServerAllows; _menu.InfoText = StatusText;   // [talk] X and the menu button switch panels
             _menu.SelectedChanged = s => _edit.Editor.Selected = s;
             _menu.Model.ShowHud = _showHud;
             _menu.HudChanged = on => _hud.ShowHud = on;
             _edit.Picked = s => _menu.OnPicked(s);
             // [menu+area] the menu's area-size row drives AreaSizeControl; the left-stick size click is off while the menu is open
             _menu.AreaPresets = AreaSize.Presets; _menu.AreaCurrent = AreaSize.Current; _menu.AreaRequest = AreaSize.Request;
-            AreaSize.Blocked = () => _area.Active || _menu.Open;
-            _nav.Suspended = () => _area.Active || _menu.CapturesRight;
-            _placement.StickBlocked = () => _menu.CapturesRight;
+            AreaSize.Blocked = () => _area.Active || _menu.Open || _ops.Open;   // [talk]
+            _nav.Suspended = () => _area.Active || _menu.CapturesRight || _ops.CapturesRight;
+            _placement.StickBlocked = () => _menu.CapturesRight || _ops.CapturesRight;
+            // [talk] Operator panel (X): chat, console, players, world, server (XR/OperatorPanel.cs). The right ray on it
+            // pauses editing, gliding, turning and scaling like the block menu; "@ pointer" is the last aimed block.
+            _ops = gameObject.AddComponent<OperatorPanel>();
+            _ops.Head = Head; _ops.LeftHand = LeftHand; _ops.RightHand = RightHand;
+            _ops.Blocked = () => _area.Active;
+            _ops.Online = () => _link.Connected;
+            _ops.SendTracked = b => _link.SendTracked(b);
+            _ops.WorldName = () => _world.World;
+            _ops.AimedBlock = () => _edit.Target.Hit && _world.Loaded ? _world.Origin + _edit.Target.Block : (Vector3Int?)null;
+            _ops.Toast = (t, k) => _hud.Toast(t, k);
+            _edit.Blocked = () => _area.Active || _menu.CapturesRight || _ops.CapturesRight;
+            _chatView = gameObject.AddComponent<ChatView>();
+            _chatView.Head = Head; _chatView.LeftHand = LeftHand; _chatView.Log = _ops.Model.Log; _chatView.Bubbles = _ops.Bubbles;
+            _chatView.Hidden = () => _ops.Open || _menu.Open || _area.Active;
+            _chatView.FigureLabel = uuid => _players.LabelOf(uuid);
             _hud = gameObject.AddComponent<Hud>();
             _hud.Head = Head; _hud.LeftHand = LeftHand; _hud.StatusText = StatusText; _hud.ShowHud = _showHud;
             _hud.AreaActive = () => _area.Active; _hud.AreaText = () => _area.Status;
 
+            Protocol.OperatorName = !string.IsNullOrEmpty(_operatorName) ? _operatorName : SkinPlayer;   // [talk] hello.operator_name
             _link = new LinkClient(ServerUrl, Token);
             _link.Start();
             if (SendPoses)
@@ -197,6 +219,8 @@ namespace TabletopCraft
                 BlockShading.MinLight = (float)c.D("min_light", BlockShading.MinLight);         // brightness of light level 0
                 _showHud = c.B("show_hud", false);   // [menu] small head-locked status (also "Show HUD" in the menu's Info tab)
                 _areaWidth = c.I("area_width", 0);                                              // [area] starting width preset
+                _operatorName = c.S("operator_name");                                           // [talk] the name in chat
+                foreach (var q in c.A("quick_commands") ?? new List<object>()) if (q is string qs) _quickCommands.Add(qs);   // [talk] Console quick buttons
                 BatchRules.Columns = Math.Max(1, c.I("batch_columns", BatchRules.Columns));     // [area] sections per batch side
             }
             catch (Exception e) { Debug.LogWarning("[Tabletop] bad tabletop.json: " + e.Message); }
@@ -259,7 +283,15 @@ namespace TabletopCraft
             _nav.Status + "\n" +   // [nav]
             AreaSize.Status + "\n" +   // [area]
             (_area.Active ? _area.Status : (_area.Status.Length > 0 ? _area.Status : "Y (left) = set up area   left stick = move") + "\n" + _edit.Status) +
-            $"\nBLOCKS {(_registry != null ? _registry.Count + " placeable" : "-")}  {_icons.Status}";
+            $"\nBLOCKS {(_registry != null ? _registry.Count + " placeable" : "-")}  {_icons.Status}" +
+            $"\nTALK {TalkStatus()}";   // [talk]
+
+        /// <summary>[talk] Chat, commands and status as the server granted them (X opens the operator panel).</summary>
+        string TalkStatus()
+        {
+            var w = _ops.Model.Welcome;
+            return $"chat {(w.Chat ? (w.ChatSend ? "as " + w.ChatName : "read-only") : "off")}  commands {(w.Commands ? "on" : "off (needs auth.token)")}  status {(w.Status ? "on" : "off")}  X = panel";
+        }
 
         /// <summary>[menu] Events that used to be read off the status text: link lost/restored, area results, local edit refusals.</summary>
         void Notify()
@@ -298,6 +330,7 @@ namespace TabletopCraft
                     _area.State.Limits = RegionLimits.From(m.O("limits"), RegionLimits.Default);
                     _nav.OnWelcome(m);   // [nav] server caps, limits, build height
                     AreaSize.OnLimits(m.O("limits"));   // [area] max_view_width
+                    _ops.OnWelcome(m, _quickCommands);   // [talk] chat, commands, status granted
                     // Light from the server makes faces merge less: scale the area-setup face estimate (soft cap).
                     AreaMath.LightFactor = AreaMath.LightFactorFor(m.A("caps")?.Contains(Protocol.CapLight) == true, BlockShading.SmoothLighting);
                     _link.Send(Protocol.AvatarConfig(true, BlockSizeM, SkinPlayer, true, "Tabletop Giant"));
@@ -345,6 +378,10 @@ namespace TabletopCraft
                 case "avatar_state":
                     Debug.Log($"[Tabletop] avatar enabled={m.B("enabled")} scale={m.D("scale")} note={m.S("note")}");
                     break;
+                case "chat": case "command_result": case "command_output": case "command_suggestions":   // [talk] PROTOCOL.md 4.26-4.28
+                case "server_status": case "world_info": case "players_info":
+                    _ops.OnMessage(m);
+                    break;
                 case BlockRegistry.Type:   // [menu] every placeable block (PROTOCOL.md 4.24)
                     try
                     {
@@ -356,6 +393,7 @@ namespace TabletopCraft
                     catch (Exception e) { Debug.LogWarning("[Tabletop] bad block_registry: " + e.Message); _hud.Toast("Bad block list from the server", ToastKind.Error); }
                     break;
                 case "error":
+                    if (_ops.OnError(m)) { Debug.Log($"[Tabletop] panel error {m.S("code")}: {m.S("message")}"); break; }   // [talk] the panel shows it
                     _lastError = $"{m.S("code")}: {m.S("message")}";
                     string areaBefore = _area.Status;   // [menu]
                     _area.OnError(m);

@@ -87,6 +87,9 @@ namespace TabletopCraft.World
             return false;
         }
 
+        /// <summary>[talk] A player's name label (chat bubbles sit above it), or null when the figure isn't on the table.</summary>
+        public Transform LabelOf(string uuid) => uuid != null && _markers.TryGetValue(uuid, out var m) && m.Fig.Label != null ? m.Fig.Label.transform : null;
+
         /// <summary>World feet position -> RegionRoot-local Unity metres (Z mirrored).</summary>
         Vector3 ToLocal(Vector3 world)
         {
