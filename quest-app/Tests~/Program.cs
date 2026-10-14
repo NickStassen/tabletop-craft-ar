@@ -137,6 +137,7 @@ static class Program
 
         fails += NavTests.Run(Fixture);   // navigation, streaming, clip caps (Tests~/NavTests.cs)
         AreaTests.Run(Check, Fixture);    // [area] width presets, resize re-keying, mesh batching (Tests~/AreaTests.cs)
+        if (args.Contains("--be-probe")) { BlockEntityTests.PrintProbes(); return 0; }   // [blocks] scratch: compare with the vanilla transforms
         int batchMeasIdx = Array.IndexOf(args, "--measure-batches");
         if (batchMeasIdx >= 0) { AreaTests.MeasureBatches(args[batchMeasIdx + 1], JarPath(args)); return fails == 0 ? 0 : 1; }
         int liveResizeIdx = Array.IndexOf(args, "--live-resize");
@@ -150,6 +151,7 @@ static class Program
         int modelsIdx = Array.IndexOf(args, "--entity-models");
         string modelsPath = modelsIdx >= 0 && modelsIdx + 1 < args.Length ? args[modelsIdx + 1] : Environment.GetEnvironmentVariable("TABLETOP_ENTITY_MODELS");
         EntityTests.Run(Check, Fixture, JarPath(args), string.IsNullOrEmpty(modelsPath) ? null : modelsPath);
+        BlockEntityTests.Run(Check, Fixture, JarPath(args));   // [blocks] block entities (BlockEntityTests.cs)
         int entSceneIdx = Array.IndexOf(args, "--entity-scene");
         if (entSceneIdx >= 0 && JarPath(args) != null && EntityModels.Loaded) EntityScene.Run(JarPath(args), args[entSceneIdx + 1]);
         else if (entSceneIdx >= 0) Console.WriteLine("SKIP --entity-scene: needs --jar and --entity-models");

@@ -77,23 +77,27 @@ namespace TabletopCraft.World
         /// <summary>Loads entity_models.json text (any thread). False, with Status saying why, when it isn't usable.</summary>
         public static bool LoadJson(string json)
         {
-            Dictionary<string, object> models, dyes;
+            Dictionary<string, object> models, dyes, textDyes;
             string mc;
             try
             {
                 var root = Json.Parse(json) as Dictionary<string, object>;
                 models = root?.O("models");
                 dyes = root?.O("dyes");
+                textDyes = root?.O("text_dyes");   // [blocks] sign text colours (DyeColor.getTextColor), files from 0.4.0 on
                 mc = root?.S("minecraft");
                 if (models == null || root.I("format") != 1) throw new FormatException("not an entity_models.json (format 1) file");
             }
             catch (Exception e) { Status = FileName + ": " + e.Message; return false; }
             var d = new Dictionary<string, int>();
             if (dyes != null) foreach (var kv in dyes) if (kv.Value is double v) d[kv.Key] = (int)v;
+            var td = new Dictionary<string, int>();
+            if (textDyes != null) foreach (var kv in textDyes) if (kv.Value is double v) td[kv.Key] = (int)v;
             lock (Lock)
             {
                 _raw = models;
                 _dyes = d;
+                _textDyes = td;
                 Cache.Clear();
                 _generation++;
             }
@@ -115,7 +119,7 @@ namespace TabletopCraft.World
         /// <summary>Forgets the loaded data (tests).</summary>
         public static void Unload()
         {
-            lock (Lock) { _raw = null; _dyes = new Dictionary<string, int>(); Cache.Clear(); _generation++; }
+            lock (Lock) { _raw = null; _dyes = new Dictionary<string, int>(); _textDyes = new Dictionary<string, int>(); Cache.Clear(); _generation++; }
             Status = "no " + FileName;
         }
 
@@ -123,6 +127,14 @@ namespace TabletopCraft.World
         public static bool Dye(string name, out int rgb)
         {
             lock (Lock) { rgb = 0; return name != null && _dyes.TryGetValue(name, out rgb); }
+        }
+
+        static Dictionary<string, int> _textDyes = new Dictionary<string, int>();
+
+        /// <summary>[blocks] A dye's sign text colour (DyeColor.getTextColor), as 0xRRGGBB; false for files without it.</summary>
+        public static bool TextDye(string name, out int rgb)
+        {
+            lock (Lock) { rgb = 0; return name != null && _textDyes.TryGetValue(name, out rgb); }
         }
 
         /// <summary>The model for a layer name ("cow", "sheep#wool", "boat/oak"), or null if unknown or no data. Thread-safe, cached.</summary>
