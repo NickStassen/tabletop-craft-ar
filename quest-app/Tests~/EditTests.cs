@@ -332,6 +332,12 @@ static class EditTests
         var wBed = PlaceWorld((2, 1, 6, "minecraft:stone"));
         Is(Plan("minecraft:red_bed[facing=north,occupied=false,part=foot]", wBed, V(1, 0, 6), Dir.Up, new Vector3(1.5f, 1, 6.5f), lookE), "refused: can't place: no room for the red bed", "bed without room for its head: refused");
         ed.Selected = "minecraft:tall_grass[half=lower]";
+        var ghost = BlockEditor.PreviewWorld(pBed, out var gc);
+        check(ghost != null && Eq(gc, V(1, 1, 6)) && ghost.Dims == V(2, 1, 1) && ghost.State(ghost.Get(0, 0, 0)) == pBed.State && ghost.State(ghost.Get(1, 0, 0)) == pBed.PartnerState,
+              "preview ghost: both bed halves in a 2x1x1 world at the foot's cell");
+        check(BlockEditor.PreviewWorld(new PlacePlan { Why = "can't place: x" }, out _) == null, "preview ghost: nothing for a refused plan");
+        check(BlockEditor.Describe(w0, HitOn(w0, A, Dir.Up, top)) == "stone @ 103,61,-37" && BlockEditor.Describe(w0, new BlockHit()) == "",
+              "target readout: name and world position");
         var pTall = ed.Plan(w0, HitOn(w0, V(7, 0, 7), Dir.Up, new Vector3(7.5f, 1, 7.5f)), lookN, 0);
         check(pTall.Ok && pTall.State == "minecraft:tall_grass[half=lower]" && Eq(pTall.PartnerCell, V(7, 2, 7)) && pTall.PartnerState == "minecraft:tall_grass[half=upper]", "tall grass: both halves");
         Is(Plan("minecraft:small_dripleaf[facing=north,half=lower,waterlogged=false]", w0, V(7, 0, 7), Dir.Up, new Vector3(7.5f, 1, 7.5f), lookN),

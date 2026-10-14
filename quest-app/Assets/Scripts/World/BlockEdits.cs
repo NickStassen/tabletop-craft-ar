@@ -295,6 +295,41 @@ namespace TabletopCraft.World
             return plan;
         }
 
+        /// <summary>The target readout by the controller: "oak stairs @ 105,64,-35" (world coordinates), or "" on a miss.</summary>
+        public static string Describe(WorldModel w, BlockHit h)
+        {
+            if (w == null || !w.Loaded || !h.Hit || !w.InBounds(h.Block.x, h.Block.y, h.Block.z)) return "";
+            var p = w.Origin + h.Block;
+            return BlockEditRules.Label(w.State(w.Get(h.Block.x, h.Block.y, h.Block.z))) + " @ " + p.x + "," + p.y + "," + p.z;
+        }
+
+        /// <summary>A tiny world holding what the plan places (and its second half) for the preview ghost; its cell
+        /// (0,0,0) is region-local <paramref name="corner"/>. Null when the plan places nothing.</summary>
+        public static WorldModel PreviewWorld(PlacePlan p, out Vector3Int corner)
+        {
+            corner = p.Cell;
+            if (p.State == null) return null;
+            var lo = p.Cell; var hi = p.Cell;
+            if (p.HasPartner)
+            {
+                lo = new Vector3Int(Math.Min(lo.x, p.PartnerCell.x), Math.Min(lo.y, p.PartnerCell.y), Math.Min(lo.z, p.PartnerCell.z));
+                hi = new Vector3Int(Math.Max(hi.x, p.PartnerCell.x), Math.Max(hi.y, p.PartnerCell.y), Math.Max(hi.z, p.PartnerCell.z));
+            }
+            corner = lo;
+            var w = new WorldModel { SnapshotId = 0, World = "preview", Dims = hi - lo + new Vector3Int(1, 1, 1) };
+            w.Palette.Add(BlockEditRules.Air); w.Palette.Add(p.State);
+            w.Grid = new ushort[w.Dims.x * w.Dims.y * w.Dims.z];
+            var c = p.Cell - lo;
+            w.Grid[w.Index(c.x, c.y, c.z)] = 1;
+            if (p.HasPartner)
+            {
+                w.Palette.Add(p.PartnerState);
+                var pc = p.PartnerCell - lo;
+                w.Grid[w.Index(pc.x, pc.y, pc.z)] = 2;
+            }
+            return w;
+        }
+
         /// <summary>block_edit op "place" from Plan, applied optimistically; null when refused (Result says why).</summary>
         public Dictionary<string, object> Place(WorldModel w, BlockHit h, Vector3 rayDir, double now)
         {
