@@ -33,7 +33,11 @@ async def session(origin: tuple[int, int, int], secs: float, stats: dict | None 
         await ws.send(json.dumps(env.wrap("hello", client="light-check", protocols=[1], caps=["rle_palette_v1", CAP_LIGHT, CAP_BIOMES])))
         welcomed = False
         end = time.monotonic() + secs
+        next_ping = time.monotonic() + 2
         while time.monotonic() < end:
+            if welcomed and time.monotonic() >= next_ping:   # the server closes idle links after 15 s
+                await ws.send(json.dumps(env.wrap("ping", id=0)))
+                next_ping = time.monotonic() + 2
             try:
                 raw = await asyncio.wait_for(ws.recv(), 0.5)
             except TimeoutError:
@@ -60,11 +64,12 @@ async def main(ox: int, oy: int, oz: int) -> int:
     o = (ox, oy, oz)
     x0, x1, z0, z1, floor, roof = ox + 2, ox + 10, oz + 2, oz + 10, oy + 4, oy + 8
     cx, cz = (x0 + x1) // 2, (z0 + z1) // 2
-    cmd(f"fill {ox} {oy} {oz} {ox + 15} {oy + 15} {oz + 15} minecraft:air")
-    await asyncio.sleep(1.0)
     stats: dict = {}
-    live = asyncio.create_task(session(o, 14, stats))
+    live = asyncio.create_task(session(o, 16, stats))
     await asyncio.sleep(2.5)
+    # Clear a room left by an earlier run. Only after subscribing: the region's chunks are loaded (ticketed) then.
+    cmd(f"fill {ox} {oy} {oz} {ox + 15} {oy + 15} {oz + 15} minecraft:air")
+    await asyncio.sleep(2.0)
     room = (f"fill {x0} {floor} {z0} {x1} {floor} {z1} minecraft:stone",            # floor
             f"fill {x0} {roof} {z0} {x1} {roof} {z1} minecraft:stone",              # roof
             f"fill {x0} {floor + 1} {z0} {x0} {roof - 1} {z1} minecraft:stone",     # west wall
