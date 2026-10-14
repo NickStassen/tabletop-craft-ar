@@ -139,6 +139,7 @@ Paper 26.3 build 181 (stable), Temurin JDK 25.0.4.1, plugin built against `paper
 ## Not verified (and why)
 
 - **Anything on the Quest**: compiled and built (section 5), but not yet run on a headset. Passthrough, MRUK table detection, the resource-pack atlas (`System.IO.Compression` on IL2CPP, `Texture2DArray`; the 26.3 jar was only checked offline, section 6), frame rate and Wi-Fi latency are untested.
+- **Block models on the Quest**: they are checked offline only, with tests on the 26.3 jar and the offline renderer ("Block models from the resource pack").
 - **Visual check of the giant** in a real Java client (that it renders at the right size, skin, hands orientation). Verified only through entity data, logs and the mineflayer bot.
 - **Skins**: offline mode can't resolve profiles, so `skin_resolved` is false in tests. `skin_player` resolution needs an online-mode server.
 - **Windows**: the server steps in QUEST_SETUP.md are written for Windows but were run on Linux.
@@ -204,18 +205,58 @@ Greedy-mesher output for the same snapshots: the real `GreedyMesher.cs`, flat-co
 | 32×384×32 | 10,909 | 1,408 | 49k | 25k | 954 | 66 ms | 14k |
 | 64×384×64 | 39,394 | 7,242 | 187k | 93k | 998 | 262 ms | 56k |
 
-With a resource pack, faces only merge when they share a texture, so expect more quads than the flat-colour counts above (my guess: 1.2–1.5×; not measured).
+With a resource pack, faces only merge when they share a texture, and since the block-model work every non-cube block is drawn from its model. The measured counts are in "Block models from the resource pack" below; the capacity guidance uses them.
 
 ### Quest 3 capacity guidance (ESTIMATES, not measured on a headset)
 
-- **Estimator** (`AreaMath.Estimate`, used for the soft cap): about 3.5 faces per column for a 96-block surface band, plus 0.035 faces per block below that band (caves). It overestimates every case above except 128×128×128, which it underestimates by about 9%.
+- **Estimator** (`AreaMath.Estimate`, used for the soft cap): recalibrated for block models to about 5.5 faces per column for a 96-block surface band, plus 0.04 faces per block below that band (caves). It overestimates every measured pack case except 128×128×128, which it underestimates by about 5%. (Before block models: 3.5 and 0.035.)
 - **Default soft cap:** 250k faces = 1M vertices / 500k triangles. This assumes the scene is only the unlit block shader at 72 Hz. The headset shows a warning above the cap; holding B overrides it.
-- **Recommended sizes:**
-  - **64×96×64**: comfortable everywhere (about 13k faces).
-  - **128×96×128**: the recommended maximum for normal play (about 47k faces measured, about 60–70k with textures).
-  - **128×128×128 / 64×384×64**: fine for rendering (about 85–100k faces). Snapshots are 0.4–0.7 MB.
-  - **128×384×128** (full height): estimated at about 220k faces / 890k vertices. That is near the cap, and it is over the server's default `max_blocks` (2,097,152), so the server operator would have to raise it.
-- **Meshing on the headset:** the box meshes about 1 ms per 16³ section. Assuming the Quest's mobile CPU is 3–5× slower (estimate), a 128×96×128 re-mesh is about 1–1.5 s spread across 3 worker threads. The main thread only uploads meshes, within a 3 ms per-frame budget.
+- **Recommended sizes** (pack counts):
+  - **64×96×64**: comfortable everywhere (about 21k faces).
+  - **128×96×128**: the recommended maximum for normal play (74–79k faces measured at spawn, in a village and in snowy plains).
+  - **128×128×128 / 64×384×64**: fine for rendering (about 63–117k faces). Snapshots are 0.4–0.7 MB.
+  - **128×384×128** (full height): estimated at about 280k faces / 1.1M vertices (4× the measured 64×384×64 is about 250k). That is over the soft cap, so it needs the B override, and it is over the server's default `max_blocks` (2,097,152), so the server operator would have to raise it.
+- **Meshing on the headset:** with block models the box meshes about 0.4–0.5 ms per 16³ section (under 1 ms worst case). Assuming the Quest's mobile CPU is 3–5× slower (estimate), a 128×96×128 re-mesh is about 0.6–1 s spread across 3 worker threads. The main thread only uploads meshes, within a 3 ms per-frame budget.
+
+## Block models from the resource pack (26.3 client jar, 2026-10-13)
+
+Engine-free, run on the x86 Linux box: .NET 8, the user's 26.3 client jar passed with `--jar` (or `MC_CLIENT_JAR`), never copied into the repo. The live data came from a local Paper 26.3 build 181 test server: normal world, seed 12345, offline mode.
+
+- **Tests:** `cd quest-app/Tests~ && dotnet run -- --jar CLIENT.jar`: **68/68 PASS**. Without a jar, 34/34 PASS and the model tests are skipped. The model tests cover:
+  - Full cubes: stone, grass (tinted top, dirt bottom), and `oak_log[axis=x]`, which has its ends west/east and rotated bark (`UvMap`).
+  - Stairs: 11 faces, with the step moving with `facing` and flipping for `half=top`. Cullfaces rotate with the model. Inner stairs have 15 faces.
+  - Multipart: fence post + north arm (16 faces), the east arm, a wall (post + low + tall), and redstone (dot / line / corner / climbing via `OR` and `side|up`, colour follows power). Glass panes are translucent through 26.x `force_translucent`.
+  - Rotated elements: the wall torch leans off its wall, the poppy is a 4-face cross, and a hanging sign uses 26.x `x`/`y`/`z` rotation.
+  - Heights: a snow layer is 6/16 high with its inner helper face skipped; snow at 8 layers is a full cube.
+  - Block-entity boxes: single and double chests, banner (wool flag), skull, bell body, shulker box. 26.x bed and sign models bake. Powder snow stays a cube, and a spawner doesn't.
+  - Classification after prewarm.
+  - Meshing: stairs on stone = 6 + 10 faces (bottom culled), two snow layers = 8 faces, joined glass panes drop the faces between them, and the greedy east face of grass is upright.
+- **Every blockstate** (`dotnet run -- --jar CLIENT.jar --list-shapes`, first variant of each of the 1,288 states): 404 stay greedy cubes (5 of them were cross placeholders before, such as mushroom stems), 33 stay see-through cubes (glass, leaves, ice), and 9 opaque-by-name cubes become see-through cubes (copper grates, frosted ice). 833 become block models: 310 that were drawn as full cubes before (stairs, beds, chests, cauldrons, anvils, paths, farmland...), 403 cross placeholders (plants, torches, fences, walls, rails, doors...), 101 slabs, and 19 glass panes / iron bars / honey / slime. Air and fluids are unchanged.
+- **Face counts** (`tools/measure_regions.py` + `dotnet run -- --jar CLIENT.jar --measure DIR`). "flat" is the mesher with flat-colour keys and the old placeholders (no pack). "pack" is greedy cubes with one texture layer per texture, plus block models.
+
+| region (y range) | flat faces | pack faces | of which model faces | `AreaMath.Estimate` (new) | pack mesh time, all sections |
+|---|---|---|---|---|---|
+| 32×96×32 spawn (32..128) | 2,676 | 4,451 | 1,926 | 5.6k | 9 ms |
+| 64×96×64 spawn (32..128) | 12,811 | 20,657 | 10,510 | 22.5k | 38 ms |
+| 128×96×128 spawn, mostly ocean (32..128) | 45,470 | 73,692 | 38,253 | 90.1k | 148 ms |
+| 128×96×128 village at -144,-832 (32..128) | 59,638 | 78,603 | 22,391 | 90.1k | 183 ms |
+| 128×96×128 snowy plains at 672,-608 (32..128) | 67,072 | 76,009 | 29,583 | 90.1k | 170 ms |
+| 128×128×128 spawn (0..128) | 82,224 | 116,715 | 42,835 | 111.1k | 226 ms |
+| 32×384×32 spawn (full height) | 12,138 | 15,556 | 4,202 | 17.4k | 82 ms |
+| 64×384×64 spawn (full height) | 47,004 | 62,710 | 22,461 | 69.7k | 178 ms |
+
+  Every face is 4 vertices and 2 triangles. Model faces are single-sided, while the old cross placeholders were double-sided, so triangles grew less than faces: 128×96×128 spawn went from 115k to 147k triangles. Meshing is 0.4–0.5 ms per 16³ section, with the worst section under 1 ms. Outliers of 7–9 ms on the first sections are .NET JIT warm-up. Baking all palette states (main thread, prewarm) took 45–53 ms for 110–171 states. That includes the test reader's PNG decoding. On the headset, the atlas's texture loading for new states already ran in the same step.
+- **Where the model faces come from:** underwater plants dominate the ocean (seagrass and tall seagrass 8 faces per block, kelp 4). In the village, the main sources are short grass (4), leaf litter (about 2.6), dirt paths (about 3.7, 15/16 high), pink petals (about 27) and stairs (about 5). In snowy plains, 10,136 snow layers cost 2.2 faces each after side culling against each other.
+- **Offline visual check:** `dotnet run -- --jar CLIENT.jar --scene OUT.json` dumps a demo scene of about 90 odd blocks (or `--snapshot FILE x0,y0,z0,dx,dy,dz` crops a saved region). Then `uv run --no-project --with pillow --with numpy python tools/render_mesh.py OUT.json CLIENT.jar OUT.png --view se|nw [--box ...]` renders it. The renderer follows the shader rules: layer texture with repeat, tint, face shading, alpha test for the opaque submesh and blending for the transparent one. Checked from both diagonal views:
+  - stairs (all facings, upside down, corners) with world-aligned plank tops (uvlock), slabs, fences, walls, panes, iron bars and fence gates;
+  - logs on all three axes, furnace fronts upright, hay bales;
+  - standing, wall and hanging torches and lanterns, flowers, tall grass, crops, sugar cane, berry bushes, potted plants, carpets, rails, redstone (red);
+  - doors and trapdoors, ladders, vines, snow layers 1–8, dirt path, farmland, cauldron, hopper;
+  - chests (double chests join), banner, skull, bed, sign, bell, anvil, enchanting table, lectern, campfire, decorated pot, brewing stand and shulker box;
+  - a crop of the real village (stair roofs, farm, paths, lamp posts).
+
+  Grass sides keep the fringe up on all four sides. Before, east/west greedy faces had it sideways.
+- **Needs the headset:** frame rate at 75–80k faces for 128×96×128, the prewarm hitch on the Quest CPU when a new region's palette is baked, and the look of face shading on rotated faces. Plants come out at 0.8 brightness from their diagonal normals, where vanilla draws them at full brightness.
 
 ## C# client tests (`cd quest-app/Tests~ && dotnet run`)
 
