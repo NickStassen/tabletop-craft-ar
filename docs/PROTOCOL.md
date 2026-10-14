@@ -1,4 +1,4 @@
-# PROTOCOL.md — Tabletop link protocol, v0.1.0
+# PROTOCOL.md — Tabletop link protocol, v0.2.0
 
 The project version (repo `VERSION` file) versions the plugin, the Quest app and this protocol together. Before 1.0 there is no backwards compatibility: plugin, app and tools of the same version go together. The wire field `v` stays `1`.
 
@@ -334,7 +334,7 @@ Then it closes with code 1000. When the Quest client disconnects (with or withou
 - **v1 (2026-10-13):** initial.
 - **v1, light and biomes (2026-10-13, additive):** optional per-block light and 4x4x4 biomes in `chunk_snapshot`, light changes in `block_update`, opted into with the `light_v1` / `biomes_v1` caps and echoed in `welcome.caps` (§4.5.1). Peers without the caps are unaffected.
 - **v1, block editing (2026-10-13, additive):** `block_edit` (C→S) breaks or places one block inside the region, opted into with the `edit_v1` cap; error codes `edit_denied`, `out_of_region`, `bad_state`; an error about an edit carries its `op` and `pos` (§4.20). Peers without the cap are unaffected.
-- **next version: block menu (2026-10-14, required, not backwards compatible):** the server sends `block_registry` (§4.24) to every client right after `welcome`, and a `block_edit` `place` must name a registry block or variant (else `bad_state`, §4.20). No cap: plugin, Quest app and tools must match.
+- **v0.2.0: block menu (2026-10-14, required, not backwards compatible):** the server sends `block_registry` (§4.24) to every client right after `welcome`, and a `block_edit` `place` must name a registry block or variant (else `bad_state`, §4.20). No cap: plugin, Quest app and tools must match.
 
 ## 4.13–4.16 Runtime region control (v1, additive)
 
@@ -413,7 +413,7 @@ Server behaviour:
 - Edits are applied on the main thread in arrival order. Each session may make `edit.max-per-second` edits (default 20): a token bucket holding one second's worth, so a burst of 20 passes and the rest get `rate_limited`.
 - `break` of air does nothing. Breaking a block that holds water (waterlogged, kelp, seagrass) leaves a water source, and placing a waterloggable state into a water source sets `waterlogged=true`, as in vanilla. Block physics run after the edit (`edit.physics`), so sand falls and water flows into a gap.
 - `place` needs a replaceable cell (air, fluids, short grass and the like: `Block#isReplaceable`) and a state that isn't air or listed in `edit.deny` (by default the operator blocks: command blocks, structure blocks, jigsaws, test blocks). Two-block structures (doors, beds, tall plants) are placed as the one state given.
-- Next version: the state's block must also be in the session's `block_registry` (§4.24), or be one of its `variants` (a wall torch picked from a wall is placed as is). Anything else (fire, water, portals, piston heads, potted plants: blocks without an item form) gets `bad_state` with the message "`<id>` is not a placeable block (not in block_registry)".
+- Since v0.2.0 the state's block must also be in the session's `block_registry` (§4.24), or be one of its `variants` (a wall torch picked from a wall is placed as is). Anything else (fire, water, portals, piston heads, potted plants: blocks without an item form) gets `bad_state` with the message "`<id>` is not a placeable block (not in block_registry)".
 - There is no acknowledgement. The change reaches every session through the normal `block_update` diff (the edit marks the region dirty), typically 100–200 ms after the edit arrives. Protection plugins are not consulted (no `BlockPlaceEvent`/`BlockBreakEvent`), so only the region bounds, the rate limit and the deny list restrict edits.
 - A refused edit gets an `error` with `ref_seq` and, additively, the edit's `op` and `pos`:
 
@@ -421,7 +421,7 @@ Server behaviour:
 |---|---|
 | `edit_denied` | no `edit_v1` grant, occupied cell, a state from `edit.deny`, chunk not loaded |
 | `out_of_region` | `pos` is outside the session's region |
-| `bad_state` | `state` isn't a block state, is air (use `break`), or (next version) isn't a `block_registry` block or variant |
+| `bad_state` | `state` isn't a block state, is air (use `break`), or (since v0.2.0) isn't a `block_registry` block or variant |
 | `rate_limited` | over `edit.max-per-second` |
 | `bad_message` | malformed: no `op`/`pos`, non-integer `pos`, unknown `face` (this reply has no `pos`) |
 
