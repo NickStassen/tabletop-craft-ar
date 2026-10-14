@@ -46,6 +46,8 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 | `chunk_snapshot` | S→C | full region data |
 | `block_update` | S→C | one or more blocks changed in the region |
 | `player_positions` | S→C | periodic list of players in or near the region |
+| `entities` | S→C | non-player entities in the region, as deltas (cap `entities_v1`, §4.21) |
+| `actions` | S→C | swings, digging, block breaks/places, damage this tick (cap `actions_v1`, §4.22) |
 | `pose` | C→S | head + hands, about 30 Hz |
 | `avatar_config` | C→S | set skin/scale/visibility of the giant |
 | `avatar_state` | S→C | the server's view of the avatar after config |
@@ -68,7 +70,7 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 - `client`: free string, e.g. `quest-app` or `fake-quest`.
 - `protocols`: protocol versions the client speaks. The server picks the highest one it also supports.
 - `token`: shared secret from the plugin `config.yml` (`auth.token`). If it's empty in config, auth is disabled (LAN dev only). A wrong token gets `error` `auth_failed` and then close code 4003.
-- `caps`: capability strings. v1 defines `rle_palette_v1` (required) and `avatar` (client will send poses). Optional extras: `light_v1` and `biomes_v1` (§4.5.1), `edit_v1` (§4.20); unknown caps are ignored.
+- `caps`: capability strings. v1 defines `rle_palette_v1` (required) and `avatar` (client will send poses). Optional extras: `light_v1` and `biomes_v1` (§4.5.1), `edit_v1` (§4.20), `entities_v1` (§4.21), `actions_v1` (§4.22); unknown caps are ignored.
 - The client MUST NOT send anything else before it gets `welcome`. The server closes with 4002 if `hello` doesn't arrive within 5 s.
 
 ### 4.2 `welcome` (S→C)
@@ -197,6 +199,11 @@ Sent at `limits.player_hz` (default 10 Hz) whenever there's at least one player 
 - `yaw`/`pitch`: the player's head (look) direction, §3 convention. The body yaw isn't sent; clients derive it as the game client does (it lags the head by up to 50° and turns toward the walking direction).
 - `skin`: optional skin texture URL taken from the player's profile. It's sent only in the first message that includes that UUID on the connection (and after it changes), and it can be `null` (no textures, e.g. on an offline-mode server: show the game's default skin for that UUID). Profile URLs are usually `http://textures.minecraft.net/texture/<hash>`; clients may fetch the same path over https and SHOULD refuse other hosts.
 - `skin_model` (optional, additive): `"wide"` (4 px arms, Mojang's "classic") or `"slim"` (3 px arms), from the textures payload's metadata. Sent together with a non-null `skin`; missing means `"wide"`.
+- Additive (sent to every client; old ones ignore them), see `tools/fixtures/player_positions_riding.json`:
+  - `id`: the player's entity id, the id that `entities` lists in a vehicle's `passengers` and `actions` uses for swings and damage.
+  - `vehicle`: entity id of what the player rides (boat, minecart, horse, pig...), missing when not riding. Clients seat the figure relative to that entity (§4.21).
+  - `pose`: missing = standing; else `sneaking`, `swimming`, `sleeping`, `gliding` (elytra), `riding` (whenever `vehicle` is set), `spin_attack` or `dying`.
+  - `equipment`: object of the non-empty slots `main_hand`, `off_hand`, `head`, `chest`, `legs`, `feet` → item key (`minecraft:diamond_sword`); missing when all are empty.
 - The giant avatar's own entities are **not** included.
 
 ### 4.7 `pose` (C→S)
@@ -421,3 +428,68 @@ Server behaviour:
 Client guidance (non-normative; the Quest's `World/BlockEdits.cs`): show an edit at once only when the resulting state is already in the session palette. Never append to the palette locally, because `palette_add` indices must keep matching the server's. Remember the cell's old value: a `block_update` that touches the cell confirms the edit, an `error` with that `pos` reverts it, and if neither arrives within 3 s the client reverts too (the server diffs the region at least once a second, so silence means the world kept the old value). An older server answers `unknown_type`: revert everything and stop editing.
 
 Fixtures: `tools/fixtures/block_edit.json`, `block_edit_break.json`, `error_edit_denied.json` (Java `FixtureTest`, Python and C# tests).
+
+## 4.21–4.23 Entities and actions (additive, caps `entities_v1`, `actions_v1`)
+
+Non-player entities (boats, minecarts, mobs, dropped items, item frames, paintings, falling blocks...) and what players and mobs do (arm swings, digging, breaking and placing blocks, taking damage), so the miniature shows them. Both are opt-in: a client lists `entities_v1` and/or `actions_v1` in `hello.caps`, the server grants each unless it's off in config.yml (`entities.enabled`, `actions.enabled`) and lists the granted ones in `welcome.caps`. Clients without them never get these messages. `v` stays 1.
+
+### 4.21 `entities` (S→C)
+
+Sent with `player_positions` (10 Hz) to sessions with `entities_v1` whenever something changed, and always after the session's region changed.
+
+```json
+{"v":1,"type":"entities","seq":5,"t":1760370001050,"full":true,
+ "entities":[
+  {"id":101,"type":"minecraft:oak_boat","uuid":"3c1e…","pos":[112.5,62.53,-30.25],"yaw":90.0,"pitch":0.0,
+   "passengers":[7,102],"size":[1.38,0.56]},
+  {"id":102,"type":"minecraft:pig","uuid":"3c1e…","pos":[112.1,62.6,-30.25],"yaw":80.0,"pitch":0.0,"body_yaw":90.0,
+   "vehicle":101,"size":[0.45,0.45],"baby":true,"variant":"temperate"},
+  {"id":104,"type":"minecraft:zombie","uuid":"3c1e…","pos":[108.7,64.0,-28.0],"yaw":-45.0,"pitch":12.5,"body_yaw":-40.0,
+   "on_ground":true,"size":[0.6,1.95],"equipment":{"main_hand":"minecraft:iron_sword","head":"minecraft:leather_helmet"}},
+  {"id":105,"type":"minecraft:item","uuid":"3c1e…","pos":[110.42,64.0,-33.9],"yaw":0.0,"pitch":0.0,"on_ground":true,
+   "size":[0.25,0.25],"item":"minecraft:diamond","count":3}
+ ]}
+```
+
+- **Which entities:** every entity whose bounding box touches the region box grown by `entities.margin` (default 2) blocks on each side, except players (they're in `player_positions`), the giant's own entities (scoreboard tag `tabletop_avatar`), markers, interactions, text displays and area effect clouds. At most `entities.max` (default 256); past that, the ones nearest the region centre win.
+- **Deltas:** the server remembers what it sent each session. An entry for an `id` the client doesn't hold yet is a **full entry** (every field that applies; false/null/empty ones are left out). An entry for a known `id` lists only what changed: `pos` when it moved by at least 0.01 block on an axis, angles when they turned by at least 1°, any other field when it differs. A field that went away is sent as `false`, `null` or `[]`. `removed` lists ids that left the region or despawned. With `full: true` the list replaces the client's whole set: entities it doesn't name are gone, and its entries are full entries. The server sends one after every region change. A client that gets a delta for an `id` it doesn't hold ignores it.
+- **Fields** (all optional except `id`; a full entry always has `type` and `pos`):
+  - `id` (int): the server's entity id, unique while the entity exists. `uuid` (string, full entries).
+  - `type`: entity type key: `minecraft:cow`, `minecraft:oak_boat` (26.x has one type per boat wood), `minecraft:item`...
+  - `pos`: world coordinates (2 decimals) of the entity's position: the feet or bottom centre, or for a hanging entity the centre of it on its wall.
+  - `yaw`, `pitch`: degrees, §3 convention. For living entities they are the **head**'s, and `body_yaw` is the body's. Other entities have no `body_yaw` (their yaw is the body's).
+  - `on_ground` (bool), `vehicle` (id of what it rides), `passengers` (ids in seat order, players included; see `player_positions[].id`).
+  - `size`: `[width, height]` of the bounding box in blocks. Clients draw a box of this size for types they don't know, and slimes scale with it.
+  - Looks: `baby`, `small` (armour stands), `sheared`, `tamed`, `angry`, `invisible` (bools). `variant`: the registry key path for vanilla ids (`temperate`, `pale`, `calico`, `desert`, `kebab`), `namespace:path` otherwise; enum values in lower case (horse colour `dark_brown`, rabbit `salt_and_pepper`, panda gene, axolotl, parrot, fox, llama colour, salmon size, pufferfish `small`/`medium`/`big`, tropical fish pattern). `color`: a dye colour (sheep wool, shulker, tropical fish body, a tamed wolf's or cat's collar). `markings`: horse markings (`white`, `whitefield`, `white_dots`, `black_dots`) or the tropical fish pattern colour. `profession`: villagers and zombie villagers; missing for none. `pose`: as for players, plus `sitting`; missing = standing. `name`: the custom name as plain text.
+  - Items and blocks: `item` (item key of a dropped item, an item frame's item or an item display's item), `count` (dropped stacks over 1), `block` (block state of a falling block or a block display), `facing` (`north`, `south`... of item frames, paintings and leash knots), `rotation` (an item frame's item rotation, 0–7).
+  - `equipment`: as for players, plus `body` (horse or wolf armour, llama carpet) and `saddle`. The whole object is resent when any slot changes.
+- Cost (TESTING.md "Entities and actions"): one sample per region per send, about 0.1–0.2 ms of main thread for 200 mobs; about 12–16 KB/s with 200 wandering mobs, under 100 B/s for a still scene.
+
+### 4.22 `actions` (S→C)
+
+At most one per tick, to sessions with `actions_v1`, with what happened inside their region during that tick.
+
+```json
+{"v":1,"type":"actions","seq":8,"t":1760370001100,
+ "actions":[
+  {"kind":"swing","id":7,"hand":"main"},
+  {"kind":"dig","pos":[105,63,-36],"stage":4,"id":7},
+  {"kind":"break","pos":[106,63,-36],"block":"minecraft:stone","id":7},
+  {"kind":"place","pos":[104,64,-36],"block":"minecraft:oak_planks","id":7},
+  {"kind":"hurt","id":104,"crit":true},
+  {"kind":"swing","id":104,"hand":"main"}
+ ]}
+```
+
+- `swing`: entity `id` (a player's `player_positions[].id` or a mob's) swings its `hand` (`main`/`off`). Players: every swing packet (attacking, digging, using items). Mobs: when they hit something.
+- `dig`: the block at world `pos` is being broken, crack `stage` 0–9 (the game's destroy stages); `-1` = the cracks are gone (digging stopped). `id` = who digs, if known. A `break` at the same `pos` also clears them, and clients drop cracks that got no update for 20 s, like the game.
+- `break`: the block state `block` at `pos` was broken by a player (`id`) or an explosion (no `id`; at most 48 blocks per explosion). The block itself goes away through `block_update` as usual; this is for the break particles.
+- `place`: the block state `block` was placed at `pos` by player `id` (a small puff; the arm swing comes as its own `swing`).
+- `hurt`: entity or player `id` took damage (the red flash); `crit` marks a critical hit.
+- Repeats within a tick collapse: the latest `dig` per block, one `swing` per entity and hand, one `hurt` per entity. At most 128 actions per tick. Blocks count when they are inside the region; players up to 16 blocks out horizontally and other entities up to 2, like `player_positions` and `entities`.
+
+### 4.23 Fixtures, tests, changelog
+
+- Fixtures: `tools/fixtures/entities.json` (a full list: a boat carrying a player and a baby pig, a sheep, an armed zombie, a dropped stack, an item frame), `entities_delta.json` (moves, a turned boat, changed equipment, a removal), `player_positions_riding.json` (a player in that boat with full equipment) and `actions.json`. Java `EntityDeltaTest` and `ActionBatchTest` build them from server-side state; Python `test_tabletop_protocol.py` and C# `Tests~/EntityTests.cs` apply them.
+- `tools/entities_check.py` checks a live server: types, positions, the vehicle link, equipment, a removal, hurt and explosion actions, and bytes/s.
+- Changelog (additive, no version bump, 2026-10-13): adds the `entities_v1` and `actions_v1` caps with the `entities` and `actions` messages, and `player_positions[].id`, `vehicle`, `pose` and `equipment` (§4.6). Clients without the caps are unaffected.

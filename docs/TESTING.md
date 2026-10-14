@@ -604,3 +604,41 @@ Unity 6000.0.84f1 batch compile: no errors, no shader errors, no new warnings (t
 
 **Needs the headset:** whether `RightHand.forward` (the OVRCameraRig hand anchor) points out of the front of the controller. If the laser comes out at an angle, the ray needs a pitch offset. Also: outline and laser visibility in passthrough (dark outline, 0.8 mm at 1 cm blocks), the preview cube's textures, size and position, label readability, haptic strength, the trigger hold-repeat rate (0.35 s, then every 0.25 s), and whether B for pick feels right next to A (re-place table). `tools/e2e.sh` was not run (its ports 25565/8765 belong to the live session).
 
+
+## Entities and actions (`entities_v1` / `actions_v1`, PROTOCOL §4.21–4.22; Paper 26.3, 2026-10-13, no headset)
+
+### Tests
+
+| Suite | Result |
+|---|---|
+| Plugin (`./gradlew build`) | 69 tests with master's, 0 failures. New: `EntityDeltaTest` (7: the full and delta fixtures rebuilt from server state, thresholds accumulate, cleared fields sent as false/null, full lists after a region change, pose names) and `ActionBatchTest` (3: the fixture tick with collapsed repeats, region filtering with the player/entity margins, a break clears the dig, the 128 cap). |
+| Python (`pytest`, `ruff`) | 58 passed with master's, ruff clean. `EntityMirror` applies the full and delta fixtures; validation of entries, equipment slots, player poses and action kinds. |
+| C# (`Tests~ dotnet run -- --jar 26.3.jar --entity-models entity_models.json`) | 385 PASS with master's (316 PASS without either; the model tests skip without `--entity-models`/`TABLETOP_ENTITY_MODELS`, the pack tests without `--jar`). New in `EntityTests.cs`: the store against the fixtures (vehicle links, removals, equipment replaced whole, full lists reset fields), `player_positions` extras, actions; without model data `Get()` is null while the catalog still names model and texture, dyes fall back, junk files are refused, and a minimal file loads with aliases and dyes; with the generated file all 185 model layer names parse (134 distinct models, 1,716 cubes, 10,296 faces) with every triangle wound outward; feet at y 0 and plausible heights for 12 mobs (villager's root scale included); mirrored legs share their skin area; animation (head, legs at 1.4 rad, zombie arms, riding legs, the 6-tick swing, −0.76 rad at half-swing as `HumanoidModel`); against the jar: 271 catalog looks (every boat, minecart, mob, variant, baby) resolve to a model and existing textures/overlays/second layers, and all 1,657 item definitions resolve (759 sprites, 898 cubes, 0 unresolved, 0 missing textures), plus their display transforms. |
+| C# `--live` | Against the test server with a boat + pig, cow, villager, item and minecart in the default region: `live: 6 entities messages, 6 entities (oak_boat, pig, cow, villager, item, minecart); 5 models, 0 boxes` and the existing checks PASS. |
+| Unity 6000.0.84f1 | Compiles with no errors or warnings in Assets; `ShaderCheck` (now with `TabletopCraft/Entity`) 80 variants, 0 errors. |
+
+Model data: `java tools/entity_models/DumpEntityModels.java ~/.minecraft 26.3 entity_models.json` reads the 26.3 jar and its libraries in a few seconds and writes 82 KB: 185 layer names (134 distinct models, 51 aliases such as the other boat woods) and the 16 dye colours. It isn't committed; the tests and the headset read the user's own copy.
+
+### Live server (`tools/entities_check.py`, own Paper 26.3 server, seed 12345)
+
+`SERVER_FIFO=run/entities/stdin.fifo TABLETOP_URL=ws://127.0.0.1:<port>/tabletop python entities_check.py 400 100 400 --tick --load 200`: all checks pass. The client gets `entities_v1` and `actions_v1`; a boat summoned with a baby pig passenger arrives with `passengers: [pig]` and the pig with `vehicle: boat`; the cow at its summon position and yaw 45, the sheep `light_blue`, the zombie's `item replace` iron sword in `main_hand`, the item as 3 diamonds, the frame facing north with a compass; six 0.5-block `tp` steps of the cow all arrive; a killed item is removed; `damage` on the sheep arrives as a `hurt` action and a TNT explosion as 9 `break` actions of `minecraft:stone`.
+
+| Scene | Entities | Main thread per send (avg / max) | Bytes/s (one client) |
+|---|---|---|---|
+| 7 still entities (after the spawn) | 7 | sample 0.09 ms / 0.13; delta 0.01 ms | ~70 (idle) |
+| 191 NoAI mobs (no ticking) | 191 | sample 0.23 ms / 3.4; delta 0.05 ms | spawn burst only (one 31 KB full message) |
+| 200 wandering mobs (`--tick`, forceloaded) | 195 | sample 0.11–0.17 ms / 0.4–0.9; delta 0.03–0.05 ms / 0.6 | 11.6–16.4 KB/s |
+
+Actions in that run: 150 `hurt` and 9 `break` actions, 5.8 KB in total. The sample includes `getNearbyEntities`, the state copies, and re-reading equipment/items for a fifth of the entities. With no player online the region's chunks only hold plugin tickets, so entities there don't tick and console selectors (`kill @e`, `tp @e`) don't find them; `--tick` forceloads the region for the test. A player nearby makes them tick normally.
+
+### Offline look check
+
+`Tests~ dotnet run -- --jar 26.3.jar --entity-models entity_models.json --entity-scene scene.json` composes a scene the way `EntityFigure`/`EntityGear` build it (a zombie riding a boat holding a sword, a walking cow with its head turned, a red sheep, chicken, warm pig, villager, horse, wolf, creeper, skeleton with a bow, cat, minecart, spider, warm baby cow, iron golem, and a player-model mannequin in iron/diamond/leather/gold armour with a sword and a torch), and `tools/render_mesh.py scene.json 26.3.jar out.png --view se|nw|s|w` renders it with the jar's textures. Checked by eye from four sides: models face their yaw, skins map like the game (faces, wool, udders, snouts), the rider sits legs-forward in the boat, armour layers sit on the right parts, the sword points forward from the hand and the torch's flame forward. The images contain Mojang textures and aren't committed.
+
+### Not verified (needs the headset)
+
+Frame rate and draw calls with many entities (meshes and materials are shared and instancing is on, untested), the hurt flash (the player skin swaps to the entity shader for 0.5 s), dig cracks and particles on screen, labels, how riders look with the boat's interpolation, and lighting from the world's light at each entity.
+
+### Known gaps
+
+Without `entity_models.json` every entity is a box and nobody wears armour (players still hold their items; those come from the pack). No tropical fish patterns (body colour only), wolf/cat collars, saddles, horse/wolf armour or llama carpets; no shield/banner/head item models (cubes of their particle texture); paintings assume 16 texture px per block; display entities ignore their transformation; minecart contents are a plain cube of the block's item model; the boat's water mask isn't drawn, so water shows inside a boat; arrows ignore their model's texture scale.
