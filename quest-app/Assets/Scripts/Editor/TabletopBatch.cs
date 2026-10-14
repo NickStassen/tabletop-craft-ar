@@ -41,6 +41,13 @@ namespace TabletopCraft.EditorTools
             EditorApplication.update += WaitForFix;
         }
 
+        /// <summary>
+        /// Builds the APK. A build that failed only because a build tool crashed with a segmentation fault is run again,
+        /// up to <see cref="MaxBuildAttempts"/> builds in all: on Linux, il2cpp's bundled .NET runtime now and then
+        /// crashes in <c>il2cpp --convert-to-cpp</c> and passes when run again (QUEST_SETUP.md Troubleshooting,
+        /// TESTING.md section 5). Any other failure ends the build at once. Bee is incremental, so a retry only redoes
+        /// the failed step and what follows it.
+        /// </summary>
         public static void BuildApk()
         {
             var options = new BuildPlayerOptions
@@ -51,10 +58,33 @@ namespace TabletopCraft.EditorTools
                 targetGroup = BuildTargetGroup.Android,
                 options = BuildOptions.None,
             };
-            BuildReport report = BuildPipeline.BuildPlayer(options);
-            Debug.Log($"[Tabletop] Build {report.summary.result}: {Path.GetFullPath(ApkPath)}, " +
-                $"{report.summary.totalSize / (1024 * 1024)} MB, {report.summary.totalErrors} errors, {report.summary.totalTime}");
+            BuildReport report = null;
+            for (int attempt = 1; attempt <= MaxBuildAttempts; attempt++)
+            {
+                report = BuildPipeline.BuildPlayer(options);
+                Debug.Log($"[Tabletop] Build {report.summary.result}: {Path.GetFullPath(ApkPath)}, " +
+                    $"{report.summary.totalSize / (1024 * 1024)} MB, {report.summary.totalErrors} errors, {report.summary.totalTime}" +
+                    (attempt > 1 ? $" (attempt {attempt} of {MaxBuildAttempts})" : ""));
+                if (report.summary.result == BuildResult.Succeeded || !OnlyToolCrashes(report)) break;
+                if (attempt < MaxBuildAttempts)
+                    Debug.LogWarning("[Tabletop] A build tool crashed (Segmentation fault; on Linux usually il2cpp's own .NET runtime, " +
+                        $"not our code). Building again, attempt {attempt + 1} of {MaxBuildAttempts}. See QUEST_SETUP.md Troubleshooting.");
+            }
             if (report.summary.result != BuildResult.Succeeded) EditorApplication.Exit(1);
+        }
+
+        const int MaxBuildAttempts = 3;
+
+        /// <summary>
+        /// Every error of the failed build is a tool's "Segmentation fault (core dumped)". That line is all the report
+        /// has: Bee prints the crashed command line (il2cpp) to stdout, and only the tool's output becomes the error.
+        /// </summary>
+        static bool OnlyToolCrashes(BuildReport report)
+        {
+            var errors = report.steps.SelectMany(step => step.messages)
+                .Where(m => m.type == LogType.Error || m.type == LogType.Exception).Select(m => m.content).ToList();
+            if (errors.Count == 0) errors.Add(report.SummarizeErrors());
+            return errors.All(e => e != null && (e.Contains("Segmentation fault") || e.Contains("core dumped")));
         }
 
         /// <summary>Same as ticking OpenXR in Project Settings > XR Plug-in Management for the given platform.</summary>

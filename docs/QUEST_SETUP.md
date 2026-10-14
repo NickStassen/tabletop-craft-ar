@@ -45,7 +45,7 @@ adb install -r quest-app/Builds/TabletopCraftAR.apk
 adb shell am start -n com.tabletopcraft.ar/com.unity3d.player.UnityPlayerGameActivity
 ```
 
-On Linux, Fix All logs an `ArgumentException: Invalid path` from the Meta XR Simulator download. The Simulator doesn't exist for Linux, so ignore it. The server side works on Linux unchanged (JDK 25, `./gradlew build`). On a firewalled box, open TCP 8765 to the LAN (e.g. `sudo ufw allow from 192.168.1.0/24 to any port 8765 proto tcp`).
+If il2cpp crashes with a segmentation fault, BuildApk builds again (up to 3 builds; see Troubleshooting). On Linux, Fix All logs an `ArgumentException: Invalid path` from the Meta XR Simulator download. The Simulator doesn't exist for Linux, so ignore it. The server side works on Linux unchanged (JDK 25, `./gradlew build`). On a firewalled box, open TCP 8765 to the LAN (e.g. `sudo ufw allow from 192.168.1.0/24 to any port 8765 proto tcp`).
 
 ## Part C: headset
 
@@ -167,6 +167,7 @@ The floating status text shows `LINK`, `RTT`, `WORLD`, `PACK`, `EDIT` (the selec
 | Symptom | Likely cause / fix |
 |---|---|
 | Compile errors in `TablePlacement.cs` / `TabletopSceneBuilder.cs` | MRUK/OVR API names differ in 85.0.0 (e.g. `SceneSettings`, `PlaneRect`, `RegisterSceneLoadedCallback`). Fix with the smallest change; the logic is in comments. |
+| Build fails: `il2cpp --convert-to-cpp`, `ExitCode 139 (Segmentation fault)`, `Segmentation fault (core dumped)` | On Linux, il2cpp's own bundled .NET 7 runtime crashes now and then while it converts the assemblies; nothing in the project causes it, and the same build passes when run again. `TabletopBatch.BuildApk` builds again by itself (up to 3 builds, and only when every error is a segfault); in the Editor, just build again. A larger stack (`ulimit -s unlimited`) isn't the fix: the crashing thread uses a few KB of stack (TESTING.md section 5). |
 | `LINK connecting ...` forever | Wrong IP, PC firewall, network profile Public, AP isolation, or cleartext blocked. Check with `aapt2 dump xmltree <apk> --file AndroidManifest.xml`: there must be `usesCleartextTraffic=true` and no `networkSecurityConfig` (the scene builder turns off Meta's `enableNSCConfig`). Test from the PC with `tools/fake_quest.py --url ws://<PC IP>:8765/tabletop`. |
 | `LINK closed 4003` | Token mismatch. |
 | Pink/black blocks | Shader not found: make sure `Assets/Shaders/Blocks.shader` compiled, or assign the two materials on TabletopApp. |
