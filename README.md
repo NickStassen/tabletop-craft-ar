@@ -4,9 +4,9 @@ A live block world from a **Minecraft: Java Edition** server, shown as a miniatu
 
 > Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft. This project ships no Mojang assets: textures come from a resource pack you supply.
 
-![The miniature on a desk in passthrough, with the Java client on the monitor behind it showing the headset user as a giant](docs/media/tabletop-giant.gif)
+![On the monitor, a Java player sees the headset user as a giant head peering into their hut; next to it, the same world as a live miniature on the desk](docs/media/tabletop-giant-peek.gif)
 
-*First run on a Quest 3: the server's world as a miniature on the desk, with a Java client on the monitor behind it showing the headset user as a giant wearing their skin. The orange capsule on the table is that Java player.*
+*On the monitor, a Java player in their hut sees the headset user as a giant head (wearing their skin) peering in through the doorway. Next to it is the same world as a live miniature on the desk, seen through the Quest 3.*
 
 Related: the idea write-up [VR-7 in NickStassen/ideas](https://github.com/NickStassen/ideas/blob/master/vr/07-minecraft-ar-tabletop.md) and the sister project [ironman-quest3-hud](https://github.com/NickStassen/ironman-quest3-hud), which has the Unity 6000.0.84f1 + Meta XR setup this project reuses.
 
@@ -38,13 +38,19 @@ Java players (LAN) ──game protocol──▶ Paper 26.3 + tabletop plugin ◀
 
 ## Screenshots
 
-From the same recording on the headset. Leaning into the miniature: stone, seagrass and an abandoned mineshaft inside the terrain.
+Recorded on the headset. Building from the headset: aim with the right controller, and the triggers place and break blocks. The selected block (stone) floats above the controller, and a laser shows where it will go.
 
-![Leaning into the terrain on the table: stone, seagrass and mineshaft planks with cobwebs](docs/media/tabletop-closeup.gif)
+![Building on the miniature from the headset: a stone hut on the water, with the selected stone block floating above the controller](docs/media/tabletop-building.gif)
 
-| | |
-|---|---|
-| ![Terrain and seagrass on the desk](docs/media/tabletop-terrain.jpg) | ![Inside the terrain: mineshaft planks and cobwebs](docs/media/tabletop-mineshaft.jpg) |
+Gliding into the terrain: a lush cave with glow berries and a lava fall. It's lit with Minecraft-style smooth lighting and biome colours, and the textures come from the user's own client jar.
+
+![Inside the miniature: a lush cave with glow berries, moss and a lava fall](docs/media/tabletop-cave.gif)
+
+| | | |
+|---|---|---|
+| ![A stone hut built on the water from the headset](docs/media/tabletop-building.jpg) | ![The giant head peering into the hut on the Java client, with the miniature next to it](docs/media/tabletop-giant-peek.jpg) | ![A lush cave and lava fall inside the miniature](docs/media/tabletop-cave.jpg) |
+
+The player name labels in these recordings are blurred, and the shots are cropped so that no screens show anything personal.
 
 ## Quick start (server)
 
