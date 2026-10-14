@@ -45,6 +45,10 @@ def validate(msg: dict) -> None:
         raise ValueError(f"{t} missing {missing}")
     if t == "error" and msg["code"] not in ERROR_CODES:
         raise ValueError(f"unknown error code {msg['code']}")
+    if t == "player_positions":
+        for p in msg["players"]:
+            if p.get("skin_model") not in (None, "wide", "slim"):
+                raise ValueError(f"player_positions skin_model must be wide or slim, got {p['skin_model']}")
 
 
 def decode_rle(data: list[int], volume: int) -> list[int]:
