@@ -11,8 +11,10 @@ namespace TabletopCraft.World
     public enum EntityKind { Model, Item, Block, Frame, Painting, Box }
 
     /// <summary>How the model root sits in the entity's frame (the game renderer's transforms before the model).
-    /// Origin: the renderer only flips the model (scale -1, -1, 1), so its origin is the entity position (LeashKnotRenderer).</summary>
-    public enum RootKind { Living, Boat, Minecart, Origin }
+    /// Origin: the renderer only flips the model (scale -1, -1, 1), so its origin is the entity position (LeashKnotRenderer).
+    /// Projectile: ArrowRenderer, rotY(yRot - 90) * rotZ(xRot), no flip, no lift. Trident: ThrownTridentRenderer,
+    /// rotY(yRot - 90) * rotZ(xRot + 90). Crystal: EndCrystalRenderer, scale 2, translate (0, -0.5, 0), no flip, no yaw.</summary>
+    public enum RootKind { Living, Boat, Minecart, Origin, Projectile, Trident, Crystal }
 
     public sealed class EntityLook
     {
@@ -40,13 +42,50 @@ namespace TabletopCraft.World
     public static class EntityCatalog
     {
         /// <summary>The model root's offset from the entity position in model pixels: living entities stand on y 0 (model
-        /// origin 1.501 blocks up), boats and minecarts sit 6 px up, a leash knot's origin is the entity position
-        /// (block + 0.375, so the knot spans 0.375-0.875 of the fence post).</summary>
-        public static Vector3 RootOffset(RootKind k) =>
-            k == RootKind.Living ? new Vector3(0, 24.016f, 0) : k == RootKind.Origin ? new Vector3(0, 0, 0) : new Vector3(0, 6, 0);
+        /// origin 1.501 blocks up), boats and minecarts sit 6 px up, a leash knot's and a projectile's origin is the
+        /// entity position (a knot spans 0.375-0.875 of its fence post), an end crystal's is 8 px (scaled: 1 block) down.</summary>
+        public static Vector3 RootOffset(RootKind k)
+        {
+            switch (k)
+            {
+                case RootKind.Living: return new Vector3(0, 24.016f, 0);
+                case RootKind.Boat: case RootKind.Minecart: return new Vector3(0, 6, 0);
+                case RootKind.Crystal: return new Vector3(0, -8, 0);
+                default: return new Vector3(0, 0, 0);
+            }
+        }
 
-        /// <summary>The model root's turn about Y in degrees (boats are drawn turned 90 degrees).</summary>
-        public static float RootYaw(RootKind k) => k == RootKind.Boat ? 90 : 0;
+        // Figure space is the game's model space point-reflected (EntityModels.Pivot), seen through the renderer's Z
+        // mirror. A game rotation rotY(a) becomes a Unity rotY(-a), rotZ(b) stays rotZ(b), and a renderer without the
+        // living (-1, -1, 1) flip leaves an extra rotZ(180) on the figure meshes.
+
+        /// <summary>The model root's rotation, applied after RootOffset: localRotation = rotY(yaw) * rotZ(roll), in
+        /// degrees (Unity / figure space). pitch: the entity's pitch (minecarts tilt, projectiles point along it).</summary>
+        public static void RootRotation(RootKind k, float pitch, out float yaw, out float roll)
+        {
+            yaw = 0; roll = 0;
+            switch (k)
+            {
+                case RootKind.Boat: yaw = 90; break;                                  // AbstractBoatRenderer: turned 90 degrees
+                case RootKind.Minecart: roll = -pitch; break;
+                case RootKind.Projectile: yaw = -90; roll = pitch + 180; break;       // rotY(yRot - 90) * rotZ(xRot), unflipped
+                case RootKind.Trident: yaw = -90; roll = pitch + 270; break;          // rotY(yRot - 90) * rotZ(xRot + 90), unflipped
+                case RootKind.Crystal: roll = 180; break;                             // unflipped, no yaw
+            }
+        }
+
+        /// <summary>The figure root's turn about Y (degrees) for an entity yaw. Mobs and vehicles: 180 + yaw, like the
+        /// player figures. Projectiles keep the game's projectile convention (yRot = atan2(dx, dz), the mob one mirrored):
+        /// 180 - yaw. Leash knots and end crystals ignore the yaw.</summary>
+        public static float RootTurn(RootKind k, float yaw)
+        {
+            switch (k)
+            {
+                case RootKind.Projectile: case RootKind.Trident: return 180 - yaw;
+                case RootKind.Origin: case RootKind.Crystal: return 0;
+                default: return 180 + yaw;
+            }
+        }
 
         static readonly HashSet<string> Woods = new HashSet<string> { "oak", "spruce", "birch", "jungle", "acacia", "cherry", "dark_oak", "pale_oak", "mangrove", "poplar" };
         // Thrown things drawn as their item sprite.
@@ -228,9 +267,10 @@ namespace TabletopCraft.World
                 case "phantom": return Set(L, "phantom", "entity/phantom/phantom");
                 case "shulker": return Set(L, "shulker", e.Color == null ? "entity/shulker/shulker" : "entity/shulker/shulker_" + e.Color);
                 case "armor_stand": return Set(L, e.Small ? "armor_stand_small" : "armor_stand", "entity/armorstand/armorstand");
-                case "arrow": case "spectral_arrow": return Set(L, "arrow", t == "arrow" ? "entity/projectiles/arrow" : "entity/projectiles/arrow_spectral");
-                case "trident": return Set(L, "trident", "entity/trident/trident");
-                case "end_crystal": return Set(L, "end_crystal", "entity/end_crystal/end_crystal");
+                case "arrow": case "spectral_arrow":
+                    return Set(L, "arrow", t == "arrow" ? "entity/projectiles/arrow" : "entity/projectiles/arrow_spectral", RootKind.Projectile);
+                case "trident": return Set(L, "trident", "entity/trident/trident", RootKind.Trident);
+                case "end_crystal": Set(L, "end_crystal", "entity/end_crystal/end_crystal", RootKind.Crystal); L.Scale = 2; return L;
                 case "leash_knot": return Set(L, "leash_knot", "entity/lead_knot/lead_knot", RootKind.Origin);
             }
             if (ThrownItems.TryGetValue(t, out var thrown)) { L.Kind = EntityKind.Item; L.Item = thrown; return L; }

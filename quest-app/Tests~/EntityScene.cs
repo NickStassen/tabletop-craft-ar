@@ -26,13 +26,13 @@ static class EntityScene
     }
 
     // 4x4 row-major helpers (Unity's matrices, same numbers as the game's for rotations).
-    static float[] Mul(float[] a, float[] b) { var r = new float[16]; for (int i = 0; i < 4; i++) for (int j = 0; j < 4; j++) for (int k = 0; k < 4; k++) r[i * 4 + j] += a[i * 4 + k] * b[k * 4 + j]; return r; }
-    static float[] I() => new float[] { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
-    static float[] T(float x, float y, float z) { var m = I(); m[3] = x; m[7] = y; m[11] = z; return m; }
-    static float[] S(float x, float y, float z) { var m = I(); m[0] = x; m[5] = y; m[10] = z; return m; }
-    static float[] RX(float d) { var m = I(); float r = d * (float)(Math.PI / 180), c = (float)Math.Cos(r), s = (float)Math.Sin(r); m[5] = c; m[6] = -s; m[9] = s; m[10] = c; return m; }
-    static float[] RY(float d) { var m = I(); float r = d * (float)(Math.PI / 180), c = (float)Math.Cos(r), s = (float)Math.Sin(r); m[0] = c; m[2] = s; m[8] = -s; m[10] = c; return m; }
-    static float[] RZ(float d) { var m = I(); float r = d * (float)(Math.PI / 180), c = (float)Math.Cos(r), s = (float)Math.Sin(r); m[0] = c; m[1] = -s; m[4] = s; m[5] = c; return m; }
+    internal static float[] Mul(float[] a, float[] b) { var r = new float[16]; for (int i = 0; i < 4; i++) for (int j = 0; j < 4; j++) for (int k = 0; k < 4; k++) r[i * 4 + j] += a[i * 4 + k] * b[k * 4 + j]; return r; }
+    internal static float[] I() => new float[] { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+    internal static float[] T(float x, float y, float z) { var m = I(); m[3] = x; m[7] = y; m[11] = z; return m; }
+    internal static float[] S(float x, float y, float z) { var m = I(); m[0] = x; m[5] = y; m[10] = z; return m; }
+    internal static float[] RX(float d) { var m = I(); float r = d * (float)(Math.PI / 180), c = (float)Math.Cos(r), s = (float)Math.Sin(r); m[5] = c; m[6] = -s; m[9] = s; m[10] = c; return m; }
+    internal static float[] RY(float d) { var m = I(); float r = d * (float)(Math.PI / 180), c = (float)Math.Cos(r), s = (float)Math.Sin(r); m[0] = c; m[2] = s; m[8] = -s; m[10] = c; return m; }
+    internal static float[] RZ(float d) { var m = I(); float r = d * (float)(Math.PI / 180), c = (float)Math.Cos(r), s = (float)Math.Sin(r); m[0] = c; m[1] = -s; m[4] = s; m[5] = c; return m; }
     static float[] Rot(float x, float y, float z) => Mul(RZ(z * (float)(180 / Math.PI)), Mul(RY(y * (float)(180 / Math.PI)), RX(x * (float)(180 / Math.PI))));
 
     /// <summary>Appends a figure-space mesh under Unity matrix m, converted to game block coordinates (Z mirrored back).</summary>
@@ -61,9 +61,8 @@ static class EntityScene
         var parts = new Dictionary<string, float[]>();
         if (model == null) return parts;
         float yaw = e.HasBodyYaw ? e.BodyYaw : e.Yaw;
-        var root = Mul(T(x, y, -z), Mul(RY(180 + yaw), S(look.Scale / 16f, look.Scale / 16f, look.Scale / 16f)));
-        var ro = EntityCatalog.RootOffset(look.Root);
-        float[] mr = Mul(T(ro.x, ro.y, ro.z), RY(EntityCatalog.RootYaw(look.Root)));
+        var root = Mul(T(x, y, -z), Mul(RY(EntityCatalog.RootTurn(look.Root, yaw)), S(look.Scale / 16f, look.Scale / 16f, look.Scale / 16f)));
+        float[] mr = ModelRoot(look.Root, e.Pitch);
         var rot = anim?.Invoke(model) ?? new float[model.Parts.Count * 3];
         var world = new float[model.Parts.Count][];
         int layer = o.Layer(look.Texture);
@@ -94,6 +93,17 @@ static class EntityScene
         }
         return parts;
     }
+
+    /// <summary>The figure's model root (EntityCatalog.RootOffset + RootRotation) as a matrix.</summary>
+    internal static float[] ModelRoot(RootKind k, float pitch)
+    {
+        var ro = EntityCatalog.RootOffset(k);
+        EntityCatalog.RootRotation(k, pitch, out float yaw, out float roll);
+        return Mul(T(ro.x, ro.y, ro.z), Mul(RY(yaw), RZ(roll)));
+    }
+
+    internal static Vector3 Apply(float[] m, Vector3 p) =>
+        new Vector3(m[0] * p.x + m[1] * p.y + m[2] * p.z + m[3], m[4] * p.x + m[5] * p.y + m[6] * p.z + m[7], m[8] * p.x + m[9] * p.y + m[10] * p.z + m[11]);
 
     static float[] Inverse(float[] r) { var t = I(); for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) t[i * 4 + j] = r[j * 4 + i]; return t; }   // rotations only
 
@@ -188,6 +198,11 @@ static class EntityScene
             Armor(o, man, item, slot, Read);
         Held(o, man.TryGetValue("right_arm", out var mra) ? mra : null, ItemModels.Resolve("minecraft:diamond_sword", Read), false);
         Held(o, man.TryGetValue("left_arm", out var mla) ? mla : null, ItemModels.Resolve("minecraft:torch", Read), true);
+        // Row 4 (z 10): an arrow stuck in the ground flying north-east and down, a trident flying east, an end crystal.
+        EntityInfo P(string type, float yaw, float pitch) => new EntityInfo { Type = "minecraft:" + type, Yaw = yaw, BodyYaw = yaw, Pitch = pitch, Width = 0.5f, Height = 0.5f };
+        Figure(o, P("arrow", 135, -40), 2f, 0.2f, 10f);
+        Figure(o, P("trident", 90, 0), 5f, 1f, 10f);
+        Figure(o, P("end_crystal", 0, 0), 9f, 1f, 10f);
 
         var inv = CultureInfo.InvariantCulture;
         var sb = new StringBuilder();

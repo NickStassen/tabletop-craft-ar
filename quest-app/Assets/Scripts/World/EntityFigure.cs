@@ -58,9 +58,10 @@ namespace TabletopCraft.World
             var mat = tex.Material(tex.Get(Look.Texture, Look.Overlays, Look.Tint.r == 255 && Look.Tint.g == 255 && Look.Tint.b == 255 ? (Color32?)null : Look.Tint));
             _modelRoot = new GameObject("model").transform;
             _modelRoot.SetParent(Root.transform, false);
-            // The game renderer's transforms before the model (EntityCatalog.RootOffset); minecarts are pitched in Animate.
+            // The game renderer's transforms before the model (EntityCatalog.RootOffset/RootRotation); minecarts and
+            // projectiles follow their pitch in Animate.
             _modelRoot.localPosition = EntityCatalog.RootOffset(Look.Root);
-            _modelRoot.localRotation = Quaternion.AngleAxis(EntityCatalog.RootYaw(Look.Root), Vector3.up);
+            _modelRoot.localRotation = RootRotation(Look.Root, 0);
             int n = _model.Parts.Count;
             _parts = new Transform[n];
             _defaults = new Quaternion[n];
@@ -123,6 +124,29 @@ namespace TabletopCraft.World
         static Quaternion Rot(float x, float y, float z) =>
             Quaternion.AngleAxis(z * Mathf.Rad2Deg, Vector3.forward) * Quaternion.AngleAxis(y * Mathf.Rad2Deg, Vector3.up) * Quaternion.AngleAxis(x * Mathf.Rad2Deg, Vector3.right);
 
+        static Quaternion RootRotation(RootKind k, float pitch)
+        {
+            EntityCatalog.RootRotation(k, pitch, out float yaw, out float roll);
+            return Quaternion.AngleAxis(yaw, Vector3.up) * Quaternion.AngleAxis(roll, Vector3.forward);
+        }
+
+        static readonly Vector3 CrystalAxis = new Vector3(1, 0, 1).normalized;
+
+        /// <summary>End crystal glass: spin and bob (CrystalAnimation, EndCrystalModel.setupAnim).</summary>
+        void AnimateCrystal(float age)
+        {
+            var outer = _model.Find("outer_glass");
+            if (outer == null) return;
+            float spin = CrystalAnimation.SpinDeg(age);
+            var tilt = Quaternion.AngleAxis(CrystalAnimation.TiltDeg, CrystalAxis);
+            var t = _parts[outer.Index];
+            EntityModels.Pivot(outer, out float x, out float y, out float z);
+            t.localPosition = new Vector3(x, y - CrystalAnimation.BobPx(age), z);   // figure space: the pivot is point-reflected
+            t.localRotation = Quaternion.AngleAxis(spin, Vector3.up) * tilt;
+            foreach (var name in new[] { "inner_glass", "cube" })
+                if (_model.Find(name) is EModelPart p) _parts[p.Index].localRotation = tilt * Quaternion.AngleAxis(spin, Vector3.up);
+        }
+
         float Height()
         {
             float top = 0;
@@ -155,7 +179,9 @@ namespace TabletopCraft.World
                     var d = _defaultRad[i];
                     _parts[i].localRotation = Rot(d.x + _rot[3 * i], d.y + _rot[3 * i + 1], d.z + _rot[3 * i + 2]);
                 }
-                if (Look.Root == RootKind.Minecart) _modelRoot.localRotation = Quaternion.AngleAxis(-pitchDeg, Vector3.forward);
+                if (Look.Root == RootKind.Minecart || Look.Root == RootKind.Projectile || Look.Root == RootKind.Trident)
+                    _modelRoot.localRotation = RootRotation(Look.Root, pitchDeg);
+                if (Look.Root == RootKind.Crystal) AnimateCrystal(a.AgeTicks);
             }
             if (_spin != null)
             {
