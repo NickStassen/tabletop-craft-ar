@@ -114,7 +114,7 @@ The server picks the starting region (config.yml `region`). You can change it fr
 
 Recommended sizes (estimates from seed 12345 terrain; see TESTING.md "Navigation and bigger areas"), all with the 16-block margin on top:
 - 64×96×64 is a comfortable area to start with.
-- 128×96×128 is the recommended maximum: about 113k faces and 330 section meshes for the 160×128×160 region it loads.
+- 128×96×128 is the recommended maximum: about 113k faces (roughly 150k with smooth lighting) and 330 section meshes for the 160×128×160 region it loads.
 - 192×96×192 (about 240k faces, about 700 meshes) and 256×96×256 (about 400k faces, about 1,200 meshes) go over the budgets. Try them with the override and watch the frame rate; they need draw-call batching to be comfortable.
 - Taller areas work, but snapshots and load times grow.
 

@@ -21,7 +21,7 @@ import time
 import websockets
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from tabletop_protocol import SECTIONS, Envelope, WorldMirror, validate  # noqa: E402
+from tabletop_protocol import CAP_BIOMES, CAP_LIGHT, SECTIONS, Envelope, WorldMirror, validate  # noqa: E402
 
 URL = os.environ.get("TABLETOP_URL", "ws://127.0.0.1:8765/tabletop")
 
@@ -83,6 +83,11 @@ def same(a: WorldMirror, b: WorldMirror, quiet: bool = False) -> bool:
         print(f"MISMATCH region {a.origin} {a.dims} vs {b.origin} {b.dims}", file=sys.stderr)
         return False
     diff = [i for i, (x, y) in enumerate(zip(a.grid, b.grid, strict=True)) if a.palette[x] != b.palette[y]]
+    if (a.light is None) != (b.light is None):
+        print("MISMATCH one mirror has light, the other doesn't", file=sys.stderr)
+        return False
+    if a.light is not None:
+        diff += [i for i, (x, y) in enumerate(zip(a.light, b.light, strict=True)) if x != y]
     if quiet:
         return not diff
     dx, _, dz = a.dims
@@ -132,8 +137,11 @@ async def main() -> int:
     ap.add_argument("--big", type=three, default=None, help="also measure one large sectioned snapshot")
     ap.add_argument("--save", default=None, help="write the initial and big regions as rle_palette_v1 JSON (for Tests~ --measure)")
     ap.add_argument("--no-v1", action="store_true", help="headset only: realistic latency, no cross-check")
+    ap.add_argument("--light", action="store_true", help="both clients ask for light_v1 + biomes_v1 (light is cross-checked too)")
     a = ap.parse_args()
-    hs, v1 = Client("nav-headset", ["rle_palette_v1", SECTIONS]), (None if a.no_v1 else Client("nav-v1", ["rle_palette_v1"]))
+    extras = [CAP_LIGHT, CAP_BIOMES] if a.light else []
+    hs = Client("nav-headset", ["rle_palette_v1", SECTIONS, *extras])
+    v1 = None if a.no_v1 else Client("nav-v1", ["rle_palette_v1", *extras])
     clients = [c for c in (hs, v1) if c]
     for c in clients:
         await c.open()
