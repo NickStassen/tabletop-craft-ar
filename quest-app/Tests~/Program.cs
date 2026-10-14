@@ -89,11 +89,13 @@ static class Program
         Check(Math.Abs(AreaMath.FitBlockSize(1.2f, 0.8f, 128, 32, 1f) - 1.2f / 128) < 1e-6, "fit: width-limited");
         Check(AreaMath.FitBlockSize(0.5f, 0.5f, 100000, 100000) == AreaMath.MinBlockM && AreaMath.FitBlockSize(10, 10, 1, 1) == AreaMath.MaxBlockM, "fit: clamped");
         Check(AreaMath.FitBlockSize(0, 1, 16, 16) == 0.01f, "fit: no table -> default");
-        var e32 = AreaMath.Estimate(32, 96, 32); var e128 = AreaMath.Estimate(128, 384, 128);
-        Check(e32.Quads == 3584 && e32.Vertices == 4 * e32.Quads && e32.Triangles == 2 * e32.Quads, $"estimate 32x96x32 = {e32}");
+        var e32 = AreaMath.Estimate(32, 96, 32); var e128 = AreaMath.Estimate(128, 128, 128);
+        Check(e32.Quads == 5632 && e32.Vertices == 4 * e32.Quads && e32.Triangles == 2 * e32.Quads, $"estimate 32x96x32 = {e32}");
         Check(AreaMath.Estimate(64, 96, 64).Quads == 4 * e32.Quads, "estimate scales with columns");
         Check(AreaMath.Estimate(32, 384, 32).Quads > e32.Quads * 3, "estimate grows with depth (caves)");
-        Check(!AreaMath.OverBudget(e128, AreaMath.DefaultQuadBudget, false), $"128x384x128 {e128} within default budget");
+        Check(!AreaMath.OverBudget(e128, AreaMath.DefaultQuadBudget, false) && !AreaMath.OverBudget(AreaMath.Estimate(64, 384, 64), AreaMath.DefaultQuadBudget, false),
+              $"128x128x128 {e128} and 64x384x64 within default budget");
+        Check(AreaMath.OverBudget(AreaMath.Estimate(128, 384, 128), AreaMath.DefaultQuadBudget, false), $"128x384x128 {AreaMath.Estimate(128, 384, 128)} needs the override (measured ~4x 64x384x64)");
         Check(AreaMath.OverBudget(AreaMath.Estimate(512, 384, 512), AreaMath.DefaultQuadBudget, false), "512x384x512 over budget");
         Check(!AreaMath.OverBudget(AreaMath.Estimate(512, 384, 512), AreaMath.DefaultQuadBudget, true), "override lifts soft cap");
         Check(AreaMath.ClampToCaps(300, 384, 300, 128, 384, 128, 2097152) == (128, 128, 128), "clamp to server caps");
@@ -119,8 +121,17 @@ static class Program
         Check(err.MaxX == 128 && err.MaxBlocks == 2097152, "region_too_large limits parse");
         Check(Protocol.RegionQuery("Bob").S("player") == "Bob" && !Protocol.RegionQuery().ContainsKey("player"), "region_query builder");
 
+        // Block models from a real client jar / resource pack (never committed; MC_CLIENT_JAR or --jar PATH).
+        string jar = JarPath(args);
+        if (jar != null) ModelTests(jar);
+        else Console.WriteLine("SKIP block model tests: set MC_CLIENT_JAR or pass --jar PATH (a client jar or resource pack zip)");
+
+        int sceneIdx = Array.IndexOf(args, "--scene");
+        if (sceneIdx >= 0 && jar != null) SceneDump.Run(jar, args[sceneIdx + 1], args);
+        if (args.Contains("--list-shapes") && jar != null) SceneDump.ListShapes(jar);
+
         int measIdx = Array.IndexOf(args, "--measure");
-        if (measIdx >= 0) { Measure(args[measIdx + 1]); return 0; }
+        if (measIdx >= 0) { Measure(args[measIdx + 1], jar); return fails == 0 ? 0 : 1; }
 
         int liveIdx = Array.IndexOf(args, "--live");
         if (liveIdx >= 0) Live(args[liveIdx + 1]);
@@ -183,30 +194,215 @@ static class Program
         link.Dispose();
     }
 
-    static void Measure(string dir)
+    /// <summary>Face counts and meshing time per saved snapshot: "flat" = flat-colour keys and placeholder shapes (no
+    /// pack), "pack" = the jar's block models and one texture layer per texture, as on the headset with pack.zip.</summary>
+    static void Measure(string dir, string jar)
     {
+        using var assets = jar != null ? new ZipAssets(jar) : null;
         foreach (var f in System.IO.Directory.GetFiles(dir, "*.json").OrderBy(x => x))
         {
             var w = new WorldModel();
             w.ApplySnapshot(ChunkSnapshot.From(Json.Parse(System.IO.File.ReadAllText(f)) as Dictionary<string, object>));
-            var mesh = new MeshData();
-            long quads = 0, specials = 0, maxSection = 0;
-            var n = w.SectionCount;
-            var sw = System.Diagnostics.Stopwatch.StartNew();
-            double worst = 0;
-            for (int x = 0; x < n.x; x++) for (int y = 0; y < n.y; y++) for (int z = 0; z < n.z; z++)
+            foreach (bool pack in assets != null ? new[] { false, true } : new[] { false })
             {
-                double t0 = sw.Elapsed.TotalMilliseconds;
-                GreedyMesher.Build(w, new Vector3Int(x, y, z), new Flat(), mesh);
-                long q = mesh.Verts.Count / 4;
-                GreedyMesher.BuildSpecials(w, new Vector3Int(x, y, z), new Flat(), mesh);
-                long s = mesh.Verts.Count / 4;
-                quads += q; specials += s - q; maxSection = Math.Max(maxSection, s);
-                worst = Math.Max(worst, sw.Elapsed.TotalMilliseconds - t0);
+                BlockRules.ResetShapes();
+                IFaceSource faces = new Flat();
+                var prep = System.Diagnostics.Stopwatch.StartNew();
+                if (pack) { var pf = new PackFaces(assets); pf.Prewarm(w); faces = pf; }
+                double prepMs = prep.Elapsed.TotalMilliseconds;
+                var mesh = new MeshData();
+                long quads = 0, specials = 0, maxSection = 0, tris = 0;
+                var n = w.SectionCount;
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                double worst = 0;
+                for (int x = 0; x < n.x; x++) for (int y = 0; y < n.y; y++) for (int z = 0; z < n.z; z++)
+                {
+                    double t0 = sw.Elapsed.TotalMilliseconds;
+                    GreedyMesher.Build(w, new Vector3Int(x, y, z), faces, mesh);
+                    long q = mesh.Verts.Count / 4;
+                    GreedyMesher.BuildSpecials(w, new Vector3Int(x, y, z), faces, mesh);
+                    long s = mesh.Verts.Count / 4;
+                    quads += q; specials += s - q; maxSection = Math.Max(maxSection, s); tris += (mesh.Opaque.Count + mesh.Transparent.Count) / 3;
+                    worst = Math.Max(worst, sw.Elapsed.TotalMilliseconds - t0);
+                }
+                var est = AreaMath.Estimate(w.Dims.x, w.Dims.y, w.Dims.z);
+                Console.WriteLine($"MEASURE {(pack ? "pack" : "flat")} {w.Dims.x}x{w.Dims.y}x{w.Dims.z} sections={n.x * n.y * n.z} quads={quads} specials={specials} total={quads + specials} " +
+                                  $"verts={(quads + specials) * 4} tris={tris} max_section_quads={maxSection} mesh_ms={sw.Elapsed.TotalMilliseconds:F0} " +
+                                  $"worst_section_ms={worst:F1} prewarm_ms={prepMs:F0} estimate={est.Quads}");
+                if (pack) Console.WriteLine("  top model blocks: " + string.Join(", ", TopSpecials(w, faces).Take(8)));
             }
-            var est = AreaMath.Estimate(w.Dims.x, w.Dims.y, w.Dims.z);
-            Console.WriteLine($"MEASURE {w.Dims.x}x{w.Dims.y}x{w.Dims.z} sections={n.x * n.y * n.z} quads={quads} specials={specials} verts={(quads + specials) * 4} " +
-                              $"tris={(quads + specials) * 2} max_section_quads={maxSection} mesh_ms={sw.Elapsed.TotalMilliseconds:F0} worst_section_ms={worst:F1} estimate={est.Quads}");
         }
+        BlockRules.ResetShapes();
+    }
+
+    /// <summary>Which states produce the most non-greedy faces ("name xN=faces").</summary>
+    static IEnumerable<string> TopSpecials(WorldModel w, IFaceSource faces)
+    {
+        var count = new Dictionary<string, (int n, long q)>();
+        var one = new MeshData();
+        var models = faces as IModelSource;
+        for (int y = 0; y < w.Dims.y; y++) for (int z = 0; z < w.Dims.z; z++) for (int x = 0; x < w.Dims.x; x++)
+        {
+            string st = w.State(w.Get(x, y, z));
+            if (BlockRules.Shape(st) != BlockShape.Model) continue;
+            one.Clear();
+            BlockModelMesher.Emit(one, w, x, y, z, st, models?.Model(st), models);
+            string name = BlockRules.Path(st);
+            count.TryGetValue(name, out var c);
+            count[name] = (c.n + 1, c.q + one.Verts.Count / 4);
+        }
+        return count.OrderByDescending(kv => kv.Value.q).Select(kv => $"{kv.Key} x{kv.Value.n}={kv.Value.q}");
+    }
+
+    static string JarPath(string[] args)
+    {
+        int i = Array.IndexOf(args, "--jar");
+        string p = i >= 0 && i + 1 < args.Length ? args[i + 1] : Environment.GetEnvironmentVariable("MC_CLIENT_JAR");
+        return !string.IsNullOrEmpty(p) && System.IO.File.Exists(p) ? p : null;
+    }
+
+    static IEnumerable<Vector3> Corners(BakedQuad q) { yield return q.P0; yield return q.P1; yield return q.P2; yield return q.P3; }
+
+    static (Vector3 min, Vector3 max) Bounds(BakedModel m, Func<BakedQuad, bool> where = null)
+    {
+        var min = new Vector3(1e9f, 1e9f, 1e9f); var max = new Vector3(-1e9f, -1e9f, -1e9f);
+        foreach (var q in m.Quads)
+            if (where == null || where(q))
+                foreach (var p in Corners(q)) for (int a = 0; a < 3; a++) { min[a] = Math.Min(min[a], p[a]); max[a] = Math.Max(max[a], p[a]); }
+        return (min, max);
+    }
+
+    static bool Near(float a, float b) => Math.Abs(a - b) < 1e-3f;
+
+    static void ModelTests(string jar)
+    {
+        using var assets = new ZipAssets(jar);
+        var baker = new BlockModelBaker(assets);
+        BakedModel B(string s) => baker.Bake(s);
+        Console.WriteLine("block models from " + System.IO.Path.GetFileName(jar));
+
+        // Full cubes stay greedy: faces per direction with the right texture, tint and UV rotation.
+        var stone = B("minecraft:stone");
+        Check(stone.FullCube && stone.Opaque && stone.Quads.Length == 6 && stone.CubeFaces.All(f => f.Layer >= 0 && f.Layer == stone.CubeFaces[0].Layer && f.UvMap == 0), "model: stone is an opaque full cube with default UVs");
+        var grass = B("minecraft:grass_block[snowy=false]");
+        Check(grass.FullCube && grass.Opaque && grass.CubeFaces[3].Color.r == ZipAssets.Tint.r && grass.CubeFaces[2].Layer == assets.LayerOf("block/dirt") &&
+              grass.CubeFaces[4].Layer == assets.LayerOf("block/grass_block_side") && grass.CubeFaces[4].Color.r == 255, "model: grass_block = tinted top, dirt bottom, plain side");
+        var logY = B("minecraft:oak_log[axis=y]"); var logX = B("minecraft:oak_log[axis=x]");
+        int logTop = assets.LayerOf("block/oak_log_top");
+        Check(logY.CubeFaces[3].Layer == logTop && logY.CubeFaces[0].Layer != logTop && logX.CubeFaces[0].Layer == logTop && logX.CubeFaces[1].Layer == logTop && logX.CubeFaces[3].Layer != logTop,
+              "model: oak_log axis=x has its end faces west/east (variant x/y rotation)");
+        Check(logY.CubeFaces.All(f => f.UvMap == 0) && logX.CubeFaces[3].UvMap != 0 && logX.CubeFaces[4].UvMap != 0, $"model: sideways log bark is rotated (UvMap up={logX.CubeFaces[3].UvMap} north={logX.CubeFaces[4].UvMap})");
+
+        // Stairs: 2 elements = 11 faces; facing rotates the step, half=top flips it.
+        var stairs = B("minecraft:oak_stairs[facing=east,half=bottom,shape=straight,waterlogged=false]");
+        var (smin, smax) = Bounds(stairs);
+        var (tmin, tmax) = Bounds(stairs, q => q.Dir == 3 && Near(q.P0.y, 1));
+        Check(!stairs.FullCube && stairs.Quads.Length == 11 && Near(smin.x, 0) && Near(smin.y, 0) && Near(smax.y, 1) && Near(smax.z, 1) && Near(tmin.x, 0.5f) && Near(tmax.x, 1),
+              $"model: oak_stairs facing=east = 11 faces, step on the east half (x {tmin.x}..{tmax.x})");
+        var stairsN = B("minecraft:oak_stairs[facing=north,half=bottom,shape=straight,waterlogged=false]");
+        (tmin, tmax) = Bounds(stairsN, q => q.Dir == 3 && Near(q.P0.y, 1));
+        Check(Near(tmin.z, 0) && Near(tmax.z, 0.5f) && Near(tmin.x, 0) && Near(tmax.x, 1), $"model: oak_stairs facing=north (y=270) step on the north half (z {tmin.z}..{tmax.z})");
+        var stairsTop = B("minecraft:oak_stairs[facing=east,half=top,shape=straight,waterlogged=false]");
+        (tmin, tmax) = Bounds(stairsTop, q => q.Dir == 2 && Near(q.P0.y, 0));
+        Check(stairsTop.Quads.Length == 11 && Near(tmin.x, 0.5f) && Near(tmax.x, 1), "model: oak_stairs half=top (x=180) step underneath on the east half");
+        Check(stairs.Quads.Where(q => q.Dir == 2).All(q => q.Cull == 2) && stairsN.Quads.Count(q => q.Cull == 4) == 2, "model: cullfaces follow the rotation");
+        var inner = B("minecraft:oak_stairs[facing=east,half=bottom,shape=inner_left,waterlogged=false]");
+        Check(inner.Quads.Length > 11, $"model: inner stairs ({inner.Quads.Length} faces)");
+
+        // Multipart: fences, walls, redstone (OR), panes.
+        var post = B("minecraft:oak_fence[east=false,north=false,south=false,waterlogged=false,west=false]");
+        var fenceN = B("minecraft:oak_fence[east=false,north=true,south=false,waterlogged=false,west=false]");
+        var (fmin, fmax) = Bounds(fenceN);
+        Check(post.Quads.Length == 6 && fenceN.Quads.Length == 16 && Near(fmin.z, 0) && Near(fmax.z, 10 / 16f) && fmin.x > 6 / 16f - 1e-3f && fmax.x < 10 / 16f + 1e-3f,
+              $"model: oak_fence north=true = post + north arm ({fenceN.Quads.Length} faces, z {fmin.z}..{fmax.z})");
+        (fmin, fmax) = Bounds(B("minecraft:oak_fence[east=true,north=false,south=false,waterlogged=false,west=false]"));
+        Check(Near(fmax.x, 1) && Near(fmin.x, 6 / 16f) && Near(fmin.z, 6 / 16f), "model: oak_fence east=true arm (part y=90)");
+        string Wall(string e, string n, string s, string up, string we) => $"minecraft:cobblestone_wall[east={e},north={n},south={s},up={up},waterlogged=false,west={we}]";
+        int wpost = B(Wall("none", "none", "none", "true", "none")).Quads.Length, wlow = B(Wall("low", "none", "none", "false", "none")).Quads.Length, wtall = B(Wall("none", "none", "tall", "false", "none")).Quads.Length;
+        var wall = B(Wall("low", "none", "tall", "true", "none"));
+        var (wmin, wmax) = Bounds(wall);
+        Check(wpost > 0 && wall.Quads.Length == wpost + wlow + wtall && Near(wmax.x, 1) && Near(wmax.z, 1) && Near(wmax.y, 1) && Near(wmin.x, 4 / 16f), $"model: wall = post + low east + tall south ({wall.Quads.Length} faces)");
+        string Wire(string e, string n, string s, string we) => $"minecraft:redstone_wire[east={e},north={n},power=0,south={s},west={we}]";
+        int dot = B(Wire("none", "none", "none", "none")).Quads.Length, eo = B(Wire("side", "none", "none", "none")).Quads.Length, wo = B(Wire("none", "none", "none", "side")).Quads.Length;
+        int no = B(Wire("none", "side", "none", "none")).Quads.Length, ew = B(Wire("side", "none", "none", "side")).Quads.Length, en = B(Wire("side", "side", "none", "none")).Quads.Length;
+        int up = B(Wire("up", "side", "none", "none")).Quads.Length;
+        Check(dot > 0 && eo > 0 && ew == eo + wo && en == dot + eo + no && up > en, $"model: redstone multipart OR/| (dot {dot}, line {ew}, corner {en}, climbing {up})");
+        var lit = B("minecraft:redstone_wire[east=side,north=none,power=15,south=none,west=side]");
+        Check(lit.Quads.Any(q => q.Color.r == 255 && q.Color.g < 80 && q.Color.b == 0) && lit.Quads.All(q => !q.Tinted) && B(Wire("none", "none", "none", "none")).Quads.Any(q => q.Color.r == 76),
+              "model: redstone colour follows power, not the biome tint");
+        var pane = B("minecraft:glass_pane[east=true,north=false,south=false,waterlogged=false,west=true]");
+        Check(pane.Quads.Length > 0 && pane.Quads.All(q => q.Translucent), "model: glass_pane is translucent (26.x force_translucent sprite)");
+        Check(B("minecraft:red_stained_glass_pane[east=true,north=false,south=false,waterlogged=false,west=true]").Quads.All(q => q.Translucent), "model: stained glass pane is translucent");
+
+        // Rotated elements: wall torch leans away from its wall; cross plants; 26.x x/y/z rotations.
+        var torch = B("minecraft:wall_torch[facing=north]");
+        var top = torch.Quads.SelectMany(Corners).OrderByDescending(p => p.y).First();
+        var bottom = torch.Quads.SelectMany(Corners).OrderBy(p => p.y).First();
+        Check(torch.Quads.Length == 6 && torch.Quads.Any(q => q.Dir < 0) && top.z < bottom.z - 0.1f && bottom.z > 0.85f, $"model: wall_torch facing=north leans north off the south wall (top z {top.z:F2}, bottom z {bottom.z:F2})");
+        var poppy = B("minecraft:poppy");
+        var (pmin, pmax) = Bounds(poppy);
+        Check(poppy.Quads.Length == 4 && poppy.Quads.All(q => q.Dir < 0 && q.Cull < 0 && !q.Translucent) && Near(pmin.y, 0) && Near(pmax.y, 1) && pmin.x < 0.06f && pmax.x > 0.94f,
+              $"model: poppy cross = 4 diagonal faces across the block ({pmin.x:F3}..{pmax.x:F3})");
+        var hanging = B("minecraft:oak_hanging_sign[attached=false,rotation=3,waterlogged=false]");
+        Check(hanging.Quads.Length > 0 && hanging.Quads.Any(q => q.Dir < 0), $"model: hanging sign with 26.x x/y/z element rotation ({hanging.Quads.Length} faces)");
+
+        // Heights and block entities.
+        var snow3 = B("minecraft:snow[layers=3]");
+        var (nmin, nmax) = Bounds(snow3);
+        Check(!snow3.FullCube && snow3.Quads.Length == 6 && Near(nmax.y, 6 / 16f) && Near(nmin.y, 0), $"model: snow layers=3 is 6/16 high, inner face skipped ({snow3.Quads.Length} faces)");
+        Check(B("minecraft:snow[layers=8]").FullCube, "model: snow layers=8 is a full cube");
+        var chest = B("minecraft:chest[facing=north,type=single,waterlogged=false]");
+        var (cmin, cmax) = Bounds(chest);
+        Check(chest.Quads.Length == 6 && Near(cmin.x, 1 / 16f) && Near(cmax.y, 14 / 16f) && chest.Quads.All(q => (int)q.T0.z == assets.LayerOf("block/oak_planks")), "block entity: chest box from its particle texture");
+        (cmin, cmax) = Bounds(B("minecraft:chest[facing=east,type=left,waterlogged=false]"));
+        Check(Near(cmax.z, 1) && Near(cmin.z, 1 / 16f), $"block entity: double chest half reaches its partner (east/left: z {cmin.z:F3}..{cmax.z:F3})");
+        var banner = B("minecraft:red_banner[rotation=4]");
+        var (bmin, bmax) = Bounds(banner);
+        Check(banner.Quads.Any(q => (int)q.T0.z == assets.LayerOf("block/red_wool")) && bmax.y > 1.5f, "block entity: banner = pole + red wool flag");
+        var skull = B("minecraft:skeleton_skull[powered=false,rotation=0]");
+        Check(skull.Quads.Length == 6 && skull.Quads.All(q => (int)q.T0.z < 0), "block entity: skull = flat-coloured box");
+        Check(B("minecraft:bell[attachment=floor,facing=north,powered=false]").Quads.Any(q => (int)q.T0.z == assets.LayerOf("block/bell_bottom")), "block entity: bell gets a body under its frame");
+        Check(B("minecraft:red_bed[facing=north,occupied=false,part=head]").Quads.Length > 0 && B("minecraft:oak_sign[rotation=5,waterlogged=false]").Quads.Length > 0, "model: 26.x bed and sign models bake");
+        Check(B("minecraft:red_shulker_box[facing=up]").FullCube, "block entity: shulker box is a full cube");
+        Check(B("minecraft:powder_snow").FullCube && B("minecraft:powder_snow").Opaque && B("minecraft:end_gateway").Opaque && !B("minecraft:spawner").FullCube,
+              "model: opaque shells with inner faces stay cubes (powder snow), see-through cages don't (spawner)");
+
+        // Classification + meshing, the way the renderer prewarms the palette on the main thread.
+        BlockRules.ResetShapes();
+        var pf = new PackFaces(assets);
+        string[] st = { "minecraft:air", "minecraft:stone", "minecraft:oak_stairs[facing=east,half=bottom,shape=straight,waterlogged=false]", "minecraft:glass",
+                        "minecraft:oak_leaves[distance=7,persistent=true,waterlogged=false]", "minecraft:copper_grate[waterlogged=false]", "minecraft:water[level=0]",
+                        "minecraft:poppy", "minecraft:snow[layers=3]", "minecraft:glass_pane[east=true,north=false,south=false,waterlogged=false,west=true]" };
+        foreach (var s in st) pf.Face(s, 0);
+        Check(BlockRules.Shape(st[1]) == BlockShape.Cube && BlockRules.Shape(st[2]) == BlockShape.Model && BlockRules.Shape(st[3]) == BlockShape.TransparentCube &&
+              BlockRules.Shape(st[4]) == BlockShape.TransparentCube && BlockRules.Shape(st[5]) == BlockShape.TransparentCube && BlockRules.Shape(st[6]) == BlockShape.Fluid &&
+              BlockRules.Shape(st[7]) == BlockShape.Model && BlockRules.Shape(st[0]) == BlockShape.Air, "classify with a pack: stone cube; stairs, poppy models; glass, leaves, grate see-through cubes; water fluid");
+        var m = new MeshData();
+        var w1 = Box(1, 2, 1, (x, y, z) => y == 0 ? 1 : 2, st);
+        pf.Prewarm(w1);
+        GreedyMesher.Build(w1, new Vector3Int(0, 0, 0), pf, m);
+        int greedy = m.Verts.Count / 4;
+        GreedyMesher.BuildSpecials(w1, new Vector3Int(0, 0, 0), pf, m);
+        Check(greedy == 6 && m.Verts.Count / 4 - greedy == 10 && m.Transparent.Count == 0, $"mesh: stairs on stone = 6 cube faces + 10 stair faces, bottom culled (got {greedy} + {m.Verts.Count / 4 - greedy})");
+        var w2 = Box(2, 2, 1, (x, y, z) => y == 0 ? 1 : 8, st);
+        m.Clear();
+        GreedyMesher.BuildSpecials(w2, new Vector3Int(0, 0, 0), pf, m);
+        Check(m.Verts.Count / 4 == 8, $"mesh: two snow layers on stone cull their bottoms and touching sides (got {m.Verts.Count / 4} faces)");
+        var w3 = Box(3, 1, 1, (x, y, z) => 9, st);
+        m.Clear();
+        GreedyMesher.BuildSpecials(w3, new Vector3Int(0, 0, 0), pf, m);
+        int paneAlone = pf.Model(st[9]).Quads.Length;
+        Check(m.Transparent.Count > 0 && m.Opaque.Count == 0 && m.Verts.Count / 4 < 3 * paneAlone, $"mesh: joined glass panes drop the faces between them ({m.Verts.Count / 4} < {3 * paneAlone})");
+        // Greedy faces in vanilla orientation: on the east face of a grass block v grows with y, u with -z.
+        var w4 = Box(1, 1, 1, (x, y, z) => 1, "minecraft:air", "minecraft:grass_block[snowy=false]");
+        pf.Prewarm(w4);
+        m.Clear();
+        GreedyMesher.Build(w4, new Vector3Int(0, 0, 0), pf, m);
+        bool oriented = false;
+        for (int i = 0; i < m.Verts.Count; i += 4)
+            if (Enumerable.Range(i, 4).All(k => m.Verts[k].x == 1))
+                oriented = Enumerable.Range(i, 4).All(k => Near(m.Uvs[k].y - m.Uvs[i].y, m.Verts[k].y - m.Verts[i].y) && Near(m.Uvs[k].x - m.Uvs[i].x, -(m.Verts[k].z - m.Verts[i].z)));
+        Check(oriented, "mesh: greedy east face of grass is upright (fringe on top)");
+        BlockRules.ResetShapes();
     }
 }
