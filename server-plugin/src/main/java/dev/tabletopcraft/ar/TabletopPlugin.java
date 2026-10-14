@@ -70,6 +70,9 @@ public final class TabletopPlugin extends JavaPlugin {
     private volatile Set<String> editDeny = Set.of();
     // [menu] Placeable blocks for the headset's block menu (block_registry, PROTOCOL.md 4.24), built on start/reload.
     private volatile BlockRegistry blockRegistry = BlockRegistry.empty();
+    // [comfort] LAN discovery (PROTOCOL.md 7, config.yml discovery): answers the headset's UDP probe on its own thread.
+    private LanBeacon beacon;
+    private volatile int onlinePlayers;
 
     @Override public void onEnable() {
         saveDefaultConfig();
@@ -116,11 +119,33 @@ public final class TabletopPlugin extends JavaPlugin {
         outbound = Executors.newSingleThreadExecutor(r -> { Thread t = new Thread(r, "tabletop-outbound"); t.setDaemon(true); return t; });
         link = new LinkServer(this, c.getString("bind.host", "0.0.0.0"), c.getInt("bind.port", 8765), c.getString("bind.path", "/tabletop"), c.getString("auth.token", ""));
         link.start();
+        startDiscovery();
         tickTask = Bukkit.getScheduler().runTaskTimer(this, this::tick, 1, 1);
+    }
+
+    /** [comfort] The discovery responder (LanBeacon). Its reply reads only values fixed here and a volatile player count. */
+    private void startDiscovery() {
+        var c = getConfig();
+        if (!c.getBoolean("discovery.enabled", true)) return;
+        int udp = c.getInt("discovery.port", 8765), wsPort = c.getInt("bind.port", 8765);
+        String path = c.getString("bind.path", "/tabletop"), version = getPluginMeta().getVersion(), mc = Bukkit.getMinecraftVersion();
+        String name = c.getString("discovery.name", "");
+        if (name == null || name.isBlank())
+            name = net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText().serialize(Bukkit.motd());
+        boolean token = !c.getString("auth.token", "").isEmpty();
+        String shown = name;
+        onlinePlayers = Bukkit.getOnlinePlayers().size();
+        try {
+            beacon = LanBeacon.start(getLogger(), udp, () -> LanBeacon.reply(shown, wsPort, path, token, version, mc, onlinePlayers));
+            getLogger().info("LAN discovery on UDP " + udp + " as \"" + shown + "\" (headset: menu > Info > Server > Find servers)");
+        } catch (java.net.SocketException e) {
+            getLogger().warning("LAN discovery off: UDP " + udp + " unavailable (" + e.getMessage() + "); set discovery.port or discovery.enabled in config.yml");
+        }
     }
 
     private void stop() {
         if (tickTask != null) tickTask.cancel();
+        if (beacon != null) { beacon.stop(); beacon = null; }
         if (configSaveAt >= 0) { configSaveAt = -1; saveConfig(); }
         avatar.remove();
         lastPose = null;
@@ -178,7 +203,7 @@ public final class TabletopPlugin extends JavaPlugin {
         }
         if (tickCount % Math.max(1, getConfig().getInt("stream.players-every-ticks", 2)) == 0) { sendPlayers(); entities.tick(ready()); }
         actions.flush(ready());   // swings, digging, breaks, damage of this tick (PROTOCOL.md 4.22)
-        if (tickCount % 20 == 0) timeouts();
+        if (tickCount % 20 == 0) { timeouts(); onlinePlayers = Bukkit.getOnlinePlayers().size(); }
         if (tickCount % 600 == 0) { String rs = reader.takeStats(); if (rs != null) getLogger().info("READS " + rs); }   // [area] main-thread cost of reads, per 30 s
         if (tickCount % 10 == 0) updateTickets();   // follow the giant
         // A headset gliding across the world changes the region every second or so: save the config at most every 5 s.
@@ -502,7 +527,8 @@ public final class TabletopPlugin extends JavaPlugin {
             com.google.gson.JsonArray arr = new com.google.gson.JsonArray();
             for (Player p : w.getPlayers()) {
                 Location l = p.getLocation();
-                if (l.getX() < r.ox() - margin || l.getX() > r.ox() + r.sx() + margin || l.getZ() < r.oz() - margin || l.getZ() > r.oz() + r.sz() + margin) continue;
+                // [comfort] near the region on all three axes; no spectators, invisible or vanished players (PlayerFilter)
+                if (!PlayerFilter.near(r, l.getX(), l.getY(), l.getZ(), margin) || !PlayerFilter.shown(p, Bukkit.getOnlinePlayers())) continue;
                 JsonObject e = new JsonObject();
                 e.addProperty("uuid", p.getUniqueId().toString());
                 e.addProperty("name", p.getName());
@@ -559,6 +585,12 @@ public final class TabletopPlugin extends JavaPlugin {
         o.add("origin", Protocol.ints(r.ox(), r.oy(), r.oz()));
         o.add("dims", Protocol.ints(r.sx(), r.sy(), r.sz()));
         o.add("view_margin", Protocol.ints(sharedMargin));   // PROTOCOL.md 4.17
+        // [comfort] the new region's limits, build height included: after a move to another world the headset must not
+        // keep gliding inside the old world's height (PROTOCOL.md 4.13)
+        JsonObject lim = new JsonObject();
+        caps.addTo(lim);
+        addBuildHeight(lim, r.world());
+        o.add("limits", lim);
         o.addProperty("by_session", by == null ? "server" : by.id);
         if (refSeq != null && by != null) o.addProperty("ref_seq", refSeq);
         return o;
