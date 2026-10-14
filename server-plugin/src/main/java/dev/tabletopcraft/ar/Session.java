@@ -34,6 +34,12 @@ public final class Session {
     public boolean lastPlayersNonEmpty;
     /** True while following the server's shared region (default); false after a private subscribe. */
     public volatile boolean shared = true;
+    /** Opted into light_v1 / biomes_v1 in hello.caps (and enabled in config); PROTOCOL.md 4.4.1. */
+    public volatile boolean wantsLight, wantsBiomes;
+    public byte[] lastLight;               // packed light, as last sent (main thread), null without light_v1
+
+    /** RegionReader extras this session needs in its snapshots and diffs. */
+    public int readExtras() { return (wantsLight ? RegionReader.LIGHT : 0) | (wantsBiomes ? RegionReader.BIOMES : 0); }
 
     public Session(WebSocket conn) { this.conn = conn; }
 

@@ -18,6 +18,10 @@ stream:
   players-every-ticks: 2
   # Players within region XZ bounds + this margin are sent.
   players-margin: 16
+  # Per-block light and 4x4x4 biomes for clients that ask for them in hello.caps (light_v1 / biomes_v1,
+  # PROTOCOL.md 4.4.1). Clients without those caps never pay the bytes. Set false to never send them.
+  light: true
+  biomes: true
 avatar:
   # Real metres per block on the table; the Quest overrides it with avatar_config.
   block-size-m: 0.01

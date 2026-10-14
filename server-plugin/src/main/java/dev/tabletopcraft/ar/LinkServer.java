@@ -136,6 +136,13 @@ public final class LinkServer extends WebSocketServer {
         String t = m.has("token") && !m.get("token").isJsonNull() ? m.get("token").getAsString() : "";
         if (!token.isEmpty() && !token.equals(t)) { fatal(s, "auth_failed", "bad or missing token", refSeq, Protocol.CLOSE_AUTH); return; }
         s.client = m.has("client") ? m.get("client").getAsString() : "unknown";
+        if (m.has("caps") && m.get("caps").isJsonArray())
+            for (var e : m.getAsJsonArray("caps")) {
+                if (!e.isJsonPrimitive()) continue;
+                String c = e.getAsString();
+                if (c.equals(Protocol.CAP_LIGHT)) s.wantsLight = plugin.lightEnabled();
+                else if (c.equals(Protocol.CAP_BIOMES)) s.wantsBiomes = plugin.biomesEnabled();
+            }
         s.state = Session.State.READY;
         plugin.getLogger().info("Hello from " + s.client + " (session " + s.id + ") @ " + s.conn.getRemoteSocketAddress());
         plugin.enqueue(() -> plugin.onReady(s));

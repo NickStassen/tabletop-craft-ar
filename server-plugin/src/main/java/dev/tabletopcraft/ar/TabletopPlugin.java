@@ -41,6 +41,11 @@ public final class TabletopPlugin extends JavaPlugin {
     private long tickCount;
     private Session avatarOwner;
     private long avatarOwnerGoneMs = -1;
+    // Light/biome extras (PROTOCOL.md 4.4.1): config switches, and a re-diff a few ticks after block changes so
+    // light the engine propagates after the change event reaches clients quickly (the safety diff catches the rest).
+    private volatile boolean lightOn = true, biomesOn = true;
+    private long lightRecheckTick = -1;
+    static final int LIGHT_RECHECK_TICKS = 4, MAX_LIGHT_CHANGES = 16384;
 
     @Override public void onEnable() {
         saveDefaultConfig();
@@ -59,6 +64,8 @@ public final class TabletopPlugin extends JavaPlugin {
         avatar.userHeightM = c.getDouble("avatar.user-height-m", 1.75);
         avatar.skinPlayer = c.getString("avatar.skin-player", "");
         avatar.interpolationTicks = c.getInt("avatar.interpolation-ticks", 2);
+        lightOn = c.getBoolean("stream.light", true);
+        biomesOn = c.getBoolean("stream.biomes", true);
         outbound = Executors.newSingleThreadExecutor(r -> { Thread t = new Thread(r, "tabletop-outbound"); t.setDaemon(true); return t; });
         link = new LinkServer(this, c.getString("bind.host", "0.0.0.0"), c.getInt("bind.port", 8765), c.getString("bind.path", "/tabletop"), c.getString("auth.token", ""));
         link.start();
@@ -80,6 +87,8 @@ public final class TabletopPlugin extends JavaPlugin {
     // ---------- thread hand-off ----------
     void enqueue(Runnable r) { queue.add(r); }
     void offerPose(Session s, Pose h, Pose l, Pose r, long seq) { latestPose.set(new PoseSet(s, h, l, r, seq)); }
+    boolean lightEnabled() { return lightOn; }
+    boolean biomesEnabled() { return biomesOn; }
     private void send(Session s, JsonObject body) { if (outbound != null && !outbound.isShutdown()) outbound.execute(() -> s.send(body)); }
 
     void markDirty(String world, int x, int y, int z) {
@@ -102,7 +111,11 @@ public final class TabletopPlugin extends JavaPlugin {
         }
         applyPose();
         int safety = Math.max(1, getConfig().getInt("stream.safety-diff-ticks", 20));
-        if (dirty || tickCount % safety == 0) { dirty = false; diffAll(); }
+        if (dirty || tickCount % safety == 0 || tickCount == lightRecheckTick) {
+            if (dirty) lightRecheckTick = tickCount + LIGHT_RECHECK_TICKS;
+            dirty = false;
+            diffAll();
+        }
         if (tickCount % Math.max(1, getConfig().getInt("stream.players-every-ticks", 2)) == 0) sendPlayers();
         if (tickCount % 20 == 0) timeouts();
         if (tickCount % 10 == 0) updateTickets();   // follow the giant
@@ -136,6 +149,10 @@ public final class TabletopPlugin extends JavaPlugin {
         lim.addProperty("player_hz", 20 / Math.max(1, getConfig().getInt("stream.players-every-ticks", 2)));
         w.add("limits", lim);
         w.addProperty("avatar_supported", true);
+        com.google.gson.JsonArray caps = new com.google.gson.JsonArray(); // optional features granted to this session
+        if (s.wantsLight) caps.add(Protocol.CAP_LIGHT);
+        if (s.wantsBiomes) caps.add(Protocol.CAP_BIOMES);
+        w.add("caps", caps);
         send(s, w);
         subscribe(s, r, null);
     }
@@ -159,13 +176,17 @@ public final class TabletopPlugin extends JavaPlugin {
         s.region = r;
         s.lastGrid = null; // pause diffs until the new snapshot is captured
         updateTickets();
-        reader.readAsync(r, g -> { if (r.equals(s.region) && s.state == Session.State.READY) sendSnapshot(s, g); });
+        reader.readAsync(r, s.readExtras(), d -> { if (r.equals(s.region) && s.state == Session.State.READY) sendSnapshot(s, d); });
     }
 
-    private void sendSnapshot(Session s, int[] grid) {
+    private void sendSnapshot(Session s, RegionData d) {
         long t0 = System.nanoTime();
         long readNs = (long) ((reader.lastSnapMs + reader.lastWalkMs) * 1e6);
+        int[] grid = d.grid();
+        byte[] light = s.wantsLight ? d.light() : null;
+        BiomeGrid biomes = s.wantsBiomes ? d.biomes() : null;
         s.lastGrid = grid;
+        s.lastLight = light;
         s.snapshotId++;
         s.resetPalette();
         Palette pal = reader.palette();
@@ -185,15 +206,23 @@ public final class TabletopPlugin extends JavaPlugin {
             int[] data = BlockCodec.encode(local);
             long encNs = System.nanoTime() - e0;
             JsonObject msg = Protocol.chunkSnapshot(id, r, palette, data);
+            long x0 = System.nanoTime();
+            Protocol.addExtras(msg, light, biomes);
+            long extrasNs = System.nanoTime() - x0;
             JsonObject timing = new JsonObject();
             timing.addProperty("read_ms", Math.round(readNs / 1e4) / 100.0);
             timing.addProperty("remap_ms", Math.round(remapNs / 1e4) / 100.0);
             timing.addProperty("encode_ms", Math.round(encNs / 1e4) / 100.0);
+            if (light != null || biomes != null) timing.addProperty("extras_encode_ms", Math.round(extrasNs / 1e4) / 100.0);
             msg.add("server_timing", timing); // additive extension, ignored by older clients
             long j0 = System.nanoTime();
             int bytes = s.sendCounted(msg);
-            getLogger().info(String.format("SNAPSHOT session=%s dims=%dx%dx%d blocks=%d palette=%d runs=%d bytes=%d read_ms=%.2f remap_ms=%.2f encode_ms=%.2f json_send_ms=%.2f",
-                s.id, r.sx(), r.sy(), r.sz(), r.volume(), palette.size(), data.length / 2, bytes, readNs / 1e6, remapNs / 1e6, encNs / 1e6, (System.nanoTime() - j0) / 1e6));
+            JsonObject lj = msg.has("light") && msg.get("light").isJsonObject() ? msg.getAsJsonObject("light") : null;
+            JsonObject bj = msg.has("biomes") && msg.get("biomes").isJsonObject() ? msg.getAsJsonObject("biomes") : null;
+            getLogger().info(String.format("SNAPSHOT session=%s dims=%dx%dx%d blocks=%d palette=%d runs=%d bytes=%d read_ms=%.2f remap_ms=%.2f encode_ms=%.2f json_send_ms=%.2f light_runs=%d biomes=%d biome_runs=%d extras_ms=%.2f",
+                s.id, r.sx(), r.sy(), r.sz(), r.volume(), palette.size(), data.length / 2, bytes, readNs / 1e6, remapNs / 1e6, encNs / 1e6, (System.nanoTime() - j0) / 1e6,
+                lj == null ? -1 : lj.getAsJsonArray("data").size() / 2, bj == null ? -1 : bj.getAsJsonArray("palette").size(),
+                bj == null ? -1 : bj.getAsJsonArray("data").size() / 2, extrasNs / 1e6));
         });
     }
 
@@ -203,14 +232,16 @@ public final class TabletopPlugin extends JavaPlugin {
         for (RegionSpec r : regions) {
             if (!diffInFlight.add(r)) continue;
             Map<Session, Integer> gen = new HashMap<>();
-            for (Session s : ready()) if (r.equals(s.region) && s.lastGrid != null) gen.put(s, s.snapshotId);
+            int extras = 0; // read light/biomes if any session on this region wants them (a re-snapshot may need biomes)
+            for (Session s : ready()) if (r.equals(s.region) && s.lastGrid != null) { gen.put(s, s.snapshotId); extras |= s.readExtras(); }
             try {
-                reader.readAsync(r, g -> { diffInFlight.remove(r); applyDiff(r, g, gen); });
+                reader.readAsync(r, extras, d -> { diffInFlight.remove(r); applyDiff(r, d, gen); });
             } catch (IllegalStateException e) { diffInFlight.remove(r); }
         }
     }
 
-    private void applyDiff(RegionSpec r, int[] g, Map<Session, Integer> gen) {
+    private void applyDiff(RegionSpec r, RegionData d, Map<Session, Integer> gen) {
+        int[] g = d.grid();
         for (var e : gen.entrySet()) {
             Session s = e.getKey();
             // Drop results that started before a newer snapshot or a region change.
@@ -219,8 +250,9 @@ public final class TabletopPlugin extends JavaPlugin {
             List<int[]> changed = new ArrayList<>();
             for (int i = 0; i < g.length; i++) if (g[i] != old[i]) changed.add(new int[] { i, g[i] });
             s.lastGrid = g;
-            if (changed.isEmpty()) continue;
-            if (changed.size() > 4096) { sendSnapshot(s, g); continue; }
+            List<int[]> light = lightChanges(s, r, d.light());
+            if (changed.isEmpty() && light.isEmpty()) continue;
+            if (changed.size() > 4096 || light.size() > MAX_LIGHT_CHANGES) { sendSnapshot(s, d); continue; }
             List<String> added = new ArrayList<>();
             List<Protocol.Change> out = new ArrayList<>();
             for (int[] c : changed) {
@@ -228,8 +260,17 @@ public final class TabletopPlugin extends JavaPlugin {
                 int lx = i % r.sx(), lz = (i / r.sx()) % r.sz(), ly = i / (r.sx() * r.sz());
                 out.add(new Protocol.Change(lx, ly, lz, s.localIndex(c[1], reader.palette(), added)));
             }
-            send(s, Protocol.blockUpdate(s.snapshotId, added, out));
+            send(s, Protocol.blockUpdate(s.snapshotId, added, out, light));
         }
+    }
+
+    /** Cells whose packed light differs from what the session last got, as [x, y, z, value]; updates lastLight. */
+    private static List<int[]> lightChanges(Session s, RegionSpec r, byte[] now) {
+        if (!s.wantsLight || now == null) return List.of();
+        byte[] old = s.lastLight;
+        s.lastLight = now;
+        if (old == null || old.length != now.length) return List.of();
+        return BlockCodec.lightDiff(old, now, r);
     }
 
     private void sendPlayers() {
@@ -310,15 +351,19 @@ public final class TabletopPlugin extends JavaPlugin {
         if (y1 <= y0) { send(s, tooLarge("region is outside the build height " + w.getMinHeight() + ".." + w.getMaxHeight(), refSeq)); return; }
         RegionSpec r = new RegionSpec(wn, q.ox(), y0, q.oz(), q.dx(), y1 - y0, q.dz());
         long t0 = System.nanoTime();
-        reader.readAsync(r, grid -> {
+        int extras = s.readExtras(); // every shared session gets this read: include what any of them wants
+        for (Session o : ready()) if (o.shared) extras |= o.readExtras();
+        reader.readAsync(r, extras, d -> {
             if (s.state != Session.State.READY) return;
-            // Byte cap: estimate from the global-palette RLE (same run structure as each session's encoding).
+            int[] grid = d.grid();
+            // Byte cap: estimate from the global-palette RLE (same run structure as each session's encoding),
+            // plus the light/biome fields (their size is estimated off-thread by the reader).
             int[] data = BlockCodec.encode(grid);
             java.util.Set<Integer> ids = new java.util.HashSet<>();
             for (int k = 0; k < data.length; k += 2) ids.add(data[k]);
             List<String> pal = new ArrayList<>();
             for (int id : ids) pal.add(reader.palette().state(id));
-            long est = RegionRequest.estimateSnapshotBytes(data, pal);
+            long est = RegionRequest.estimateSnapshotBytes(data, pal) + d.extraBytes();
             if (est > caps.maxBytes()) {
                 String msg = String.format("snapshot would be about %d bytes, over max %d (try a smaller region)", est, caps.maxBytes());
                 getLogger().info("REGION_REJECT " + msg);
@@ -336,7 +381,7 @@ public final class TabletopPlugin extends JavaPlugin {
                 if (!o.shared) continue;
                 send(o, regionChanged(r, s, o == s ? refSeq : null));
                 o.region = r;
-                sendSnapshot(o, grid);
+                sendSnapshot(o, d);
             }
             updateTickets();
         });

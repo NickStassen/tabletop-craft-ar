@@ -54,7 +54,32 @@ public final class Protocol {
         return o;
     }
 
+    /** Optional per-session features a client opts into via hello.caps (PROTOCOL.md 4.4.1). */
+    public static final String CAP_LIGHT = "light_v1", CAP_BIOMES = "biomes_v1";
+
+    /** Fills the snapshot's optional "light" / "biomes" fields (left null when the session didn't ask for them). */
+    public static void addExtras(JsonObject snapshot, byte[] light, BiomeGrid biomes) {
+        if (light != null) {
+            JsonObject l = new JsonObject();
+            l.addProperty("encoding", "rle_v1");
+            l.add("data", ints(BlockCodec.encode(light)));
+            snapshot.add("light", l);
+        }
+        if (biomes != null) snapshot.add("biomes", biomes.toJson());
+    }
+
     public record Change(int lx, int ly, int lz, int paletteIndex) {}
+
+    /** block_update, plus the optional "light" list of [x, y, z, sky << 4 | block] for cells whose light changed. */
+    public static JsonObject blockUpdate(int snapshotId, List<String> paletteAdd, List<Change> changes, List<int[]> light) {
+        JsonObject o = blockUpdate(snapshotId, paletteAdd, changes);
+        if (light != null && !light.isEmpty()) {
+            JsonArray a = new JsonArray();
+            for (int[] c : light) a.add(ints(c));
+            o.add("light", a);
+        }
+        return o;
+    }
 
     public static JsonObject blockUpdate(int snapshotId, List<String> paletteAdd, List<Change> changes) {
         JsonObject o = body("block_update");
