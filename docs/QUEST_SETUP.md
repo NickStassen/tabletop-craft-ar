@@ -74,7 +74,7 @@ Then relaunch the app. Alternatively set **ServerUrl** on the TabletopApp compon
 
 **Java players' skins on the table.** Each player's skin comes from their game profile, which only an `online-mode=true` server has. On an offline-mode server, everyone gets the default skin the game would show for their UUID (Steve, Alex and the others), read from your `pack.zip` (Part E). Without a pack they get plain colours.
 
-Optional lighting keys (the server sends light and biomes when its config has `stream.light` / `stream.biomes` on, the default): `"smooth_lighting": false` gives one light value per face and no ambient occlusion (about 20% fewer faces than smooth lighting), and `"brightness"` is Minecraft's Brightness slider, 0 (Moody) to 1 (Bright), default 0.5.
+Optional lighting keys (the server sends light and biomes when its config has `stream.light` / `stream.biomes` on, the default): `"smooth_lighting": false` gives one light value per face and no ambient occlusion (about 15-18% fewer faces than smooth lighting on real terrain), and `"brightness"` is Minecraft's Brightness slider, 0 (Moody) to 1 (Bright), default 0.5.
 
 ## Part E: textures (resource pack)
 
