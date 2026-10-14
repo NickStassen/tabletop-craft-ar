@@ -138,6 +138,16 @@ class FixtureTest {
         assertEquals(fx.get("count").getAsInt(), n);
     }
 
+    /** [blocks] PROTOCOL.md 4.26: the block_entities fixture is exactly what BlockEntityJson builds from those values. */
+    @Test void blockEntitiesFixtureMatchesBuilders() throws Exception {
+        JsonObject f = fixture("block_entities");
+        JsonObject m = BlockEntityJson.message(BlockEntityJsonTest.fixtureEntities(), java.util.List.<int[]>of(new int[] { 100, 64, -35 }));
+        assertEquals("block_entities", f.get("type").getAsString());
+        assertEquals(f.getAsJsonArray("entities"), m.getAsJsonArray("entities"));
+        assertEquals(f.getAsJsonArray("removed"), m.getAsJsonArray("removed"));
+        assertEquals(Protocol.CAP_BLOCK_ENTITIES, "block_entities_v1");
+    }
+
     @Test void avatarConfigFixtureParses() throws Exception {
         AvatarConfig c = AvatarConfig.parse(fixture("avatar_config"));
         assertEquals(0.01, c.blockSizeM());

@@ -64,6 +64,7 @@ public final class TabletopPlugin extends JavaPlugin {
     static final int LIGHT_RECHECK_TICKS = 4, MAX_LIGHT_CHANGES = 16384;
     private final EntityStreamer entities = new EntityStreamer(this);   // entities_v1 (PROTOCOL.md 4.21)
     private final ActionListener actions = new ActionListener(this);    // actions_v1 (PROTOCOL.md 4.22)
+    private final BlockEntityStreamer blockEntities = new BlockEntityStreamer(this);   // [blocks] block_entities_v1 (PROTOCOL.md 4.26)
     // Block editing from the headset (block_edit, PROTOCOL.md 4.20), config section "edit". Read on websocket threads.
     private volatile boolean editEnabled = true, editRequireToken, editTokenSet, editPhysics = true;
     private volatile int editRate = 20;
@@ -75,6 +76,7 @@ public final class TabletopPlugin extends JavaPlugin {
         saveDefaultConfig();
         getServer().getPluginManager().registerEvents(new BlockListener(this), this);
         getServer().getPluginManager().registerEvents(actions, this);
+        getServer().getPluginManager().registerEvents(blockEntities, this);   // [blocks] sign edits, interactions
         start();
     }
 
@@ -104,6 +106,7 @@ public final class TabletopPlugin extends JavaPlugin {
         biomesOn = c.getBoolean("stream.biomes", true);
         entities.configure(c.getBoolean("entities.enabled", true), c.getInt("entities.max", 256), c.getInt("entities.margin", 2));
         actions.enabled = c.getBoolean("actions.enabled", true);
+        blockEntities.configure(c.getBoolean("block-entities.enabled", true), c.getDouble("block-entities.budget-ms", 0.3), c.getInt("block-entities.rescan-ticks", 40));   // [blocks]
         editEnabled = c.getBoolean("edit.enabled", true);
         editRequireToken = c.getBoolean("edit.require-token", false);
         editTokenSet = !c.getString("auth.token", "").isEmpty();
@@ -141,14 +144,21 @@ public final class TabletopPlugin extends JavaPlugin {
     boolean biomesEnabled() { return biomesOn; }
     boolean entitiesEnabled() { return entities.enabled; }
     boolean actionsEnabled() { return actions.enabled; }
+    boolean blockEntitiesEnabled() { return blockEntities.enabled; }   // [blocks]
     private void send(Session s, JsonObject body) { if (outbound != null && !outbound.isShutdown()) outbound.execute(() -> s.send(body)); }
     /** Like send, adding the UTF-8 size to a counter (entities bytes/s). */
     void sendCounting(Session s, JsonObject body, java.util.concurrent.atomic.AtomicLong bytes, java.util.concurrent.atomic.AtomicLong total) {
         if (outbound != null && !outbound.isShutdown()) outbound.execute(() -> { int n = s.sendCounted(body); bytes.addAndGet(n); total.addAndGet(n); });
     }
 
+    /** [blocks] Like sendCounting, building the body on the outbound thread too (big block_entities messages). */
+    void sendCountingLater(Session s, java.util.function.Supplier<JsonObject> body, java.util.concurrent.atomic.AtomicLong bytes, java.util.concurrent.atomic.AtomicLong total) {
+        if (outbound != null && !outbound.isShutdown()) outbound.execute(() -> { int n = s.sendCounted(body.get()); bytes.addAndGet(n); total.addAndGet(n); });
+    }
+
     void markDirty(String world, int x, int y, int z) {
         if (link == null) return;
+        blockEntities.touch(world, x, z);   // [blocks] its chunk's block entities are read again next tick
         for (Session s : link.sessions()) if (s.region != null && s.region.world().equals(world) && s.region.containsWorld(x, y, z)) { dirty = true; return; }
     }
 
@@ -178,6 +188,7 @@ public final class TabletopPlugin extends JavaPlugin {
         }
         if (tickCount % Math.max(1, getConfig().getInt("stream.players-every-ticks", 2)) == 0) { sendPlayers(); entities.tick(ready()); }
         actions.flush(ready());   // swings, digging, breaks, damage of this tick (PROTOCOL.md 4.22)
+        blockEntities.tick(ready());   // [blocks] sign text, banner patterns, heads... (PROTOCOL.md 4.26), budgeted
         if (tickCount % 20 == 0) timeouts();
         if (tickCount % 600 == 0) { String rs = reader.takeStats(); if (rs != null) getLogger().info("READS " + rs); }   // [area] main-thread cost of reads, per 30 s
         if (tickCount % 10 == 0) updateTickets();   // follow the giant
@@ -223,6 +234,7 @@ public final class TabletopPlugin extends JavaPlugin {
         if (sectionsFor(s)) sc.add(SectionCodec.ENCODING);
         if (s.wantsEntities) sc.add(Protocol.CAP_ENTITIES);   // entities (PROTOCOL.md 4.21)
         if (s.wantsActions) sc.add(Protocol.CAP_ACTIONS);     // actions (PROTOCOL.md 4.22)
+        if (s.wantsBlockEntities) sc.add(Protocol.CAP_BLOCK_ENTITIES);   // [blocks] block entity data (PROTOCOL.md 4.26)
         sc.add("view_margin");
         sc.add("pose_snapshot_id");
         if (s.canEdit) sc.add(Protocol.CAP_EDIT);   // block editing (PROTOCOL.md 4.20)
@@ -471,6 +483,8 @@ public final class TabletopPlugin extends JavaPlugin {
                 || s.lastGrid != base.get(s) || s.lastLight != baseLight.get(s)) continue;
             int[] idx = diff.blocks.get(s.lastGrid);
             if (idx == null) continue;
+            // [blocks] /setblock, /fill, /data... fire no block events: the chunks the diff found changes in are read again.
+            if (idx.length <= 4096) for (int i : idx) blockEntities.touch(r.world(), r.ox() + i % r.sx(), r.oz() + (i / r.sx()) % r.sz());
             boolean withLight = s.wantsLight && d.light() != null;
             List<int[]> light = withLight && s.lastLight != null ? diff.light.getOrDefault(s.lastLight, List.of()) : List.of();
             // Many changes: a snapshot instead (a sectioned client gets only the changed sections, against lastGrid).

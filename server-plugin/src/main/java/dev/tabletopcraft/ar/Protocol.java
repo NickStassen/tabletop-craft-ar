@@ -108,6 +108,8 @@ public final class Protocol {
     public static final String CAP_ACTIONS = "actions_v1";
     /** Block editing from the headset (block_edit, PROTOCOL.md 4.20). */
     public static final String CAP_EDIT = "edit_v1";
+    /** [blocks] Block entity data (sign text, banner patterns, heads...) in a "block_entities" message (PROTOCOL.md 4.26). */
+    public static final String CAP_BLOCK_ENTITIES = "block_entities_v1";
 
     /** Fills the snapshot's optional "light" / "biomes" fields (left null when the session didn't ask for them). */
     public static void addExtras(JsonObject snapshot, byte[] light, BiomeGrid biomes) {
