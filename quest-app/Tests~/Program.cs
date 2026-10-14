@@ -137,6 +137,7 @@ static class Program
 
         PlayerTests.Run(Check, Fixture);
         WaterTests.Run(Check, args);   // fluids, waterlogging, texture animation (WaterTests.cs)
+        EyeTests.Run(Check);            // eye in water/lava/powder snow/blocks, water inside faces (EyeTests.cs)
 
         // Block models from a real client jar / resource pack (never committed; MC_CLIENT_JAR or --jar PATH).
         string jar = JarPath(args);
@@ -383,7 +384,7 @@ static class Program
         var fm = new MeshData();
         FluidMesher.Build(pond, new Vector3Int(0, 0, 0), new Flat(), fm);
         var flatWater = BlockRules.FlatColor(FluidRules.WaterState);
-        int TopQuads(MeshData md) { int t = 0; for (int i = 0; i < md.Verts.Count; i += 4) if (md.Verts[i].y > 1.5f && md.Verts[i + 1].y > 1.5f && md.Verts[i + 2].y > 1.5f) t++; return t; }
+        int TopQuads(MeshData md) { int t = 0; for (int i = 0; i < md.Verts.Count; i += 4) if (!md.WaterBack.Contains(i) /* not the inside copies */ && md.Verts[i].y > 1.5f && md.Verts[i + 1].y > 1.5f && md.Verts[i + 2].y > 1.5f) t++; return t; }
         Check(TopQuads(fm) == 1 && fm.Colors.All(c => c.r == flatWater.r && c.b == flatWater.b && c.a == flatWater.a), $"fluid light: open water lit by the sky above merges into one top quad ({TopQuads(fm)})");
         pond.Light[pond.Index(1, 2, 1)] = 0x80;   // shade above one cell (sky 8 < water's 14)
         FluidMesher.Build(pond, new Vector3Int(0, 0, 0), new Flat(), fm);

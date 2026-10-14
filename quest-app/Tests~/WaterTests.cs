@@ -39,8 +39,9 @@ static class WaterTests
     static List<Vector3[]> Quads(MeshData m, int layer)
     {
         var r = new List<Vector3[]>();
+        var inside = new HashSet<int>(m.WaterBack);   // the water's inside copies (EyeTests covers them)
         for (int q = 0; q < m.Verts.Count / 4; q++)
-            if ((int)m.Uvs[q * 4].z == layer) r.Add(new[] { m.Verts[q * 4], m.Verts[q * 4 + 1], m.Verts[q * 4 + 2], m.Verts[q * 4 + 3] });
+            if ((int)m.Uvs[q * 4].z == layer && !inside.Contains(q * 4)) r.Add(new[] { m.Verts[q * 4], m.Verts[q * 4 + 1], m.Verts[q * 4 + 2], m.Verts[q * 4 + 3] });
         return r;
     }
 
@@ -148,7 +149,7 @@ static class WaterTests
             var m = new MeshData();
             var faces = new Tagged();
             var n = w.SectionCount;
-            long total = 0, water = 0, fluidSections = 0;
+            long total = 0, water = 0, inside = 0, fluidSections = 0;
             double fluidMs = 0, worst = 0;
             var sw = new System.Diagnostics.Stopwatch();
             for (int x = 0; x < n.x; x++) for (int y = 0; y < n.y; y++) for (int z = 0; z < n.z; z++)
@@ -158,7 +159,8 @@ static class WaterTests
                 GreedyMesher.BuildSpecials(w, s, faces, m);
                 total += m.Verts.Count / 4;
                 int wq = Quads(m, 1).Count;
-                water += wq;
+                water += wq; inside += m.WaterBack.Count / 6;
+                total -= m.WaterBack.Count / 6;   // inside copies are only drawn under water
                 m.Clear();
                 sw.Restart();
                 FluidMesher.Build(w, s, faces, m);
@@ -167,7 +169,7 @@ static class WaterTests
                 if (wq > 0) fluidSections++;
                 m.Clear();
             }
-            Console.WriteLine($"FLUIDS {Path.GetFileNameWithoutExtension(f)} sections={n.x * n.y * n.z} with_water={fluidSections} total_quads={total} water_quads={water} " +
+            Console.WriteLine($"FLUIDS {Path.GetFileNameWithoutExtension(f)} sections={n.x * n.y * n.z} with_water={fluidSections} total_quads={total} water_quads={water} inside_copies={inside} " +
                               $"fluid_mesh_ms={fluidMs:F0} worst_section_ms={worst:F2}");
         }
     }

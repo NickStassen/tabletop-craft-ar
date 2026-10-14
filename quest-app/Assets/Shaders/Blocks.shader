@@ -13,14 +13,16 @@ Shader "TabletopCraft/Blocks"
             #pragma fragment frag
             #pragma require 2darray
             #include "UnityCG.cginc"
+            #include "TabletopFog.cginc"   // eye-in-fluid fog (EyeEffects.cs)
             UNITY_DECLARE_TEX2DARRAY(_Blocks);
             float _HasTex, _Cutoff;
             struct appdata { float4 vertex : POSITION; float3 normal : NORMAL; float3 uv : TEXCOORD0; fixed4 color : COLOR; UNITY_VERTEX_INPUT_INSTANCE_ID };
-            struct v2f { float4 pos : SV_POSITION; float3 uv : TEXCOORD0; half4 color : COLOR; UNITY_VERTEX_OUTPUT_STEREO };
+            struct v2f { float4 pos : SV_POSITION; float3 uv : TEXCOORD0; half4 color : COLOR; float3 fogPos : TEXCOORD5; UNITY_VERTEX_OUTPUT_STEREO };
             v2f vert (appdata v)
             {
                 v2f o; UNITY_SETUP_INSTANCE_ID(v); UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
                 o.pos = UnityObjectToClipPos(v.vertex); o.uv = v.uv;
+                o.fogPos = TabletopFogPos(v.vertex);   // eye-in-fluid fog
                 // Vanilla face shading (CardinalLighting.DEFAULT): up 1.0, down 0.5, north/south 0.8, east/west 0.6.
                 // Faces not aligned to an axis (cross plants, 45 degree elements; zero normals on double-sided quads)
                 // stay unshaded, as vanilla draws them. Z is mirrored in Unity, which doesn't change |n.z|.
@@ -38,6 +40,7 @@ Shader "TabletopCraft/Blocks"
                 fixed4 c = i.color;
                 if (_HasTex > 0.5 && i.uv.z >= 0) c *= UNITY_SAMPLE_TEX2DARRAY(_Blocks, i.uv);
                 clip(c.a - _Cutoff);
+                c.rgb = TabletopFog(c.rgb, i.fogPos);   // eye-in-fluid fog
                 return c;
             }
             ENDCG
