@@ -110,7 +110,7 @@ namespace TabletopCraft.XR
 
         void Update()
         {
-            if (OVRInput.GetDown(OVRInput.Button.Four, OVRInput.Controller.LTouch)) Toggle();
+            if (OVRInput.GetDown(OVRInput.Button.Two, OVRInput.Controller.LTouch)) Toggle();   // Y: on LTouch alone X = One, Y = Two (Three/Four are unmapped)
             if (!Active) return;
             float now = Time.unscaledTime;
 
@@ -126,7 +126,7 @@ namespace TabletopCraft.XR
                 else acted = false;
                 if (acted) _repeatAt = now + 0.18f;
             }
-            if (OVRInput.GetDown(OVRInput.Button.Three, OVRInput.Controller.LTouch)) State.CycleMode();
+            if (OVRInput.GetDown(OVRInput.Button.One, OVRInput.Controller.LTouch)) State.CycleMode();   // X
             if (OVRInput.GetDown(OVRInput.Button.PrimaryThumbstick, OVRInput.Controller.RTouch)) AutoFit = !AutoFit;
 
             float bs = Mathf.Max(1e-4f, BlockSize());
