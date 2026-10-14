@@ -32,6 +32,10 @@ static class EditTests
         Raycast(check);
         Mirror(check);
         Rules(check);
+        Placement(check);
+        TwoBlockEdits(check);
+        Picks(check);
+        Deltas(check, fixture);
         Editor(check, fixture);
     }
 
@@ -158,16 +162,6 @@ static class EditTests
         check(BlockEditRules.WithProp(furnace, "facing", "north") == "minecraft:furnace[facing=north,lit=false]" &&
               BlockEditRules.WithProp(furnace, "lit", "true") == "minecraft:furnace[facing=east,lit=true]" &&
               BlockEditRules.WithProp("minecraft:stone", "facing", "up") == "minecraft:stone", "state property replace");
-        var north = new Vector3(0, -0.3f, -1); var east = new Vector3(1, -0.5f, 0.2f);
-        check(BlockEditRules.Orient("minecraft:oak_log[axis=y]", 1, north) == "minecraft:oak_log[axis=x]" &&
-              BlockEditRules.Orient("minecraft:oak_log[axis=y]", 3, north) == "minecraft:oak_log[axis=y]" &&
-              BlockEditRules.Orient("minecraft:oak_log[axis=x]", 4, north) == "minecraft:oak_log[axis=z]", "logs line up with the clicked face");
-        check(BlockEditRules.Orient("minecraft:furnace[facing=north,lit=false]", 3, north) == "minecraft:furnace[facing=south,lit=false]" &&
-              BlockEditRules.Orient("minecraft:furnace[facing=north,lit=false]", 3, east) == "minecraft:furnace[facing=west,lit=false]", "furnaces face the user");
-        check(BlockEditRules.Orient("minecraft:oak_stairs[facing=east,half=bottom,shape=straight,waterlogged=false]", 3, north) ==
-              "minecraft:oak_stairs[facing=north,half=bottom,shape=straight,waterlogged=false]", "stairs face the way the user looks");
-        check(BlockEditRules.Orient("minecraft:hopper[enabled=true,facing=down]", 1, east) == "minecraft:hopper[enabled=true,facing=down]" &&
-              BlockEditRules.Orient("minecraft:stone", 2, east) == "minecraft:stone", "vertical facings and plain blocks are kept");
         check(BlockEditRules.BreakResult("minecraft:oak_slab[type=bottom,waterlogged=true]") == BlockEditRules.WaterSource &&
               BlockEditRules.BreakResult("minecraft:kelp[age=3]") == BlockEditRules.WaterSource &&
               BlockEditRules.BreakResult("minecraft:oak_slab[type=bottom,waterlogged=false]") == "minecraft:air" &&
@@ -175,8 +169,308 @@ static class EditTests
         check(BlockEditRules.PlaceResult("minecraft:oak_slab[type=bottom,waterlogged=false]", "minecraft:water[level=0]") == "minecraft:oak_slab[type=bottom,waterlogged=true]" &&
               BlockEditRules.PlaceResult("minecraft:oak_slab[type=bottom,waterlogged=false]", "minecraft:water[level=3]") == "minecraft:oak_slab[type=bottom,waterlogged=false]" &&
               BlockEditRules.PlaceResult("minecraft:oak_slab[type=bottom,waterlogged=false]", "minecraft:air") == "minecraft:oak_slab[type=bottom,waterlogged=false]" &&
+              BlockEditRules.PlaceResult("minecraft:oak_slab[type=bottom,waterlogged=false]", "minecraft:seagrass") == "minecraft:oak_slab[type=bottom,waterlogged=true]" &&
               BlockEditRules.PlaceResult("minecraft:stone", "minecraft:water[level=0]") == "minecraft:stone", "placing into a water source waterlogs");
+        check(BlockEditRules.PlaceResult("minecraft:oak_slab[type=bottom,waterlogged=true]", "minecraft:air") == "minecraft:oak_slab[type=bottom,waterlogged=false]" &&
+              BlockEditRules.PlaceResult("minecraft:tube_coral_fan[waterlogged=true]", "minecraft:water[level=8]") == "minecraft:tube_coral_fan[waterlogged=false]",
+              "a waterlogged pick placed on land (or in falling water) is dry: no water source comes with it");
         check(BlockEditRules.Label("minecraft:oak_stairs[facing=east]") == "oak stairs", "block label");
+
+        // Replaceable cells (vanilla canBeReplaced, mirrored by the plugin).
+        check(BlockPlacement.Replaceable("minecraft:short_grass", "minecraft:stone") && BlockPlacement.Replaceable("minecraft:snow[layers=1]", "minecraft:stone") &&
+              !BlockPlacement.Replaceable("minecraft:snow[layers=2]", "minecraft:stone") && BlockPlacement.Replaceable("minecraft:vine[east=false,north=true,south=false,up=false,west=false]", null) &&
+              BlockPlacement.Replaceable("minecraft:sculk_vein[down=true,east=false,north=false,south=false,up=false,waterlogged=false,west=false]", "minecraft:stone") &&
+              BlockPlacement.Replaceable("minecraft:fire[age=0,east=false,north=false,south=false,up=false,west=false]", null) &&
+              BlockPlacement.Replaceable("minecraft:water[level=0]", "minecraft:stone") && BlockPlacement.Replaceable("minecraft:air", "minecraft:stone") &&
+              !BlockPlacement.Replaceable("minecraft:stone", "minecraft:dirt") && !BlockPlacement.Replaceable("minecraft:oak_slab[type=bottom,waterlogged=false]", "minecraft:oak_slab[type=bottom,waterlogged=false]"),
+              "replaceable: grass, one snow layer, vines, sculk vein, fire, fluids and air; not two snow layers, solid blocks or slabs");
+        check(!BlockPlacement.Replaceable("minecraft:short_grass", "minecraft:short_grass") && BlockPlacement.Replaceable("minecraft:short_grass", "minecraft:fern"),
+              "replaceable: a block doesn't replace itself (vanilla: the item of the block in the cell)");
+
+        // The look (Direction.orderedByNearest, Player.getDirection, yaw).
+        var north = Look.From(new Vector3(0, -0.5f, -1));
+        check(north.Horizontal == Dir.North && Near(Math.Abs(north.Yaw), 180) && north.Nearest().SequenceEqual(new[] { Dir.North, Dir.Down, Dir.West, Dir.East, Dir.Up, Dir.South }),
+              $"look north: horizontal north, yaw 180, nearest {string.Join(",", north.Nearest())}");
+        var down = Look.From(new Vector3(0.1f, -1, -0.3f));
+        check(down.NearestOne == Dir.Down && down.Horizontal == Dir.North && down.Nearest()[1] == Dir.North && down.Nearest()[2] == Dir.East, "look down (a bit north-east): nearest down, then north, then east");
+        check(Look.From(new Vector3(1, 0, 0.2f)).Horizontal == Dir.East && Near(Look.From(new Vector3(1, 0, 0)).Yaw, -90) && Look.From(new Vector3(0, 0, 1)).Horizontal == Dir.South &&
+              Look.From(new Vector3(-1, 0.1f, 0)).Horizontal == Dir.West, "look: east is yaw -90, south 0, west 90");
+        check(BlockPlacement.Segment(0) == 0 && BlockPlacement.Segment(360) == 0 && BlockPlacement.Segment(-90) == 12 && BlockPlacement.Segment(90) == 4 && BlockPlacement.Segment(11.25f) == 1 && BlockPlacement.Segment(-11.25f) == 0,
+              "rotation segments round like Java (Math.round)");
+        check(BlockPlacement.WallVariant("minecraft:torch", null) == "minecraft:wall_torch" && BlockPlacement.WallVariant("minecraft:soul_torch", null) == "minecraft:soul_wall_torch" &&
+              BlockPlacement.WallVariant("minecraft:oak_sign[rotation=0,waterlogged=false]", null) == "minecraft:oak_wall_sign" &&
+              BlockPlacement.WallVariant("minecraft:oak_hanging_sign[attached=false,rotation=0,waterlogged=false]", null) == "minecraft:oak_wall_hanging_sign" &&
+              BlockPlacement.WallVariant("minecraft:player_head[powered=false,rotation=0]", null) == "minecraft:player_wall_head" &&
+              BlockPlacement.WallVariant("minecraft:dead_tube_coral_fan[waterlogged=true]", null) == "minecraft:dead_tube_coral_wall_fan" &&
+              BlockPlacement.WallVariant("minecraft:stone", null) == null && BlockPlacement.WallVariant("minecraft:wall_torch[facing=east]", null) == null &&
+              BlockPlacement.WallVariant("minecraft:torch", id => id != "minecraft:wall_torch") == null, "wall forms by name, checked against the registry");
+        check(BlockPlacement.Rebuild("minecraft:oak_sign[rotation=4,waterlogged=false]", "minecraft:oak_wall_sign", new[] { "rotation" }, "facing", "east") == "minecraft:oak_wall_sign[facing=east,waterlogged=false]" &&
+              BlockPlacement.Rebuild("minecraft:torch", "minecraft:wall_torch", null, "facing", "west") == "minecraft:wall_torch[facing=west]",
+              "wall state: standing properties minus rotation, plus facing, sorted like getAsString");
+    }
+
+    /// <summary>A placement test world: 10x8x10 at origin (100,60,-40), stone floor at y=0, block A = stone at (3,1,3),
+    /// a stone ceiling block at (5,4,5), and whatever else the case puts in.</summary>
+    static WorldModel PlaceWorld(params (int x, int y, int z, string s)[] extra)
+    {
+        var w = World(10, 8, 10, (x, y, z) => y == 0 || (x == 3 && y == 1 && z == 3) || (x == 5 && y == 4 && z == 5) ? 1 : 0, "minecraft:air", "minecraft:stone");
+        foreach (var e in extra)
+        {
+            int id = w.Palette.IndexOf(e.s);
+            if (id < 0) { id = w.Palette.Count; w.Palette.Add(e.s); }
+            w.Grid[w.Index(e.x, e.y, e.z)] = (ushort)id;
+        }
+        w.Origin = V(100, 60, -40);
+        return w;
+    }
+
+    static BlockHit HitOn(WorldModel w, Vector3Int block, int face, Vector3 point)
+    {
+        var adj = block + BlockRaycast.Normal(face);
+        return new BlockHit { Hit = true, Block = block, Face = face, Adjacent = adj, AdjacentInView = w.InBounds(adj.x, adj.y, adj.z), Point = point };
+    }
+
+    static void Placement(Action<bool, string> check)
+    {
+        var ed = new BlockEditor { ServerAllows = true };
+        var lookN = new Vector3(0, -0.5f, -1);           // looking north, a bit down
+        var lookDown = new Vector3(0.1f, -1, -0.3f);      // looking down (a bit north)
+        var A = V(3, 1, 3); var ceil = V(5, 4, 5);
+        var top = new Vector3(3.5f, 2, 3.5f);             // A's top face
+        var eastLow = new Vector3(4, 1.3f, 3.5f); var eastHigh = new Vector3(4, 1.8f, 3.5f);   // A's east face, lower / upper half
+        var under = new Vector3(5.5f, 4, 5.5f);           // the ceiling block's underside
+        string Plan(string sel, WorldModel w, Vector3Int block, int face, Vector3 point, Vector3 look)
+        {
+            ed.Selected = sel;
+            var p = ed.Plan(w, HitOn(w, block, face, point), look, 0);
+            return p.Ok ? p.State : "refused: " + p.Why;
+        }
+        var w0 = PlaceWorld();
+        string On(string sel, int face, Vector3 point, Vector3 look) => Plan(sel, w0, face == Dir.Down ? ceil : A, face, point, look);
+        void Is(string got, string want, string what) => check(got == want, what + (got == want ? "" : $" (got {got})"));
+
+        Is(On("minecraft:oak_log[axis=y]", Dir.East, eastLow, lookN), "minecraft:oak_log[axis=x]", "log: axis of the clicked face (east -> x)");
+        Is(On("minecraft:oak_log[axis=y]", Dir.Up, top, lookN), "minecraft:oak_log[axis=y]", "log: on top -> y");
+        Is(On("minecraft:furnace[facing=north,lit=false]", Dir.Up, top, lookN), "minecraft:furnace[facing=south,lit=false]", "furnace faces the user");
+        Is(On("minecraft:anvil[facing=north]", Dir.Up, top, lookN), "minecraft:anvil[facing=east]", "anvil: clockwise of the look (AnvilBlock)");
+        Is(On("minecraft:campfire[facing=north,lit=true,signal_fire=false,waterlogged=false]", Dir.Up, top, new Vector3(1, -0.5f, 0)), "minecraft:campfire[facing=east,lit=true,signal_fire=false,waterlogged=false]", "campfire faces the way the user looks");
+
+        // Torches, signs, banners, heads, coral fans: standing on top, the wall form on a side (StandingAndWallBlockItem).
+        Is(On("minecraft:torch", Dir.Up, top, lookN), "minecraft:torch", "torch on top stands");
+        Is(On("minecraft:torch", Dir.East, eastLow, lookN), "minecraft:wall_torch[facing=east]", "torch on a side is a wall torch facing out");
+        Is(On("minecraft:torch", Dir.Down, under, lookN), "refused: can't place: nothing to attach the torch to", "torch under a block with nothing around: refused");
+        Is(On("minecraft:redstone_torch[lit=true]", Dir.East, eastLow, lookN), "minecraft:redstone_wall_torch[facing=east,lit=true]", "redstone torch on a side");
+        Is(On("minecraft:oak_sign[rotation=0,waterlogged=false]", Dir.Up, top, lookN), "minecraft:oak_sign[rotation=0,waterlogged=false]", "sign on top faces the user (rotation from the yaw + 180)");
+        Is(On("minecraft:oak_sign[rotation=0,waterlogged=false]", Dir.Up, top, new Vector3(1, -0.5f, 0)), "minecraft:oak_sign[rotation=4,waterlogged=false]", "sign placed looking east: rotation 4 (faces west)");
+        Is(On("minecraft:oak_sign[rotation=0,waterlogged=false]", Dir.East, eastLow, lookN), "minecraft:oak_wall_sign[facing=east,waterlogged=false]", "sign on a side is a wall sign");
+        Is(On("minecraft:white_banner[rotation=0]", Dir.East, eastLow, lookN), "minecraft:white_wall_banner[facing=east]", "banner on a side");
+        Is(On("minecraft:skeleton_skull[powered=false,rotation=0]", Dir.Up, top, lookN), "minecraft:skeleton_skull[powered=false,rotation=8]", "skull on top: rotation from the yaw (SkullBlock)");
+        Is(On("minecraft:skeleton_skull[powered=false,rotation=0]", Dir.East, eastLow, lookN), "minecraft:skeleton_wall_skull[facing=east,powered=false]", "skull on a side");
+        Is(On("minecraft:tube_coral_fan[waterlogged=true]", Dir.East, eastLow, lookN), "minecraft:tube_coral_wall_fan[facing=east,waterlogged=false]", "coral fan on a side (dry in air)");
+        Is(On("minecraft:oak_hanging_sign[attached=false,rotation=0,waterlogged=false]", Dir.Down, under, lookN), "minecraft:oak_hanging_sign[attached=false,rotation=0,waterlogged=false]", "hanging sign under a full block: not attached, 4-way");
+        Is(On("minecraft:oak_hanging_sign[attached=false,rotation=0,waterlogged=false]", Dir.East, eastLow, lookN), "minecraft:oak_wall_hanging_sign[facing=south,waterlogged=false]", "hanging sign on a side: along the wall");
+
+        // Buttons, levers, grindstones (face), bells (attachment).
+        Is(On("minecraft:oak_button[face=wall,facing=north,powered=false]", Dir.Up, top, lookN), "minecraft:oak_button[face=floor,facing=north,powered=false]", "button on top: floor, facing the look");
+        Is(On("minecraft:oak_button[face=wall,facing=north,powered=false]", Dir.East, eastLow, lookN), "minecraft:oak_button[face=wall,facing=east,powered=false]", "button on a side: wall, facing out");
+        Is(On("minecraft:lever[face=wall,facing=north,powered=false]", Dir.Down, under, lookN), "minecraft:lever[face=ceiling,facing=north,powered=false]", "lever under a block: ceiling");
+        Is(On("minecraft:grindstone[face=wall,facing=north]", Dir.Down, under, lookN), "minecraft:grindstone[face=ceiling,facing=north]", "grindstone under a block: ceiling");
+        Is(On("minecraft:bell[attachment=floor,facing=north,powered=false]", Dir.Up, top, lookN), "minecraft:bell[attachment=floor,facing=north,powered=false]", "bell on top: floor");
+        Is(On("minecraft:bell[attachment=floor,facing=north,powered=false]", Dir.East, eastLow, lookN), "minecraft:bell[attachment=single_wall,facing=west,powered=false]", "bell on a side: single wall, facing the wall");
+        var wBell = PlaceWorld((5, 1, 3, "minecraft:stone"));
+        Is(Plan("minecraft:bell[attachment=floor,facing=north,powered=false]", wBell, A, Dir.East, eastLow, lookN), "minecraft:bell[attachment=double_wall,facing=west,powered=false]", "bell between two blocks: double wall");
+        Is(On("minecraft:bell[attachment=floor,facing=north,powered=false]", Dir.Down, under, lookN), "minecraft:bell[attachment=ceiling,facing=north,powered=false]", "bell under a block: ceiling");
+
+        // Top halves: slabs, stairs, trapdoors.
+        const string slab = "minecraft:oak_slab[type=bottom,waterlogged=false]";
+        Is(On(slab, Dir.Up, top, lookN), slab, "slab on top: bottom");
+        Is(On(slab, Dir.Down, under, lookN), "minecraft:oak_slab[type=top,waterlogged=false]", "slab under a block: top");
+        Is(On(slab, Dir.East, eastHigh, lookN), "minecraft:oak_slab[type=top,waterlogged=false]", "slab on the upper half of a side: top");
+        Is(On(slab, Dir.East, eastLow, lookN), slab, "slab on the lower half of a side: bottom");
+        const string stairs = "minecraft:oak_stairs[facing=east,half=bottom,shape=straight,waterlogged=false]";
+        Is(On(stairs, Dir.Up, top, lookN), "minecraft:oak_stairs[facing=north,half=bottom,shape=straight,waterlogged=false]", "stairs face the way the user looks");
+        Is(On(stairs, Dir.East, eastHigh, lookN), "minecraft:oak_stairs[facing=north,half=top,shape=straight,waterlogged=false]", "stairs on the upper half of a side: upside down");
+        Is(On(stairs, Dir.Down, under, lookN), "minecraft:oak_stairs[facing=north,half=top,shape=straight,waterlogged=false]", "stairs under a block: upside down");
+        const string trap = "minecraft:oak_trapdoor[facing=north,half=bottom,open=false,powered=false,waterlogged=false]";
+        Is(On(trap, Dir.East, eastHigh, lookN), "minecraft:oak_trapdoor[facing=east,half=top,open=false,powered=false,waterlogged=false]", "trapdoor on a side: facing out, top from the hit point");
+        Is(On(trap, Dir.East, eastLow, lookN), "minecraft:oak_trapdoor[facing=east,half=bottom,open=false,powered=false,waterlogged=false]", "trapdoor on the lower half of a side: bottom");
+        Is(On(trap, Dir.Up, top, lookN), "minecraft:oak_trapdoor[facing=south,half=bottom,open=false,powered=false,waterlogged=false]", "trapdoor on top: bottom, facing the user");
+        Is(On(trap, Dir.Down, under, lookN), "minecraft:oak_trapdoor[facing=south,half=top,open=false,powered=false,waterlogged=false]", "trapdoor under a block: top");
+
+        // Facing the clicked face, hoppers, observers, pistons.
+        Is(On("minecraft:end_rod[facing=up]", Dir.East, eastLow, lookN), "minecraft:end_rod[facing=east]", "end rod points out of the clicked face");
+        var wRod = PlaceWorld((6, 1, 6, "minecraft:end_rod[facing=up]"));
+        Is(Plan("minecraft:end_rod[facing=up]", wRod, V(6, 1, 6), Dir.Up, new Vector3(6.5f, 2, 6.5f), lookN), "minecraft:end_rod[facing=down]", "end rod on an end rod pointing the same way: flipped (EndRodBlock)");
+        Is(On("minecraft:lightning_rod[facing=up,powered=false,waterlogged=false]", Dir.East, eastLow, lookN), "minecraft:lightning_rod[facing=east,powered=false,waterlogged=false]", "lightning rod points out of the clicked face");
+        Is(On("minecraft:amethyst_cluster[facing=up,waterlogged=false]", Dir.Down, under, lookN), "minecraft:amethyst_cluster[facing=down,waterlogged=false]", "amethyst cluster under a block points down");
+        Is(On("minecraft:shulker_box[facing=up]", Dir.East, eastLow, lookN), "minecraft:shulker_box[facing=east]", "shulker box opens away from the clicked face");
+        Is(On("minecraft:hopper[enabled=true,facing=down]", Dir.Up, top, lookN), "minecraft:hopper[enabled=true,facing=down]", "hopper on top: down");
+        Is(On("minecraft:hopper[enabled=true,facing=down]", Dir.East, eastLow, lookN), "minecraft:hopper[enabled=true,facing=west]", "hopper on a side: into the clicked block");
+        Is(On("minecraft:observer[facing=south,powered=false]", Dir.Up, top, lookDown), "minecraft:observer[facing=down,powered=false]", "observer looking down: its face looks down (away from the user)");
+        Is(On("minecraft:observer[facing=south,powered=false]", Dir.Up, top, lookN), "minecraft:observer[facing=north,powered=false]", "observer looking north: face north");
+        Is(On("minecraft:piston[extended=false,facing=north]", Dir.Up, top, lookDown), "minecraft:piston[extended=false,facing=up]", "piston looking down: faces up (the user)");
+        Is(On("minecraft:dispenser[facing=north,triggered=false]", Dir.Up, top, lookN), "minecraft:dispenser[facing=south,triggered=false]", "dispenser faces the user");
+        Is(On("minecraft:barrel[facing=north,open=false]", Dir.Up, top, lookDown), "minecraft:barrel[facing=up,open=false]", "barrel looking down opens up");
+        Is(On("minecraft:crafter[crafting=false,orientation=north_up,triggered=false]", Dir.Up, top, lookDown), "minecraft:crafter[crafting=false,orientation=up_north,triggered=false]", "crafter looking down: front up, top the look");
+
+        // Doors, beds, tall plants: the lower half / foot, with room for the other half.
+        const string door = "minecraft:oak_door[facing=north,half=lower,hinge=left,open=false,powered=false]";
+        ed.Selected = door;
+        var pDoor = ed.Plan(w0, HitOn(w0, V(1, 0, 1), Dir.Up, new Vector3(1.8f, 1, 1.5f)), lookN, 0);
+        check(pDoor.Ok && pDoor.State == "minecraft:oak_door[facing=north,half=lower,hinge=right,open=false,powered=false]" && pDoor.HasPartner && Eq(pDoor.PartnerCell, V(1, 2, 1)) &&
+              pDoor.PartnerState == "minecraft:oak_door[facing=north,half=upper,hinge=right,open=false,powered=false]", $"door: lower half, upper half above, hinge right from the hit point ({pDoor.State})");
+        Is(Plan(door, w0, V(1, 0, 1), Dir.Up, new Vector3(1.2f, 1, 1.5f), lookN), door, "door clicked on its left side: hinge left");
+        var wDoorWall = PlaceWorld((0, 1, 1, "minecraft:stone"), (0, 2, 1, "minecraft:stone"));
+        Is(Plan(door, wDoorWall, V(1, 0, 1), Dir.Up, new Vector3(1.8f, 1, 1.5f), lookN), door, "door next to a wall on its left: hinge on the wall side (left)");
+        var wLow = PlaceWorld((1, 2, 1, "minecraft:stone"));
+        Is(Plan(door, wLow, V(1, 0, 1), Dir.Up, new Vector3(1.5f, 1, 1.5f), lookN), "refused: can't place: no room for the oak door", "door without room above: refused");
+        var lookE = new Vector3(1, -0.4f, 0.1f);
+        ed.Selected = "minecraft:red_bed[facing=north,occupied=false,part=foot]";
+        var pBed = ed.Plan(w0, HitOn(w0, V(1, 0, 6), Dir.Up, new Vector3(1.5f, 1, 6.5f)), lookE, 0);
+        check(pBed.Ok && pBed.State == "minecraft:red_bed[facing=east,occupied=false,part=foot]" && Eq(pBed.PartnerCell, V(2, 1, 6)) && pBed.PartnerState == "minecraft:red_bed[facing=east,occupied=false,part=head]",
+              $"bed: foot where clicked, head one block the way the user looks ({pBed.State} + {pBed.PartnerState} at {pBed.PartnerCell})");
+        var wBed = PlaceWorld((2, 1, 6, "minecraft:stone"));
+        Is(Plan("minecraft:red_bed[facing=north,occupied=false,part=foot]", wBed, V(1, 0, 6), Dir.Up, new Vector3(1.5f, 1, 6.5f), lookE), "refused: can't place: no room for the red bed", "bed without room for its head: refused");
+        ed.Selected = "minecraft:tall_grass[half=lower]";
+        var pTall = ed.Plan(w0, HitOn(w0, V(7, 0, 7), Dir.Up, new Vector3(7.5f, 1, 7.5f)), lookN, 0);
+        check(pTall.Ok && pTall.State == "minecraft:tall_grass[half=lower]" && Eq(pTall.PartnerCell, V(7, 2, 7)) && pTall.PartnerState == "minecraft:tall_grass[half=upper]", "tall grass: both halves");
+        Is(Plan("minecraft:small_dripleaf[facing=north,half=lower,waterlogged=false]", w0, V(7, 0, 7), Dir.Up, new Vector3(7.5f, 1, 7.5f), lookN),
+           "minecraft:small_dripleaf[facing=south,half=lower,waterlogged=false]", "small dripleaf faces the user");
+        var wTallGrass = PlaceWorld((7, 2, 7, "minecraft:stone"));
+        Is(Plan("minecraft:tall_grass[half=lower]", wTallGrass, V(7, 0, 7), Dir.Up, new Vector3(7.5f, 1, 7.5f), lookN), "refused: can't place: no room for the tall grass", "tall grass without room above: refused");
+
+        // Lanterns, vines, lichen, cocoa, ladders, leaves, rails.
+        Is(On("minecraft:lantern[hanging=false,waterlogged=false]", Dir.Down, under, lookN), "minecraft:lantern[hanging=true,waterlogged=false]", "lantern under a block hangs");
+        Is(On("minecraft:lantern[hanging=false,waterlogged=false]", Dir.Up, top, lookN), "minecraft:lantern[hanging=false,waterlogged=false]", "lantern on top stands");
+        Is(On("minecraft:vine[east=false,north=false,south=false,up=false,west=false]", Dir.East, eastLow, lookN), "minecraft:vine[east=false,north=false,south=false,up=false,west=true]", "vine on a side clings to it");
+        Is(On("minecraft:glow_lichen[down=false,east=false,north=false,south=false,up=false,waterlogged=false,west=false]", Dir.Up, top, lookN),
+           "minecraft:glow_lichen[down=true,east=false,north=false,south=false,up=false,waterlogged=false,west=false]", "glow lichen on top lies on it");
+        Is(On("minecraft:cocoa[age=0,facing=north]", Dir.East, eastLow, lookN), "minecraft:cocoa[age=0,facing=west]", "cocoa on a log's side faces the log");
+        Is(On("minecraft:ladder[facing=north,waterlogged=false]", Dir.East, eastLow, lookN), "minecraft:ladder[facing=east,waterlogged=false]", "ladder on a side faces out");
+        Is(On("minecraft:oak_leaves[distance=7,persistent=false,waterlogged=false]", Dir.Up, top, lookN), "minecraft:oak_leaves[distance=7,persistent=true,waterlogged=false]", "placed leaves are persistent");
+        Is(On("minecraft:rail[shape=north_south,waterlogged=false]", Dir.Up, top, new Vector3(1, -0.5f, 0.2f)), "minecraft:rail[shape=east_west,waterlogged=false]", "rail along the look");
+
+        // Replaceable cells: aim at short grass -> into its cell; place next to grass / one snow layer, not two layers.
+        var wGrass = PlaceWorld((6, 1, 6, "minecraft:short_grass"), (4, 1, 3, "minecraft:snow[layers=1]"), (2, 1, 3, "minecraft:snow[layers=2]"));
+        ed.Selected = "minecraft:dirt";
+        var pg = ed.Plan(wGrass, HitOn(wGrass, V(6, 1, 6), Dir.Up, new Vector3(6.5f, 1.4f, 6.5f)), lookN, 0);
+        check(pg.Ok && Eq(pg.Cell, V(6, 1, 6)), $"aiming at short grass places into its cell (got {pg.Cell})");
+        var ps = ed.Plan(wGrass, HitOn(wGrass, A, Dir.East, eastLow), lookN, 0);
+        check(ps.Ok && Eq(ps.Cell, V(4, 1, 3)), "placing next to a single snow layer replaces it");
+        var ps2 = ed.Plan(wGrass, HitOn(wGrass, A, Dir.West, new Vector3(3, 1.3f, 3.5f)), lookN, 0);
+        check(!ps2.Ok && ps2.Why == "can't place: snow is in the way", $"two snow layers are not replaced ({ps2.Why})");
+        check(BlockRaycast.CanPlaceInto(wGrass, V(6, 1, 6), "minecraft:dirt") && !BlockRaycast.CanPlaceInto(wGrass, V(6, 1, 6), "minecraft:short_grass") && !BlockRaycast.CanPlaceInto(wGrass, A, "minecraft:dirt"),
+              "CanPlaceInto: grass yes (not by itself), stone no");
+        var pgg = ed.Plan(wGrass, BlockRaycast.Cast(wGrass, new Vector3(6.5f, 6, 6.5f), new Vector3(0, -1, 0), 10), new Vector3(0, -1, 0), 0);
+        check(pgg.Ok && Eq(pgg.Cell, V(6, 1, 6)), "the ray stops at the short grass (its outline) and the block replaces it");
+    }
+
+    static void TwoBlockEdits(Action<bool, string> check)
+    {
+        const string lower = "minecraft:oak_door[facing=north,half=lower,hinge=left,open=false,powered=false]";
+        const string upper = "minecraft:oak_door[facing=north,half=upper,hinge=left,open=false,powered=false]";
+        var w = PlaceWorld((1, 1, 1, lower), (1, 2, 1, upper), (6, 1, 6, "minecraft:red_bed[facing=east,occupied=false,part=foot]"), (7, 1, 6, "minecraft:red_bed[facing=east,occupied=false,part=head]"));
+        var ed = new BlockEditor { ServerAllows = true };
+        var msg = ed.Break(w, HitOn(w, V(1, 2, 1), Dir.North, new Vector3(1.5f, 2.5f, 1)), 0);
+        check(msg != null && w.Get(1, 2, 1) == 0 && w.Get(1, 1, 1) == 0 && ed.Pending.Count == 2, "breaking a door's top half removes both halves (optimistically)");
+        ed.OnError(w, Parse("{\"type\":\"error\",\"code\":\"edit_denied\",\"message\":\"no\",\"pos\":[101,62,-39]}"));
+        check(w.State(w.Get(1, 1, 1)) == lower && w.State(w.Get(1, 2, 1)) == upper && ed.Pending.Count == 0, "a refused door break puts both halves back");
+        ed.Break(w, HitOn(w, V(7, 1, 6), Dir.Up, new Vector3(7.5f, 1.56f, 6.5f)), 0);
+        check(w.Get(6, 1, 6) == 0 && w.Get(7, 1, 6) == 0, "breaking a bed's head removes the foot too");
+        // A refused door place reverts both guessed halves.
+        var w2 = PlaceWorld((9, 7, 9, lower), (9, 6, 9, upper));
+        var ed2 = new BlockEditor { ServerAllows = true, Selected = lower };
+        msg = ed2.Place(w2, HitOn(w2, V(1, 0, 1), Dir.Up, new Vector3(1.2f, 1, 1.5f)), new Vector3(0, -0.5f, -1), 0);
+        check(msg != null && msg.S("state") == lower && w2.State(w2.Get(1, 1, 1)) == lower && w2.State(w2.Get(1, 2, 1)) == upper && ed2.Pending.Count == 2, "door placed: both halves shown at once");
+        ed2.OnError(w2, Parse("{\"type\":\"error\",\"code\":\"edit_denied\",\"message\":\"no\",\"pos\":[101,61,-39]}"));
+        check(w2.Get(1, 1, 1) == 0 && w2.Get(1, 2, 1) == 0 && ed2.Pending.Count == 0, "a refused door place takes both halves away");
+    }
+
+    static void Picks(Action<bool, string> check)
+    {
+        var reg = BlockRegistry.From(Parse("{\"type\":\"block_registry\",\"count\":6,\"categories\":[{\"id\":\"building\",\"label\":\"B\",\"blocks\":[" +
+            "\"minecraft:torch\",\"minecraft:oak_door[facing=north,half=lower,hinge=left,open=false,powered=false]\",\"minecraft:wheat[age=0]\"," +
+            "\"minecraft:oak_leaves[distance=7,persistent=false,waterlogged=false]\",\"minecraft:cauldron\",\"minecraft:stone\"]}]," +
+            "\"items\":{},\"variants\":{\"minecraft:wall_torch\":\"minecraft:torch\",\"minecraft:water_cauldron\":\"minecraft:cauldron\"}}"));
+        var w = PlaceWorld((1, 1, 1, "minecraft:wall_torch[facing=east]"), (2, 1, 1, "minecraft:oak_door[facing=east,half=upper,hinge=right,open=true,powered=true]"),
+                           (4, 1, 1, "minecraft:wheat[age=7]"), (5, 1, 1, "minecraft:oak_leaves[distance=2,persistent=false,waterlogged=true]"), (6, 1, 1, "minecraft:water_cauldron[level=2]"));
+        var ed = new BlockEditor { ServerAllows = true, Registry = reg };
+        string PickAt(int x) { ed.Pick(w, HitOn(w, V(x, 1, 1), Dir.Up, new Vector3(x + 0.5f, 2, 1.5f))); return ed.Selected; }
+        check(PickAt(1) == "minecraft:torch", "pick a wall torch -> torch (the item it was placed with)");
+        check(PickAt(2) == "minecraft:oak_door[facing=north,half=lower,hinge=left,open=false,powered=false]", "pick a door's open top half -> the door's default state");
+        check(PickAt(4) == "minecraft:wheat[age=0]", "pick grown wheat -> age 0");
+        check(PickAt(5) == "minecraft:oak_leaves[distance=7,persistent=false,waterlogged=false]", "pick waterlogged leaves -> default (dry; placing makes them persistent)");
+        check(PickAt(6) == "minecraft:cauldron", "pick a water cauldron -> cauldron");
+        var bare = new BlockEditor { ServerAllows = true };
+        check(bare.Base("minecraft:oak_door[facing=east,half=upper,hinge=right,open=true,powered=true]") == "minecraft:oak_door[facing=east,half=lower,hinge=right,open=true,powered=false]" &&
+              bare.Base("minecraft:red_bed[facing=east,occupied=false,part=head]") == "minecraft:red_bed[facing=east,occupied=false,part=foot]" &&
+              bare.Base("minecraft:wheat[age=7]") == "minecraft:wheat[age=0]" && bare.Base("minecraft:oak_slab[type=top,waterlogged=true]") == "minecraft:oak_slab[type=top,waterlogged=false]",
+              "pick without a registry: lower half, foot, age 0, unpowered, dry");
+        // A wall torch still selected (an old hotbar entry) is placed as the torch would be.
+        ed.Selected = "minecraft:wall_torch[facing=north]";
+        var p = ed.Plan(w, HitOn(w, V(3, 1, 3), Dir.Up, new Vector3(3.5f, 2, 3.5f)), new Vector3(0, -0.5f, -1), 0);
+        check(p.Ok && p.State == "minecraft:torch", $"a selected wall torch stands on top ({p.State})");
+        p = ed.Plan(w, HitOn(w, V(3, 1, 3), Dir.East, new Vector3(4, 1.5f, 3.5f)), new Vector3(0, -0.5f, -1), 0);
+        check(p.Ok && p.State == "minecraft:wall_torch[facing=east]", $"...and goes on a wall as a wall torch ({p.State})");
+    }
+
+    /// <summary>Optimistic edits across sectioned deltas (gliding, resizing) and sends the server hasn't answered.</summary>
+    static void Deltas(Action<bool, string> check, Func<string, string> fixture)
+    {
+        Dictionary<string, object> Load(string name) => Parse(System.IO.File.ReadAllText(fixture(name)));
+        var w = new WorldModel();
+        w.ApplySnapshot(SectionedSnapshot.Assemble(new[] { Load("chunk_snapshot_sections.json") }, null, null));
+        var ed = new BlockEditor { ServerAllows = true };
+        ed.OnSnapshot(w, null);
+        // Guesses at (20,5,3) (old section 1, air: place stone) and (5,9,3) (old section 0, leaves the region).
+        ed.Pending.Apply(w, V(20, 5, 3), 1, 0);
+        ed.Pending.Apply(w, V(5, 9, 3), 1, 0);
+        var listed = new List<Vector3Int>();
+        var d = SectionedSnapshot.Assemble(new[] { Load("chunk_snapshot_delta.json") }, w, listed);   // origin +16 x, section 1 listed
+        w.ApplySnapshot(d);
+        ed.OnSnapshot(w, new HashSet<Vector3Int>(listed));
+        check(ed.Pending.Count == 1 && ed.Pending.IsPending(w, V(4, 5, 3)) && w.Get(4, 5, 3) == 1, "delta: a guess in a copied section moves with the origin and stays pending");
+        ed.OnError(w, Parse("{\"type\":\"error\",\"code\":\"edit_denied\",\"message\":\"no\",\"pos\":[20,65,3]}"));
+        check(w.Get(4, 5, 3) == 0 && ed.Pending.Count == 0, "optimistic edit, then delta, then error: the moved guess is reverted (no ghost block)");
+        ed.Pending.Apply(w, V(4, 6, 3), 1, 10);
+        w.SnapshotId = 50; ed.OnSnapshot(w, null);
+        check(ed.Pending.Count == 0, "a full snapshot clears the guesses");
+
+        // A delta that lists the section with the guess: the server's data wins, the entry is dropped (no revert later).
+        var w2 = new WorldModel();
+        w2.ApplySnapshot(SectionedSnapshot.Assemble(new[] { Load("chunk_snapshot_sections.json") }, null, null));
+        var ed2 = new BlockEditor { ServerAllows = true };
+        ed2.OnSnapshot(w2, null);
+        ed2.Pending.Apply(w2, V(20, 5, 3), 1, 0);
+        ed2.Pending.Apply(w2, V(5, 10, 3), 1, 0);
+        var same = Load("chunk_snapshot_delta.json");
+        same["origin"] = new List<object> { 0.0, 60.0, 0.0 };
+        same["base"] = new Dictionary<string, object> { ["snapshot_id"] = 8.0, ["shift"] = new List<object> { 0.0, 0.0, 0.0 } };
+        var listed2 = new List<Vector3Int>();
+        w2.ApplySnapshot(SectionedSnapshot.Assemble(new[] { same }, w2, listed2));
+        ed2.OnSnapshot(w2, new HashSet<Vector3Int>(listed2));
+        check(ed2.Pending.Count == 1 && ed2.Pending.IsPending(w2, V(5, 10, 3)) && w2.Get(5, 10, 3) == 1 && w2.Get(20, 5, 3) == 0,
+              "delta listing a guessed cell's section: the server's value replaces the guess; the other guess stays");
+        check(ed2.Pending.Expire(w2, 3.5) == 1 && w2.Get(5, 10, 3) == 0, "a carried guess still expires after 3 s of silence");
+
+        // Hold-repeat with a block new to the palette: nothing is shown, so the cell counts as taken for a second.
+        var w3 = PlaceWorld();
+        w3.SnapshotId = 1;
+        var ed3 = new BlockEditor { ServerAllows = true, Selected = "minecraft:gold_block" };
+        var hit = HitOn(w3, V(3, 1, 3), Dir.Up, new Vector3(3.5f, 2, 3.5f));
+        var down = new Vector3(0, -1, 0);
+        check(ed3.Place(w3, hit, down, 0) != null && w3.Get(3, 2, 3) == 0, "a new block is sent, not shown");
+        var again = ed3.Plan(w3, hit, down, 0.35);
+        check(!again.Ok && again.Waiting && ed3.Place(w3, hit, down, 0.35) == null && ed3.Result == "waiting for the server", "repeat within a second: not sent again (no warning)");
+        check(ed3.Plan(w3, hit, down, 1.05).Ok, "after a second it may be sent again");
+        ed3.Place(w3, hit, down, 2);
+        var gold = Parse("{\"snapshot_id\":1,\"palette_add\":[\"minecraft:gold_block\"],\"changes\":[[3,2,3,2]]}");
+        ed3.OnBlockUpdate(w3, gold); w3.ApplyBlockUpdate(gold);
+        check(ed3.Pending.UnansweredCount == 0 && w3.State(w3.Get(3, 2, 3)) == "minecraft:gold_block", "the block_update answers the send");
+        ed3.Selected = "minecraft:stone";
+        check(ed3.Place(w3, HitOn(w3, V(6, 0, 6), Dir.Up, new Vector3(6.5f, 1, 6.5f)), down, 3) != null && ed3.Pending.UnansweredCount == 0 &&
+              ed3.Break(w3, HitOn(w3, V(6, 1, 6), Dir.Up, new Vector3(6.5f, 2, 6.5f)), 3.1) != null,
+              "a block shown at once can be broken right away (only unshown sends wait)");
     }
 
     static void Editor(Action<bool, string> check, Func<string, string> fixture)
@@ -236,8 +530,8 @@ static class EditTests
         var hitSea = BlockRaycast.Cast(w, new Vector3(3.5f, 6f, 3.5f), down, 20);
         ed.Selected = "minecraft:oak_slab[type=bottom,waterlogged=false]";
         msg = ed.Place(w, hitSea, down, 40);
-        check(Eq(hitSea.Block, V(3, 0, 3)) && msg.S("state") == "minecraft:oak_slab[type=bottom,waterlogged=false]" && w.State(w.Get(3, 1, 3)) == "minecraft:oak_slab[type=bottom,waterlogged=true]",
-              "aiming through water at the seabed places into the water (waterlogged)");
+        check(Eq(hitSea.Block, V(3, 0, 3)) && msg.S("state") == "minecraft:oak_slab[type=bottom,waterlogged=true]" && w.State(w.Get(3, 1, 3)) == "minecraft:oak_slab[type=bottom,waterlogged=true]",
+              "aiming through water at the seabed places into the water (waterlogged, sent and shown)");
 
         check(ed.Pick(w, BlockRaycast.Cast(w, new Vector3(4.5f, 6f, 4.5f), down, 20)) && ed.Selected == "minecraft:dirt", "B picks the targeted block");
 
@@ -291,7 +585,7 @@ static class EditTests
                             if (!asm.Busy) break;   // more parts to come
                             var res = asm.Wait();
                             if (res.Error != null) { log.Add("snapshot error " + res.Error); break; }
-                            w.ApplySnapshot(res.Snapshot); ed.OnSnapshot();
+                            w.ApplySnapshot(res.Snapshot); ed.OnSnapshot(w, res.Delta ? res.ListedKeys : null);
                             break;
                         case "block_update": ed.OnBlockUpdate(w, m); w.ApplyBlockUpdate(m); break;
                         case "error": log.Add($"error {m.S("code")} {m.S("message")}"); ed.OnError(w, m); break;

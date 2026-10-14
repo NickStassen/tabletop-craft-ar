@@ -350,7 +350,7 @@ namespace TabletopCraft
                     {
                         _registry = BlockRegistry.From(m);
                         _menu.SetRegistry(_registry);
-                        _edit.Editor.Placeable = _registry.IsPlaceable;
+                        _edit.Editor.Registry = _registry;   // placeable blocks, pick defaults, wall forms
                         Debug.Log($"[Tabletop] block registry: {_registry.Count} blocks in {_registry.CategoryIds.Count} categories, {_registry.Variants.Count} variants");
                     }
                     catch (Exception e) { Debug.LogWarning("[Tabletop] bad block_registry: " + e.Message); _hud.Toast("Bad block list from the server", ToastKind.Error); }
@@ -378,7 +378,7 @@ namespace TabletopCraft
             bool had = _world.Loaded;
             var oldOrigin = had ? _world.Origin : s.Origin;
             _world.ApplySnapshot(s);
-            _edit.Editor.OnSnapshot();   // a snapshot replaces block-edit guesses
+            _edit.Editor.OnSnapshot(_world, r.Delta ? r.ListedKeys : null);   // block-edit guesses: dropped, or moved along by a delta
             _renderer.OnSnapshot(r.Plan, oldOrigin, s.Origin);
             if (oldOrigin != s.Origin) _effects.OnRegionChanged();   // [entities] cracks sit at region-local positions
             _caps.ModelVersion = ++_modelVersion;
