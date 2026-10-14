@@ -754,7 +754,7 @@ A separate headless Paper 26.3 test server (JDK 25, offline mode, seed 12345, it
 - **Session helpers** (`World/SessionState.cs`): the setup card after 5 s without a first connection or at once on a fatal close, never for a later drop; the offline badge and hidden figures after 1.5 s; a new server can show the card again; the card text (URL, status, settings path, the Info > Server and QUEST_SETUP Part D pointers, "not retrying" on 4003); `Loading area N %` only for big loads, then `Area loaded` once; keyed toasts update in place, custom lifetimes; hold A fires once after 0.5 s, a tap never, a press that starts on or passes over the menu never.
 - **Orientation** (`World/NavState.cs`): the 8-way compass (north = -Z), the readout (`58 16 41  facing N` for a known view), Reset view's re-centring, the badge's point on the table edge toward the head.
 
-Unity 6000.0.84f1 batch compile clean (no warnings in Assets), ShaderCheck 80 variants 0 errors (no shader changes).
+Unity 6000.0.84f1 batch compile clean (no warnings in Assets), ShaderCheck 80 variants 0 errors (no shader changes), `TabletopBatch.BuildApk` succeeded (46 MB APK, il2cpp in 81 s, not installed). The Android manifest is unchanged: discovery needs no new permission (PROTOCOL.md §7).
 
 ### Live server
 - **Startup log:** `Link listening on ws://0.0.0.0:8802/tabletop`, then one `Headset URL: ws://<lan-ip>:8802/tabletop (<interface>)` per private IPv4 (two on the test box: the Ethernet adapter and a VPN interface), then `LAN discovery on UDP 8802 as "Comfort Test"` (the MOTD).
