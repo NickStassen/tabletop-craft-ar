@@ -70,7 +70,7 @@ namespace TabletopCraft
             _renderer = _blocks.gameObject.AddComponent<TabletopRenderer>();
             _renderer.Model = _world; _renderer.Atlas = _atlas; _renderer.OpaqueMaterial = OpaqueMaterial; _renderer.TransparentMaterial = TransparentMaterial;
             _players = playersT.gameObject.AddComponent<PlayerMarkers>();
-            _players.Model = _world; _players.MarkerMaterial = MarkerMaterial;
+            _players.Model = _world; _players.MarkerMaterial = MarkerMaterial; _players.Atlas = _atlas;
 
             _placement = gameObject.AddComponent<TablePlacement>();
             _placement.Anchor = _anchor; _placement.Head = Head; _placement.RightHand = RightHand;
@@ -186,13 +186,7 @@ namespace TabletopCraft
                 case "block_update": _world.ApplyBlockUpdate(m); break;
                 case "player_positions":
                     var list = new List<PlayerInfo>();
-                    foreach (var o in m.A("players"))
-                    {
-                        var p = (Dictionary<string, object>)o;
-                        var pos = Json.Doubles(p.A("pos"));
-                        list.Add(new PlayerInfo { Uuid = p.S("uuid"), Name = p.S("name"), Pos = new Vector3((float)pos[0], (float)pos[1], (float)pos[2]),
-                            Yaw = (float)p.D("yaw"), Pitch = (float)p.D("pitch"), Sneaking = p.B("sneaking"), Skin = p.S("skin") });
-                    }
+                    foreach (var o in m.A("players")) list.Add(PlayerInfo.From((Dictionary<string, object>)o));
                     _players.Apply(list);
                     break;
                 case "pong":

@@ -133,9 +133,23 @@ namespace TabletopCraft.Net
     public struct PlayerInfo
     {
         public string Uuid, Name, Skin;
+        public string SkinModel; // "wide", "slim" or null (PROTOCOL.md 4.6, optional)
+        public bool HasSkin;     // the message carried "skin" (sent once per UUID per connection, may be null)
         public Vector3 Pos; // world coords (feet)
         public float Yaw, Pitch;
         public bool Sneaking;
+
+        /// <summary>One entry of player_positions.players.</summary>
+        public static PlayerInfo From(Dictionary<string, object> p)
+        {
+            var pos = Json.Doubles(p.A("pos"));
+            return new PlayerInfo
+            {
+                Uuid = p.S("uuid"), Name = p.S("name"), Pos = new Vector3((float)pos[0], (float)pos[1], (float)pos[2]),
+                Yaw = (float)p.D("yaw"), Pitch = (float)p.D("pitch"), Sneaking = p.B("sneaking"),
+                HasSkin = p.ContainsKey("skin"), Skin = p.S("skin"), SkinModel = p.S("skin_model"),
+            };
+        }
     }
 
     /// <summary>Server limits from welcome.limits, region_info.limits or a region_too_large error.</summary>

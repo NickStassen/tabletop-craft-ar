@@ -15,7 +15,8 @@
    "yaw": 135.0,
    "pitch": 10.0,
    "sneaking": false,
-   "skin": "https://textures.minecraft.net/texture/"
+   "skin": "https://textures.minecraft.net/texture/",
+   "skin_model": "slim"
   }
  ]
 }

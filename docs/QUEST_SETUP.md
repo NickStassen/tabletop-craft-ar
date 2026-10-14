@@ -68,7 +68,11 @@ adb push tabletop.json /sdcard/Android/data/com.tabletopcraft.ar/files/tabletop.
 adb shell am force-stop com.tabletopcraft.ar
 ```
 
-Then relaunch the app. Alternatively set **ServerUrl** on the TabletopApp component before building. `block_size_m` 0.01 makes a 32-block region 32 cm wide; `skin_player` is resolved by the server (online lookups; an offline-mode server shows the default skin). The token must match `auth.token` in the plugin config (empty = off).
+Then relaunch the app. Alternatively set **ServerUrl** on the TabletopApp component before building. `block_size_m` 0.01 makes a 32-block region 32 cm wide. The token must match `auth.token` in the plugin config (empty = off).
+
+**Giant skin.** `skin_player` is the Java account whose skin the giant wears. Leave it out to use the plugin's `avatar.skin-player` (config.yml), or the default skin if that's empty too. The plugin looks the name up on Mojang's servers in the background, so the PC running Paper needs internet access. Then `/tabletop avatar status` shows `"skin_resolved":true`, and the server log has `SKIN resolved <name>`. This works with `online-mode=true` (recommended) and also on an offline-mode test server. If the lookup fails (wrong name, no internet), the headset gets a `skin_failed` error. Java clients may still show the skin, because they resolve the name themselves. You can also change the skin from the console with `/tabletop avatar skin <name>`.
+
+**Java players' skins on the table.** Each player's skin comes from their game profile, which only an `online-mode=true` server has. On an offline-mode server, everyone gets the default skin the game would show for their UUID (Steve, Alex and the others), read from your `pack.zip` (Part E). Without a pack they get plain colours.
 
 ## Part E: textures (resource pack)
 
@@ -82,8 +86,8 @@ Don't commit or redistribute the jar or pack.
 ## Part F: test with a second Java player
 
 1. On another PC on the same LAN (or a second launcher profile on the same PC), start Minecraft **26.3** -> Multiplayer -> Direct Connection -> `192.168.1.50`. The player must be whitelisted, or `white-list=false` (Part A step 4).
-2. Walk around inside the region: an orange capsule with your name moves on the table. Break and place blocks: the miniature updates within a second (events are applied next tick, a full diff runs every second).
-3. Look up from inside the region: the giant (up to 28.8 blocks tall, scale 16) follows the headset user's head; the two white blocks follow the controllers or hands. Its head sits exactly where the headset is above the table, so lean in close to the table to bring it down to the terrain.
+2. Walk around inside the region: a small Minecraft figure with your skin and name walks on the table. Its legs and arms swing with your speed, its head turns and tilts with your view, the body follows like in the game, and it crouches when you sneak. The skin appears once it has downloaded (a second or so). Until then the figure shows the default skin. Break and place blocks: the miniature updates within a second (events are applied next tick, a full diff runs every second).
+3. Look for the giant (up to 28.8 blocks tall, scale 16, wearing the `skin_player` skin). With the default `avatar.placement: ground`, it stands on the terrain inside the region, below where the headset is. When you stand back from the table it waits at the region's edge, facing where you look. Its head turns with yours, and the two white blocks move like your controllers or hands relative to your head, scaled up to its size. For the old behaviour, where the head is exactly where the headset is above the table, run `/tabletop avatar placement exact`. At 1 cm/block that puts it far off and high up.
 
 Headset controls: **A** (right) = re-place the world at the right controller; hold **both grips** and move the right hand = drag/rotate; **right thumbstick up/down** = scale the miniature (also changes the giant's mapping).
 
@@ -129,4 +133,6 @@ The floating status text shows `LINK`, `RTT`, `WORLD`, `PACK`, `TABLE`, `POSES` 
 | Pink/black blocks | Shader not found: make sure `Assets/Shaders/Blocks.shader` compiled, or assign the two materials on TabletopApp. |
 | World appears but mirrored | The Z mirror is in TabletopRenderer (vertices) and PlayerMarkers; both must stay. |
 | No table found | Redo Space Setup and mark the table; or press A to place it manually. |
-| Giant floats high | Expected at 1 cm/block: positions are mapped exactly and the body is clamped to scale 16 (see ARCHITECTURE 3.5). Use a larger `block_size_m` (e.g. 0.03) for a "truer" giant. |
+| Giant floats high or is far away | `avatar.placement` is `exact` (see ARCHITECTURE 3.5): positions are mapped exactly and the body is clamped to scale 16. Use `/tabletop avatar placement ground`. |
+| Giant has the default skin | No `skin_player` in tabletop.json and no `avatar.skin-player`, a misspelt name (`skin_failed` in the status text), or no internet on the server PC. Check `/tabletop avatar status` (`skin_resolved`). |
+| Players are plain-coloured figures | They have no skin URL (offline-mode server) and there's no `pack.zip` to take the default skins from (Part E). |
