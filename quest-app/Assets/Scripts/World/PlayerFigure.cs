@@ -122,6 +122,10 @@ namespace TabletopCraft.World
             _parts[i].localRotation = rot;
         }
 
+        // [entities] parts and renderers for held items, armour, the riding pose and the hurt flash (PlayerExtras)
+        public Transform PartTransform(PlayerPart p) => _parts[(int)p];
+        public MeshRenderer[] Renderers => _renderers;
+
         public void Destroy() { if (Root != null) Object.Destroy(Root); }
     }
 }

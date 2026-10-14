@@ -1,6 +1,7 @@
 // Bootstrap: reads config, owns the link, routes protocol messages, and builds the TabletopAnchor hierarchy:
 //   TabletopAnchor (table centre, +Y = up) > RegionRoot (region corner, unscaled) > Blocks (scale = block_size_m)
 //                                                                               > Players
+//                                                                               > Entities ([entities])
 // Config file (optional): <persistentDataPath>/tabletop.json, e.g.
 //   {"server":"ws://192.168.1.50:8765/tabletop","token":"","block_size_m":0.01,"skin_player":""}
 using System;
@@ -50,6 +51,11 @@ namespace TabletopCraft
         readonly SnapshotAssembler _snaps = new SnapshotAssembler();
         readonly Queue<Dictionary<string, object>> _held = new Queue<Dictionary<string, object>>();
         int _modelVersion;
+        // [entities] boats, mobs, items (EntityRenderer), block actions (ActionEffects), their textures
+        EntityRenderer _entities;
+        ActionEffects _effects;
+        EntityTextures _entityTex;
+        readonly List<GameAction> _actions = new List<GameAction>();
 
         void Start()
         {
@@ -78,6 +84,19 @@ namespace TabletopCraft
             _renderer.Model = _world; _renderer.Atlas = _atlas; _renderer.OpaqueMaterial = OpaqueMaterial; _renderer.TransparentMaterial = TransparentMaterial;
             _players = playersT.gameObject.AddComponent<PlayerMarkers>();
             _players.Model = _world; _players.MarkerMaterial = MarkerMaterial; _players.Atlas = _atlas;
+            // [entities] non-player entities next to the players, block actions in block space
+            _entityTex = new EntityTextures { Atlas = _atlas };
+            // Entity models: the user's entity_models.json next to pack.zip (generated from their own client jar). Parsed
+            // on a worker; until then (or without it) entities are boxes, and EntityRenderer rebuilds them when it lands.
+            string modelsPath = Path.Combine(Application.persistentDataPath, EntityModels.FileName);
+            System.Threading.Tasks.Task.Run(() => { EntityModels.LoadFile(modelsPath); Debug.Log("[Tabletop] " + EntityModels.Status); });
+            var entitiesT = new GameObject("Entities").transform; entitiesT.SetParent(_regionRoot, false);
+            _entities = entitiesT.gameObject.AddComponent<EntityRenderer>();
+            _entities.Model = _world; _entities.Textures = _entityTex;
+            _players.Textures = _entityTex; _players.Entities = _entities;
+            _effects = new GameObject("Effects").AddComponent<ActionEffects>();
+            _effects.transform.SetParent(_blocks, false);
+            _effects.Model = _world; _effects.Atlas = _atlas; _effects.Textures = _entityTex; _effects.BlocksMaterial = OpaqueMaterial;
 
             // Eye in water/lava/powder snow/inside a block: fog, passthrough tint, the water's inside faces (EyeEffects.cs).
             var eye = gameObject.AddComponent<EyeEffects>();
@@ -154,6 +173,7 @@ namespace TabletopCraft
             BlockSizeM = bs;
             _blocks.localScale = Vector3.one * bs;
             _players.BlockSizeM = bs;
+            _entities.BlockSizeM = bs;   // [entities]
             RecenterRegion();
             _avatarConfigAt = Time.unscaledTime + 0.3f;
         }
@@ -189,7 +209,7 @@ namespace TabletopCraft
             if (_status)
                 _status.text = $"LINK {(_link.Connected ? "OK" : _link.Status)}  RTT {(_rttMs < 0 ? "-" : _rttMs + "ms")}\n" +
                                $"WORLD {(_world.Loaded ? $"{_world.Dims.x}x{_world.Dims.y}x{_world.Dims.z} @ {_world.Origin}" : "-")}  PACK {(_atlas.HasPack ? "yes" : "flat")}  LIGHT {LightStatus()}\n" +
-                               $"TABLE {_placement.Status}\nPOSES {(_poses ? _poses.Sent : 0)}  MESH {_renderer.Quads / 1000}k faces" +
+                               $"TABLE {_placement.Status}\nPOSES {(_poses ? _poses.Sent : 0)}  MESH {_renderer.Quads / 1000}k faces  ENTITIES {_entities.Count}{(EntityModels.Loaded ? "" : " (boxes)")}" +
                                (_renderer.Pending > 0 ? $" ({_renderer.Pending} sections pending)" : "") + $"  {_lastError}\n" +
                                _nav.Status + "\n" +   // [nav]
                                (_area.Active ? _area.Status : (_area.Status.Length > 0 ? _area.Status : "Y (left) = set up area   left stick = move") + "\n" + _edit.Status);
@@ -236,6 +256,16 @@ namespace TabletopCraft
                     foreach (var o in m.A("players")) list.Add(PlayerInfo.From((Dictionary<string, object>)o));
                     _players.Apply(list);
                     break;
+                case "entities": _entities.Apply(m); break;   // [entities] PROTOCOL.md 4.21
+                case "actions":                                  // [entities] PROTOCOL.md 4.22
+                    _actions.Clear();
+                    GameAction.Parse(m, _actions);
+                    foreach (var a in _actions)
+                    {
+                        if (a.Kind == ActionKind.Swing || a.Kind == ActionKind.Hurt) { if (!_entities.Act(a)) _players.Act(a); }
+                        else _effects.Apply(a);
+                    }
+                    break;
                 case "pong":
                     _rttMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - (long)m.D("echo_t");
                     if (_pingId % 5 == 0) Debug.Log($"[Tabletop] rtt {_rttMs} ms");
@@ -267,6 +297,7 @@ namespace TabletopCraft
             _world.ApplySnapshot(s);
             _edit.Editor.OnSnapshot();   // a snapshot replaces block-edit guesses
             _renderer.OnSnapshot(r.Plan, oldOrigin, s.Origin);
+            if (oldOrigin != s.Origin) _effects.OnRegionChanged();   // [entities] cracks sit at region-local positions
             _caps.ModelVersion = ++_modelVersion;
             _nav.OnSnapshot(s.World, s.Origin, s.Dims, r.ViewMargin);
             Debug.Log($"[Tabletop] snapshot {s.SnapshotId}: {s.Dims} palette {s.Palette.Length} parts {r.Parts}" +
@@ -321,6 +352,7 @@ namespace TabletopCraft
         {
             _link?.Dispose();
             _atlas?.Dispose();
+            _entityTex?.Dispose();   // [entities]
             try { _wifiLock?.Call("release"); } catch { }
         }
     }

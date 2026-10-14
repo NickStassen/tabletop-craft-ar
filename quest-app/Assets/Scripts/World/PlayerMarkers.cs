@@ -19,6 +19,9 @@ namespace TabletopCraft.World
         public Material SkinMaterial;
         /// <summary>Source of the default skins (assets/minecraft/textures/entity/player/... in the user's pack.zip).</summary>
         public ResourcePackAtlas Atlas;
+        // [entities] held items/armour textures, vehicles to sit in, light (PlayerExtras)
+        public EntityTextures Textures;
+        public EntityRenderer Entities;
 
         sealed class Marker
         {
@@ -28,6 +31,7 @@ namespace TabletopCraft.World
             public float TargetYaw, Yaw, TargetPitch, Pitch;
             public bool Sneaking;
             public string SkinUrl;                 // URL the figure wears (or is downloading)
+            public readonly PlayerExtras Extras = new PlayerExtras();   // [entities]
         }
 
         readonly Dictionary<string, Marker> _markers = new Dictionary<string, Marker>();
@@ -62,6 +66,7 @@ namespace TabletopCraft.World
                     _markers[p.Uuid] = m;
                 }
                 m.Target = p.Pos; m.TargetYaw = p.Yaw; m.TargetPitch = p.Pitch; m.Sneaking = p.Sneaking;
+                m.Extras.Update(p, m.Fig, Textures);   // [entities] vehicle, pose, held items, armour
                 if (_skinInfo.TryGetValue(p.Uuid, out var s) && s.url != m.SkinUrl && !string.IsNullOrEmpty(s.url))
                 {
                     m.SkinUrl = s.url;
@@ -72,7 +77,14 @@ namespace TabletopCraft.World
             }
             _gone.Clear();
             foreach (var kv in _markers) if (!_seen.Contains(kv.Key)) _gone.Add(kv.Key);
-            foreach (var k in _gone) { _markers[k].Fig.Destroy(); _markers.Remove(k); }
+            foreach (var k in _gone) { _markers[k].Extras.Destroy(); _markers[k].Fig.Destroy(); _markers.Remove(k); }
+        }
+
+        /// <summary>[entities] An arm swing or hurt flash for a player's entity id (PROTOCOL.md 4.22); false if unknown.</summary>
+        public bool Act(in GameAction a)
+        {
+            foreach (var m in _markers.Values) if (m.Extras.Id == a.Id && a.Id >= 0) { m.Extras.Act(a); return true; }
+            return false;
         }
 
         /// <summary>World feet position -> RegionRoot-local Unity metres (Z mirrored).</summary>
@@ -92,18 +104,22 @@ namespace TabletopCraft.World
             {
                 Vector3 before = m.Shown;
                 m.Shown = Vector3.Lerp(m.Shown, m.Target, k);
+                // [entities] Riding: sit where the vehicle is shown this frame, without walking.
+                if (m.Extras.Riding && Entities != null && Entities.Seat(m.Extras.Vehicle, m.Target, out var seat, out _)) { m.Shown = seat; before = seat; }
                 m.Yaw = Mathf.LerpAngle(m.Yaw, m.TargetYaw, k);
                 m.Pitch = Mathf.Lerp(m.Pitch, m.TargetPitch, k);
                 Vector3 d = m.Shown - before;
                 // A teleport shouldn't make the figure sprint across the table.
                 if ((m.Target - m.Shown).sqrMagnitude > 16f * 16f) { m.Shown = m.Target; d = Vector3.zero; }
                 var pose = m.Anim.Step(dt, d.x, d.z, m.Yaw, m.Pitch, m.Sneaking);
+                m.Extras.AdjustPose(ref pose, dt, m.Pitch);   // [entities] riding/holding arms, swing
                 var root = m.Fig.Root.transform;
                 root.localPosition = ToLocal(m.Shown);
                 // Minecraft yaw 0 faces +Z (south) = Unity -Z after the mirror (Euler Y 180); yaw 90 faces west = Unity -X.
                 root.localRotation = Quaternion.Euler(0, 180f + pose.BodyYaw, 0);
                 root.localScale = Vector3.one * scale;
                 m.Fig.Apply(pose);
+                m.Extras.AfterApply(m.Fig, SkinMaterial, Textures, Entities != null ? Entities.LightAt(m.Shown, 1f) : Color.white);   // [entities]
                 if (cam != null) m.Fig.Label.transform.rotation = Quaternion.LookRotation(m.Fig.Label.transform.position - cam.transform.position);
             }
         }
