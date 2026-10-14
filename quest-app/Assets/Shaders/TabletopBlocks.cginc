@@ -11,7 +11,8 @@
 //   #include "TabletopBlocks.cginc"                   (declares _Blocks)
 //   v2f gets TABLETOP_RANDOM_COORDS(1, 2)             (two unused TEXCOORD indices)
 //   vert: TABLETOP_TRANSFER_RANDOM(o, v)               (after o.uv = v.uv; needs v.vertex, v.normal, v.uv)
-//   frag: fixed4 t = TabletopSampleBlocks(i.uv, i.cellPos, i.randomTable);
+//   frag: TABLETOP_BLOCKS_GRADIENTS(i)                (first line: before any clip/discard, while the 2x2 quad is whole)
+//         fixed4 t = TabletopSampleBlocks(i.uv, i.cellPos, i.randomTable, tbDx, tbDy);
 #ifndef TABLETOP_BLOCKS_INCLUDED
 #define TABLETOP_BLOCKS_INCLUDED
 
@@ -21,6 +22,7 @@ float4 _TabletopCell0;          // per renderer (MaterialPropertyBlock): world b
 float _TabletopBlocksSize;      // global: texels per block (the atlas tile size); 0 until the atlas exists
 
 #define TABLETOP_RANDOM_COORDS(a, b) float3 cellPos : TEXCOORD##a; nointerpolation float randomTable : TEXCOORD##b;
+#define TABLETOP_BLOCKS_GRADIENTS(i) float2 tbDx = ddx((i).uv.xy), tbDy = ddy((i).uv.xy);
 #define TABLETOP_TRANSFER_RANDOM(o, v) { float t_ = (v).uv.z >= 0 ? floor(((v).uv.z + 0.5) / 4096.0) : 0; o.uv.z = (v).uv.z - t_ * 4096.0; o.randomTable = t_; o.cellPos = (v).vertex.xyz - (v).normal * 0.5; }
 
 inline uint TabletopHash(int3 c)
@@ -33,9 +35,8 @@ inline uint TabletopHash(int3 c)
 // The block texture at uv (u, v in block units, z = layer). A face with a random table samples its block's variant:
 // the in-block coordinate turned/mirrored by the variant's code (bit0 swap, bit1 negate u, bit2 negate v). The block
 // is the cell just behind the face (cellPos, object space; meshes are Z mirrored).
-inline fixed4 TabletopSampleBlocks(float3 uv, float3 cellPos, float randomTable)
+inline fixed4 TabletopSampleBlocks(float3 uv, float3 cellPos, float randomTable, float2 dx, float2 dy)
 {
-    float2 dx = ddx(uv.xy), dy = ddy(uv.xy);
     float2 st = uv.xy;
     if (randomTable >= 0.5)
     {

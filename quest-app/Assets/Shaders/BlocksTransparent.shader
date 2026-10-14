@@ -41,9 +41,10 @@ Shader "TabletopCraft/BlocksTransparent"
             }
             fixed4 frag (v2f i) : SV_Target
             {
+                TABLETOP_BLOCKS_GRADIENTS(i)   // uv gradients for the mips, before the clip discards anything
                 TABLETOP_CLIP(i)   // [nav] clip volume
                 fixed4 c = i.color;
-                if (_HasTex > 0.5 && i.uv.z >= 0) c *= TabletopSampleBlocks(i.uv, i.cellPos, i.randomTable);   // [random]
+                if (_HasTex > 0.5 && i.uv.z >= 0) c *= TabletopSampleBlocks(i.uv, i.cellPos, i.randomTable, tbDx, tbDy);   // [random], mips
                 clip(c.a - 0.01);
                 c.rgb = TabletopFog(c.rgb, i.fogPos);   // eye-in-fluid fog
                 return c;
