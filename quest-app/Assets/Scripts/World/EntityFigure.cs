@@ -24,7 +24,9 @@ namespace TabletopCraft.World
         Vector3[] _defaultRad;
         float[] _rot;
         Transform _spin;                 // items: spinning node
+        EntityInfo _info;                // model figures: the entity they were built for (armour stand pose, invisibility)
         readonly List<MeshRenderer> _renderers = new List<MeshRenderer>();
+        readonly List<MeshRenderer> _body = new List<MeshRenderer>();   // the model and its second layer, not gear
         readonly MaterialPropertyBlock _mpb = new MaterialPropertyBlock();
         Color _color = Color.white, _overlay = new Color(1, 0, 0, 0);
         EntityGear _gear;
@@ -40,6 +42,7 @@ namespace TabletopCraft.World
                     _model = EntityModels.Get(look.Model);
                     if (_model == null) { BuildBox(e, tex); break; }
                     _rig = EntityRig.For(_model);
+                    _info = e;
                     BuildModel(tex);
                     break;
                 case EntityKind.Item: BuildItem(e, tex); break;
@@ -91,8 +94,10 @@ namespace TabletopCraft.World
                 t.localScale = new Vector3(p.Sx, p.Sy, p.Sz);
                 _parts[p.Index] = t;
                 bool hidden = Look.HideArms && (p.Name == "right_arm" || p.Name == "left_arm");
+                // Armour stands: arms and base plate only when the stand has them, never the humanoid hat.
+                if (Look.ArmorStand && EntityCatalog.StandPart(_info, p.Name, 0, out _, out bool shown) && !shown) hidden = true;
                 var mesh = EntityMeshes.Part(_model, p);
-                if (mesh != null && !hidden) AddRenderer(t.gameObject, mesh, mat);
+                if (mesh != null && !hidden) { AddRenderer(t.gameObject, mesh, mat); _body.Add(_renderers[_renderers.Count - 1]); }
             }
             if (Look.ExtraModel != null)
             {
@@ -114,10 +119,23 @@ namespace TabletopCraft.World
                         if (hp != null && (hp.Rx != p.Rx || hp.Ry != p.Ry || hp.Rz != p.Rz))
                             go.transform.localRotation = Quaternion.Inverse(_defaults[hp.Index]) * Rot(p.Rx, p.Ry, p.Rz);
                         AddRenderer(go, mesh, emat);
+                        _body.Add(_renderers[_renderers.Count - 1]);
                     }
             }
             if (Look.Contents != null) BuildBlock(Look.Contents, tex, 12f, new Vector3(0, 10.5f, 0));
+            if (Look.ArmorStand) PoseStand(0);
             TopPx = Look.Root == RootKind.Living ? Height() : 16;
+            // LivingEntityRenderer: an invisible mob's model and its layers (wool, clothes, slime shell) aren't drawn;
+            // its armour and held items are (EntityGear hangs them on the same, still animated, part transforms).
+            if (_info.Invisible) foreach (var r in _body) r.enabled = false;
+        }
+
+        /// <summary>Armour stands: the pose replaces the animated rotations (EntityCatalog.StandPart).</summary>
+        void PoseStand(float yaw)
+        {
+            foreach (var p in _model.Parts)
+                if (EntityCatalog.StandPart(_info, p.Name, yaw, out var deg, out _))
+                    _parts[p.Index].localRotation = Rot(deg.x * Mathf.Deg2Rad, deg.y * Mathf.Deg2Rad, deg.z * Mathf.Deg2Rad);
         }
 
         /// <summary>Game rotation Z * Y * X (radians) as a Unity quaternion (same numbers, see PlayerModel).</summary>
@@ -170,6 +188,7 @@ namespace TabletopCraft.World
         /// <summary>Applies one frame of animation (rotation deltas on the default pose of each animated part).</summary>
         public void Animate(in EntityAnimInput a, float pitchDeg)
         {
+            if (_rig != null && Look.ArmorStand) { PoseStand(a.BodyYaw); return; }
             if (_rig != null)
             {
                 EntityAnimation.Pose(_rig, a, _rot);

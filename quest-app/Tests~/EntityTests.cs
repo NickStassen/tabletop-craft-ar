@@ -70,6 +70,7 @@ static class EntityTests
         check(east.x > 3.9f && Math.Abs(east.z) < 1e-3f && south.z < -3.9f && up.y > 1.9f && up.x > 3.4f,
               $"arrow flying east points east (unity {east.x:F2},{east.z:F2}), south points -Z ({south.z:F2}), pitched up points up ({up.y:F2})");
         var a = EntityCatalog.Resolve(new EntityInfo { Type = "minecraft:arrow" }); var tr = EntityCatalog.Resolve(new EntityInfo { Type = "minecraft:trident" });
+        StandFixture(check);
         var cr = EntityCatalog.Resolve(new EntityInfo { Type = "minecraft:end_crystal" });
         check(a.Root == RootKind.Projectile && EntityCatalog.Resolve(new EntityInfo { Type = "minecraft:spectral_arrow" }).Root == RootKind.Projectile &&
               tr.Root == RootKind.Trident && cr.Root == RootKind.Crystal && cr.Scale == 2, "catalog: arrows are projectiles, the trident its own root, the end crystal at scale 2");
@@ -77,6 +78,32 @@ static class EntityTests
         check(Math.Abs(CrystalAnimation.BobPx(0) + 8.8f) < 1e-3f && CrystalAnimation.SpinDeg(10) == 30f &&
               Enumerable.Range(0, 200).All(t => CrystalAnimation.BobPx(t) >= -11.2f - 1e-3f && CrystalAnimation.BobPx(t) <= -4.8f + 1e-3f),
               "end crystal glass bobs between 4.8 and 11.2 px below its pivot and spins 3 deg per tick");
+    }
+
+    /// <summary>Armour stands (PROTOCOL.md 4.21 arms / base_plate / stand_pose) from tools/fixtures/entities_armor_stand.json,
+    /// and how the figure poses them (EntityCatalog.StandPart, ArmorStandModel.setupAnim).</summary>
+    static void StandFixture(Action<bool, string> check)
+    {
+        string path = null;
+        for (var d = new System.IO.DirectoryInfo(AppContext.BaseDirectory); d != null && path == null; d = d.Parent)
+        { var p = System.IO.Path.Combine(d.FullName, "tools", "fixtures", "entities_armor_stand.json"); if (System.IO.File.Exists(p)) path = p; }
+        var s = new EntityStore();
+        s.Apply(Json.Parse(System.IO.File.ReadAllText(path)) as Dictionary<string, object>, null);
+        EntityInfo plain = s.Get(201), posed = s.Get(202), small = s.Get(203);
+        check(plain.BasePlate && !plain.Arms && plain.StandPose == null && posed.Arms && !posed.BasePlate && posed.StandPose[9] == -110 && posed.StandPose[10] == 25 &&
+              posed.StandPose[13] == 0 && small.Small && small.Invisible && small.BasePlate && small.Hand("head") == "minecraft:iron_helmet",
+              "armour stand fixture: base plate, arms, pose (right arm -110/25/10), small invisible stand with a helmet");
+        bool Part(EntityInfo e, string n, float yaw, out Vector3 d, out bool v) => EntityCatalog.StandPart(e, n, yaw, out d, out v);
+        Part(plain, "left_arm", 0, out var la, out bool laShown); Part(plain, "right_leg", 0, out var rl, out _);
+        Part(posed, "right_arm", 0, out var ra, out bool raShown); Part(posed, "shoulder_stick", 0, out var sh, out _);
+        Part(plain, "base_plate", 45, out var bp, out bool bpShown); Part(posed, "base_plate", -90, out _, out bool posedPlate);
+        Part(plain, "hat", 0, out _, out bool hat);
+        check(!laShown && la.x == -10 && la.z == -10 && rl.x == 1 && rl.z == 1 && raShown && ra.x == -110 && ra.y == 25 && sh.y == 5 &&
+              bpShown && bp.y == -45 && !posedPlate && !hat && !Part(plain, "tail", 0, out _, out _),
+              "armour stand parts: vanilla default pose without stand_pose, arms only with arms, sticks follow the body, the base plate turns against the yaw, no hat");
+        // Removing a stand's pose (null) goes back to the default pose; full lists clear arms/base plate.
+        s.Apply(Json.Parse("{\"full\":false,\"entities\":[{\"id\":202,\"stand_pose\":null,\"arms\":false}]}") as Dictionary<string, object>, null);
+        check(s.Get(202).StandPose == null && !s.Get(202).Arms, "armour stand delta: stand_pose null and arms false clear them");
     }
 
     static Dictionary<string, object> Load(Func<string, string> fixture, string name) =>

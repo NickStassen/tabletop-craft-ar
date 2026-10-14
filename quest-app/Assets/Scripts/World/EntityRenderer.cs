@@ -151,7 +151,7 @@ namespace TabletopCraft.World
                     WalkPos = s.Walk.Pos, WalkSpeed = s.Walk.Speed,
                     HeadYaw = Mathf.Clamp(Mathf.DeltaAngle(s.Body, s.Yaw), -85f, 85f), HeadPitch = s.Pitch,
                     AgeTicks = s.Age, AttackTime = attack, OffHandSwing = s.Swing.OffHand,
-                    OnGround = e.OnGround, ArmsForward = look.ArmsForward, Riding = riding,
+                    OnGround = e.OnGround, ArmsForward = look.ArmsForward, Riding = riding, BodyYaw = e.HasBodyYaw ? s.Body : s.Yaw,
                 };
                 s.Fig.Animate(anim, s.Pitch);
 

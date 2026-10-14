@@ -29,6 +29,7 @@ namespace TabletopCraft.World
         public float Scale = 1;
         public bool ArmsForward;                   // zombies hold their arms out
         public bool HideArms;                      // illagers: crossed "arms" part instead of right_arm/left_arm
+        public bool ArmorStand;                    // posed by StandPart, not animated
         public string Item;                        // Item/Block/Frame: what to show; minecart contents
         public string Contents;                    // minecart display block (item id)
         public Color32 BoxColor = White;           // fallback box
@@ -87,7 +88,35 @@ namespace TabletopCraft.World
             }
         }
 
-        static readonly HashSet<string> Woods = new HashSet<string> { "oak", "spruce", "birch", "jungle", "acacia", "cherry", "dark_oak", "pale_oak", "mangrove", "poplar" };
+        /// <summary>
+        /// Armour stands (ArmorStandArmorModel / ArmorStandModel.setupAnim): a part's rotation in degrees (game numbers,
+        /// which figure space keeps) and whether it is drawn. The pose replaces the default rotations of head, body,
+        /// arms and legs; the body and shoulder sticks follow the body; the base plate turns against the stand's yaw so
+        /// it stays square to the world; arms only with "arms", the base plate only with "base_plate"; the humanoid hat
+        /// never. False for parts the stand doesn't drive.
+        /// </summary>
+        public static bool StandPart(EntityInfo e, string part, float yawDeg, out Vector3 deg, out bool visible)
+        {
+            deg = new Vector3(0, 0, 0); visible = true;
+            var p = e.StandPose ?? EntityInfo.DefaultStandPose;
+            int i;
+            switch (part)
+            {
+                case "head": i = 0; break;
+                case "body": case "right_body_stick": case "left_body_stick": case "shoulder_stick": i = 1; break;
+                case "left_arm": i = 2; visible = e.Arms; break;
+                case "right_arm": i = 3; visible = e.Arms; break;
+                case "left_leg": i = 4; break;
+                case "right_leg": i = 5; break;
+                case "base_plate": deg = new Vector3(0, -yawDeg, 0); visible = e.BasePlate; return true;
+                case "hat": visible = false; return true;
+                default: return false;
+            }
+            deg = new Vector3(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]);
+            return true;
+        }
+
+        static readonly HashSet<string> Woods =new HashSet<string> { "oak", "spruce", "birch", "jungle", "acacia", "cherry", "dark_oak", "pale_oak", "mangrove", "poplar" };
         // Thrown things drawn as their item sprite.
         static readonly Dictionary<string, string> ThrownItems = new Dictionary<string, string>
         {
@@ -266,7 +295,7 @@ namespace TabletopCraft.World
                 case "magma_cube": Set(L, "magma_cube", "entity/slime/magmacube"); L.Scale = Math.Max(0.5f, e.Width / 0.52f); return L;
                 case "phantom": return Set(L, "phantom", "entity/phantom/phantom");
                 case "shulker": return Set(L, "shulker", e.Color == null ? "entity/shulker/shulker" : "entity/shulker/shulker_" + e.Color);
-                case "armor_stand": return Set(L, e.Small ? "armor_stand_small" : "armor_stand", "entity/armorstand/armorstand");
+                case "armor_stand": Set(L, e.Small ? "armor_stand_small" : "armor_stand", "entity/armorstand/armorstand"); L.ArmorStand = true; return L;
                 case "arrow": case "spectral_arrow":
                     return Set(L, "arrow", t == "arrow" ? "entity/projectiles/arrow" : "entity/projectiles/arrow_spectral", RootKind.Projectile);
                 case "trident": return Set(L, "trident", "entity/trident/trident", RootKind.Trident);

@@ -92,6 +92,7 @@ namespace TabletopCraft.World
         public float AgeTicks;
         public float AttackTime;            // 0 = no swing, else 0..1 through the arm swing
         public bool OffHandSwing, OnGround, ArmsForward, Riding;
+        public float BodyYaw;               // degrees, the figure's yaw (armour stand base plates turn against it)
     }
 
     public static class EntityAnimation
