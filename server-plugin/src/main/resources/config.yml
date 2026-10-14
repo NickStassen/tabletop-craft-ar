@@ -30,21 +30,31 @@ stream:
 avatar:
   # Real metres per block on the table; the Quest overrides it with avatar_config.
   block-size-m: 0.01
-  # Cap on the Mannequin SCALE attribute (16 = 28.8 blocks tall, the attribute's maximum).
+  # What Java players see of the headset user (ARCHITECTURE.md 3.5):
+  #   floating: a giant player head (your skin) and two hands, no body, exactly where the headset and controllers
+  #             are relative to the table (origin + pose / block-size-m), turned with them (yaw, pitch and roll).
+  #   ground:   a Mannequin body standing on the terrain under the headset's X/Z, clamped into the region; hands
+  #             keep your real head-to-hand offsets scaled up to its size.
+  #   exact:    a Mannequin whose head and hands are at the mapped positions; the body hangs below the head.
+  placement: floating
+  # floating: real head and hand sizes, scaled like the table (0.25 m at 0.01 m/block = a 25-block head).
+  head-size-m: 0.25
+  hand-size-m: 0.1
+  # floating: largest head in blocks; the hands shrink by the same factor (0 = no cap).
+  max-head-blocks: 64
+  # floating: hand block, or "auto" for the plain block closest to the skin's hand colour.
+  hand-block: auto
+  # ground/exact: cap on the Mannequin SCALE attribute (16 = 28.8 blocks tall, the attribute's maximum).
   max-scale: 16.0
-  # Real height of the headset user. Hand offsets are scaled by giant height / this.
+  # ground/exact: real height of the headset user. Hand offsets are scaled by giant height / this.
   user-height-m: 1.75
-  # Where the giant stands (ARCHITECTURE.md 3.5):
-  #   ground: on the terrain under the headset's head X/Z, clamped into the region; head turns with the
-  #           headset; hands keep your real head-to-hand offsets scaled up to the giant's size.
-  #   exact:  head and hands at exactly origin + pose / block-size-m (far away and high up at small block sizes).
-  placement: ground
-  # Per-tick smoothing of the giant's position and head rotation, 0.05..1 (1 = off). Jumps over 16 blocks snap.
+  # ground/exact: per-tick smoothing of the Mannequin's position and head rotation, 0.05..1 (1 = off). Jumps
+  # over 16 blocks snap. Floating displays are smoothed by the clients (interpolation-ticks).
   smoothing: 0.5
   # Java account whose skin the giant wears when the headset sends no skin_player (tabletop.json). The server
   # looks it up on the Mojang API (works in offline mode too, needs internet); Java clients also resolve it.
   skin-player: ""
-  # Teleport/transform interpolation of the hand displays, in ticks.
+  # Teleport/transform interpolation of the head and hand displays, in ticks.
   interpolation-ticks: 2
   # Spawn the giant when poses arrive even if no avatar_config was sent.
   spawn-on-first-pose: true
