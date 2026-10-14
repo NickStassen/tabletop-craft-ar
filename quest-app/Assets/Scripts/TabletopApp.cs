@@ -39,8 +39,16 @@ namespace TabletopCraft
         TablePlacement _placement;
         AreaSetupMode _area;
         BlockEditMode _edit;   // block editing from the headset (XR/BlockEditMode.cs)
+        // [menu] block menu + hotbar (XR/BlockMenu.cs), its icons, the server's block list, and the HUD that replaced
+        // the head-locked status text (XR/Hud.cs: toasts, area-setup panel, optional small status).
+        BlockMenu _menu;
+        BlockIconAtlas _icons;
+        BlockRegistry _registry;
+        Hud _hud;
+        bool _showHud;
+        readonly LinkWatch _linkWatch = new LinkWatch();
+        string _lastAreaStatus = "", _lastEditResult = "";
         string _session;
-        TextMesh _status;
         float _nextPing; int _pingId; long _rttMs = -1;
         float _avatarConfigAt = -1;   // send avatar_config once scaling settles, not every frame
         string _lastError = "";
@@ -126,8 +134,26 @@ namespace TabletopCraft
             _edit = gameObject.AddComponent<BlockEditMode>();
             _edit.Blocks = _blocks; _edit.RightHand = RightHand; _edit.Head = Head; _edit.World = () => _world; _edit.Atlas = _atlas;
             _edit.OpaqueMaterial = OpaqueMaterial; _edit.TransparentMaterial = TransparentMaterial; _edit.Nav = _nav.State;
-            _edit.Send = b => _link.Send(b); _edit.Online = () => _link.Connected; _edit.Blocked = () => _area.Active;
+            _edit.Send = b => _link.Send(b); _edit.Online = () => _link.Connected;
+            _edit.Blocked = () => _area.Active || _menu.CapturesRight;   // [menu] the right ray on the menu clicks the menu
             _edit.ModelChanged = () => _caps.ModelVersion = ++_modelVersion;   // optimistic edits re-slice the clip caps too
+
+            // [menu] Block menu (left ≡): categories from the server's block_registry, search, hotbar, Info tab; icons
+            // rendered from pack.zip on a worker and cached under persistentDataPath/icons. While the right ray is on the
+            // panel, editing, gliding, turning and scaling pause (the trigger and right stick belong to the menu).
+            _icons = new BlockIconAtlas(ResourcePackAtlas.DefaultPath, Path.Combine(Application.persistentDataPath, "icons"));
+            _menu = gameObject.AddComponent<BlockMenu>();
+            _menu.Head = Head; _menu.LeftHand = LeftHand; _menu.RightHand = RightHand; _menu.Icons = _icons;
+            _menu.Blocked = () => _area.Active; _menu.CanEdit = () => _edit.Editor.ServerAllows; _menu.InfoText = StatusText;
+            _menu.SelectedChanged = s => _edit.Editor.Selected = s;
+            _menu.Model.ShowHud = _showHud;
+            _menu.HudChanged = on => _hud.ShowHud = on;
+            _edit.Picked = s => _menu.OnPicked(s);
+            _nav.Suspended = () => _area.Active || _menu.CapturesRight;
+            _placement.StickBlocked = () => _menu.CapturesRight;
+            _hud = gameObject.AddComponent<Hud>();
+            _hud.Head = Head; _hud.LeftHand = LeftHand; _hud.StatusText = StatusText; _hud.ShowHud = _showHud;
+            _hud.AreaActive = () => _area.Active; _hud.AreaText = () => _area.Status;
 
             _link = new LinkClient(ServerUrl, Token);
             _link.Start();
@@ -138,7 +164,6 @@ namespace TabletopCraft
                 _poses.SnapshotId = () => _world.SnapshotId;   // [nav] the frame the pose is in (PROTOCOL.md 4.7)
             }
             SetBlockSize(BlockSizeM, false);
-            CreateStatus();
             AcquireWifiLock();
             Debug.Log($"[Tabletop] server {ServerUrl}, pack: {_atlas.Status}");
         }
@@ -157,6 +182,7 @@ namespace TabletopCraft
                 BlockShading.SmoothLighting = c.B("smooth_lighting", true);       // lighting look (BlockShading.cs)
                 BlockShading.Brightness = (float)c.D("brightness", BlockShading.Brightness);   // vanilla slider, default 1 = Bright
                 BlockShading.MinLight = (float)c.D("min_light", BlockShading.MinLight);         // brightness of light level 0
+                _showHud = c.B("show_hud", false);   // [menu] small head-locked status (also "Show HUD" in the menu's Info tab)
             }
             catch (Exception e) { Debug.LogWarning("[Tabletop] bad tabletop.json: " + e.Message); }
         }
@@ -206,13 +232,38 @@ namespace TabletopCraft
                 _avatarConfigAt = -1;   // while disconnected, welcome sends the current block size anyway
                 if (_link.Connected) _link.Send(Protocol.AvatarConfig(true, BlockSizeM, SkinPlayer, true, "Tabletop Giant"));
             }
-            if (_status)
-                _status.text = $"LINK {(_link.Connected ? "OK" : _link.Status)}  RTT {(_rttMs < 0 ? "-" : _rttMs + "ms")}\n" +
-                               $"WORLD {(_world.Loaded ? $"{_world.Dims.x}x{_world.Dims.y}x{_world.Dims.z} @ {_world.Origin}" : "-")}  PACK {(_atlas.HasPack ? "yes" : "flat")}  LIGHT {LightStatus()}\n" +
-                               $"TABLE {_placement.Status}\nPOSES {(_poses ? _poses.Sent : 0)}  MESH {_renderer.Quads / 1000}k faces  ENTITIES {_entities.Count}{(EntityModels.Loaded ? "" : " (boxes)")}" +
-                               (_renderer.Pending > 0 ? $" ({_renderer.Pending} sections pending)" : "") + $"  {_lastError}\n" +
-                               _nav.Status + "\n" +   // [nav]
-                               (_area.Active ? _area.Status : (_area.Status.Length > 0 ? _area.Status : "Y (left) = set up area   left stick = move") + "\n" + _edit.Status);
+            Notify();   // [menu] toasts instead of the head-locked status text
+        }
+
+        /// <summary>[menu] The full status (the block menu's Info tab, and the small HUD when "Show HUD" is on).</summary>
+        string StatusText() =>
+            $"LINK {(_link.Connected ? "OK" : _link.Status)}  RTT {(_rttMs < 0 ? "-" : _rttMs + "ms")}\n" +
+            $"WORLD {(_world.Loaded ? $"{_world.Dims.x}x{_world.Dims.y}x{_world.Dims.z} @ {_world.Origin}" : "-")}  PACK {(_atlas.HasPack ? "yes" : "flat")}  LIGHT {LightStatus()}\n" +
+            $"TABLE {_placement.Status}\nPOSES {(_poses ? _poses.Sent : 0)}  MESH {_renderer.Quads / 1000}k faces  ENTITIES {_entities.Count}{(EntityModels.Loaded ? "" : " (boxes)")}" +
+            (_renderer.Pending > 0 ? $" ({_renderer.Pending} sections pending)" : "") + $"  {_lastError}\n" +
+            _nav.Status + "\n" +   // [nav]
+            (_area.Active ? _area.Status : (_area.Status.Length > 0 ? _area.Status : "Y (left) = set up area   left stick = move") + "\n" + _edit.Status) +
+            $"\nBLOCKS {(_registry != null ? _registry.Count + " placeable" : "-")}  {_icons.Status}";
+
+        /// <summary>[menu] Events that used to be read off the status text: link lost/restored, area results, local edit refusals.</summary>
+        void Notify()
+        {
+            string link = _linkWatch.Update(_link.Connected);
+            if (link != null) _hud.Toast(link, link.StartsWith("Link lost") ? ToastKind.Warn : ToastKind.Info);
+            if (!_area.Active && _area.Status != _lastAreaStatus)
+            {
+                _lastAreaStatus = _area.Status;
+                bool bad = _area.Status.StartsWith("server refused") || _area.Status.StartsWith("cannot");
+                if (_area.Status.Length > 0) _hud.Toast(char.ToUpperInvariant(_area.Status[0]) + _area.Status.Substring(1), bad ? ToastKind.Error : ToastKind.Info);
+            }
+            else if (_area.Active) _lastAreaStatus = _area.Status;
+            string r = _edit.Editor.Result;
+            if (r != _lastEditResult)
+            {
+                _lastEditResult = r;
+                if (r.StartsWith("can't") || r.StartsWith("not connected") || r.StartsWith("editing is off") || r.StartsWith("the server has no"))
+                    _hud.Toast(char.ToUpperInvariant(r[0]) + r.Substring(1), ToastKind.Warn);
+            }
         }
 
         /// <summary>Status text: server light (smooth/flat/off), biome count and whether the pack has colour maps.</summary>
@@ -276,9 +327,22 @@ namespace TabletopCraft
                 case "avatar_state":
                     Debug.Log($"[Tabletop] avatar enabled={m.B("enabled")} scale={m.D("scale")} note={m.S("note")}");
                     break;
+                case BlockRegistry.Type:   // [menu] every placeable block (PROTOCOL.md 4.24)
+                    try
+                    {
+                        _registry = BlockRegistry.From(m);
+                        _menu.SetRegistry(_registry);
+                        _edit.Editor.Placeable = _registry.IsPlaceable;
+                        Debug.Log($"[Tabletop] block registry: {_registry.Count} blocks in {_registry.CategoryIds.Count} categories, {_registry.Variants.Count} variants");
+                    }
+                    catch (Exception e) { Debug.LogWarning("[Tabletop] bad block_registry: " + e.Message); _hud.Toast("Bad block list from the server", ToastKind.Error); }
+                    break;
                 case "error":
                     _lastError = $"{m.S("code")}: {m.S("message")}";
+                    string areaBefore = _area.Status;   // [menu]
                     _area.OnError(m);
+                    // [menu] a toast, unless area setup reports it itself (its status becomes a toast in Notify)
+                    if (_area.Status == areaBefore && HudText.ForError(m.S("code"), m.S("message")) is string toast) _hud.Toast(toast, ToastKind.Error);
                     _edit.Editor.OnError(_world, m);   // undoes an optimistic edit the server refused
                     if (m.S("code") == "region_too_large" && _nav.State.Pending) _nav.OnRegionError(m.S("message"));   // [nav]
                     Debug.LogWarning("[Tabletop] server error " + _lastError);
@@ -314,17 +378,6 @@ namespace TabletopCraft
             _link.Send(new Dictionary<string, object> { ["type"] = "error", ["code"] = "bad_snapshot", ["message"] = why, ["snapshot_id"] = snapshotId, ["fatal"] = false });
         }
 
-        void CreateStatus()
-        {
-            if (!Head) return;
-            var go = new GameObject("Status");
-            go.transform.SetParent(Head, false);
-            go.transform.localPosition = new Vector3(0, -0.25f, 0.8f);
-            _status = go.AddComponent<TextMesh>();
-            SetBuiltinFont(_status);
-            _status.characterSize = 0.008f; _status.fontSize = 48; _status.anchor = TextAnchor.UpperCenter; _status.color = new Color(0.6f, 1f, 1f);
-        }
-
         /// <summary>A TextMesh added from code has no font and draws nothing: use the built-in one (always in the player).</summary>
         public static void SetBuiltinFont(TextMesh t)
         {
@@ -353,6 +406,7 @@ namespace TabletopCraft
             _link?.Dispose();
             _atlas?.Dispose();
             _entityTex?.Dispose();   // [entities]
+            _icons?.Dispose();       // [menu] stops the icon worker
             try { _wifiLock?.Call("release"); } catch { }
         }
     }

@@ -405,7 +405,7 @@ namespace TabletopCraft.World
                 var raw = new byte[px.Length * 4];
                 for (int i = 0; i < px.Length; i++) { raw[i * 4] = px[i].r; raw[i * 4 + 1] = px[i].g; raw[i * 4 + 2] = px[i].b; raw[i * 4 + 3] = px[i].a; }
                 string f = FileOf(key), tmp = f + ".tmp";
-                using (var fs = File.Create(tmp)) using (var z = new DeflateStream(fs, CompressionLevel.Fastest)) z.Write(raw, 0, raw.Length);
+                using (var fs = File.Create(tmp)) using (var z = new DeflateStream(fs, System.IO.Compression.CompressionLevel.Fastest)) z.Write(raw, 0, raw.Length);
                 if (File.Exists(f)) File.Delete(f);
                 File.Move(tmp, f);
             }
