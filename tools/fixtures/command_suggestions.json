@@ -1,0 +1,12 @@
+{
+ "v": 1,
+ "type": "command_suggestions",
+ "seq": 96,
+ "t": 1760370006505,
+ "ref_seq": 82,
+ "start": 9,
+ "items": [
+  "advance_time",
+  "advance_weather"
+ ]
+}

@@ -1,0 +1,13 @@
+{
+ "v": 1,
+ "type": "chat",
+ "seq": 42,
+ "t": 1760370005200,
+ "kind": "operator",
+ "from": {
+  "name": "Nick",
+  "session": "6f1c"
+ },
+ "text": "hello from the table",
+ "line": "[Giant] Nick: hello from the table"
+}

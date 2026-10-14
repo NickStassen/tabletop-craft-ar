@@ -1,0 +1,15 @@
+{
+ "v": 1,
+ "type": "command",
+ "seq": 80,
+ "t": 1760370006000,
+ "line": "summon minecraft:lightning_bolt ~ ~1 ~",
+ "at": {
+  "world": "world",
+  "pos": [
+   105,
+   64,
+   -35
+  ]
+ }
+}
