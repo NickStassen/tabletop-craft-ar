@@ -81,15 +81,30 @@ namespace TabletopCraft.World
         /// <summary>A new snapshot (or region_changed) defines the region. Keeps the view where it is in the world when it can.</summary>
         public void OnRegion(string world, Vector3Int origin, Vector3Int dims, Vector3Int margin, float now)
         {
-            bool reset = !Loaded || world != World || dims != Dims || ClampMargin(margin, dims) != Margin;
+            bool resized = Loaded && world == World && (dims != Dims || ClampMargin(margin, dims) != Margin);
+            bool reset = !Loaded || world != World || resized;
             var moved = new Vector3Int(origin.x - Origin.x, origin.y - Origin.y, origin.z - Origin.z);
+            var oldView = View;
             Loaded = true; World = world ?? World; Origin = origin; Dims = dims; Margin = ClampMargin(margin, dims);
             for (int a = 0; a < 3; a++) if (moved[a] != 0) _lastDir[a] = Math.Sign(moved[a]);
             // The latency that matters ends when the new terrain is meshed (OnSettled), not when the snapshot lands.
             if (Pending) { _settleFrom = _pendingSince; Pending = false; }
             var c = RegionCentre;
             for (int a = 0; a < 3; a++) _over[a] = 0;
-            if (reset) { View = c; _padRefused = false; for (int a = 0; a < 3; a++) _lastDir[a] = 0; return; }
+            if (reset)
+            {
+                View = c; _padRefused = false; for (int a = 0; a < 3; a++) _lastDir[a] = 0;
+                // [area] A resize (width preset, padding) around where we look keeps the view where it is in the world
+                // when the new window can show it (AreaSizing centres it to within 8 blocks); else (area setup moved the
+                // area elsewhere) the view starts at the new centre.
+                if (resized)
+                {
+                    var was = oldView - c;
+                    bool near = Math.Abs(was.x) <= Margin.x + 0.5f && Math.Abs(was.y) <= Margin.y + 0.5f && Math.Abs(was.z) <= Margin.z + 0.5f;
+                    if (near) View = c + Clamp(was, Margin);
+                }
+                return;
+            }
             // Same size: a shift (ours or another headset's). Keep the world position; re-centre if it's far away.
             var off = View - c;
             if (Math.Abs(off.x) > Margin.x + Step || Math.Abs(off.y) > Margin.y + Step || Math.Abs(off.z) > Margin.z + Step) View = c;
@@ -219,6 +234,17 @@ namespace TabletopCraft.World
             if (m == Margin) return null;
             var o = new Vector3Int((int)Math.Floor(View.x - w.x / 2f) - m.x, (int)Math.Floor(View.y - w.y / 2f) - m.y, (int)Math.Floor(View.z - w.z / 2f) - m.z);
             return new RegionMove { Origin = o, Dims = dims, Margin = m, Kind = "pad" };
+        }
+
+        /// <summary>[area] Send a region change planned elsewhere (AreaSizing.Plan) through the same one-in-flight
+        /// bookkeeping as the shifts. False while another request is pending (try again later).</summary>
+        public bool TryIssue(RegionMove r, float now)
+        {
+            if (!Loaded) return false;
+            if (Pending && now - _pendingSince > RequestTimeout) Pending = false;
+            if (Pending) return false;
+            Issue(r, now);
+            return true;
         }
 
         RegionMove Issue(RegionMove r, float now)

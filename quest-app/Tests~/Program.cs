@@ -136,6 +136,11 @@ static class Program
         Check(Protocol.RegionQuery("Bob").S("player") == "Bob" && !Protocol.RegionQuery().ContainsKey("player"), "region_query builder");
 
         fails += NavTests.Run(Fixture);   // navigation, streaming, clip caps (Tests~/NavTests.cs)
+        AreaTests.Run(Check, Fixture);    // [area] width presets, resize re-keying, mesh batching (Tests~/AreaTests.cs)
+        int batchMeasIdx = Array.IndexOf(args, "--measure-batches");
+        if (batchMeasIdx >= 0) { AreaTests.MeasureBatches(args[batchMeasIdx + 1], JarPath(args)); return fails == 0 ? 0 : 1; }
+        int liveResizeIdx = Array.IndexOf(args, "--live-resize");
+        if (liveResizeIdx >= 0) { AreaTests.LiveResize(args[liveResizeIdx + 1], Check); Console.WriteLine(fails == 0 ? "ALL PASS" : $"{fails} FAILED"); return fails == 0 ? 0 : 1; }
 
         int navMeasIdx = Array.IndexOf(args, "--measure-nav");
         if (navMeasIdx >= 0) { NavTests.MeasureNav(args[navMeasIdx + 1]); return 0; }

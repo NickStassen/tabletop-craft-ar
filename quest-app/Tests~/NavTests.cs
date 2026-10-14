@@ -196,7 +196,9 @@ static class NavTests
         Check(!SectionPlan.Compute(old, Snap(odd, 2), null, null).Rekey, "plan: 8-block shift -> full re-mesh");
         var big = Terrain(new Vector3Int(0, 0, 0), new Vector3Int(64, 16, 32), pal, Hills, 2);
         var pb = SectionPlan.Compute(old, Snap(big, 2), null, null);
-        Check(!pb.Rekey && pb.Mesh.Count == 8, "plan: new dims -> full re-mesh");
+        Check(pb.Rekey && pb.Mesh.Count == 2 && pb.Kept == 6, $"plan: [area] grown dims on the same section grid re-key, only the new column is meshed ({pb.Mesh.Count} meshed, {pb.Kept} kept)");
+        var far = Terrain(new Vector3Int(64, 0, 0), new Vector3Int(64, 16, 32), pal, Hills, 2);
+        Check(!SectionPlan.Compute(old, Snap(far, 2), null, null).Rekey, "plan: new dims without overlap -> full re-mesh");
         // Unaligned dims: a partial old section can't stand in for a full new one.
         var w40 = Terrain(new Vector3Int(0, 0, 0), new Vector3Int(40, 16, 16), pal, Hills);
         var w40b = Terrain(new Vector3Int(16, 0, 0), new Vector3Int(40, 16, 16), pal, Hills, 2);
