@@ -5,7 +5,8 @@ using UnityEngine;
 
 namespace TabletopCraft.World
 {
-    public enum BlockShape : byte { Air, Cube, TransparentCube, Cross, Slab, Fluid }
+    /// <summary>Model = drawn from its baked resource-pack model (BlockModels.cs); only set with a pack loaded.</summary>
+    public enum BlockShape : byte { Air, Cube, TransparentCube, Cross, Slab, Fluid, Model }
 
     public static class BlockRules
     {
@@ -16,9 +17,17 @@ namespace TabletopCraft.World
         public static string Name(string state) { int i = state.IndexOf('['); return i < 0 ? state : state.Substring(0, i); }
         public static string Path(string state) { var n = Name(state); int c = n.IndexOf(':'); return c < 0 ? n : n.Substring(c + 1); }
 
-        public static BlockShape Shape(string state)
+        public static BlockShape Shape(string state) => Cache.TryGetValue(state, out var s) ? s : Cache[state] = Classify(state);
+
+        /// <summary>With a resource pack, BlockModels.Prepare overrides the name-based shape from the block's real model
+        /// (main thread, before any worker meshes the state).</summary>
+        public static void SetShape(string state, BlockShape s) => Cache[state] = s;
+        public static void ResetShapes() => Cache.Clear();
+
+        /// <summary>Name-based shape (no assets needed).</summary>
+        public static BlockShape Classify(string state)
         {
-            if (Cache.TryGetValue(state, out var s)) return s;
+            BlockShape s;
             string p = Path(state);
             if (p == "air" || p == "cave_air" || p == "void_air" || p == "barrier" || p == "light" || p == "structure_void") s = BlockShape.Air;
             else if (p == "water" || p == "lava" || p == "bubble_column") s = BlockShape.Fluid;
@@ -27,7 +36,6 @@ namespace TabletopCraft.World
             else if (IsCross(p)) s = BlockShape.Cross;
             else if (IsNonCube(p)) s = BlockShape.Cross; // placeholder for stairs-free odd shapes (torches, rails, signs...)
             else s = BlockShape.Cube;
-            Cache[state] = s;
             return s;
         }
 
