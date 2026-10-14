@@ -39,6 +39,8 @@ public final class Session {
     public volatile Set<String> caps = Set.of();
     /** Region that lastGrid describes (what the client has), for delta snapshots. Main thread. */
     public RegionSpec gridRegion;
+    /** [nav] System.nanoTime() when the oldest data in lastGrid was captured (RegionData.capturedNs). Main thread. */
+    public long lastGridNs;
     /** Recent snapshot id -> region, so a pose is mapped with the origin the client used (pose.snapshot_id). Main thread. */
     private final Map<Integer, RegionSpec> recentRegions = new java.util.LinkedHashMap<>() {
         @Override protected boolean removeEldestEntry(Map.Entry<Integer, RegionSpec> e) { return size() > 8; }

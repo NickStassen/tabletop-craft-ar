@@ -46,7 +46,13 @@ public final class SectionCodec {
     }
 
     /** RLE pairs over section (kx, ky, kz) of a yzx grid with dims dx, dy, dz. */
-    public static int[] encodeSection(int[] grid, int dx, int dy, int dz, int kx, int ky, int kz) {
+    public static int[] encodeSection(int[] grid, int dx, int dy, int dz, int kx, int ky, int kz) { return encodeSection(grid, null, dx, dy, dz, kx, ky, kz); }
+
+    /**
+     * [nav] As above, each value mapped through map (global palette id -> session palette index; null = as is), so a
+     * delta only remaps the sections it lists instead of the whole region.
+     */
+    public static int[] encodeSection(int[] grid, int[] map, int dx, int dy, int dz, int kx, int ky, int kz) {
         int x0 = kx * S, y0 = ky * S, z0 = kz * S;
         int sx = Math.min(S, dx - x0), sy = Math.min(S, dy - y0), sz = Math.min(S, dz - z0);
         int[] tmp = new int[16];
@@ -55,7 +61,7 @@ public final class SectionCodec {
             for (int z = 0; z < sz; z++) {
                 int base = ((y0 + y) * dz + z0 + z) * dx + x0;
                 for (int x = 0; x < sx; x++) {
-                    int v = grid[base + x];
+                    int v = map == null ? grid[base + x] : map[grid[base + x]];
                     if (v == cur) { run++; continue; }
                     if (run > 0) { if (n + 2 > tmp.length) tmp = Arrays.copyOf(tmp, tmp.length * 2); tmp[n++] = cur; tmp[n++] = run; }
                     cur = v; run = 1;

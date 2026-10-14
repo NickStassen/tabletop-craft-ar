@@ -38,6 +38,17 @@ public final class RegionReader {
 
     public RegionReader(Plugin plugin) { this.plugin = plugin; }
 
+    /**
+     * [nav] Walks run on this pool rather than Bukkit's async scheduler, which only starts queued tasks on its next
+     * 50 ms heartbeat: that was a whole tick of every glide shift. Daemon threads; idle ones exit after 30 s.
+     */
+    private final java.util.concurrent.ThreadPoolExecutor workers = new java.util.concurrent.ThreadPoolExecutor(3, 3, 30, java.util.concurrent.TimeUnit.SECONDS,
+        new java.util.concurrent.LinkedBlockingQueue<>(), r -> { Thread t = new Thread(r, "tabletop-reader"); t.setDaemon(true); return t; });
+    { workers.allowCoreThreadTimeOut(true); }
+
+    /** Plugin disable: stop the walk threads (a walk in progress finishes; its callback is dropped once disabled). */
+    public void shutdown() { workers.shutdown(); }
+
     public Palette palette() { return palette; }
 
     public void readAsync(RegionSpec r, Consumer<int[]> done) { readAsync(r, 0, d -> done.accept(d.grid())); }
@@ -50,35 +61,72 @@ public final class RegionReader {
      * walk (diffs, size estimates: O(volume) work that must stay off the main thread); its result goes to done.
      */
     public <T> void readAsync(RegionSpec r, int extras, java.util.function.Function<RegionData, T> offThread, java.util.function.BiConsumer<RegionData, T> done) {
+        readAsync(r, extras, null, offThread, done);
+    }
+
+    /**
+     * [nav] With a usable base (RegionMerge.usable: same world, overlapping, with the extras this read needs), only the
+     * sections of r that weren't fully inside the base region are read: just their chunks are loaded and captured on
+     * the main thread, and the walk fills those sections into a copy of the base's kept sections (RegionData.base and
+     * .fresh say which). A one-section shift of a 288-wide region then captures one row of chunks and walks 1/18 of it.
+     */
+    public <T> void readAsync(RegionSpec r, int extras, RegionMerge.Base base, java.util.function.Function<RegionData, T> offThread,
+                              java.util.function.BiConsumer<RegionData, T> done) {
         World w = Bukkit.getWorld(r.world());
         boolean light = (extras & LIGHT) != 0, biomes = (extras & BIOMES) != 0;
         if (w == null) throw new IllegalStateException("world not loaded: " + r.world());
         long t0 = System.nanoTime();
+        boolean[] fresh = RegionMerge.usable(base, r, extras) ? RegionMerge.freshSections(base.region(), r) : null;
+        RegionMerge.Base b = fresh != null ? base : null;
         List<long[]> coords = new ArrayList<>();
-        for (int cx = r.ox() >> 4; cx <= (r.ox() + r.sx() - 1) >> 4; cx++)
-            for (int cz = r.oz() >> 4; cz <= (r.oz() + r.sz() - 1) >> 4; cz++) coords.add(new long[] { cx, cz });
+        if (fresh != null) {
+            for (long k : RegionMerge.freshChunks(fresh, r)) coords.add(new long[] { (int) (k >> 32), (int) k });
+        } else {
+            for (int cx = r.ox() >> 4; cx <= (r.ox() + r.sx() - 1) >> 4; cx++)
+                for (int cz = r.oz() >> 4; cz <= (r.oz() + r.sz() - 1) >> 4; cz++) coords.add(new long[] { cx, cz });
+        }
         Map<Long, ChunkSnapshot> snaps = new HashMap<>();
         load(w, coords, 0, () -> {
             long t1 = System.nanoTime();
             capture(w, coords, 0, snaps, biomes, light, 0, 1, 0, (mainNs, ticks) -> {
                 int minY = w.getMinHeight(), maxY = w.getMaxHeight();
-                Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
-                    long t3 = System.nanoTime();
-                    RegionData d = walk(r, snaps, minY, maxY, light, biomes);
-                    long t4 = System.nanoTime();
-                    lastLoadMs = (t1 - t0) / 1e6; lastSnapMs = mainNs / 1e6; lastSnapTicks = ticks; lastWalkMs = (t4 - t3) / 1e6;
-                    T extra = offThread.apply(d);
-                    if (plugin.isEnabled()) Bukkit.getScheduler().runTask(plugin, () -> {
-                        if (d.biomes() != null) fillClimate(w, d.biomes());
-                        done.accept(d, extra);
-                    });
+                if (workers.isShutdown()) return;
+                workers.execute(() -> {
+                    try {
+                        long t3 = System.nanoTime();
+                        RegionData d = b == null ? walk(r, snaps, minY, maxY, light, biomes, t1)
+                                                 : walkFresh(r, snaps, minY, maxY, light, biomes, b, fresh);
+                        long t4 = System.nanoTime();
+                        lastLoadMs = (t1 - t0) / 1e6; lastSnapMs = mainNs / 1e6; lastSnapTicks = ticks; lastWalkMs = (t4 - t3) / 1e6;
+                        int[] n = RegionMerge.sectionCounts(r);
+                        int total = n[0] * n[1] * n[2];
+                        RegionData fd = new RegionData(d.grid(), d.light(), d.biomes(), d.extraBytes(), d.base(), d.fresh(), d.capturedNs(),
+                            new RegionData.Stats((t1 - t0) / 1e6, mainNs / 1e6, ticks, (t4 - t3) / 1e6, d.stats().copyMs(), coords.size(),
+                                fresh != null ? RegionMerge.count(fresh) : total, total));
+                        T extra = offThread.apply(fd);
+                        if (plugin.isEnabled()) Bukkit.getScheduler().runTask(plugin, () -> {
+                            if (fd.biomes() != null) fillClimate(w, fd.biomes());
+                            done.accept(fd, extra);
+                        });
+                    } catch (RuntimeException | Error e) {
+                        plugin.getLogger().log(java.util.logging.Level.WARNING, "region read of " + r + " failed", e);
+                    }
                 });
             });
         });
     }
 
-    /** Loads coords[from..] with getChunkAtAsync, then runs next on the main thread. */
+    /**
+     * Loads coords[from..] with getChunkAtAsync, then runs next on the main thread. [nav] When they are all loaded
+     * already (the usual case: the region's chunks are ticketed) and this is the main thread, next runs right away
+     * instead of a tick later (50 ms of a glide shift's round trip).
+     */
     private void load(World w, List<long[]> coords, int from, Runnable next) {
+        if (Bukkit.isPrimaryThread()) {
+            boolean all = true;
+            for (int i = from; i < coords.size() && all; i++) all = w.isChunkLoaded((int) coords.get(i)[0], (int) coords.get(i)[1]);
+            if (all) { next.run(); return; }
+        }
         List<CompletableFuture<Chunk>> fs = new ArrayList<>();
         for (int i = from; i < coords.size(); i++) fs.add(w.getChunkAtAsync((int) coords.get(i)[0], (int) coords.get(i)[1]));
         CompletableFuture.allOf(fs.toArray(new CompletableFuture[0])).whenComplete((v, err) -> Bukkit.getScheduler().runTask(plugin, () -> {
@@ -136,21 +184,51 @@ public final class RegionReader {
 
     static long key(int cx, int cz) { return (((long) cx) << 32) ^ (cz & 0xffffffffL); }
 
-    private RegionData walk(RegionSpec r, Map<Long, ChunkSnapshot> snaps, int minY, int maxY, boolean withLight, boolean withBiomes) {
+    private RegionData walk(RegionSpec r, Map<Long, ChunkSnapshot> snaps, int minY, int maxY, boolean withLight, boolean withBiomes, long capturedNs) {
         int[] grid = new int[r.volume()];
         byte[] light = withLight ? new byte[r.volume()] : null;
-        int air = palette.id("minecraft:air");
-        // Per-walk cache keyed by BlockData (equals/hashCode compare the underlying block state), so the state
-        // string is built once per distinct state instead of once per block.
+        walkBox(r, snaps, minY, maxY, grid, light, 0, r.sx(), 0, r.sy(), 0, r.sz(), new HashMap<>());
+        BiomeGrid biomes = withBiomes ? walkBiomes(r, snaps, minY, maxY, null) : null;
+        long extra = 0;
+        if (light != null) extra += BlockCodec.estimateEncodedBytes(light) + 40;
+        if (biomes != null) extra += 200 + biomes.palette.size() * 40L + BlockCodec.encode(biomes.cells).length * 4L;
+        return new RegionData(grid, light, biomes, extra, null, null, capturedNs, RegionData.Stats.NONE);
+    }
+
+    /**
+     * [nav] Incremental walk: the base's kept sections are copied (RegionMerge.copyKept), the fresh ones read from the
+     * captured chunks. Biomes: cells in captured chunks are sampled, the others copied from the base's biome grid.
+     * extraBytes stays 0: the caller estimates an incremental read's size itself (TabletopPlugin.onRegionRequest).
+     */
+    private RegionData walkFresh(RegionSpec r, Map<Long, ChunkSnapshot> snaps, int minY, int maxY, boolean withLight, boolean withBiomes,
+                                 RegionMerge.Base b, boolean[] fresh) {
+        long c0 = System.nanoTime();
+        int[] grid = RegionMerge.copyKept(b, r, fresh);
+        byte[] light = withLight ? RegionMerge.copyKeptLight(b, r, fresh) : null;
+        double copyMs = (System.nanoTime() - c0) / 1e6;
         Map<org.bukkit.block.data.BlockData, Integer> local = new HashMap<>();
-        int sx = r.sx(), sz = r.sz();
-        for (int lx = 0; lx < sx; lx++) {
+        List<int[]> keys = RegionMerge.keys(fresh, r);
+        for (int[] k : keys)
+            walkBox(r, snaps, minY, maxY, grid, light, k[0] * 16, Math.min(r.sx(), k[0] * 16 + 16), k[1] * 16, Math.min(r.sy(), k[1] * 16 + 16),
+                k[2] * 16, Math.min(r.sz(), k[2] * 16 + 16), local);
+        BiomeGrid biomes = withBiomes ? walkBiomes(r, snaps, minY, maxY, b.biomes()) : null;
+        return new RegionData(grid, light, biomes, 0, b, keys, b.capturedNs(), new RegionData.Stats(0, 0, 0, 0, copyMs, 0, 0, 0));
+    }
+
+    /** Reads the region-local box [x0,x1) x [y0,y1) x [z0,z1) from the captured chunks into grid (and light). */
+    private void walkBox(RegionSpec r, Map<Long, ChunkSnapshot> snaps, int minY, int maxY, int[] grid, byte[] light,
+                         int x0, int x1, int y0, int y1, int z0, int z1, Map<org.bukkit.block.data.BlockData, Integer> local) {
+        int air = palette.id("minecraft:air");
+        // local: per-walk cache keyed by BlockData (equals/hashCode compare the underlying block state), so the state
+        // string is built once per distinct state instead of once per block.
+        int sx = r.sx(), sz = r.sz(), step = sx * sz;
+        for (int lx = x0; lx < x1; lx++) {
             int x = r.ox() + lx;
-            for (int lz = 0; lz < sz; lz++) {
+            for (int lz = z0; lz < z1; lz++) {
                 int z = r.oz() + lz;
                 ChunkSnapshot cs = snaps.get(key(x >> 4, z >> 4));
-                int i = lz * sx + lx, step = sx * sz;
-                for (int ly = 0; ly < r.sy(); ly++, i += step) {
+                int i = (y0 * sz + lz) * sx + lx;
+                for (int ly = y0; ly < y1; ly++, i += step) {
                     int y = r.oy() + ly;
                     int id;
                     if (y < minY || y >= maxY) {
@@ -168,15 +246,14 @@ public final class RegionReader {
                 }
             }
         }
-        BiomeGrid biomes = withBiomes ? walkBiomes(r, snaps, minY, maxY) : null;
-        long extra = 0;
-        if (light != null) extra += BlockCodec.estimateEncodedBytes(light) + 40;
-        if (biomes != null) extra += 200 + biomes.palette.size() * 40L + BlockCodec.encode(biomes.cells).length * 4L;
-        return new RegionData(grid, light, biomes, extra);
     }
 
-    /** One biome per 4x4x4 cell the region touches, sampled at a block inside both the cell and the region. */
-    private static BiomeGrid walkBiomes(RegionSpec r, Map<Long, ChunkSnapshot> snaps, int minY, int maxY) {
+    /**
+     * One biome per 4x4x4 cell the region touches, sampled at a block inside both the cell and the region. [nav] With a
+     * base (incremental read), cells whose chunk wasn't captured are copied from the base's grid: such a chunk holds only
+     * kept sections, so the cell lies in the base region too.
+     */
+    private static BiomeGrid walkBiomes(RegionSpec r, Map<Long, ChunkSnapshot> snaps, int minY, int maxY, BiomeGrid base) {
         BiomeGrid b = BiomeGrid.covering(r);
         Map<Biome, String> keys = new HashMap<>();
         for (int qy = 0; qy < b.qdy; qy++) {
@@ -185,12 +262,22 @@ public final class RegionReader {
                 int z = Math.max((b.qz + qz) << 2, r.oz());
                 for (int qx = 0; qx < b.qdx; qx++) {
                     int x = Math.max((b.qx + qx) << 2, r.ox());
-                    Biome bio = snaps.get(key(x >> 4, z >> 4)).getBiome(x & 15, y, z & 15);
-                    b.set(qx, qy, qz, keys.computeIfAbsent(bio, RegionReader::biomeKey), x, y, z);
+                    ChunkSnapshot cs = snaps.get(key(x >> 4, z >> 4));
+                    String k = cs == null && base != null ? baseBiome(base, x, y, z)
+                                                          : keys.computeIfAbsent(cs.getBiome(x & 15, y, z & 15), RegionReader::biomeKey);
+                    b.set(qx, qy, qz, k, x, y, z);
                 }
             }
         }
         return b;
+    }
+
+    /** The base grid's biome at world block (x, y, z), clamped into the base grid. */
+    static String baseBiome(BiomeGrid base, int x, int y, int z) {
+        int qx = Math.max(0, Math.min(base.qdx - 1, (x >> 2) - base.qx));
+        int qy = Math.max(0, Math.min(base.qdy - 1, (y >> 2) - base.qy));
+        int qz = Math.max(0, Math.min(base.qdz - 1, (z >> 2) - base.qz));
+        return base.palette.get(base.cells[base.index(qx, qy, qz)]);
     }
 
     @SuppressWarnings("deprecation")
