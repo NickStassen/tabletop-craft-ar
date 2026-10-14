@@ -65,9 +65,13 @@ async def main(ox: int, oy: int, oz: int) -> int:
     stats: dict = {}
     live = asyncio.create_task(session(o, 14, stats))
     await asyncio.sleep(2.5)
-    for c in (f"fill {x0} {floor} {z0} {x1} {floor} {z1} minecraft:stone", f"fill {x0} {roof} {z0} {x1} {roof} {z1} minecraft:stone",
-              f"fill {x0} {floor + 1} {z0} {x0} {roof - 1} {z1} minecraft:stone", f"fill {x1} {floor + 1} {z0} {x1} {roof - 1} {z1} minecraft:stone",
-              f"fill {x0} {floor + 1} {z0} {x1} {roof - 1} {z0} minecraft:stone", f"setblock {cx} {floor + 1} {cz} minecraft:torch"):
+    room = (f"fill {x0} {floor} {z0} {x1} {floor} {z1} minecraft:stone",            # floor
+            f"fill {x0} {roof} {z0} {x1} {roof} {z1} minecraft:stone",              # roof
+            f"fill {x0} {floor + 1} {z0} {x0} {roof - 1} {z1} minecraft:stone",     # west wall
+            f"fill {x1} {floor + 1} {z0} {x1} {roof - 1} {z1} minecraft:stone",     # east wall
+            f"fill {x0} {floor + 1} {z0} {x1} {roof - 1} {z0} minecraft:stone",     # north wall (south stays open)
+            f"setblock {cx} {floor + 1} {cz} minecraft:torch")
+    for c in room:
         cmd(c)
         await asyncio.sleep(0.4)
     await asyncio.sleep(3.0)
