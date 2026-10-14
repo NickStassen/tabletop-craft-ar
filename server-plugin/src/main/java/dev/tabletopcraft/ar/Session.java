@@ -56,6 +56,9 @@ public final class Session {
     public volatile boolean wantsLight, wantsBiomes;
     public byte[] lastLight;               // packed light, as last sent (main thread), null without light_v1
     public BiomeGrid lastBiomes;           // biomes of the last snapshot (for a resend after bad_snapshot), null without biomes_v1
+    /** Granted edit_v1 in welcome.caps (block_edit, PROTOCOL.md 4.20); its rate limit, set together with it. */
+    public volatile boolean canEdit;
+    public volatile EditLimiter editLimiter;
 
     /** RegionReader extras this session needs in its snapshots and diffs. */
     public int readExtras() { return (wantsLight ? RegionReader.LIGHT : 0) | (wantsBiomes ? RegionReader.BIOMES : 0); }

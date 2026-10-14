@@ -42,7 +42,9 @@ namespace TabletopCraft.World
         public readonly List<Color32> Colors = new List<Color32>();
         public readonly List<int> Opaque = new List<int>();
         public readonly List<int> Transparent = new List<int>();
-        public void Clear() { Verts.Clear(); Uvs.Clear(); Colors.Clear(); Opaque.Clear(); Transparent.Clear(); }
+        /// <summary>Water faces seen from inside the water (FluidMesher): drawn only while the eye is under water (EyeEffects).</summary>
+        public readonly List<int> WaterBack = new List<int>();
+        public void Clear() { Verts.Clear(); Uvs.Clear(); Colors.Clear(); Opaque.Clear(); Transparent.Clear(); WaterBack.Clear(); }
     }
 
     public static class GreedyMesher

@@ -520,3 +520,80 @@ Light adds about 40–60% to snapshots and deltas, and reading it about 20–30 
 ### Not verified (needs the headset)
 
 Clipping and the cut-face caps on screen, turning, the glide speed and feel, how long the headset takes to assemble and mesh a delta, the giant staying put while the region moves (`pose.snapshot_id`), and frame rates above 64×96×64.
+
+
+## Eye in water, lava, powder snow or a block (Quest, 2026-10-13, no headset yet)
+
+What changed:
+- `World/EyeMedium.cs` (engine-free) decides the medium at the centre eye, filters it and gives the look per medium.
+- `World/EyeEffects.cs` applies the result on the headset: fog globals, the passthrough tint and the water's inside faces.
+- `Shaders/TabletopFog.cginc` adds distance fog to the Blocks, BlocksTransparent and PlayerSkin shaders.
+- `Shaders/EyeOverlay.shader` with `Resources/TabletopEyeOverlay.mat` draws the tint.
+- `FluidMesher` and `MeshData.WaterBack` hold the reversed inside copies of water faces, and `TabletopRenderer.Underwater` turns that third submesh on.
+- The design and the edge-case decisions are in ARCHITECTURE.md §4 under "Eye in a fluid".
+
+**Tests** (`Tests~/EyeTests.cs`; `dotnet run -- --jar <26.3 jar>`: 275 checks with master's nav tests merged, all PASS):
+- Medium:
+  - The lower cell of a two-high water column is water up to y 1. The surface cell ends at 1 + 8/9, exactly at the surface is air, and 1e-4 below it is water.
+  - A lone source cell is 8/9 high.
+  - Flowing water: level 4 is 4/9 high, level 7 is 1/9. Falling water (level 8) is 8/9.
+  - Kelp, seagrass, bubble columns and waterlogged fences count as water.
+  - Waterlogged stairs are solid while they mesh as a cube (no pack), and water up to 8/9 once they are a model.
+  - Waterlogged slabs: the slab's half is solid, the other half is water.
+  - Lava; powder snow (whole cell); stone solid; glass air.
+  - Under ice the water ends at 8/9, as in vanilla.
+  - Outside the region (sides, below, above) is air. The region's top cutting through water is a surface at 8/9. No snapshot means air.
+- Filter, with 1 cm blocks (the 4 mm margin is 0.4 block):
+  - Water is taken after the 50 ms dwell, not on the first frame.
+  - Hovering ±0.2 block around the surface for 100 frames never switches.
+  - The eye leaves water once 0.6 block above the surface.
+  - A one-frame dip doesn't switch.
+- Fade and looks:
+  - The tint fades in 0.07 → 0.38 → 0.45 over 0.2 s with no colour shift, and fades out to nothing.
+  - Vanilla water vision: 24 blocks of visibility on entering, 96 after 30 s. Ramp values 0 / 0.6 / 1 at 0 / 100 / 600 ticks.
+  - Without biomes the fog uses the default water colour 0x3F76E4.
+  - Lava visibility is 1 block with a strong tint. Solid is dim, not black.
+- Inside faces:
+  - One water cell gives 6 outside faces and 6 reversed copies with their own vertices, wound to face into the water, never in the transparent list. The 8/9 surface is among them.
+  - Lava has none.
+  - A merged 16×4×16 ocean has a copy for each of its 10 quads.
+- Nav's window caps:
+  - Kelp, waterlogged models and bubble columns are cut as water; cubes as themselves; plants and air not at all.
+  - A water cut over a kelp cell merges into one quad with an inside copy.
+- **Real terrain** (the seed-12345 snapshots from the water section, `--measure-fluids`): the 128×96×128 ocean region has 4,097 water quads, so 4,097 inside copies. That is about 16k extra vertices (+11%) in memory, drawn only while the eye is in water. Fluid meshing still takes 17 ms for all 384 sections (Release, x86).
+
+**Unity:**
+- The C# compile check is clean.
+- The four changed shaders were compiled through `ShaderData.Pass.CompileVariant` for Android Vulkan and GLES3, with and without `STEREO_INSTANCING_ON`/`INSTANCING_ON`: 32 vertex/fragment variants, 0 errors. This was repeated after merging nav's clip volume into the same shaders. A temporary editor script did this and was not committed.
+
+**Needs the headset:**
+- Whether the overlay box really tints the passthrough underlay. This depends on how the compositor uses the eye buffer's alpha: premultiplied output is assumed.
+- How the four looks feel, in particular water at 45% tint and fog strength 0.95 against the real room. Values are in `EyeMediumRules.Look`.
+- The surface seen from below and the aquarium walls from inside, including their sorting with kelp.
+- Logcat should show `[Tabletop] EYE Water` / `Air` when the head dips into the miniature ocean.
+- No flicker at the surface, and FPS. The fog adds one distance per fragment in the block shaders.
+
+
+## Block editing from the headset (`block_edit`, PROTOCOL §4.20; 2026-10-13, no headset)
+
+**Unit tests.** Plugin `./gradlew build`: 43 tests, 0 failures. `BlockEditTest` (5) covers place/break parsing, 11 malformed messages rejected (no op, unknown op, no/short pos, fractional or string or out-of-world pos, place without or with a blank state, unknown face, 600-character state), the deny-list id, an error carrying `op`/`pos`/`ref_seq`, and the token bucket (a burst of 40 lets 20 through, refills at 20/s, steady 20/s forever, never holds more than a second's worth). `FixtureTest` gains one test: both fixtures parse and the error builder reproduces `error_edit_denied.json`. Python `pytest`: 42 passed (fixtures validate, builder = fixture, 7 bad-field cases), ruff clean. `Tests~ dotnet run -- --jar …/26.3.jar`: 231/231 PASS, including 44 for editing:
+- DDA (`BlockRaycast`): straight down onto a floor (cell, face, adjacent cell, distance, entry point), entering the region through its top and through a side, max distance, water skipped (aim at the seabed and place into the water), a horizontal ray on a west face, misses (pointing away, parallel outside, zero direction), a ray starting inside a block, short grass targeted by its cell, and 3,000 random rays checked against a 1/500-block ray march (1,669 hits, 0 disagreements, 1 ray where the march stepped over a clipped corner).
+- Frames: a Unity-space ray along +Z is block-space north and hits the south face; the hit point maps back onto the rendered face; the rendered block centre lands in its cell; block space equals the pose frame (`TabletopPose`) divided by the block size.
+- Rules: state property read and replace, log `axis` from the clicked face, furnaces turned toward the user, stairs facing the look direction, vertical facings kept, water left by waterlogged blocks and kelp, waterlogging when placing into a source.
+- Editor and reconciliation: no edits without `edit_v1`; a break is shown at once and re-meshes; an error with `pos` reverts it; a `block_update` confirms it and a later error then changes nothing; a stale `block_update` confirms nothing; 3 s of silence reverts; place goes on the hit face; a state missing from the palette is sent but not shown (the palette stays in sync); no placing outside the area; waterlogged slab and seabed placement; pick; a new snapshot clears pending edits; `unknown_type` from an old server reverts everything and turns editing off; the builder reproduces `block_edit.json`, and `error_edit_denied.json` reverts its cell.
+
+Unity 6000.0.84f1 batch compile: no errors, no shader errors, no new warnings (the 2 existing `overlayType` warnings in `TabletopSceneBuilder`).
+
+**Live** (my test server: Paper 26.3 build 181, seed 12345, region origin (-16, 32, -16), 32×96×32, ports 8776/25576). The middle column is ocean, so every ray below went through water onto gravel on the sea floor at (0, 48, 0).
+- `Tests~ dotnet run -- --live-edit ws://127.0.0.1:8776/tabletop` runs the headset's own code (DDA down the middle column, `BlockEditor`, `PendingEdits`, `LinkClient`). Times are from the send to the confirming `block_update`: break gravel (shown at once, confirmed 138 ms), put it back (144 ms), gold block (not in the palette, so it arrives with `palette_add`: 151 ms), break the gold block (148 ms), and a deny-listed command block on a guessed cell is reverted from the error's `pos` (55 ms). 7/7 PASS.
+- `tools/edit_check.py --url ws://127.0.0.1:8776/tabletop`: 14/14 PASS. Break / restore / gold: 139–198 ms each. A second fresh connection's snapshot holds the gold block (the world really changed) and gets `edit_denied` without `edit_v1`. Occupied cell `edit_denied`, outside the region `out_of_region`, `minecraft:not_a_block` `bad_state`, `minecraft:command_block` `edit_denied`, bad face `bad_message` (with `ref_seq`). A burst of 40 edits: 20 pass, 20 `rate_limited`.
+- Server log: one `EDIT session=… break|place world x,y,z face=… old -> new (ms)` line per edit; `setBlockData` with physics costs 0.07–0.32 ms on the main thread. Refusals log `EDIT_DENIED`.
+- Config: `edit.require-token: true` with an empty `auth.token` gives `welcome.caps = []` and `edit_denied`. With a token set, a headset presenting it gets `["edit_v1"]`.
+- Fixed on the way (`TabletopPlugin.diffAll`): a change made while a diff of the region was still reading lost its dirty flag and waited for the 4-tick light recheck (the first break measured 351 ms). Now the region stays dirty and the next diff starts right after.
+- Regression: `fake_quest.py --extras --avatar` against the same server: ok, no errors.
+
+**After merging master (navigation, floating giant).** Editing now only targets the visible window (`NavState`): the ray is clipped to it, blocks cut by its sides are hit on their visible part, the hidden margin can't be hit or built on, the outline is cut like the terrain, and guesses and reverts re-slice the clip caps. The live-edit test now assembles snapshots through `SnapshotAssembler` (the app's `sections_v1` path). Results on the merged tree: plugin 59 tests, 0 failures; `pytest` 50 passed, ruff clean; `Tests~ dotnet run -- --jar …/26.3.jar` 299/299 PASS (adds 6 window cases: a column outside the window misses, inside works, a ray entering through a cut side hits the half-shown cell and can't build outside it, a wall in the margin isn't hit, a half-shown edge block can be built on, a whole-block edge stops at the next cell), and 325/325 after also merging water's underwater view; Unity batch compile clean. Live on the merged plugin: `edit_check.py` 14/14 (`welcome.caps` = `view_margin`, `pose_snapshot_id`, `edit_v1`; breaking tall seagrass left a water source as designed; 134–198 ms per edit), `--live-edit` 7/7 (a block new to the palette arrives in 147 ms and is not guessed).
+- Nav's own `Tests~ --live` on this server (after its resizes had grown the region to 128×128×128 of freshly generated ocean and lush caves) fails one check, "bad_snapshot -> full resend matches the delta-assembled region", with 19–22 `block_update`s arriving during the run. It fails the same way with my `diffAll` change taken out, so the world was still changing between the delta and the resend, rather than anything in this branch.
+
+**Needs the headset:** whether `RightHand.forward` (the OVRCameraRig hand anchor) points out of the front of the controller. If the laser comes out at an angle, the ray needs a pitch offset. Also: outline and laser visibility in passthrough (dark outline, 0.8 mm at 1 cm blocks), the preview cube's textures, size and position, label readability, haptic strength, the trigger hold-repeat rate (0.35 s, then every 0.25 s), and whether B for pick feels right next to A (re-place table). `tools/e2e.sh` was not run (its ports 25565/8765 belong to the live session).
+

@@ -141,6 +141,8 @@ static class Program
         if (navMeasIdx >= 0) { NavTests.MeasureNav(args[navMeasIdx + 1]); return 0; }
         PlayerTests.Run(Check, Fixture);
         WaterTests.Run(Check, args);   // fluids, waterlogging, texture animation (WaterTests.cs)
+        EditTests.Run(Check, Fixture);  // block editing: DDA targeting, Z mirror, optimistic edits (EditTests.cs)
+        EyeTests.Run(Check);            // eye in water/lava/powder snow/blocks, water inside faces (EyeTests.cs)
 
         // Block models from a real client jar / resource pack (never committed; MC_CLIENT_JAR or --jar PATH).
         string jar = JarPath(args);
@@ -166,6 +168,8 @@ static class Program
 
         int liveIdx = Array.IndexOf(args, "--live");
         if (liveIdx >= 0) Live(args[liveIdx + 1]);
+        int liveEditIdx = Array.IndexOf(args, "--live-edit");
+        if (liveEditIdx >= 0) EditTests.Live(args[liveEditIdx + 1], Check);
         Console.WriteLine(fails == 0 ? "ALL PASS" : $"{fails} FAILED");
         return fails == 0 ? 0 : 1;
     }
@@ -437,7 +441,7 @@ static class Program
         var fm = new MeshData();
         FluidMesher.Build(pond, new Vector3Int(0, 0, 0), new Flat(), fm);
         var flatWater = BlockRules.FlatColor(FluidRules.WaterState);
-        int TopQuads(MeshData md) { int t = 0; for (int i = 0; i < md.Verts.Count; i += 4) if (md.Verts[i].y > 1.5f && md.Verts[i + 1].y > 1.5f && md.Verts[i + 2].y > 1.5f) t++; return t; }
+        int TopQuads(MeshData md) { int t = 0; for (int i = 0; i < md.Verts.Count; i += 4) if (!md.WaterBack.Contains(i) /* not the inside copies */ && md.Verts[i].y > 1.5f && md.Verts[i + 1].y > 1.5f && md.Verts[i + 2].y > 1.5f) t++; return t; }
         Check(TopQuads(fm) == 1 && fm.Colors.All(c => c.r == flatWater.r && c.b == flatWater.b && c.a == flatWater.a), $"fluid light: open water lit by the sky above merges into one top quad ({TopQuads(fm)})");
         pond.Light[pond.Index(1, 2, 1)] = 0x80;   // shade above one cell (sky 8 < water's 14)
         FluidMesher.Build(pond, new Vector3Int(0, 0, 0), new Flat(), fm);

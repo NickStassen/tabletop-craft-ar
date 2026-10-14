@@ -1,0 +1,10 @@
+{
+ "v": 1,
+ "type": "block_edit",
+ "seq": 42,
+ "t": 1760370004000,
+ "op": "place",
+ "pos": [105, 64, -35],
+ "state": "minecraft:oak_log[axis=x]",
+ "face": "east"
+}

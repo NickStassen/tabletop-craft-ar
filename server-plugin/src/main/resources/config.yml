@@ -59,6 +59,25 @@ avatar:
   # Spawn the giant when poses arrive even if no avatar_config was sent.
   spawn-on-first-pose: true
   despawn-after-disconnect-ms: 10000
+edit:
+  # Break and place blocks from the headset (block_edit, PROTOCOL.md 4.20). Headsets that ask for edit_v1 in hello.caps
+  # get it in welcome.caps; edits are only applied inside the table's region. On by default for a LAN dev server.
+  enabled: true
+  # true: only allow editing when auth.token is set above (then every connected headset presented the token).
+  require-token: false
+  # Edits per second per headset (token bucket); more get error rate_limited.
+  max-per-second: 20
+  # Block physics after an edit (sand falls, water flows, torches without support pop off), as when a player edits.
+  physics: true
+  # Blocks that can never be placed from the headset (operator-only blocks).
+  deny:
+    - minecraft:command_block
+    - minecraft:chain_command_block
+    - minecraft:repeating_command_block
+    - minecraft:structure_block
+    - minecraft:jigsaw
+    - minecraft:test_block
+    - minecraft:test_instance_block
 debug:
   # Broadcast avatar_state with a "debug" object (entity positions) every 10 ticks.
   avatar-state: false

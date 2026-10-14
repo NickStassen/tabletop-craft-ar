@@ -90,6 +90,14 @@ namespace TabletopCraft.World
             return true;
         }
 
+        /// <summary>A local (optimistic) change of one cell, from block editing (BlockEdits.cs); re-meshes like a block_update.</summary>
+        public void SetLocal(int x, int y, int z, ushort id)
+        {
+            if (!InBounds(x, y, z) || id >= Palette.Count) return;
+            Grid[Index(x, y, z)] = id;
+            MarkDirty(x, y, z);
+        }
+
         void MarkDirty(int x, int y, int z)
         {
             // The block's section, plus every neighbouring section it touches when it sits on a border: their faces

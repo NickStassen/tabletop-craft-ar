@@ -37,6 +37,7 @@ namespace TabletopCraft
         PoseSender _poses;
         TablePlacement _placement;
         AreaSetupMode _area;
+        BlockEditMode _edit;   // block editing from the headset (XR/BlockEditMode.cs)
         string _session;
         TextMesh _status;
         float _nextPing; int _pingId; long _rttMs = -1;
@@ -78,6 +79,10 @@ namespace TabletopCraft
             _players = playersT.gameObject.AddComponent<PlayerMarkers>();
             _players.Model = _world; _players.MarkerMaterial = MarkerMaterial; _players.Atlas = _atlas;
 
+            // Eye in water/lava/powder snow/inside a block: fog, passthrough tint, the water's inside faces (EyeEffects.cs).
+            var eye = gameObject.AddComponent<EyeEffects>();
+            eye.Head = Head; eye.Blocks = _blocks; eye.Model = _world; eye.BlockRenderer = _renderer;
+
             _placement = gameObject.AddComponent<TablePlacement>();
             _placement.Anchor = _anchor; _placement.Head = Head; _placement.RightHand = RightHand;
             _placement.OnScaleChanged = k => SetBlockSize(Mathf.Clamp(BlockSizeM * k, 0.002f, 0.1f), false);
@@ -96,6 +101,14 @@ namespace TabletopCraft
             _nav.Anchor = _anchor; _nav.RegionRoot = _regionRoot; _nav.Head = Head; _nav.Renderer = _renderer; _nav.Caps = _caps;
             _nav.BlockSize = () => BlockSizeM; _nav.Suspended = () => _area.Active; _nav.Send = b => _link.Send(b);
             _area.Nav = _nav.State;
+            eye.Caps = _caps;   // water cuts of the visible window get inside faces too (EyeEffects.cs)
+
+            // Block editing: right trigger break, left trigger place, B pick (XR/BlockEditMode.cs, PROTOCOL.md 4.20).
+            _edit = gameObject.AddComponent<BlockEditMode>();
+            _edit.Blocks = _blocks; _edit.RightHand = RightHand; _edit.Head = Head; _edit.World = () => _world; _edit.Atlas = _atlas;
+            _edit.OpaqueMaterial = OpaqueMaterial; _edit.TransparentMaterial = TransparentMaterial; _edit.Nav = _nav.State;
+            _edit.Send = b => _link.Send(b); _edit.Online = () => _link.Connected; _edit.Blocked = () => _area.Active;
+            _edit.ModelChanged = () => _caps.ModelVersion = ++_modelVersion;   // optimistic edits re-slice the clip caps too
 
             _link = new LinkClient(ServerUrl, Token);
             _link.Start();
@@ -179,7 +192,7 @@ namespace TabletopCraft
                                $"TABLE {_placement.Status}\nPOSES {(_poses ? _poses.Sent : 0)}  MESH {_renderer.Quads / 1000}k faces" +
                                (_renderer.Pending > 0 ? $" ({_renderer.Pending} sections pending)" : "") + $"  {_lastError}\n" +
                                _nav.Status + "\n" +   // [nav]
-                               (_area.Active ? _area.Status : (_area.Status.Length > 0 ? _area.Status : "Y (left) = set up area   left stick = move"));
+                               (_area.Active ? _area.Status : (_area.Status.Length > 0 ? _area.Status : "Y (left) = set up area   left stick = move") + "\n" + _edit.Status);
         }
 
         /// <summary>Status text: server light (smooth/flat/off), biome count and whether the pack has colour maps.</summary>
@@ -194,6 +207,7 @@ namespace TabletopCraft
                 case "welcome":
                     Debug.Log($"[Tabletop] welcome from {m.S("server")} {m.S("server_version")} mc {m.S("mc_version")}");
                     _session = m.S("session");
+                    _edit.Editor.ServerAllows = m.A("caps")?.Contains(Protocol.CapEdit) == true;   // block editing granted
                     _area.State.Limits = RegionLimits.From(m.O("limits"), RegionLimits.Default);
                     _nav.OnWelcome(m);   // [nav] server caps, limits, build height
                     // Light from the server makes faces merge less: scale the area-setup face estimate (soft cap).
@@ -214,6 +228,7 @@ namespace TabletopCraft
                     catch (Exception e) { BadSnapshot(m.I("snapshot_id"), e.Message); }
                     break;
                 case "block_update":
+                    _edit.Editor.OnBlockUpdate(_world, m);   // the server's values replace block-edit guesses
                     if (_world.ApplyBlockUpdate(m)) _caps.ModelVersion = ++_modelVersion;   // [nav] caps re-slice
                     break;
                 case "player_positions":
@@ -234,6 +249,7 @@ namespace TabletopCraft
                 case "error":
                     _lastError = $"{m.S("code")}: {m.S("message")}";
                     _area.OnError(m);
+                    _edit.Editor.OnError(_world, m);   // undoes an optimistic edit the server refused
                     if (m.S("code") == "region_too_large" && _nav.State.Pending) _nav.OnRegionError(m.S("message"));   // [nav]
                     Debug.LogWarning("[Tabletop] server error " + _lastError);
                     break;
@@ -249,6 +265,7 @@ namespace TabletopCraft
             bool had = _world.Loaded;
             var oldOrigin = had ? _world.Origin : s.Origin;
             _world.ApplySnapshot(s);
+            _edit.Editor.OnSnapshot();   // a snapshot replaces block-edit guesses
             _renderer.OnSnapshot(r.Plan, oldOrigin, s.Origin);
             _caps.ModelVersion = ++_modelVersion;
             _nav.OnSnapshot(s.World, s.Origin, s.Dims, r.ViewMargin);

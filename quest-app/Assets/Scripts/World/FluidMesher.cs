@@ -357,6 +357,17 @@ namespace TabletopCraft.World
             for (int i = 0; i < 4; i++) m.Colors.Add(key.Color);   // tint x light, set in Key() (BlockShading.Fluid)
             var t = key.Transparent ? m.Transparent : m.Opaque;
             t.Add(s); t.Add(s + 1); t.Add(s + 2); t.Add(s); t.Add(s + 2); t.Add(s + 3);
+            // The same face seen from inside the water (looking up at the surface, the region's cut walls as an aquarium
+            // from inside). Own vertices so the outside face keeps its normal (face shading), reversed winding, and its own
+            // index list (a third submesh) that is only drawn while the eye is under water: from outside nothing blends
+            // twice. Water only: lava is opaque and nearly blind from inside anyway.
+            if (key.Transparent)
+            {
+                int b = m.Verts.Count;
+                for (int i = 0; i < 4; i++) { m.Verts.Add(m.Verts[s + i]); m.Uvs.Add(m.Uvs[s + i]); m.Colors.Add(m.Colors[s + i]); }
+                var wb = m.WaterBack;
+                wb.Add(b); wb.Add(b + 2); wb.Add(b + 1); wb.Add(b); wb.Add(b + 3); wb.Add(b + 2);
+            }
         }
 
         /// <summary>UVs in block units from the section-local position, so merged and lowered faces tile and crop the
