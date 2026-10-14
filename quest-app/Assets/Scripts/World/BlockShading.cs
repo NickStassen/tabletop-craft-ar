@@ -168,6 +168,42 @@ namespace TabletopCraft.World
             return Shade(tint, Lightmap(sky, blk), 1f);
         }
 
+        /// <summary>
+        /// Baked model quads (BlockModelMesher): the biome tint when q.Tint is set; axis-aligned faces take Quad()
+        /// (smooth light + AO of the block's face, bilinear for partial faces like vanilla's partial-face weights),
+        /// rotated faces (q.Dir &lt; 0: crosses, 22.5/45 degree elements) the block's own light without AO.
+        /// </summary>
+        public static Quad4 Model(WorldModel w, int x, int y, int z, in BakedQuad q)
+        {
+            var key = new FaceKey { Color = q.Color, Tint = q.Tint };
+            var b = new Vector3Int(x, y, z);
+            if (w.Light == null && (q.Tint == TintKind.None || w.Tints == null)) return new Quad4(q.Color);
+            if (q.Dir < 0) return new Quad4(Flat(w, key, b));
+            var o = new Vector3(x, y, z);
+            return Quad(w, key, b, q.Dir, o + q.P0, o + q.P1, o + q.P2, o + q.P3);
+        }
+
+        /// <summary>
+        /// Fluid faces (FluidMesher), as vanilla's LiquidBlockRenderer: one light per face, the brighter (per channel)
+        /// of the fluid cell and the cell above, no AO. A face whose neighbour is outside the region (the cut sides
+        /// and top of the miniature) is lit as open sky, like the cube faces there. tint already holds the
+        /// (biome) colour and its alpha.
+        /// </summary>
+        public static Color32 Fluid(WorldModel w, Color32 tint, int x, int y, int z, int dir)
+        {
+            var light = w.Light;
+            if (light == null) return tint;
+            var n = Dir[dir];
+            if (!w.InBounds(x + n.x, y + n.y, z + n.z)) return Shade(tint, Lightmap(15, 0), 1f);
+            Cell(w, light, new Vector3Int(x, y, z), out int s0, out int b0, out _);
+            if (w.InBounds(x, y + 1, z))
+            {
+                Cell(w, light, new Vector3Int(x, y + 1, z), out int s1, out int b1, out _);
+                s0 = Mathf.Max(s0, s1); b0 = Mathf.Max(b0, b1);
+            }
+            return Shade(tint, Lightmap(s0, b0), 1f);
+        }
+
         /// <summary>26.x LightCoordsUtil.smoothBlend on (sky, block) pairs; d is the centre.</summary>
         public static void SmoothBlend(int aS, int aB, int bS, int bB, int cS, int cB, int dS, int dB, out float sky, out float block)
         {

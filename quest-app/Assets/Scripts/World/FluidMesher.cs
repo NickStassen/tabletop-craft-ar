@@ -113,10 +113,11 @@ namespace TabletopCraft.World
         // One scratch per worker thread, fetched once per section (thread-static access is slow under IL2CPP).
         [ThreadStatic] static Pass _pass;
 
-        /// <summary>HOOK(biome water colour): tint of the water at region-local (x, y, z). Today the atlas default
-        /// (ResourcePackAtlas.WaterTint, or the flat colour; its alpha is the water opacity). Per-biome colours go
-        /// here; keep the alpha. Called on worker threads.</summary>
-        public static Color32 WaterColor(WorldModel w, int x, int y, int z, Color32 atlasTint) => atlasTint;
+        /// <summary>Tint of the water at region-local (x, y, z): the blended biome water colour when the server sent
+        /// biomes (BlockShading/BiomeColors), else the atlas default (ResourcePackAtlas.WaterTint, or the flat colour).
+        /// The alpha (water opacity) is always the atlas one. Called on worker threads.</summary>
+        public static Color32 WaterColor(WorldModel w, int x, int y, int z, Color32 atlasTint) =>
+            BlockShading.Tint(w, new FaceKey { Color = atlasTint, Tint = TintKind.Water }, x, y, z);
 
         /// <summary>Appends the fluid geometry of one section. Call after the block geometry (GreedyMesher.BuildSpecials
         /// does) so water is drawn after the plants inside it in the transparent submesh.</summary>
@@ -205,6 +206,9 @@ namespace TabletopCraft.World
             {
                 var key = _keys[(kind - 1) * 6 + dir];
                 if (kind == (int)FluidKind.Water) key.Color = WaterColor(w, pos.x, pos.y, pos.z, key.Color);
+                // Light (vanilla LiquidBlockRenderer: one value per face), folded into the key so the greedy merge of
+                // flat fluid faces only joins equally lit cells.
+                key.Color = BlockShading.Fluid(w, key.Color, pos.x, pos.y, pos.z, dir);
                 return key;
             }
 
@@ -350,7 +354,7 @@ namespace TabletopCraft.World
             int s = m.Verts.Count;
             m.Verts.Add(p0 + b0); m.Verts.Add(p1 + b0); m.Verts.Add(p2 + b0); m.Verts.Add(p3 + b0);
             m.Uvs.Add(Uv(dir, p0, key.Layer)); m.Uvs.Add(Uv(dir, p1, key.Layer)); m.Uvs.Add(Uv(dir, p2, key.Layer)); m.Uvs.Add(Uv(dir, p3, key.Layer));
-            for (int i = 0; i < 4; i++) m.Colors.Add(key.Color);   // HOOK(light): per-vertex light/AO for fluids goes here
+            for (int i = 0; i < 4; i++) m.Colors.Add(key.Color);   // tint x light, set in Key() (BlockShading.Fluid)
             var t = key.Transparent ? m.Transparent : m.Opaque;
             t.Add(s); t.Add(s + 1); t.Add(s + 2); t.Add(s); t.Add(s + 2); t.Add(s + 3);
         }

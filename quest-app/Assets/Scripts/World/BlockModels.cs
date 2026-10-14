@@ -57,7 +57,7 @@ namespace TabletopCraft.World
             {
                 int c = quads[i].Cull;
                 if (c >= 0 && Hidden(w, x + DX[c], y + DY[c], z + DZ[c], c, state, model, i, models)) continue;
-                AddQuad(m, o, quads[i]);
+                AddQuad(m, o, quads[i], BlockShading.Model(w, x, y, z, quads[i]));
             }
         }
 
@@ -83,14 +83,16 @@ namespace TabletopCraft.World
 
         /// <summary>Appends one model face at block origin o (region-local block units, Minecraft frame; the renderer
         /// mirrors Z). Same layout as GreedyMesher.AddQuad but with the model's own UVs.</summary>
-        public static void AddQuad(MeshData m, Vector3 o, in BakedQuad q)
+        public static void AddQuad(MeshData m, Vector3 o, in BakedQuad q) => AddQuad(m, o, q, new Quad4(q.Color));
+
+        /// <summary>As above with per-vertex colours: BlockShading.Model gives the biome tint (q.Tint), the smooth light
+        /// and AO of axis-aligned faces, and the block's own light for rotated ones.</summary>
+        public static void AddQuad(MeshData m, Vector3 o, in BakedQuad q, Quad4 col)
         {
             int s = m.Verts.Count;
             m.Verts.Add(o + q.P0); m.Verts.Add(o + q.P1); m.Verts.Add(o + q.P2); m.Verts.Add(o + q.P3);
             m.Uvs.Add(q.T0); m.Uvs.Add(q.T1); m.Uvs.Add(q.T2); m.Uvs.Add(q.T3);
-            // LIGHT/TINT HOOK: per-vertex colour of model faces. q.Color is the base colour (fixed tint when q.Tinted,
-            // white for plain textures, flat colour without a texture); q.Dir is the facing (-1 when rotated).
-            for (int i = 0; i < 4; i++) m.Colors.Add(q.Color);
+            m.Colors.Add(col.C0); m.Colors.Add(col.C1); m.Colors.Add(col.C2); m.Colors.Add(col.C3);
             var t = q.Translucent ? m.Transparent : m.Opaque;
             t.Add(s); t.Add(s + 1); t.Add(s + 2); t.Add(s); t.Add(s + 2); t.Add(s + 3);
         }

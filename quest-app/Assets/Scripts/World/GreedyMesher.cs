@@ -9,6 +9,8 @@
 //                                       BlockShading.Quad(w, key, block, dir, p0, p1, p2, p3) -> Quad4
 //   - quads that aren't axis-aligned (cross plants, rotated elements):
 //                                       BlockShading.Flat(w, key, block)                  -> Color32 (own cell, no AO)
+//   - baked block models (BlockModelMesher.Emit):  BlockShading.Model(w, x, y, z, quad)  -> Quad4 (Quad or Flat)
+//   - fluids (FluidMesher, folded into the face key so merging respects it): BlockShading.Fluid(w, tint, x, y, z, dir)
 // then pass the Quad4 to AddQuad / EmitQuad. key.Tint (set by the atlas from the model's tintindex) picks the biome
 // colour (grass/foliage/dry foliage/water); without server light/biome data the colours equal the old fixed look.
 // Greedy merging only joins faces whose 4 corner colours are equal and constant along the merge direction.

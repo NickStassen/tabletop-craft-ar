@@ -21,8 +21,17 @@ namespace TabletopCraft.World
 
         /// <summary>With a resource pack, BlockModels.Prepare overrides the name-based shape from the block's real model
         /// (main thread, before any worker meshes the state).</summary>
-        public static void SetShape(string state, BlockShape s) => Cache[state] = s;
-        public static void ResetShapes() => Cache.Clear();
+        public static void SetShape(string state, BlockShape s)
+        {
+            if (Cache.TryGetValue(state, out var old) && old == s) return;
+            Cache[state] = s;
+            System.Threading.Interlocked.Increment(ref _version);
+        }
+        public static void ResetShapes() { Cache.Clear(); System.Threading.Interlocked.Increment(ref _version); }
+
+        /// <summary>Bumped whenever SetShape/ResetShapes changes a shape (WorldModel.ShapeOf then rebuilds its cache).</summary>
+        public static int Version => System.Threading.Volatile.Read(ref _version);
+        static int _version;
 
         /// <summary>Name-based shape (no assets needed).</summary>
         public static BlockShape Classify(string state)

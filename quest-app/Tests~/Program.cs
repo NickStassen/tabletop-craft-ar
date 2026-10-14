@@ -183,6 +183,42 @@ static class Program
         return WithLight(w, (x, y, z) => w.Grid[w.Index(x, y, z)] == 1 ? 0 : 0xF0);
     }
 
+    /// <summary>Light and biome tints through the real pack models (grass block cube faces, short grass cross, stairs).</summary>
+    static void PackLightTests(string jar)
+    {
+        using var assets = new ZipAssets(jar);
+        BlockRules.ResetShapes();
+        var w = Box(3, 3, 3, (x, y, z) => y == 0 ? 1 : (x == 1 && y == 1 && z == 1) ? 2 : (x == 0 && y == 1 && z == 0) ? 3 : 0,
+                    "minecraft:air", "minecraft:grass_block[snowy=false]", "minecraft:oak_stairs[facing=east,half=bottom,shape=straight,waterlogged=false]", "minecraft:short_grass");
+        WithLight(w, (x, y, z) => y == 0 || (x == 1 && y == 1 && z == 1) ? 0 : 0xF0);
+        w.Tints = new BiomeTints(new BiomeGrid { QOrigin = new Vector3Int(0, 0, 0), QDims = new Vector3Int(1, 1, 1), Palette = new[] { "minecraft:cherry_grove" }, Cells = new ushort[1] },
+                                 new Vector3Int(0, 0, 0), w.Dims);
+        var faces = new PackFaces(assets);
+        faces.Prewarm(w);
+        var m = new MeshData();
+        GreedyMesher.Build(w, new Vector3Int(0, 0, 0), faces, m);
+        int greedyVerts = m.Verts.Count;
+        bool cherryTop = false;
+        for (int i = 0; i < greedyVerts; i += 4)
+            if (m.Verts[i].y == 1 && m.Verts[i + 2].y == 1 && (int)m.Uvs[i].z == assets.LayerOf("block/grass_block_top") && Near(m.Colors[i], 0xB6, 0xDB, 0x61, 0)) cherryTop = true;
+        Check(cherryTop, "pack: grass_block top (model cube face, tintindex) takes the biome grass colour");
+        GreedyMesher.BuildSpecials(w, new Vector3Int(0, 0, 0), faces, m);
+        int grassLayer = assets.LayerOf("block/short_grass");
+        bool crossTinted = false, stairsShaded = false, stairsLit = false;
+        for (int i = greedyVerts; i < m.Verts.Count; i += 4)
+        {
+            int layer = (int)m.Uvs[i].z;
+            if (layer == grassLayer && Near(m.Colors[i], 0xB6, 0xDB, 0x61, 0)) crossTinted = true;
+            if (layer == assets.LayerOf("block/oak_planks"))
+            {
+                for (int k = 0; k < 4; k++) { if (m.Colors[i + k].r < 250) stairsShaded = true; if (m.Colors[i + k].r > 200) stairsLit = true; }
+            }
+        }
+        Check(crossTinted, "pack: short_grass (rotated cross faces) takes the biome grass colour");
+        Check(stairsShaded && stairsLit, "pack: oak_stairs model faces get smooth light and AO (some corners darker than others)");
+        BlockRules.ResetShapes();
+    }
+
     static void LightAndBiomeTests(string jarArg)
     {
         // Lightmap: 26.x lightmap.fsh with the overworld at noon and brightness 0.5.
@@ -306,6 +342,7 @@ static class Program
             Check(G("forest") == 0x79C05A && G("jungle") == 0x59C93C && F("jungle") == 0x30BB0B && G("taiga") == 0x86B783 && G("snowy_plains") == 0x80B497 &&
                   G("desert") == 0xBFB755 && G("birch_forest") == 0x88BB66 && G("meadow") == 0x83BB6D && G("sparse_jungle") == 0x64C73F, "colormap (26.3 jar): forest, jungle, taiga, snowy, desert, birch, meadow");
             Check(G("dark_forest") == 0x507A32, $"dark forest grass modifier ({G("dark_forest"):X6})");
+            PackLightTests(jar);
         }
         else Console.WriteLine("SKIP colormap tests: no client jar at " + jar + " (set TABLETOP_CLIENT_JAR)");
 
@@ -326,11 +363,44 @@ static class Program
         Check(wl.ApplyBlockUpdate(Json.Parse("{\"snapshot_id\":7,\"changes\":[],\"light\":[[0,1,0,17]]}") as Dictionary<string, object>) && wl.Light[wl.Index(0, 1, 0)] == 17 && wl.DirtySections.Count == 1,
               "light-only block_update");
         Check(Protocol.Hello("").A("caps").Contains("light_v1") && Protocol.Hello("").A("caps").Contains("biomes_v1"), "hello asks for light_v1 + biomes_v1");
+        // Model quads (BlockModelMesher) take their colours from BlockShading.Model.
+        var floorWall = Floor(3, 4, 3, (2, 1, 1));
+        var topQuad = new BakedQuad { P0 = new Vector3(0, 1, 0), P1 = new Vector3(0, 1, 1), P2 = new Vector3(1, 1, 1), P3 = new Vector3(1, 1, 0), Color = grey.Color, Dir = 3 };
+        var mq = BlockShading.Model(floorWall, 1, 0, 1, topQuad);
+        Check(Near(mq.C0, 200, 200, 200) && Near(mq.C1, 200, 200, 200) && Near(mq.C2, 160, 160, 160) && Near(mq.C3, 160, 160, 160), "model quad, axis-aligned: smooth light + AO like a cube face");
+        var rotQuad = topQuad; rotQuad.Dir = -1;
+        var lm15 = BlockShading.Lightmap(0, 15);
+        Check(Near(BlockShading.Model(cave, 1, 1, 1, rotQuad).C0, (int)(200 * lm15.x + 0.5f), (int)(200 * lm15.y + 0.5f), (int)(200 * lm15.z + 0.5f)), "model quad, rotated: the block's own light, no AO");
+        var cherry = new BiomeGrid { QOrigin = new Vector3Int(0, 0, 0), QDims = new Vector3Int(1, 1, 1), Palette = new[] { "minecraft:cherry_grove" }, Cells = new ushort[1] };
+        var tintedWorld = Box(3, 3, 3, (x, y, z) => y == 0 ? 1 : 0, "minecraft:air", "minecraft:stone");
+        tintedWorld.Tints = new BiomeTints(cherry, new Vector3Int(0, 0, 0), tintedWorld.Dims);
+        var tintedQuad = rotQuad; tintedQuad.Tint = TintKind.Grass; tintedQuad.Color = new Color32(124, 189, 107, 255);
+        Check(Near(BlockShading.Model(tintedWorld, 1, 1, 1, tintedQuad).C0, 0xB6, 0xDB, 0x61, 0), "model quad, tinted: biome grass colour (cherry grove), no light data");
+
+        // Fluids: vanilla light (max of the cell and the one above, no AO), per-biome water, merging by colour.
+        const string src = "minecraft:water[level=0]";
+        var pond = WithLight(Box(4, 3, 4, (x, y, z) => y == 0 ? 1 : y == 1 ? 2 : 0, "minecraft:air", "minecraft:stone", src), (x, y, z) => y == 0 ? 0 : y == 1 ? 0xE0 : 0xF0);
+        var fm = new MeshData();
+        FluidMesher.Build(pond, new Vector3Int(0, 0, 0), new Flat(), fm);
+        var flatWater = BlockRules.FlatColor(FluidRules.WaterState);
+        int TopQuads(MeshData md) { int t = 0; for (int i = 0; i < md.Verts.Count; i += 4) if (md.Verts[i].y > 1.5f && md.Verts[i + 1].y > 1.5f && md.Verts[i + 2].y > 1.5f) t++; return t; }
+        Check(TopQuads(fm) == 1 && fm.Colors.All(c => c.r == flatWater.r && c.b == flatWater.b && c.a == flatWater.a), $"fluid light: open water lit by the sky above merges into one top quad ({TopQuads(fm)})");
+        pond.Light[pond.Index(1, 2, 1)] = 0x80;   // shade above one cell (sky 8 < water's 14)
+        FluidMesher.Build(pond, new Vector3Int(0, 0, 0), new Flat(), fm);
+        var l14 = BlockShading.Lightmap(14, 0);
+        Check(TopQuads(fm) > 1 && fm.Colors.Any(c => Near(c, (int)(flatWater.r * l14.x + 0.5f), (int)(flatWater.g * l14.y + 0.5f), (int)(flatWater.b * l14.z + 0.5f)) && c.a == flatWater.a),
+              $"fluid light: a shaded cell takes max(own 14, above 8) and splits the merge ({TopQuads(fm)} top quads)");
+        var swampWorld = Box(2, 2, 2, (x, y, z) => 0, "minecraft:air");
+        swampWorld.Tints = new BiomeTints(new BiomeGrid { QOrigin = new Vector3Int(0, 0, 0), QDims = new Vector3Int(1, 1, 1), Palette = new[] { "minecraft:swamp" }, Cells = new ushort[1] }, new Vector3Int(0, 0, 0), swampWorld.Dims);
+        var wc = FluidMesher.WaterColor(swampWorld, 1, 1, 1, new Color32(63, 118, 228, 200));
+        Check(wc.r == 0x61 && wc.g == 0x7B && wc.b == 0x64 && wc.a == 200 && FluidMesher.WaterColor(noLight, 1, 1, 1, new Color32(63, 118, 228, 200)).b == 228,
+              "WaterColor: swamp water colour with the atlas alpha; atlas tint without biomes");
+
         long baseQuads = AreaMath.Estimate(128, 96, 128).Quads;
         AreaMath.LightFactor = AreaMath.LightFactorFor(true, true);
         long litQuads = AreaMath.Estimate(128, 96, 128).Quads;
         AreaMath.LightFactor = AreaMath.LightFactorFor(false, true);
-        Check(litQuads == (long)Math.Ceiling(baseQuads * 1.6) && AreaMath.Estimate(128, 96, 128).Quads == baseQuads && AreaMath.LightFactorFor(true, false) == 1.25,
+        Check(litQuads == (long)Math.Ceiling(baseQuads * 1.35) && AreaMath.Estimate(128, 96, 128).Quads == baseQuads && AreaMath.LightFactorFor(true, false) == 1.15,
               $"area estimate scales with server light ({baseQuads} -> {litQuads} faces)");
         var corner = Box(32, 32, 32, (x, y, z) => 0, "minecraft:air");
         corner.DirtySections.Clear();

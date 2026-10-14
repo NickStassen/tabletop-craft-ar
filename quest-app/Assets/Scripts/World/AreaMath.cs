@@ -21,12 +21,13 @@ namespace TabletopCraft.World
         public const double CavePerBlock = 0.04;
         public const int SurfaceBand = 96;
         /// <summary>
-        /// Extra quads from per-vertex light (BlockShading): faces with different light/AO don't merge. Measured on real
-        /// terrain (docs/TESTING.md "Lighting and biome colours"): x1.54-1.63 with smooth lighting, x1.21-1.28 flat.
-        /// 1.0 = no light data. Set from welcome.caps (light_v1) by TabletopApp.
+        /// Extra faces from per-vertex light (BlockShading): greedy faces with different light/AO don't merge (model
+        /// and fluid faces barely change). Measured with the 26.3 pack on real terrain (docs/TESTING.md "Lighting with
+        /// models and water"): x1.24-1.38 with smooth lighting, x1.04-1.17 flat. 1.0 = no light data. Set from
+        /// welcome.caps (light_v1) by TabletopApp.
         /// </summary>
         public static double LightFactor = 1.0;
-        public static double LightFactorFor(bool serverLight, bool smooth) => !serverLight ? 1.0 : smooth ? 1.6 : 1.25;
+        public static double LightFactorFor(bool serverLight, bool smooth) => !serverLight ? 1.0 : smooth ? 1.35 : 1.15;
 
         /// <summary>Default soft cap (ESTIMATE for Quest 3 at 72 Hz with the unlit block shader): 250k quads = 1M vertices, 500k triangles.</summary>
         public const long DefaultQuadBudget = 250_000;

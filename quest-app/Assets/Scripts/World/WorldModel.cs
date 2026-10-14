@@ -18,7 +18,8 @@ namespace TabletopCraft.World
         /// <summary>4x4x4 biomes (biomes_v1) and the blended tints derived from them, else null (fixed tints).</summary>
         public BiomeGrid Biomes;
         public BiomeTints Tints;
-        BlockShape[] _shapes = new BlockShape[0];   // per palette index; swapped whole on the main thread, read by workers
+        BlockShape[] _shapes = new BlockShape[0];   // per palette index; swapped whole, read by workers
+        volatile int _shapesVersion = -1;           // BlockRules.Version the cache was built for
         public readonly HashSet<Vector3Int> DirtySections = new HashSet<Vector3Int>();
         public bool Loaded => SnapshotId >= 0;
         public Vector3Int SectionCount => new Vector3Int((Dims.x + Section - 1) / Section, (Dims.y + Section - 1) / Section, (Dims.z + Section - 1) / Section);
@@ -31,15 +32,20 @@ namespace TabletopCraft.World
         /// <summary>BlockRules shape of a palette index without a string lookup (hot path of the lighting code).</summary>
         public BlockShape ShapeOf(ushort id)
         {
+            // BlockModels.Prepare reclassifies states from their pack models (BlockRules.SetShape) after the snapshot
+            // arrived; the version tells us to re-read. Rebuilding on a worker is fine: the array is swapped whole.
+            if (_shapesVersion != BlockRules.Version) RebuildShapes();
             var s = _shapes;
             return id < s.Length ? s[id] : BlockRules.Shape(State(id));
         }
 
         void RebuildShapes()
         {
-            var s = new BlockShape[Palette.Count];
-            for (int i = 0; i < s.Length; i++) s[i] = BlockRules.Shape(Palette[i]);
+            int v = BlockRules.Version, n = Palette.Count;
+            var s = new BlockShape[n];
+            for (int i = 0; i < n; i++) s[i] = BlockRules.Shape(Palette[i]);
             _shapes = s;
+            _shapesVersion = v;
         }
 
         public void ApplySnapshot(ChunkSnapshot s)

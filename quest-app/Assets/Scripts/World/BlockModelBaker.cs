@@ -25,6 +25,7 @@ namespace TabletopCraft.World
         public sbyte Cull;        // neighbour direction (IFaceSource order 0..5) that hides this face, -1 = never culled
         public sbyte Dir;         // axis-aligned facing (0..5), -1 for rotated faces
         public bool Tinted;       // tintindex present (grass, foliage, water...)
+        public TintKind Tint;     // biome colour of a tinted face (BlockShading resolves it per block), None otherwise
         public bool Translucent;  // alpha-blended submesh; otherwise the alpha-tested opaque submesh
     }
 
@@ -134,6 +135,7 @@ namespace TabletopCraft.World
         readonly Dictionary<string, Dictionary<string, object>> _blockstates = new Dictionary<string, Dictionary<string, object>>();
         readonly Dictionary<string, Resolved> _resolved = new Dictionary<string, Resolved>();
         bool _hasBlockColor;
+        TintKind _tintKind;   // which biome colour this state's tinted faces take (BiomeColors.BlockTint)
         Color32 _blockColor;
 
         public BlockModelBaker(IModelAssets assets) { _assets = assets; }
@@ -217,6 +219,7 @@ namespace TabletopCraft.World
                     }
 
             _hasBlockColor = BlockColor(path, props, out _blockColor);
+            _tintKind = BiomeColors.BlockTint(state, out _);
             var quads = new List<BakedQuad>();
             Resolved firstModel = null;
             foreach (var a in applies)
@@ -488,6 +491,7 @@ namespace TabletopCraft.World
                 P0 = p[0] * k, P1 = p[1] * k, P2 = p[2] * k, P3 = p[3] * k,
                 T0 = t[0], T1 = t[1], T2 = t[2], T3 = t[3],
                 Color = key.Color, Cull = (sbyte)cull, Dir = (sbyte)dir, Tinted = tinted, Translucent = translucent,
+                Tint = tinted ? _tintKind : TintKind.None,
             });
         }
 
@@ -575,7 +579,7 @@ namespace TabletopCraft.World
                 for (int d = 0; d < 6; d++)
                 {
                     var q = m.Quads[first[d]];
-                    m.CubeFaces[d] = new FaceKey { Layer = (int)q.T0.z, Color = q.Color, UvMap = CubeUv.MapOf(q, d) };
+                    m.CubeFaces[d] = new FaceKey { Layer = (int)q.T0.z, Color = q.Color, UvMap = CubeUv.MapOf(q, d), Tint = q.Tint };
                 }
             }
             return m;
