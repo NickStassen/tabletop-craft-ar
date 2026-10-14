@@ -73,7 +73,8 @@ public final class EntityDelta {
         if (e.passengers.length > 0) o.add("passengers", ids(e.passengers));
         o.add("size", size(e));
         flag(o, "baby", e.baby); flag(o, "small", e.small); flag(o, "sheared", e.sheared); flag(o, "invisible", e.invisible);
-        flag(o, "tamed", e.tamed); flag(o, "angry", e.angry);
+        flag(o, "tamed", e.tamed); flag(o, "angry", e.angry); flag(o, "arms", e.arms); flag(o, "base_plate", e.basePlate);
+        if (e.standPose != null) o.add("stand_pose", standPose(e.standPose));
         str(o, "variant", e.variant); str(o, "color", e.color); str(o, "markings", e.markings); str(o, "profession", e.profession);
         str(o, "pose", e.pose); str(o, "name", e.name); str(o, "item", e.item); str(o, "block", e.block); str(o, "facing", e.facing);
         if (e.count > 1) o.addProperty("count", e.count);
@@ -101,6 +102,11 @@ public final class EntityDelta {
         if (e.invisible != was.invisible) { o.addProperty("invisible", e.invisible); was.invisible = e.invisible; }
         if (e.tamed != was.tamed) { o.addProperty("tamed", e.tamed); was.tamed = e.tamed; }
         if (e.angry != was.angry) { o.addProperty("angry", e.angry); was.angry = e.angry; }
+        if (e.arms != was.arms) { o.addProperty("arms", e.arms); was.arms = e.arms; }
+        if (e.basePlate != was.basePlate) { o.addProperty("base_plate", e.basePlate); was.basePlate = e.basePlate; }
+        if (!Arrays.equals(e.standPose, was.standPose)) {
+            o.add("stand_pose", e.standPose == null ? JsonNull.INSTANCE : standPose(e.standPose)); was.standPose = e.standPose;
+        }
         if (!Objects.equals(e.variant, was.variant)) { o.addProperty("variant", e.variant); was.variant = e.variant; }
         if (!Objects.equals(e.color, was.color)) { o.addProperty("color", e.color); was.color = e.color; }
         if (!Objects.equals(e.markings, was.markings)) { o.addProperty("markings", e.markings); was.markings = e.markings; }
@@ -124,7 +130,7 @@ public final class EntityDelta {
         EntityState c = new EntityState(e.id, e.type, e.x, e.y, e.z, e.yaw, e.pitch);
         c.uuid = e.uuid; c.bodyYaw = e.bodyYaw; c.onGround = e.onGround; c.vehicle = e.vehicle; c.passengers = e.passengers;
         c.width = e.width; c.height = e.height; c.baby = e.baby; c.sheared = e.sheared; c.invisible = e.invisible; c.small = e.small;
-        c.tamed = e.tamed; c.angry = e.angry;
+        c.tamed = e.tamed; c.angry = e.angry; c.arms = e.arms; c.basePlate = e.basePlate; c.standPose = e.standPose;
         c.variant = e.variant; c.color = e.color; c.markings = e.markings; c.profession = e.profession; c.pose = e.pose; c.name = e.name;
         c.item = e.item; c.block = e.block; c.facing = e.facing; c.count = e.count; c.rotation = e.rotation; c.equipment = e.equipment;
         return c;
@@ -152,6 +158,17 @@ public final class EntityDelta {
     }
 
     private static double angle(float a) { return Math.round(a * 10) / 10.0; }
+
+    /** An armour stand's pose: {"head": [x, y, z], "body": ..., "right_leg": ...} in degrees (EntityState.standPose). */
+    static JsonObject standPose(float[] p) {
+        JsonObject o = new JsonObject();
+        for (int i = 0; i < EntityState.STAND_PARTS.length; i++) {
+            JsonArray a = new JsonArray();
+            for (int k = 0; k < 3; k++) a.add(angle(p[i * 3 + k]));
+            o.add(EntityState.STAND_PARTS[i], a);
+        }
+        return o;
+    }
 
     private static JsonArray ids(int[] v) { return Protocol.ints(v); }
 

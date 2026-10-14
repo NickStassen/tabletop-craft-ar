@@ -93,6 +93,8 @@ Optional area keys (Part K): `"area_width"` starts the app at a width preset wit
 
 **Headset off, Wi-Fi gone.** Taking the headset off (or the app going to the background) despawns the giant at once and closes the link; putting it back on reconnects, and the table you left is shown meanwhile. If the link drops (Wi-Fi gone, server stopped or frozen: 6 s without anything from the server counts as dropped), the app keeps reconnecting with backoff, a red **Offline: reconnecting...** badge sits on the table's edge toward you, and players and mobs are hidden after 1.5 s, because their positions are stale; the terrain stays. Everything updates when the link is back.
 
+Optional look keys: `"mipmaps": false` turns off the block textures' mipmaps (on by default: distant terrain stops shimmering, about 33% more texture memory), and `"leaves_inner": false` stops drawing the faces between two leaves blocks (vanilla draws them, so canopies look full; on by default, about 0.5-4% more faces in forests).
+
 ## Part E: textures (resource pack)
 
 Without a pack the app uses flat colours. To use textures you already own:

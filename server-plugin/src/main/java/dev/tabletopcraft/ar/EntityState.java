@@ -21,6 +21,17 @@ public final class EntityState {
     public int[] passengers = NO_IDS;
     public double width, height;
     public boolean baby, sheared, invisible, small, tamed, angry;
+    /** Armour stands: shows its arms / its base plate (PROTOCOL.md 4.21). */
+    public boolean arms, basePlate;
+    /**
+     * Armour stand pose in degrees, 18 values: head, body, left arm, right arm, left leg, right leg (x, y, z each);
+     * null when every part has vanilla's default pose ({@link #DEFAULT_STAND_POSE}).
+     */
+    public float[] standPose;
+    /** ArmorStand.DEFAULT_*_POSE in 26.3 (degrees), in standPose order. */
+    public static final float[] DEFAULT_STAND_POSE = { 0, 0, 0, 0, 0, 0, -10, 0, -10, -15, 0, 10, -1, 0, -1, 1, 0, 1 };
+    /** Part names of standPose's triples, as the protocol sends them. */
+    public static final String[] STAND_PARTS = { "head", "body", "left_arm", "right_arm", "left_leg", "right_leg" };
     public String variant, color, markings, profession, pose, name, item, block, facing;
     public int count, rotation;
     /** Equipment slot (main_hand, off_hand, head, chest, legs, feet, body, saddle) -> item key; only non-empty slots. */

@@ -119,19 +119,24 @@ namespace TabletopCraft.World
         /// cubic: the face lies on the block boundary (full cube faces); false for faces inside the block (a slab top),
         /// which vanilla lights from the block's own layer.
         /// </summary>
-        public static Quad4 FaceCorners(WorldModel w, FaceKey key, int x, int y, int z, int dir, bool cubic = true)
+        public static Quad4 FaceCorners(WorldModel w, FaceKey key, int x, int y, int z, int dir, bool cubic = true, int floor = 0)
         {
             Color32 tint = Tint(w, key, x, y, z);
             var light = w.Light;
             if (light == null) return new Quad4(tint);
+            // Emissive rendering (magma, an active sculk sensor): LightCoordsUtil.FULL_BRIGHT, no AO.
+            if (key.Shade == BakedModel.ShadeFullBright) return new Quad4(Shade(tint, Lightmap(15, 15), 1f));
             var n = Dir[dir];
             var p = new Vector3Int(x, y, z);
             var f = cubic ? p + n : p;
-            if (!w.InBounds(f.x, f.y, f.z)) return new Quad4(Shade(tint, Lightmap(15, 0), 1f)); // cut face at the region edge
+            if (!w.InBounds(f.x, f.y, f.z)) return new Quad4(Shade(tint, Lightmap(15, floor), 1f)); // cut face at the region edge
             int axis = dir >> 1, ua = (axis + 1) % 3, va = (axis + 2) % 3;
             var u = new Vector3Int(); u[ua] = 1;
             var v = new Vector3Int(); v[va] = 1;
             Cell(w, light, f, out int cSky, out int cBlk, out var cShape);
+            // "ambientocclusion": false (BlockModelLighter.prepareQuadFlat): one light, the cell in front for a face on
+            // the block's side, else the block's own; no AO. floor: the face's light_emission (lightCoordsWithEmission).
+            if (key.Shade == BakedModel.ShadeFlat) return new Quad4(Shade(tint, Lightmap(Mathf.Max(cSky, floor), Mathf.Max(cBlk, floor)), 1f));
             if (!cubic)
             {
                 // Vanilla: a face inside the block takes the light of the cell in front unless that cell is opaque.
@@ -139,7 +144,7 @@ namespace TabletopCraft.World
                 Cell(w, light, front, out int fs, out int fb, out var fShape);
                 if (w.InBounds(front.x, front.y, front.z) && Permeable(fShape)) { cSky = fs; cBlk = fb; }
             }
-            if (!SmoothLighting) return new Quad4(Shade(tint, Lightmap(cSky, cBlk), 1f));
+            if (!SmoothLighting) return new Quad4(Shade(tint, Lightmap(Mathf.Max(cSky, floor), Mathf.Max(cBlk, floor)), 1f));
             float cAo = AoOccluder(cShape) ? 0.2f : 1f;
             var q = new Quad4();
             for (int c = 0; c < 4; c++)
@@ -154,7 +159,7 @@ namespace TabletopCraft.World
                 if (Permeable(aOut) || Permeable(bOut)) Cell(w, light, a + v * sv, out kSky, out kBlk, out kShape);
                 float ao = ((AoOccluder(aShape) ? 0.2f : 1f) + (AoOccluder(bShape) ? 0.2f : 1f) + (AoOccluder(kShape) ? 0.2f : 1f) + cAo) * 0.25f;
                 SmoothBlend(aSky, aBlk, bSky, bBlk, kSky, kBlk, cSky, cBlk, out float sky, out float blk);
-                var col = Shade(tint, Lightmap(sky, blk), ao);
+                var col = Shade(tint, Lightmap(Mathf.Max(sky, floor), Mathf.Max(blk, floor)), ao);
                 if (c == 0) q.C0 = col; else if (c == 1) q.C1 = col; else if (c == 2) q.C2 = col; else q.C3 = col;
             }
             return q;
@@ -165,12 +170,12 @@ namespace TabletopCraft.World
         /// light and AO of the block's face, bilinearly interpolated at each vertex position (region-local block units),
         /// like vanilla's partial-face weights. p0..p3 in the caller's vertex order.
         /// </summary>
-        public static Quad4 Quad(WorldModel w, FaceKey key, Vector3Int b, int dir, Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3)
+        public static Quad4 Quad(WorldModel w, FaceKey key, Vector3Int b, int dir, Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, int floor = 0)
         {
             int axis = dir >> 1, ua = (axis + 1) % 3, va = (axis + 2) % 3;
             float plane = p0[axis] - b[axis];
             bool cubic = (dir & 1) == 1 ? plane >= 0.999f : plane <= 0.001f;
-            var c = FaceCorners(w, key, b.x, b.y, b.z, dir, cubic);
+            var c = FaceCorners(w, key, b.x, b.y, b.z, dir, cubic, floor);
             if (w.Light == null) return c;
             return new Quad4 { C0 = Bilerp(c, p0[ua] - b[ua], p0[va] - b[va]), C1 = Bilerp(c, p1[ua] - b[ua], p1[va] - b[va]),
                                C2 = Bilerp(c, p2[ua] - b[ua], p2[va] - b[va]), C3 = Bilerp(c, p3[ua] - b[ua], p3[va] - b[va]) };
@@ -178,28 +183,31 @@ namespace TabletopCraft.World
 
         /// <summary>Quads that aren't axis-aligned (cross plants, rotated elements): the block's own light, no AO (vanilla
         /// renders cross models with ambientocclusion=false).</summary>
-        public static Color32 Flat(WorldModel w, FaceKey key, Vector3Int b)
+        public static Color32 Flat(WorldModel w, FaceKey key, Vector3Int b, int floor = 0)
         {
             Color32 tint = Tint(w, key, b.x, b.y, b.z);
             var light = w.Light;
             if (light == null) return tint;
+            if (key.Shade == BakedModel.ShadeFullBright) return Shade(tint, Lightmap(15, 15), 1f);
             Cell(w, light, b, out int sky, out int blk, out _);
-            return Shade(tint, Lightmap(sky, blk), 1f);
+            return Shade(tint, Lightmap(Mathf.Max(sky, floor), Mathf.Max(blk, floor)), 1f);
         }
 
         /// <summary>
         /// Baked model quads (BlockModelMesher): the biome tint when q.Tint is set; axis-aligned faces take Quad()
         /// (smooth light + AO of the block's face, bilinear for partial faces like vanilla's partial-face weights),
-        /// rotated faces (q.Dir &lt; 0: crosses, 22.5/45 degree elements) the block's own light without AO.
+        /// rotated faces (q.Dir &lt; 0: crosses, 22.5/45 degree elements) the block's own light without AO. shade: the
+        /// model's BakedModel.Shade (flat for "ambientocclusion": false, full bright for emissive blocks); a face with
+        /// "light_emission" has at least that much sky and block light (eyeblossoms, firefly bushes glow).
         /// </summary>
-        public static Quad4 Model(WorldModel w, int x, int y, int z, in BakedQuad q)
+        public static Quad4 Model(WorldModel w, int x, int y, int z, in BakedQuad q, byte shade = BakedModel.ShadeSmooth)
         {
-            var key = new FaceKey { Color = q.Color, Tint = q.Tint };
+            var key = new FaceKey { Color = q.Color, Tint = q.Tint, Shade = shade };
             var b = new Vector3Int(x, y, z);
             if (w.Light == null && (q.Tint == TintKind.None || w.Tints == null)) return new Quad4(q.Color);
-            if (q.Dir < 0) return new Quad4(Flat(w, key, b));
+            if (q.Dir < 0) return new Quad4(Flat(w, key, b, q.Emission));
             var o = new Vector3(x, y, z);
-            return Quad(w, key, b, q.Dir, o + q.P0, o + q.P1, o + q.P2, o + q.P3);
+            return Quad(w, key, b, q.Dir, o + q.P0, o + q.P1, o + q.P2, o + q.P3, q.Emission);
         }
 
         /// <summary>

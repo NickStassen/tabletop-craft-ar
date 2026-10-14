@@ -801,3 +801,51 @@ Replaceable cells, vanilla placement orientation, two-block structures, placed s
 
 ### Not verified (needs the headset)
 The ghost's look in passthrough (alpha 0.4 of the block's own textures; does it read as "here", is it visible on bright terrain), the red refusal tint and outline, the target readout's size and position under the selected block, the miss stub, and how the orientation feels with the controller ray as the look (e.g. stairs and furnaces when pointing steeply down at the table: the horizontal facing comes from the ray's small horizontal part).
+
+## Looking like vanilla 26.3 (0.3.1 rendering; Paper 26.3, seed 12345, 2026-10-14, no headset)
+
+Sources: the 26.3 client jar's assets and the renderers' bytecode (`javap -p -c` on the unobfuscated jar), never copied into the repo. Golden numbers for vanilla's randomness were computed by calling the real 26.3 classes (`Mth.getSeed`, `RandomSource.createThreadLocalInstance`) from a scratch harness.
+
+### Tests
+
+- `quest-app/Tests~ dotnet run -- --jar <26.3 jar> --entity-models <entity_models.json>`: **570 PASS** (531 before). New, mostly in `Tests~/RenderTests.cs`:
+  - Randomness at six positions (including ±30,000,000) against the real classes: `Mth.getSeed`, the Random LCG, `nextInt(4/5/16)`, the multipart part seed and picks, XYZ offsets. Lily pads (4 turned variants), fire (2 × 4 combinations on the ground, 4 on two walls), chorus plants (5, weights 2+1+1+1); a poppy at (1000, −12, −999) meshes 0.05 / 0.117 blocks off its cell.
+  - Random UV tables: stone (mirrored, all sides), dirt and grass top/bottom (turned), netherrack (16), deepslate `axis=x`, sand; every table entry reproduces that variant's baked face UVs; a 4×4 stone floor still merges into 6 quads.
+  - Tints: exactly vanilla's 28 tinted blocks over all 35,723 states (probe); cherry/pale oak leaves, bamboo, bamboo sapling, lava/powder snow cauldrons and the stonecutter untinted; pink petals tint only their stems.
+  - Grass sides: the overlay is a second quad on the same corners after the base (10 quads for one block, 2 blocks still merge); snowy grass has none. Only `grass_block` has an overlay among all 26.3 states.
+  - Lighting in a closed dark stone box: magma's top full bright (255), the stone walls dark (20), the open eyeblossom's emissive faces glow, its plain faces dark; doors and rails flat, active sculk sensors full bright; the heavy core resolves its `"all"` slot.
+  - Pistons: push (head + 2 blocks), retract and sticky pull, with the change sets a Paper 26.3 server sends (recorded live, below); the push meshes the head and both blocks in their moving cells.
+  - Mips: 16 px → 5 levels, linear-light means (black + white → 188), solidified cut-outs, a poppy keeps 0.50 coverage at 2×2 (a box filter: 0), oak leaves stay closer to their level-0 coverage.
+  - Entity roots (`EntityTests.cs`): arrow, trident, end crystal and leash-knot figure transforms equal the vanilla `PoseStack` through the Z mirror for 4 yaws × 3 pitches (worst error 2.6e-7 blocks); an arrow flying east points east, pitched up points up; the crystal glass bobs 4.8-11.2 px below its pivot. Armour stand fixture: arms, base plate, pose, parts (default pose, sticks follow the body, the plate turns against the yaw, no hat).
+- `server-plugin ./gradlew build`: 79 tests, 0 failures (new `EntityDeltaTest.armorStandFixture`). `tools`: pytest 73 passed (new `test_entities_armor_stands`), ruff clean.
+- Unity 6000.0.84f1 headless: compile clean, `ShaderCheck` 80 variants / 0 errors (Vulkan + GLES3, stereo keywords), `BatchMeshCheck.RunRenderer` 8/8 PASS.
+
+### Live server (own Paper 26.3, ports 25603/8803, a scratch recorder)
+
+- Armour stands summoned with `{ShowArms:1b,NoBasePlate:1b,Pose:{Head:[10f,20f,0f],RightArm:[-110f,25f,10f]}}`, a plain one and `{Invisible:1b,Small:1b}`: the `entities` entries carried `arms`, `stand_pose` (the two set parts, the rest at vanilla's defaults), `base_plate` only on the other two, `small` + `invisible` on the third.
+- Pistons: every move is one `block_update` when it starts and one 2 ticks (0.2 s) later. Extending (piston, stone, 2 × dirt in front): `piston[extended=true]` at the base, `moving_piston[type=normal]` on the head cell and the three destination cells, no separate air changes. Retracting: the base cell becomes `moving_piston`, the head cell air. Sticky pull: base `moving_piston[type=sticky]`, the head cell `moving_piston[type=normal]` (the pulled stone), the stone's cell air. `PistonGhosts` handles exactly these.
+
+### Faces (`Tests~ --measure-batches`, pack, smooth light, the same snapshots before and after)
+
+| region | master 9f0e1ab | 0.3.1, `leaves_inner: false` | 0.3.1 (default) |
+|---|---|---|---|
+| 160×128×160 at 0,0 (ocean, dark forest) | 190,494 | 191,239 | 192,096 (+0.8%) |
+| 128×96×128 forest (−224, 288) | 163,958 | 170,846 | 177,864 (+8.5%) |
+| 128×96×128 dark forest (96, −32) | 104,008 | 106,416 | 106,936 (+2.8%) |
+
+Without the leaves change the difference is the grass side overlays (one extra quad per merged grass side; the forest: +6,920 with only that commit); faces between identical leaves add 0.3-4.1%. `leaves_inner` stays on by default (vanilla's look).
+
+### Texture memory
+
+A 16 px layer is 1,024 bytes, 1,364 with mips. Real regions need 55-98 layers (73-130 KB with mips, +18-32 KB); every block texture and animation frame of the 26.3 pack would be 1,945 KB → 2,590 KB. Animated textures copy every mip level per frame change (5 small copies instead of 1).
+
+### Not verified (needs the headset)
+
+Everything above is engine-free or editor-only. The look of the per-block texture rotation and the mips (and their GPU cost: the block shaders now sample with explicit gradients), grass sides in different biomes, offsets, emissive blocks, leaves, pistons and the entity roots must be checked on the Quest (checklist in the 0.3.1 merge notes).
+
+### Known gaps (deferred)
+
+- Greedy cubes pick their rotation from a hash of the world block, not the Java client's exact choice (that needs 64-bit integer maths per pixel); model blocks (lily pads, fire...) match exactly.
+- Blocks with a light level (glowstone, torches, lanterns...) still get smooth light and AO; vanilla lights every light-emitting state flat. The server sends no per-state light level, and only magma and sculk sensors (emissive rendering) are handled.
+- Pistons: blocks jump to their new cell instead of sliding for 2 ticks.
+- 26.x `shade_direction_override` (flowerbed stems, emissive crosses) is not applied.

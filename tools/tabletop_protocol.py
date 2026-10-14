@@ -52,6 +52,7 @@ CAP_ENTITIES = "entities_v1"
 CAP_ACTIONS = "actions_v1"
 ACTION_KINDS = {"swing", "dig", "break", "place", "hurt"}
 EQUIPMENT_SLOTS = {"main_hand", "off_hand", "head", "chest", "legs", "feet", "body", "saddle"}
+STAND_PARTS = {"head", "body", "left_arm", "right_arm", "left_leg", "right_leg"}
 PLAYER_POSES = {"standing", "sneaking", "swimming", "sleeping", "gliding", "riding", "spin_attack", "dying"}
 # Block editing from the headset (PROTOCOL.md 4.20): block_edit, granted in welcome.caps.
 CAP_EDIT = "edit_v1"
@@ -107,6 +108,7 @@ def validate(msg: dict) -> None:
             if "pos" in e and len(e["pos"]) != 3:
                 raise ValueError(f"entities entry {e['id']} pos must have 3 numbers")
             _check_equipment(e.get("equipment"))
+            _check_stand_pose(e.get("stand_pose"))
         if not all(isinstance(i, int) for i in msg.get("removed") or []):
             raise ValueError("entities removed must be a list of ids")
     if t == "actions":
@@ -180,6 +182,14 @@ def registry_id(state: str) -> str:
 def registry_states(msg: dict) -> dict[str, str]:
     """block_registry -> {block id: default state}, in menu order."""
     return {registry_id(s): s for c in msg["categories"] for s in c["blocks"]}
+
+
+def _check_stand_pose(pose: dict | None) -> None:
+    """An armour stand's stand_pose (PROTOCOL.md 4.21): every part once, [x, y, z] degrees."""
+    if pose is None:
+        return
+    if set(pose) != STAND_PARTS or not all(isinstance(v, list) and len(v) == 3 for v in pose.values()):
+        raise ValueError(f"stand_pose needs [x, y, z] for each of {sorted(STAND_PARTS)}, got {pose}")
 
 
 def _check_equipment(eq: dict | None) -> None:

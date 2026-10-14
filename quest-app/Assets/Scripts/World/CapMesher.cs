@@ -52,6 +52,8 @@ namespace TabletopCraft.World
                     // AO: the cut reads like a daylight cross-section, like the region's own open-sky edges.
                     // [water] Water keeps its tint kind (colour already folded in): Emit gives it inside faces.
                     if (key.Tint != TintKind.None) { key.Color = BlockShading.Tint(w, key, p.x, p.y, p.z); if (key.Tint != TintKind.Water) key.Tint = TintKind.None; }
+                    if (key.Overlay != 0 && key.OverlayTint != TintKind.None) { key.OverlayColor = BlockShading.Tint(w, key.OverlayKey(), p.x, p.y, p.z); key.OverlayTint = TintKind.None; }
+                    key.Random = 0;   // [random] cuts are cross-sections: plain tiling (the cap renderers carry no block origin)
                     mask[k] = key;
                 }
             for (int v = 0; v < nv; v++)
@@ -86,6 +88,15 @@ namespace TabletopCraft.World
             // Same winding rule as GreedyMesher.EmitQuad (right-handed, CCW seen from outside); the uploader flips it after mirroring Z.
             if (positive) { tris.Add(start); tris.Add(start + 1); tris.Add(start + 2); tris.Add(start); tris.Add(start + 2); tris.Add(start + 3); }
             else { tris.Add(start); tris.Add(start + 2); tris.Add(start + 1); tris.Add(start); tris.Add(start + 3); tris.Add(start + 2); }
+            if (key.Overlay != 0)
+            {
+                // The grass side overlay (FaceKey.Overlay) over the cut, on the same corners like GreedyMesher's.
+                var over = key.OverlayKey();
+                int o = m.Verts.Count;
+                for (int i = 0; i < 4; i++) { m.Verts.Add(m.Verts[start + i]); m.Uvs.Add(CubeUv.Greedy(face, m.Verts[start + i], over)); m.Colors.Add(key.OverlayColor); }
+                if (positive) { tris.Add(o); tris.Add(o + 1); tris.Add(o + 2); tris.Add(o); tris.Add(o + 2); tris.Add(o + 3); }
+                else { tris.Add(o); tris.Add(o + 2); tris.Add(o + 1); tris.Add(o); tris.Add(o + 3); tris.Add(o + 2); }
+            }
             // [water] A water cut seen from inside the water (an aquarium wall): reversed copy with own vertices in
             // MeshData.WaterBack, drawn only while the eye is under water (ClipCaps.Underwater), as FluidMesher does.
             if (key.Tint == TintKind.Water)

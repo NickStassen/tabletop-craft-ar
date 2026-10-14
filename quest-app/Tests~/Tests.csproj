@@ -15,7 +15,7 @@
     <!-- [area] width presets and mesh batching -->
     <Compile Include="../Assets/Scripts/World/AreaSizing.cs;../Assets/Scripts/World/SectionBatches.cs" />
     <Compile Include="../Assets/Scripts/World/BlockShading.cs;../Assets/Scripts/World/BiomeColors.cs" />
-    <Compile Include="../Assets/Scripts/World/BlockModelBaker.cs;../Assets/Scripts/World/BlockModels.cs" />
+    <Compile Include="../Assets/Scripts/World/BlockModelBaker.cs;../Assets/Scripts/World/BlockModels.cs;../Assets/Scripts/World/PistonGhosts.cs;../Assets/Scripts/World/TextureMips.cs" />
     <Compile Include="../Assets/Scripts/World/PlayerModel.cs;../Assets/Scripts/World/PlayerAnimation.cs;../Assets/Scripts/World/SkinImage.cs" />
     <Compile Include="../Assets/Scripts/World/FluidMesher.cs;../Assets/Scripts/World/TextureAnimation.cs;../Assets/Scripts/World/EyeMedium.cs" />
     <Compile Include="../Assets/Scripts/World/BlockRaycast.cs;../Assets/Scripts/World/BlockEdits.cs;../Assets/Scripts/World/BlockPlacement.cs" />

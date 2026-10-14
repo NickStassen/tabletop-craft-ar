@@ -222,6 +222,23 @@ def test_entities_full_then_delta():
     assert m.entities == {}
 
 
+def test_entities_armor_stands():
+    """Armour stands (PROTOCOL.md 4.21): arms, base_plate and stand_pose; a default stand sends neither arms nor a pose."""
+    msg = json.loads((FIX / "entities_armor_stand.json").read_text())
+    validate(msg)
+    m = EntityMirror()
+    m.apply(msg)
+    plain, posed, small = m.entities[201], m.entities[202], m.entities[203]
+    assert plain["base_plate"] and "arms" not in plain and "stand_pose" not in plain
+    assert posed["arms"] and "base_plate" not in posed and posed["stand_pose"]["right_arm"] == [-110.0, 25.0, 10.0]
+    assert small["small"] and small["invisible"] and small["equipment"] == {"head": "minecraft:iron_helmet"}
+    m.apply({"full": False, "entities": [{"id": 202, "stand_pose": None, "arms": False}]})
+    assert m.entities[202]["stand_pose"] is None and not m.entities[202]["arms"]   # cleared, like other fields
+    del msg["entities"][1]["stand_pose"]["left_leg"]
+    with pytest.raises(ValueError):
+        validate(msg)
+
+
 def test_entities_validation():
     msg = json.loads((FIX / "entities.json").read_text())
     del msg["entities"][0]["type"]

@@ -1,0 +1,106 @@
+{
+ "v": 1,
+ "type": "entities",
+ "seq": 12,
+ "t": 1760370002050,
+ "full": true,
+ "entities": [
+  {
+   "id": 201,
+   "type": "minecraft:armor_stand",
+   "uuid": "3c1e7f0a-0000-4000-8000-000000000201",
+   "pos": [
+    100.5,
+    64.0,
+    -20.5
+   ],
+   "yaw": 45.0,
+   "pitch": 0.0,
+   "body_yaw": 45.0,
+   "on_ground": true,
+   "size": [
+    0.5,
+    1.98
+   ],
+   "base_plate": true
+  },
+  {
+   "id": 202,
+   "type": "minecraft:armor_stand",
+   "uuid": "3c1e7f0a-0000-4000-8000-000000000202",
+   "pos": [
+    102.5,
+    64.0,
+    -20.5
+   ],
+   "yaw": -90.0,
+   "pitch": 0.0,
+   "body_yaw": -90.0,
+   "on_ground": true,
+   "size": [
+    0.5,
+    1.98
+   ],
+   "arms": true,
+   "stand_pose": {
+    "head": [
+     10.0,
+     20.0,
+     0.0
+    ],
+    "body": [
+     0.0,
+     5.0,
+     0.0
+    ],
+    "left_arm": [
+     -30.0,
+     0.0,
+     -10.0
+    ],
+    "right_arm": [
+     -110.0,
+     25.0,
+     10.0
+    ],
+    "left_leg": [
+     -1.0,
+     0.0,
+     -1.0
+    ],
+    "right_leg": [
+     1.0,
+     0.0,
+     1.0
+    ]
+   },
+   "equipment": {
+    "main_hand": "minecraft:iron_sword"
+   }
+  },
+  {
+   "id": 203,
+   "type": "minecraft:armor_stand",
+   "uuid": "3c1e7f0a-0000-4000-8000-000000000203",
+   "pos": [
+    104.5,
+    64.0,
+    -20.5
+   ],
+   "yaw": 180.0,
+   "pitch": 0.0,
+   "body_yaw": 180.0,
+   "on_ground": true,
+   "size": [
+    0.25,
+    0.99
+   ],
+   "small": true,
+   "invisible": true,
+   "base_plate": true,
+   "equipment": {
+    "head": "minecraft:iron_helmet"
+   }
+  }
+ ]
+}

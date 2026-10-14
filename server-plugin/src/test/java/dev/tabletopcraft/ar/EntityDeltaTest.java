@@ -76,6 +76,42 @@ class EntityDeltaTest {
         assertNull(EntityDelta.message(sent, next, false), "no change -> no message");
     }
 
+    /** tools/fixtures/entities_armor_stand.json: a survival stand, a posed stand with arms and a sword, an invisible small stand. */
+    static List<EntityState> armorStands() {
+        EntityState plain = st(201, "minecraft:armor_stand", 100.5, 64, -20.5, 45, 0, "201");
+        plain.bodyYaw = 45f; plain.onGround = true; plain.width = 0.5; plain.height = 1.975; plain.basePlate = true;
+        EntityState posed = st(202, "minecraft:armor_stand", 102.5, 64, -20.5, -90, 0, "202");
+        posed.bodyYaw = -90f; posed.onGround = true; posed.width = 0.5; posed.height = 1.975; posed.arms = true;
+        posed.standPose = EntitySampler.standPose(
+            new org.bukkit.util.EulerAngle(Math.toRadians(10), Math.toRadians(20), 0), new org.bukkit.util.EulerAngle(0, Math.toRadians(5), 0),
+            new org.bukkit.util.EulerAngle(Math.toRadians(-30), 0, Math.toRadians(-10)), new org.bukkit.util.EulerAngle(Math.toRadians(-110), Math.toRadians(25), Math.toRadians(10)),
+            new org.bukkit.util.EulerAngle(Math.toRadians(-1), 0, Math.toRadians(-1)), new org.bukkit.util.EulerAngle(Math.toRadians(1), 0, Math.toRadians(1)));
+        posed.equipment = Map.of("main_hand", "minecraft:iron_sword");
+        EntityState small = st(203, "minecraft:armor_stand", 104.5, 64, -20.5, 180, 0, "203");
+        small.bodyYaw = 180f; small.onGround = true; small.width = 0.25; small.height = 0.9875; small.small = true; small.invisible = true; small.basePlate = true;
+        small.equipment = Map.of("head", "minecraft:iron_helmet");
+        return new ArrayList<>(List.of(plain, posed, small));
+    }
+
+    @Test void armorStandFixture() throws Exception {
+        Map<Integer, EntityState> sent = new HashMap<>();
+        JsonObject m = EntityDelta.message(sent, armorStands(), true);
+        assertEquals(fixture("entities_armor_stand").get("entities"), m.get("entities"));
+        // Vanilla's default pose is not sent at all; a pose back to default is cleared with null.
+        var defaults = EntityState.DEFAULT_STAND_POSE;
+        var radians = new org.bukkit.util.EulerAngle[6];
+        for (int i = 0; i < 6; i++) radians[i] = new org.bukkit.util.EulerAngle(Math.toRadians(defaults[i * 3]), Math.toRadians(defaults[i * 3 + 1]), Math.toRadians(defaults[i * 3 + 2]));
+        assertNull(EntitySampler.standPose(radians));
+        List<EntityState> next = armorStands();
+        next.get(1).standPose = null; next.get(1).arms = false; next.get(0).basePlate = false;
+        JsonObject d = EntityDelta.message(sent, next, false);
+        JsonObject posed = d.getAsJsonArray("entities").get(1).getAsJsonObject();
+        assertTrue(posed.get("stand_pose").isJsonNull());
+        assertFalse(posed.get("arms").getAsBoolean());
+        assertFalse(d.getAsJsonArray("entities").get(0).getAsJsonObject().get("base_plate").getAsBoolean());
+        assertNull(EntityDelta.message(sent, next, false), "no change -> no message");
+    }
+
     @Test void smallMovesAccumulateUntilTheyCount() {
         Map<Integer, EntityState> sent = new HashMap<>();
         EntityState cow = new EntityState(1, "minecraft:cow", 0, 64, 0, 0, 0);
