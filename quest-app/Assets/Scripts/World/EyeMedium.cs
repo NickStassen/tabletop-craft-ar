@@ -135,7 +135,7 @@ namespace TabletopCraft.World
                 case EyeMedium.Water:
                 {
                     var fog = water * (0.6f + 0.4f * vision);
-                    return new EyeLook { Fog = fog, Start = -8f, End = 96f * Math.Max(0.25f, vision), Strength = 0.95f, Tint = fog, TintAlpha = 0.45f };
+                    return new EyeLook { Fog = fog, Start = 0f, End = 96f * Math.Max(0.5f, vision), Strength = 0.7f, Tint = fog, TintAlpha = 0.45f };   // lighter than vanilla (0.95, from 24 blocks): user feedback
                 }
                 case EyeMedium.Lava:
                     return new EyeLook { Fog = new Rgb(0.6f, 0.1f, 0f), Start = 0.25f, End = 1f, Strength = 1f, Tint = new Rgb(0.85f, 0.3f, 0.05f), TintAlpha = 0.8f };

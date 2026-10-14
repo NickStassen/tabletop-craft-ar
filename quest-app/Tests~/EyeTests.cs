@@ -109,10 +109,10 @@ static class EyeTests
         var expect = EyeMediumRules.Look(EyeMedium.Water, EyeMediumRules.WaterColor(tank, under), EyeMediumRules.WaterVision(h.VisionTicks));
         check(a0 < 0.1f && aMid > 0.1f && aMid < 0.4f && Math.Abs(aEnd - 0.45f) < 1e-4 && Math.Abs(h.Look.Fog.B - expect.Fog.B) < 1e-4,
               $"fade in over 0.2 s (alpha {a0:F2} -> {aMid:F2} -> {aEnd:F2})");
-        check(Math.Abs(h.Look.End - 24f) < 0.1f && EyeMediumRules.WaterVision(0) == 0 && Math.Abs(EyeMediumRules.WaterVision(100) - 0.6f) < 1e-6 &&
-              EyeMediumRules.WaterVision(600) == 1, $"water vision: 24 blocks on entering (got {h.Look.End:F1}), vanilla ramp");
+        check(Math.Abs(h.Look.End - 48f) < 0.1f && EyeMediumRules.WaterVision(0) == 0 && Math.Abs(EyeMediumRules.WaterVision(100) - 0.6f) < 1e-6 &&
+              EyeMediumRules.WaterVision(600) == 1, $"water vision: 48 blocks on entering (got {h.Look.End:F1}), vanilla ramp from half");
         for (int i = 0; i < 31 * 20; i++) h.Update(tank, under, bs, 0.05f);
-        check(Math.Abs(h.Look.End - 96f) < 1e-3 && h.Look.Start == -8f, $"water vision: 96 blocks after 30 s (got {h.Look.End:F1})");
+        check(Math.Abs(h.Look.End - 96f) < 1e-3 && h.Look.Start == 0f && h.Look.Strength == 0.7f, $"water vision: 96 blocks after 30 s (got {h.Look.End:F1})");
         var c = EyeMediumRules.WaterColor(tank, under);
         check(Math.Abs(c.R - 63 / 255f) < 1e-6 && Math.Abs(c.B - 228 / 255f) < 1e-6 && Math.Abs(h.Look.Fog.B - c.B) < 1e-4,
               "water fog: default water colour without biomes, full brightness once adjusted");
