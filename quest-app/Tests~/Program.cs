@@ -137,6 +137,7 @@ static class Program
 
         PlayerTests.Run(Check, Fixture);
         WaterTests.Run(Check, args);   // fluids, waterlogging, texture animation (WaterTests.cs)
+        EditTests.Run(Check, Fixture);  // block editing: DDA targeting, Z mirror, optimistic edits (EditTests.cs)
 
         // Block models from a real client jar / resource pack (never committed; MC_CLIENT_JAR or --jar PATH).
         string jar = JarPath(args);
@@ -160,6 +161,8 @@ static class Program
 
         int liveIdx = Array.IndexOf(args, "--live");
         if (liveIdx >= 0) Live(args[liveIdx + 1]);
+        int liveEditIdx = Array.IndexOf(args, "--live-edit");
+        if (liveEditIdx >= 0) EditTests.Live(args[liveEditIdx + 1], Check);
         Console.WriteLine(fails == 0 ? "ALL PASS" : $"{fails} FAILED");
         return fails == 0 ? 0 : 1;
     }

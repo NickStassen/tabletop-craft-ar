@@ -15,11 +15,22 @@ namespace TabletopCraft.Net
         {
             ["type"] = "hello", ["client"] = ClientName, ["client_version"] = ClientVersion,
             ["protocols"] = new List<object> { Version }, ["token"] = token ?? "",
-            ["caps"] = new List<object> { "rle_palette_v1", "avatar", CapLight, CapBiomes },
+            ["caps"] = new List<object> { "rle_palette_v1", "avatar", CapLight, CapBiomes, CapEdit },
         };
 
         /// <summary>Optional snapshot extras (PROTOCOL.md 4.4.1): per-block light and 4x4x4 biomes.</summary>
         public const string CapLight = "light_v1", CapBiomes = "biomes_v1";
+        /// <summary>Block editing from the headset (PROTOCOL.md 4.17); granted in welcome.caps when the server allows it.</summary>
+        public const string CapEdit = "edit_v1";
+
+        /// <summary>block_edit (PROTOCOL.md 4.17): op "break" or "place", world block position, state (place only), clicked face.</summary>
+        public static Dictionary<string, object> BlockEdit(string op, Vector3Int pos, string state, string face)
+        {
+            var d = new Dictionary<string, object> { ["type"] = "block_edit", ["op"] = op, ["pos"] = new List<object> { pos.x, pos.y, pos.z } };
+            if (state != null) d["state"] = state;
+            if (face != null) d["face"] = face;
+            return d;
+        }
 
         public static Dictionary<string, object> Subscribe(string world, Vector3Int origin, Vector3Int dims) => new Dictionary<string, object>
         {

@@ -1,0 +1,130 @@
+// Block targeting for editing from the headset (XR/BlockEditMode.cs): a voxel ray traversal (Amanatides & Woo DDA)
+// over WorldModel that returns the first targetable cell and the face the ray entered it through, like vanilla's
+// crosshair hit result. Engine-free (tested in Tests~).
+//
+// Frames: "block space" is the protocol's right-handed region-local frame (+X east, +Y up, +Z south, 1 unit = 1 block,
+// cell (x,y,z) spans [x,x+1] x [y,y+1] x [z,z+1]). TabletopRenderer draws block-space vertex (x,y,z) at Blocks-local
+// (x, y, -z) (Unity is left-handed, PROTOCOL.md section 3), so a point or direction in the Blocks transform's local
+// space maps to block space by negating z, and back the same way (FromBlocksLocal is its own inverse).
+//
+// Air (incl. cave air, barriers, light) and fluids are skipped, so you aim through water at the seabed and the cell in
+// front of the hit (Adjacent) is where a placed block goes. Non-cube blocks (models, plants) are targeted by their cell.
+using System;
+using UnityEngine;
+
+namespace TabletopCraft.World
+{
+    public struct BlockHit
+    {
+        public bool Hit;
+        public Vector3Int Block;     // region-local cell that was hit
+        public int Face;             // 0=-X west 1=+X east 2=-Y down 3=+Y up 4=-Z north 5=+Z south (IFaceSource dirs)
+        public Vector3Int Adjacent;  // Block + Normal(Face): the cell a placed block goes into (may be outside the region)
+        public float Distance;       // along the ray to the entry point, in blocks
+        public Vector3 Point;        // entry point on the face, block space
+    }
+
+    public static class BlockRaycast
+    {
+        /// <summary>Minecraft Direction names per face index (block_edit "face").</summary>
+        public static readonly string[] FaceNames = { "west", "east", "down", "up", "north", "south" };
+
+        public static Vector3Int Normal(int face)
+        {
+            var n = new Vector3Int();
+            n[face / 2] = (face & 1) == 1 ? 1 : -1;
+            return n;
+        }
+
+        /// <summary>Face index for the face on <paramref name="axis"/> (0=x 1=y 2=z) whose normal has the given sign.</summary>
+        public static int FaceOf(int axis, int sign) => axis * 2 + (sign > 0 ? 1 : 0);
+
+        /// <summary>Blocks-local (Unity, Z mirrored) to block space, and back (the mapping is its own inverse).</summary>
+        public static Vector3 FromBlocksLocal(Vector3 p) => new Vector3(p.x, p.y, -p.z);
+        public static Vector3 ToBlocksLocal(Vector3 p) => new Vector3(p.x, p.y, -p.z);
+
+        /// <summary>What the ray stops at: everything except air-like blocks and fluids.</summary>
+        public static bool Targetable(BlockShape s) => s != BlockShape.Air && s != BlockShape.Fluid;
+
+        /// <summary>A placed block may go into air or a fluid (vanilla replaces water and lava when you place into it).</summary>
+        public static bool CanPlaceInto(WorldModel w, Vector3Int c) =>
+            w.InBounds(c.x, c.y, c.z) && !Targetable(w.ShapeOf(w.Grid[w.Index(c.x, c.y, c.z)]));
+
+        /// <summary>
+        /// First targetable cell along the ray from <paramref name="origin"/> in direction <paramref name="dir"/> (block
+        /// space, any length), up to <paramref name="maxDist"/> blocks. A ray that starts inside a targetable cell hits it,
+        /// with the face that points back along the ray's main axis.
+        /// </summary>
+        public static BlockHit Cast(WorldModel w, Vector3 origin, Vector3 dir, float maxDist)
+        {
+            var none = new BlockHit();
+            if (w == null || !w.Loaded || maxDist <= 0) return none;
+            float len = MathF.Sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+            if (len < 1e-9f) return none;
+            var d = dir * (1f / len);
+
+            // Clip the ray to the region box [0, Dims] (slab method); remember the axis it enters through.
+            float t0 = 0, t1 = maxDist;
+            int enterAxis = -1;
+            for (int a = 0; a < 3; a++)
+            {
+                float lo = 0, hi = w.Dims[a];
+                if (MathF.Abs(d[a]) < 1e-12f)
+                {
+                    if (origin[a] < lo || origin[a] >= hi) return none;   // parallel to this slab and outside it
+                    continue;
+                }
+                float ta = (lo - origin[a]) / d[a], tb = (hi - origin[a]) / d[a];
+                if (ta > tb) { float s = ta; ta = tb; tb = s; }
+                if (ta > t0) { t0 = ta; enterAxis = a; }
+                if (tb < t1) t1 = tb;
+                if (t0 > t1) return none;
+            }
+
+            var p = origin + d * t0;
+            var cell = new Vector3Int();
+            for (int a = 0; a < 3; a++) cell[a] = Math.Min(Math.Max((int)MathF.Floor(p[a]), 0), w.Dims[a] - 1);
+            int face;
+            if (enterAxis >= 0)
+            {
+                // Entered through the box face: the first cell on that axis is fixed by the direction (no rounding).
+                cell[enterAxis] = d[enterAxis] > 0 ? 0 : w.Dims[enterAxis] - 1;
+                face = FaceOf(enterAxis, d[enterAxis] > 0 ? -1 : 1);
+            }
+            else
+            {
+                int main = 0;
+                for (int a = 1; a < 3; a++) if (MathF.Abs(d[a]) > MathF.Abs(d[main])) main = a;
+                face = FaceOf(main, d[main] > 0 ? -1 : 1);
+            }
+
+            int sx = Sign(d.x), sy = Sign(d.y), sz = Sign(d.z);
+            float mx = Next(origin.x, d.x, cell.x), my = Next(origin.y, d.y, cell.y), mz = Next(origin.z, d.z, cell.z);
+            float dxT = sx != 0 ? MathF.Abs(1f / d.x) : float.PositiveInfinity;
+            float dyT = sy != 0 ? MathF.Abs(1f / d.y) : float.PositiveInfinity;
+            float dzT = sz != 0 ? MathF.Abs(1f / d.z) : float.PositiveInfinity;
+            float t = t0;
+            int guard = w.Dims.x + w.Dims.y + w.Dims.z + 3;
+            while (guard-- > 0)
+            {
+                if (Targetable(w.ShapeOf(w.Grid[w.Index(cell.x, cell.y, cell.z)])))
+                    return new BlockHit { Hit = true, Block = cell, Face = face, Adjacent = cell + Normal(face), Distance = t, Point = origin + d * t };
+                int axis = mx <= my ? (mx <= mz ? 0 : 2) : (my <= mz ? 1 : 2);
+                float tn = axis == 0 ? mx : axis == 1 ? my : mz;
+                if (tn > t1) return none;   // leaves the region or goes past maxDist
+                t = tn;
+                if (axis == 0) { cell.x += sx; mx += dxT; face = FaceOf(0, -sx); }
+                else if (axis == 1) { cell.y += sy; my += dyT; face = FaceOf(1, -sy); }
+                else { cell.z += sz; mz += dzT; face = FaceOf(2, -sz); }
+                if (!w.InBounds(cell.x, cell.y, cell.z)) return none;
+            }
+            return none;
+        }
+
+        static int Sign(float v) => v > 0 ? 1 : v < 0 ? -1 : 0;
+
+        /// <summary>Ray parameter where the ray crosses the next cell boundary on one axis (infinity if parallel).</summary>
+        static float Next(float o, float d, int cell) =>
+            d > 0 ? (cell + 1 - o) / d : d < 0 ? (cell - o) / d : float.PositiveInfinity;
+    }
+}
