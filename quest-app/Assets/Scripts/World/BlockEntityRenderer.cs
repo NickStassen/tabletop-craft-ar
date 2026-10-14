@@ -103,6 +103,32 @@ namespace TabletopCraft.World
         public long Triangles { get; private set; }
         public int Groups => _groups.Count;
         public bool Scanning => _scan.Count > 0;
+        public int TextQuads => _textMesh != null ? _textMesh.vertexCount / 4 : 0;
+        public int PortalFaces => (_portalMesh != null ? _portalMesh.vertexCount / 4 : 0) + (_gatewayMesh != null ? _gatewayMesh.vertexCount / 4 : 0);
+        public int BeamQuads => _bv.Count / 4;
+
+        /// <summary>Editor checks: the frame's draws as a command buffer (cameras rendered outside the player loop don't
+        /// see Graphics.RenderMesh* calls). Call after Update.</summary>
+        public void Fill(CommandBuffer cb)
+        {
+            foreach (var g in _groups.Values)
+                for (int start = 0, c = 0; start < g.Members.Count; start += Chunk, c++)
+                    cb.DrawMeshInstanced(g.Mesh, 0, g.Mat, 0, g.World[c], Math.Min(Chunk, g.Members.Count - start), g.Props[c]);
+            var l2w = transform.localToWorldMatrix;
+            if (TextQuads > 0) cb.DrawMesh(_textMesh, l2w, _textMat, 0, 0);
+            if (_portalMesh != null && _portalMesh.vertexCount > 0) cb.DrawMesh(_portalMesh, l2w, _portalMat, 0, 0);
+            if (_gatewayMesh != null && _gatewayMesh.vertexCount > 0) cb.DrawMesh(_gatewayMesh, l2w, _gatewayMat, 0, 0);
+            if (_beamMesh != null && _beamMesh.vertexCount > 0) { cb.DrawMesh(_beamMesh, l2w, _beamCoreMat, 0, 0); cb.DrawMesh(_beamMesh, l2w, _beamGlowMat, 1, 0); }
+        }
+
+        /// <summary>The region-local matrix of the first model at a world position (Editor checks).</summary>
+        public bool TryInstanceMatrix(Vector3Int world, out Matrix4x4 local)
+        {
+            local = Matrix4x4.identity;
+            if (!_insts.TryGetValue(world, out var i) || i.Members.Count == 0) return false;
+            local = LocalOf(i.Members[0]);
+            return true;
+        }
 
         void Awake() { _skins = new PlayerSkins(); }
 
@@ -646,6 +672,7 @@ namespace TabletopCraft.World
             };
         }
 
+        readonly List<(Mesh, Material)> _emptyGroups = new List<(Mesh, Material)>();
         static readonly int ColorId = Shader.PropertyToID("_Color"), OverlayId = Shader.PropertyToID("_Overlay");
         static Vector4[] _noOverlay;
 
@@ -657,10 +684,12 @@ namespace TabletopCraft.World
             var bounds = RegionBounds(l2w);
             int calls = 0, instances = 0; long tris = 0;
             if (_noOverlay == null) { _noOverlay = new Vector4[Chunk]; for (int i = 0; i < Chunk; i++) _noOverlay[i] = new Vector4(1, 0, 0, 0); }
+            _emptyGroups.Clear();
+            foreach (var kv in _groups) if (kv.Value.Members.Count == 0) _emptyGroups.Add(kv.Key);
+            foreach (var k in _emptyGroups) _groups.Remove(k);
             foreach (var g in _groups.Values)
             {
                 int n = g.Members.Count;
-                if (n == 0) continue;
                 if (g.Dirty)
                 {
                     if (g.Local.Length < n) g.Local = new Matrix4x4[n];
