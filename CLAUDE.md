@@ -43,7 +43,7 @@ Work through these in order and record what you verify in `README.md` Status and
 3. `adb install` the APK. Watch `adb logcat -s Unity | grep Tabletop` for LINK up and the first snapshot.
 4. Confirm MRUK detects the table and the area wireframe snaps to it.
 5. Exercise area setup: resize, auto-fit, small (16x16) and max (128x96x128). Note FPS.
-6. Confirm the atlas loads from `pack.zip` (PACK in the status text). The parser was checked offline against the 26.3 client jar (sprite-object textures and fluids fixed), not yet on the headset. Fix grey grass/leaves (biome tint) and missing-texture fallbacks.
+6. Confirm the atlas loads from `pack.zip` (PACK in the block menu's Info tab). The parser was checked offline against the 26.3 client jar (sprite-object textures and fluids fixed), not yet on the headset. Fix grey grass/leaves (biome tint) and missing-texture fallbacks.
 7. Place and break blocks from a Java client and confirm live diffs on the table.
 8. Check the giant avatar (Mannequin + hands) tracks head and hand poses.
 9. Profile with OVR Metrics. Tune the 250k-face soft cap if needed.
@@ -60,7 +60,7 @@ Work through these in order and record what you verify in `README.md` Status and
 
 ## How to debug
 - Server: `/tabletop status`, `/tabletop avatar status` (logs `AVATAR_STATE` / `AVATAR_ENTITY`). Set `debug.avatar-state: true` to stream entity positions to clients.
-- Quest: `adb logcat -s Unity | grep Tabletop`. The status text under your view shows LINK, RTT, WORLD, PACK, TABLE and POSES.
+- Quest: `adb logcat -s Unity | grep Tabletop`. The block menu's Info tab (left ≡) shows LINK, RTT, WORLD, PACK, TABLE and POSES; `"show_hud": true` in tabletop.json (or Show HUD in the Info tab) brings back a small head-locked copy.
 
 ## Repo rules
 - **This repo will be public.** No personal details: no employers or jobs, family or relationships, events, health, money, home location, hostnames or schedule. Keep docs strictly technical, and keep IPs and usernames in examples generic.
