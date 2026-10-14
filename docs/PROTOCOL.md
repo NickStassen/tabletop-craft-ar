@@ -61,13 +61,13 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
  "client":"quest-app","client_version":"0.1.0",
  "protocols":[1],
  "token":"changeme",
- "caps":["rle_palette_v1","avatar"]}
+ "caps":["rle_palette_v1","avatar","light_v1","biomes_v1"]}
 ```
 
 - `client`: free string, e.g. `quest-app` or `fake-quest`.
 - `protocols`: protocol versions the client speaks. The server picks the highest one it also supports.
 - `token`: shared secret from the plugin `config.yml` (`auth.token`). If it's empty in config, auth is disabled (LAN dev only). A wrong token gets `error` `auth_failed` and then close code 4003.
-- `caps`: capability strings. v1 defines `rle_palette_v1` (required) and `avatar` (client will send poses).
+- `caps`: capability strings. v1 defines `rle_palette_v1` (required) and `avatar` (client will send poses). Optional extras: `light_v1` and `biomes_v1` (§4.5.1); unknown caps are ignored.
 - The client MUST NOT send anything else before it gets `welcome`. The server closes with 4002 if `hello` doesn't arrive within 5 s.
 
 ### 4.2 `welcome` (S→C)
@@ -79,10 +79,12 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
  "world":"world",
  "region":{"origin":[100,60,-40],"dims":[32,64,32]},
  "limits":{"max_dims":[64,384,64],"pose_hz_max":60,"player_hz":10},
- "avatar_supported":true}
+ "avatar_supported":true,
+ "caps":["light_v1","biomes_v1"]}
 ```
 
 - `session`: opaque id for logs.
+- `caps` (optional): the optional features granted to this session (§4.5.1). Missing or empty means none (e.g. an older server).
 - `region`: the default region from config. The server immediately follows `welcome` with a `chunk_snapshot` for it unless the client sends `subscribe` first. (Send order: `welcome`, then a snapshot, which the server builds async, so a `subscribe` arriving in the meantime replaces it.)
 - `limits.max_dims`: the largest `dims` the server accepts in `subscribe`.
 
@@ -116,7 +118,7 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 - `palette`: array of **full block-state strings** exactly as `BlockData#getAsString()` produces them (namespaced id plus `[k=v,...]` with properties sorted alphabetically, as Minecraft does). Index 0 SHOULD be `minecraft:air` when air is present. The palette only lists states that appear in this region.
 - `order`: always `"yzx"` in v1. Linear index `i = (y * dz + z) * dx + x`, so X varies fastest, then Z, then Y (the same order Minecraft uses inside a section).
 - `encoding: "rle_palette_v1"`: `data` is a flat int array of pairs `[paletteIndex, runLength, paletteIndex, runLength, …]` over the linear order. The sum of all `runLength` values MUST equal `dx*dy*dz`, and each `runLength` ≥ 1. A decoder that gets a wrong total MUST drop the snapshot and send `error` `bad_snapshot`.
-- `biomes`, `light`: reserved, always `null` in v1.
+- `biomes`, `light`: `null` unless the session was granted `biomes_v1` / `light_v1` (§4.5.1).
 - Size: if a snapshot would be over 4 MiB, the server sends `error` `region_too_large` instead.
 
 ### 4.5 `block_update` (S→C)
@@ -134,6 +136,49 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 - If `snapshot_id` doesn't match the client's current snapshot, the client drops the message. (It's for an old subscription.)
 - If more than 4096 changes occur in one tick (an explosion, or a `/fill`), the server MAY send a fresh `chunk_snapshot` instead.
 - Sources the server MUST cover: block break and place by players, physics, fluids, fire, explosions, pistons, and commands. Implementation: listen to the main events and also run a cheap per-tick diff of affected sections. See ARCHITECTURE.md §3.3.
+
+### 4.5.1 Light and biomes (optional, additive: `light_v1`, `biomes_v1`)
+
+Per-block light and biomes let a client draw Minecraft-style lighting (dark caves, torch light, smooth lighting) and per-biome grass, foliage and water colours. Both are **opt-in** so older clients never pay the bytes:
+
+- The client lists `light_v1` and/or `biomes_v1` in `hello.caps`. The server grants each one unless it is turned off in its config (`stream.light`, `stream.biomes`) and echoes the granted ones in `welcome.caps`. Without a grant, `chunk_snapshot.light` / `.biomes` stay `null` and `block_update` carries no `light`.
+- Nothing else changes: old servers ignore the caps and send `null`, and clients fall back to fixed tints and no lighting.
+
+**`chunk_snapshot.light`** (with `light_v1`):
+
+```json
+"light":{"encoding":"rle_v1","data":[0,16,240,14,254,1,0,1]}
+```
+
+- One packed value per block, `sky * 16 + block` (0..255): the sky and block light levels 0..15 the server stores for that position (Paper `ChunkSnapshot#getBlockSkyLight` / `getBlockEmittedLight`). Opaque blocks normally hold 0; light-emitting blocks hold their own emission. Cells above the build height are `240` (open sky), below it `0`.
+- Same yzx order as `data`, and the same pair encoding: `[value, runLength, …]`, runs summing to `dx*dy*dz`. A wrong total is a `bad_snapshot`.
+
+**`chunk_snapshot.biomes`** (with `biomes_v1`):
+
+```json
+"biomes":{"res":4,"q_origin":[25,15,-11],"q_dims":[2,1,2],
+ "palette":["minecraft:plains","minecraft:swamp"],
+ "climate":[[0.8,0.4],[0.8,0.9]],
+ "encoding":"rle_palette_v1","data":[0,2,1,2]}
+```
+
+- One biome per world-aligned 4x4x4 cell, vanilla's storage resolution. `q_origin = floor(origin / 4)` per axis (quart coordinates) and `q_dims` covers every cell the region touches. A block at region-local `(x,y,z)` uses cell `floor((origin + local) / 4) - q_origin`, linear index `(qy * qdz + qz) * qdx + qx` (x fastest, like the block grid).
+- `palette`: biome keys (`minecraft:plains`, or a datapack key). `data`: `rle_palette_v1` pairs over the cells.
+- `climate` (optional, may be missing or contain `null`): `[temperature, downfall]` per palette entry from `World#getTemperature` / `getHumidity` at the lowest cell where the biome was seen. Vanilla colours use the base temperature, which this equals except for biomes only seen above sea level + 17 (height cooling), so clients SHOULD prefer their own table for vanilla ids and use `climate` for unknown ones. Grass/foliage colour maps, per-biome override colours, water colours and the swamp/dark-forest modifiers are client knowledge (the Quest ships a table taken from the 26.3 biome data).
+- Biomes are only sent in snapshots (they change only through commands like `/fillbiome`; the next snapshot picks that up).
+
+**`block_update.light`** (with `light_v1`):
+
+```json
+{"v":1,"type":"block_update","seq":4,"t":1760370001050,"snapshot_id":7,
+ "palette_add":["minecraft:torch"],"changes":[[1,1,1,3]],
+ "light":[[1,1,1,254],[2,1,1,253],[1,1,2,253]]}
+```
+
+- `[x, y, z, value]`, region-local, packed as above, for every cell whose light differs from what this session last received. Applied after `changes`. A `block_update` MAY carry only `light` (`changes: []`).
+- The light engine updates light a little after the block change event, so the server diffs the region again 4 ticks after a change event, and the periodic safety diff (`stream.safety-diff-ticks`, default 20) catches the rest. More than 16384 light changes (or 4096 block changes) in one diff are sent as a fresh `chunk_snapshot` instead.
+
+Sizes on real terrain (seed 12345, see TESTING.md "Lighting and biome colours"): light adds about 15% to a 64x96x64 snapshot (9 KB) and 25% to a 128x96x128 one (60 KB); biomes add under 2 KB. Fixtures: `tools/fixtures/chunk_snapshot_extras.json`, `block_update_light.json`; `hello.json` / `welcome.json` show the caps.
 
 ### 4.6 `player_positions` (S→C)
 
@@ -263,6 +308,7 @@ Then it closes with code 1000. When the Quest client disconnects (with or withou
 ## Changelog
 
 - **v1 (2026-10-13):** initial.
+- **v1, light and biomes (2026-10-13, additive):** optional per-block light and 4x4x4 biomes in `chunk_snapshot`, light changes in `block_update`, opted into with the `light_v1` / `biomes_v1` caps and echoed in `welcome.caps` (§4.5.1). Peers without the caps are unaffected.
 
 ## 4.13–4.16 Runtime region control (v1, additive)
 

@@ -29,6 +29,8 @@ REQUIRED = {
 }
 ERROR_CODES = {"version_mismatch", "auth_failed", "bad_message", "unknown_type", "unsupported", "region_too_large",
                "world_not_found", "bad_snapshot", "rate_limited", "skin_failed", "internal"}
+# Optional snapshot extras a client can ask for in hello.caps (PROTOCOL.md 4.4.1).
+CAP_LIGHT, CAP_BIOMES = "light_v1", "biomes_v1"
 
 
 def validate(msg: dict) -> None:
@@ -62,6 +64,45 @@ def decode_rle(data: list[int], volume: int) -> list[int]:
     return out
 
 
+def decode_light(obj: dict, volume: int) -> list[int]:
+    """chunk_snapshot.light (PROTOCOL.md 4.4.1): rle_v1 pairs of packed sky << 4 | block over the yzx grid."""
+    if obj.get("encoding") != "rle_v1":
+        raise ValueError(f"unsupported light encoding {obj.get('encoding')}")
+    out = decode_rle(obj["data"], volume)
+    if out and (min(out) < 0 or max(out) > 255):
+        raise ValueError("light value out of range")
+    return out
+
+
+@dataclass
+class BiomeGrid:
+    """chunk_snapshot.biomes (PROTOCOL.md 4.4.1): one biome per 4x4x4 world-aligned cell."""
+
+    q_origin: tuple[int, int, int]
+    q_dims: tuple[int, int, int]
+    palette: list[str]
+    cells: list[int]
+    climate: list | None = None
+
+    @staticmethod
+    def from_json(obj: dict) -> BiomeGrid:
+        if obj.get("res") != 4 or obj.get("encoding") != "rle_palette_v1":
+            raise ValueError("unsupported biome res/encoding")
+        qd = tuple(obj["q_dims"])
+        cells = decode_rle(obj["data"], qd[0] * qd[1] * qd[2])
+        if cells and max(cells) >= len(obj["palette"]):
+            raise ValueError("biome palette index out of range")
+        climate = obj.get("climate")
+        if climate is not None and len(climate) != len(obj["palette"]):
+            raise ValueError("climate must have one entry per palette entry")
+        return BiomeGrid(tuple(obj["q_origin"]), qd, list(obj["palette"]), cells, climate)
+
+    def at_world(self, x: int, y: int, z: int) -> str:
+        qx, qy, qz = (x >> 2) - self.q_origin[0], (y >> 2) - self.q_origin[1], (z >> 2) - self.q_origin[2]
+        dx, _, dz = self.q_dims
+        return self.palette[self.cells[(qy * dz + qz) * dx + qx]]
+
+
 @dataclass
 class WorldMirror:
     """Client-side copy of the subscribed region, kept current from chunk_snapshot + block_update."""
@@ -72,6 +113,8 @@ class WorldMirror:
     snapshot_id: int = -1
     palette: list[str] = field(default_factory=list)
     grid: list[int] = field(default_factory=list)
+    light: list[int] | None = None   # packed sky << 4 | block, when the server sent light
+    biomes: BiomeGrid | None = None
 
     @property
     def loaded(self) -> bool:
@@ -88,8 +131,11 @@ class WorldMirror:
         grid = decode_rle(msg["data"], dims[0] * dims[1] * dims[2])
         if grid and max(grid) >= len(msg["palette"]):
             raise ValueError("palette index out of range")
+        light = decode_light(msg["light"], len(grid)) if msg.get("light") else None
+        biomes = BiomeGrid.from_json(msg["biomes"]) if msg.get("biomes") else None
         self.world, self.origin, self.dims = msg["world"], tuple(msg["origin"]), dims
         self.snapshot_id, self.palette, self.grid = msg["snapshot_id"], list(msg["palette"]), grid
+        self.light, self.biomes = light, biomes
 
     def apply_block_update(self, msg: dict) -> bool:
         if msg["snapshot_id"] != self.snapshot_id:
@@ -97,11 +143,20 @@ class WorldMirror:
         self.palette.extend(msg.get("palette_add") or [])
         for x, y, z, p in msg["changes"]:
             self.grid[self.index(x, y, z)] = p
+        if self.light is not None:
+            for x, y, z, v in msg.get("light") or []:
+                self.light[self.index(x, y, z)] = v
         return True
 
     def at_world(self, x: int, y: int, z: int) -> str:
         ox, oy, oz = self.origin
         return self.palette[self.grid[self.index(x - ox, y - oy, z - oz)]]
+
+    def light_at_world(self, x: int, y: int, z: int) -> tuple[int, int]:
+        """(sky, block) light at a world position; needs a snapshot with light."""
+        ox, oy, oz = self.origin
+        v = self.light[self.index(x - ox, y - oy, z - oz)]
+        return v >> 4, v & 15
 
     def count(self, prefix: str) -> int:
         ids = {i for i, s in enumerate(self.palette) if s == prefix or s.startswith(prefix + "[")}

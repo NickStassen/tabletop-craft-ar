@@ -32,5 +32,9 @@
   "pose_hz_max": 60,
   "player_hz": 10
  },
- "avatar_supported": true
+ "avatar_supported": true,
+ "caps": [
+  "light_v1",
+  "biomes_v1"
+ ]
 }

@@ -4,7 +4,7 @@ import pathlib
 
 import pytest
 
-from tabletop_protocol import Envelope, WorldMirror, decode_rle, parse_region, scripted_pose, validate
+from tabletop_protocol import CAP_BIOMES, CAP_LIGHT, Envelope, WorldMirror, decode_light, decode_rle, parse_region, scripted_pose, validate
 
 FIX = pathlib.Path(__file__).parent / "fixtures"
 
@@ -58,3 +58,43 @@ def test_parse_region_forms():
     assert c == {"center": [0.5, 70.0, -3.0], "size": [32, 64, 32], "y_origin": -64}
     with pytest.raises(ValueError):
         parse_region("1,2,3")
+
+
+def test_snapshot_extras_light_and_biomes():
+    m = WorldMirror()
+    m.apply_snapshot(json.loads((FIX / "chunk_snapshot_extras.json").read_text()))
+    assert m.light is not None and len(m.light) == 32
+    assert m.light_at_world(104, 63, -39) == (15, 14)   # local (2, 1, 3)
+    assert m.light_at_world(102, 62, -42) == (0, 0)     # inside the grass block
+    assert m.biomes.at_world(102, 62, -42) == "minecraft:plains"
+    assert m.biomes.at_world(105, 63, -39) == "minecraft:swamp"   # quart (26, 15, -10)
+    assert m.biomes.climate[1] == [0.8, 0.9]
+
+
+def test_block_update_light_applies_and_old_snapshots_ignore_it():
+    m = WorldMirror()
+    m.apply_snapshot(json.loads((FIX / "chunk_snapshot_extras.json").read_text()))
+    assert m.apply_block_update(json.loads((FIX / "block_update_light.json").read_text()))
+    assert m.at_world(103, 63, -41) == "minecraft:torch"
+    assert m.light_at_world(103, 63, -41) == (15, 14)
+    assert m.apply_block_update({"snapshot_id": 7, "changes": [], "light": [[0, 1, 0, 17]]})
+    assert m.light_at_world(102, 63, -42) == (1, 1)
+    v1 = WorldMirror()
+    v1.apply_snapshot(snap())   # light: null -> no light mirror, light entries are ignored
+    assert v1.light is None and v1.biomes is None
+    assert v1.apply_block_update({"snapshot_id": 1, "changes": [], "light": [[0, 0, 0, 240]]})
+
+
+def test_decode_light_rejects_bad_data():
+    assert decode_light({"encoding": "rle_v1", "data": [240, 2, 0, 1]}, 3) == [240, 240, 0]
+    with pytest.raises(ValueError):
+        decode_light({"encoding": "rle_v2", "data": [0, 3]}, 3)
+    with pytest.raises(ValueError):
+        decode_light({"encoding": "rle_v1", "data": [0, 2]}, 3)
+    with pytest.raises(ValueError):
+        decode_light({"encoding": "rle_v1", "data": [256, 3]}, 3)
+
+
+def test_caps_in_hello_and_welcome_fixtures():
+    assert {CAP_LIGHT, CAP_BIOMES} <= set(json.loads((FIX / "hello.json").read_text())["caps"])
+    assert json.loads((FIX / "welcome.json").read_text())["caps"] == [CAP_LIGHT, CAP_BIOMES]
