@@ -733,3 +733,47 @@ For each width W in 64, 96, 128, 192, 256: put `"area_width": W` in `tabletop.js
 3. Click through the presets once (64 → 96 → 128 → 192 → 256 → 64): the table never empties, the area grows/shrinks around the view, its footprint on the table stays the same (`AREA_RESIZED ... block ... mm in ... ms`), and the status line shows `AREA W wide ... server max 256`.
 4. Look for batching artefacts: water, leaves and glass across batch borders (world x or z a multiple of 32), the underwater view (inside faces), the cut faces at the window after a resize, the light at the new border after shrinking, and edits right at a batch border.
 5. At 256, repeat 2 with `"batch_columns": 4` to see whether fewer draw calls beat the bigger re-uploads.
+
+## Sessions, prefs, discovery and the keyboard (0.3.1 comfort; Paper 26.3, 2026-10-14, no headset)
+
+A separate headless Paper 26.3 test server (JDK 25, offline mode, seed 12345, its own ports, ViaVersion/ViaBackwards for the mineflayer player), the region the earlier runs left (80×96×80 with a 16-block margin).
+
+### Tests
+
+| Suite | Result |
+|---|---|
+| Plugin (JUnit) | 87 tests, 0 failures. New `LanBeaconTest` (8): the probe fixture is recognised and other packets aren't; only private, link-local and loopback senders get an answer; the reply equals `tools/fixtures/discovery_reply.json` (name cut to one 48-character line); 20 replies per second; a real UDP probe on loopback gets the reply and junk gets nothing; the `Headset URL` lines (192.168 first, then 10, then 172.16/12, interface names; a specific bind host alone); the constant-time token check; `PlayerFilter` (the margin on x, y and z; spectator, invisible and vanished are never shown). `FixtureTest.regionChangedFixtureCarriesLimits`. |
+| Tools (pytest + ruff) | 80 passed, ruff clean. New: discovery probe/reply fixtures (no envelope) and bad replies (port 0 or 70000, a path without `/`, a non-bool token, `v` 2), `region_changed.limits.build_height`. |
+| Quest scripts (`Tests~ --jar 26.3.jar --entity-models …`) | 629/629 PASS (531 before), new in `Tests~/ComfortTests.cs`: |
+
+- **Keyboard** (`World/KeyboardModel.cs`): 32 keys on the letter layer and 36 on `?123`, inside their box and not overlapping; every digit and the symbols commands need are on `?123`; one-shot shift, caps lock on the second press, off on the third; a full server URL and a command with every symbol typed key by key; enter, del and clear; search collapses spaces; max length; the field shows its tail with the cursor.
+- **Info tab** (`World/BlockMenuModel.cs`): Show HUD, Reset view and the Server button below the status, nothing overlapping; the Server field opens with the keyboard and Find / Connect / Cancel (0.35 m tall panel); typing goes to the field, not the search; enter connects to the normalised address; found servers are buttons, hovering shows the URL, a click connects; a bad address is refused and the field stays open; cancel keeps the old server; leaving the tab closes the field; enter in Search picks the first result.
+- **prefs.json** (`World/AppPrefs.cs`): round trip; the tabletop.json values it saw; a broken file is reported (the app starts fresh); the shared-key rule (a new or edited tabletop.json value wins, an unchanged one doesn't); the table pose relative to the table anchor round-trips and follows a moved and turned table; yaw like `Quaternion.Euler`; debounced saving (1.5 s quiet, 10 s at most, never twice, flush); the Server field rewriting tabletop.json keeps every other key and refuses to silently replace a broken file; the hotbar and tab restore (empties skipped, a category tab waits for the block list).
+- **Addresses and discovery** (`Net/LanDiscovery.cs`): `192.168.1.50` → `ws://192.168.1.50:8765/tabletop`, typed ports kept, full URLs kept, junk refused; the reply fixture parsed with the sender's address; the limited + /24 broadcast targets; a UDP probe answered by a loopback responder (a duplicate reply listed once); the TCP fallback finds the one open port among 254 loopback hosts in 12 ms.
+- **Link** (`Net/LinkClient.cs`, against a small RFC 6455 server inside the test): a full snapshot drops the queued snapshots and updates (a delta drops nothing) and the queue is bounded; pongs measured inside the client and not queued; shutdown sends `avatar_config` then `bye`, clears the RTT and doesn't reconnect; a server that goes silent after `welcome` is noticed after `DeadSeconds` and reconnected; close 4003 stops the retries; a URL without `ws://` doesn't start; nobody listening gives an error status and no RTT.
+- **Session helpers** (`World/SessionState.cs`): the setup card after 5 s without a first connection or at once on a fatal close, never for a later drop; the offline badge and hidden figures after 1.5 s; a new server can show the card again; the card text (URL, status, settings path, the Info > Server and QUEST_SETUP Part D pointers, "not retrying" on 4003); `Loading area N %` only for big loads, then `Area loaded` once; keyed toasts update in place, custom lifetimes; hold A fires once after 0.5 s, a tap never, a press that starts on or passes over the menu never.
+- **Orientation** (`World/NavState.cs`): the 8-way compass (north = -Z), the readout (`58 16 41  facing N` for a known view), Reset view's re-centring, the badge's point on the table edge toward the head.
+
+Unity 6000.0.84f1 batch compile clean (no warnings in Assets), ShaderCheck 80 variants 0 errors (no shader changes).
+
+### Live server
+- **Startup log:** `Link listening on ws://0.0.0.0:8802/tabletop`, then one `Headset URL: ws://<lan-ip>:8802/tabletop (<interface>)` per private IPv4 (two on the test box: the Ethernet adapter and a VPN interface), then `LAN discovery on UDP 8802 as "Comfort Test"` (the MOTD).
+- **Discovery** (`Tests~ --discover 8802`): the probe to loopback and to the LAN broadcast found the server twice (127.0.0.1 and the LAN address) within 1.5 s: name, plugin 0.3.0, mc 26.3, players. With `auth.token` set and `/tabletop reload`, the replies say `token`.
+- **Dead link** (`Tests~ --live-link`, the server frozen with `kill -STOP` for 12 s): `no answer for 6 s: reconnecting` exactly 6.0 s after the freeze, the RTT back to -1, connection attempts while frozen end with `no answer within 5 s` (the kernel accepts TCP, nobody answers the upgrade), and a new `welcome` 0.5 s after `kill -CONT` (12.5 s in all).
+- **Wrong token** (`--live-token`, `auth.token: test-secret`): close 4003 with one `auth_failed` error, then no reconnect for 3 s (the server log has one `Link closed … code=4003`).
+- **Players and limits** (a Python client plus the mineflayer player, console commands through the FIFO), 9/9: shown in creative inside the region; hidden in spectator; shown again; hidden with the invisibility potion; shown after `effect clear`; hidden 18 blocks below the region's 16-block margin (y 10 for a region from y 44); shown again at y 100. `region_request` to `world_nether` → `region_changed` with `limits.build_height` [0, 256], and back to the overworld with [-64, 320].
+- `Tests~ --live` still passes (its RTT now comes from `LinkClient`).
+
+### Not verified (needs the headset)
+- Headset off and on: the giant disappears at once in the Java world, the app reconnects on its own when the headset is back, the old table shows meanwhile, no "Link lost" toast, `LINK paused (headset off)` in the Info tab; whether Quest sends `HMDUnmounted`, `OnApplicationPause(true)` or both, and when.
+- A Wi-Fi drop or a server stop while playing: the red badge at the table edge toward you, players and mobs hidden after 1.5 s and back after reconnecting.
+- First run with no server reachable: the setup card after about 5 s (size and position), hidden while the menu is open; Find servers on the real LAN (UDP broadcast from the Quest, reply through the PC firewall; the TCP fallback when UDP 8765 is blocked); typing an address on the keyboard and connecting; the toasts for a missing `pack.zip` / `entity_models.json`.
+- prefs.json across restarts: block size, table position and turn on the same MRUK table, hotbar, selection, menu tab, Show HUD; first run fitting the area to the table.
+- Hold A (tick, then buzz after 0.5 s; a tap does nothing; nothing on the menu); a late MRUK scene keeping a manual placement.
+- The N marker, the coordinates line under the small hotbar, Reset view; player labels disappearing outside the window; the `Loading area N %` toast on a width change.
+
+### Known gaps
+- Players and entities are hidden while offline rather than faded: neither the player skin shader nor the entity shader has a fade, and hiding needs no shader change.
+- The headset can't type a token yet (only the address); a server with `auth.token` needs it in `tabletop.json`.
+- The table pose is remembered only relative to an MRUK table; without one the miniature starts in front of you each session (a spatial anchor is future work).
+- Named entities' labels outside the window are the entity renderer's (not changed here).

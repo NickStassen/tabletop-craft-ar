@@ -353,6 +353,7 @@ namespace TabletopCraft
                 }
                 File.WriteAllText(ConfigPath, text);
                 _config = Json.Parse(text) as Dictionary<string, object>;
+                Token = _config?.S("token") ?? Token;   // a token fixed in the file since the start counts too
             }
             catch (Exception e) { _hud.Toast("Can't write tabletop.json: " + e.Message, ToastKind.Error); }
             StopLink("server changed");
