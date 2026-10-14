@@ -72,6 +72,8 @@ def validate(msg: dict) -> None:
         raise ValueError(f"{t} missing {missing}")
     if t == "error" and msg["code"] not in ERROR_CODES:
         raise ValueError(f"unknown error code {msg['code']}")
+    if t in ("welcome", "region_info") and not isinstance(msg["limits"].get("max_view_width"), int):
+        raise ValueError(f"{t} limits need max_view_width (PROTOCOL.md 4.25)")
     if t == "player_positions":
         for p in msg["players"]:
             if p.get("skin_model") not in (None, "wide", "slim"):
