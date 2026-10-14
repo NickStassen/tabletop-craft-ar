@@ -168,7 +168,7 @@ public final class LinkServer extends WebSocketServer {
             for (var e : m.getAsJsonArray("protocols")) if (e.getAsInt() == Protocol.VERSION) speaks = true;
         if (!speaks) { fatal(s, "version_mismatch", "server speaks protocols [" + Protocol.VERSION + "]", refSeq, Protocol.CLOSE_VERSION); return; }
         String t = m.has("token") && !m.get("token").isJsonNull() ? m.get("token").getAsString() : "";
-        if (!token.isEmpty() && !token.equals(t)) { fatal(s, "auth_failed", "bad or missing token", refSeq, Protocol.CLOSE_AUTH); return; }
+        if (!token.isEmpty() && !tokenMatches(token, t)) { fatal(s, "auth_failed", "bad or missing token", refSeq, Protocol.CLOSE_AUTH); return; }
         s.client = m.has("client") ? m.get("client").getAsString() : "unknown";
         if (m.has("caps") && m.get("caps").isJsonArray()) {
             java.util.Set<String> caps = new java.util.HashSet<>();
@@ -206,6 +206,16 @@ public final class LinkServer extends WebSocketServer {
         return true;
     }
 
+    /** Constant-time token check: both sides hashed (no length leak), then MessageDigest.isEqual. */
+    static boolean tokenMatches(String expected, String given) {
+        try {
+            var sha = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] a = sha.digest(expected.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            byte[] b = sha.digest((given == null ? "" : given).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.security.MessageDigest.isEqual(a, b);
+        } catch (java.security.NoSuchAlgorithmException e) { throw new IllegalStateException(e); }   // every JVM has SHA-256
+    }
+
     private void fatal(Session s, String code, String msg, Long refSeq, int closeCode) {
         s.send(Protocol.error(code, msg, refSeq, true));
         s.conn.close(closeCode, code);
@@ -213,5 +223,11 @@ public final class LinkServer extends WebSocketServer {
 
     @Override public void onError(WebSocket conn, Exception ex) { plugin.getLogger().log(Level.WARNING, "Websocket error", ex); }
 
-    @Override public void onStart() { plugin.getLogger().info("Link listening on ws://" + getAddress().getHostString() + ":" + getPort() + path); }
+    @Override public void onStart() {
+        plugin.getLogger().info("Link listening on ws://" + getAddress().getHostString() + ":" + getPort() + path);
+        // ws://0.0.0.0 isn't something to type into the headset: list the addresses it can actually use.
+        var urls = LanBeacon.headsetUrls(getAddress().getHostString(), getPort(), path, LanBeacon.localNics());
+        for (String u : urls) plugin.getLogger().info("Headset URL: " + u);
+        if (urls.isEmpty()) plugin.getLogger().info("Headset URL: ws://<this PC's LAN IPv4>:" + getPort() + path + " (no private IPv4 found)");
+    }
 }

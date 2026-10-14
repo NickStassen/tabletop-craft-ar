@@ -11,6 +11,7 @@ Status: **v1, normative.** The server plugin (`server-plugin/`), the Quest app (
 - Why JSON and not binary in v1: a 32x32x64 band is only tens of KB once run-length encoded (see §6.3), pose traffic at 30 Hz is about 10 KB/s, and JSON is easy to debug with `websocat` or the fake client. A binary chunk encoding is planned only if measurements show it's needed (PLAN.md, Phase 5).
 - Permessage-deflate is optional. The server MAY offer it, and the client MAY decline. Nothing in this spec depends on compression.
 - Max frame size the server accepts: 64 KiB. Max frame the server sends: 4 MiB.
+- Finding the server on the LAN is a separate small UDP exchange (§7).
 
 ## 2. Envelope
 
@@ -197,7 +198,7 @@ Sizes on real terrain (seed 12345, see TESTING.md "Lighting and biome colours"):
 
 ### 4.6 `player_positions` (S→C)
 
-Sent at `limits.player_hz` (default 10 Hz) whenever there's at least one player in the region bounds expanded by 16 blocks horizontally, plus once with an empty list when the last one leaves.
+Sent at `limits.player_hz` (default 10 Hz) whenever there's at least one player in the region bounds expanded by `stream.players-margin` (16) blocks on every axis, plus once with an empty list when the last one leaves. Next version: the margin applies to Y too (a player deep in a cave under the region isn't listed), and spectators, invisible players (the flag or the potion) and vanished players (a true `vanished` metadata value, as vanish plugins set, or hidden from any other online player) are never listed.
 
 ```json
 {"v":1,"type":"player_positions","seq":4,"t":1760370001050,
@@ -283,6 +284,7 @@ Sent after each `avatar_config`, and when the server changes something by itself
 
 - Either side MAY ping. The receiver MUST answer with `pong` carrying the same `id` and `echo_t` = the ping's `t`. RTT = now − `echo_t` on the original sender.
 - The client SHOULD ping every 2 s. The server closes a connection after 15 s with no messages at all (close code 4004).
+- Next version: the client SHOULD treat 6 s without any inbound bytes as a dead link (Wi-Fi gone without a TCP FIN, a frozen server), drop the socket and reconnect. The Quest app does, and clears its RTT while the link is down. A big snapshot in transit counts as traffic.
 
 ### 4.11 `error` (both directions)
 
@@ -333,12 +335,30 @@ Then it closes with code 1000. When the Quest client disconnects (with or withou
 | 4004 | idle timeout |
 | 4005 | server shutting down / plugin disabled |
 
+A client SHOULD NOT reconnect by itself after 4001 or 4003: nothing changes until the app, the plugin, the token or the address does. The Quest app stops retrying and shows its setup card (QUEST_SETUP.md Part D); it reconnects with backoff after every other close.
+
 ## 6. Implementation notes (non-normative)
 
 1. **Encoder reference (Java):** walk `i = 0 … N−1` in yzx order, look up `ChunkSnapshot.getBlockData(x&15, y, z&15).getAsString()`, map it to a palette index with a `HashMap<String,Integer>` (cache by `BlockData` identity), and emit a pair whenever the index changes.
 2. **Decoder reference (C#/Python):** expand the pairs into a `ushort[]` of length N and check the total.
 3. **Size check:** a typical 32x64x32 band (65,536 blocks), mostly air above and stone below, has about 500–3,000 runs, so 5–30 KB of JSON. A worst-case noisy 32x384x32 region (393,216 blocks, all runs of 1) is about 2.5 MB of JSON, which is still under the 4 MiB cap. See RESEARCH.md §2.
 4. **Conformance:** `tools/` ships golden JSON fixtures for every message type. Both the Java unit tests and the fake client round-trip them.
+
+## 7. LAN discovery (UDP, outside the WebSocket; next version)
+
+So the headset can find a server without typing its address (QUEST_SETUP.md Part D, "Find servers"). It is a probe and a reply, each one UDP datagram holding one UTF-8 JSON object. There is no envelope (`seq`, `t`).
+
+```json
+{"type":"tabletop_discover","v":1}
+{"type":"tabletop_server","v":1,"name":"A Minecraft Server","port":8765,"path":"/tabletop","token":false,"version":"0.3.0","mc":"26.3","players":2}
+```
+
+- **Probe (headset → broadcast).** The client sends `tabletop_discover` to UDP port 8765 (the plugin's `discovery.port`; the app's tabletop.json `discovery_port` if changed) at `255.255.255.255` and at its own /24's broadcast address, then listens on its sending socket for about 1.2 s.
+- **Reply (plugin → the probe's sender, unicast).** `tabletop_server` with `name` (config `discovery.name`, else the server's MOTD as plain text, one line, at most 48 characters), the WebSocket `port` and `path` (`bind.port`, `bind.path`), `token` (true when `auth.token` is set, so the client knows it needs one), the plugin `version`, the game version `mc` and the number of online `players`. The client builds the URL from the reply's source address: `ws://<source>:<port><path>`.
+- The plugin answers only probes with `v` 1 from private (10/8, 172.16/12, 192.168/16), link-local or loopback addresses, at most 20 replies a second, and ignores everything else. `discovery.enabled: false` turns it off.
+- Why a probe and not a periodic beacon: an Android app receives broadcast or multicast only while it holds a `WifiManager.MulticastLock` (with the `CHANGE_WIFI_MULTICAST_STATE` permission), while sending a broadcast and receiving a unicast reply need neither. The Quest app's manifest is unchanged.
+- **Fallback (client only).** If nothing answers (a firewall that lets only TCP 8765 through), the Quest app connects to TCP 8765 on every host of its /24 (400 ms each, 48 at a time) and lists the hosts that accept as "port open". It never sends `hello` to them; connecting is the user's choice.
+- Fixtures: `tools/fixtures/discovery_probe.json`, `discovery_reply.json` (Java `LanBeaconTest`, Python `test_discovery_*`, C# `Tests~/ComfortTests.cs`).
 
 ## Changelog
 
@@ -348,11 +368,12 @@ Then it closes with code 1000. When the Quest client disconnects (with or withou
 - **v0.2.0: block menu (2026-10-14, required, not backwards compatible):** the server sends `block_registry` (§4.24) to every client right after `welcome`, and a `block_edit` `place` must name a registry block or variant (else `bad_state`, §4.20). No cap: plugin, Quest app and tools must match.
 - **next version: chat, commands and server status (§4.26–4.28).** New caps `chat_v1`, `command_v1` (needs `auth.token` by default) and `status_v1`; messages `chat`, `chat_send`, `command`, `command_result`, `command_output`, `command_complete`, `command_suggestions`, `server_status`, `world_query`, `world_info`, `players_query`, `players_info`; `hello.operator_name`; `welcome.chat` and `welcome.commands`; errors `chat_denied`, `command_denied`. Fixtures `hello_control.json`, `welcome_control.json`, `chat*.json`, `command*.json`, `error_command_denied.json`, `server_status.json`, `world_query.json`, `world_info.json`, `players_query.json`, `players_info.json`.
 - **v0.3.0: visible width presets (§4.25).** `limits.max_view_width` (required in `welcome.limits`, `region_info.limits` and `region_too_large`); a `region_request` whose visible width is over it is narrowed around its centre instead of refused; `sections_v1` deltas may change `dims` (a section-aligned resize, §4.18). Fixtures `chunk_snapshot_grow.json`, `chunk_snapshot_shrink.json`, `region_request_resize.json`.
+- **Next version: sessions and discovery.** `region_changed` carries `limits` like `region_info` (with the new world's `build_height`, §4.13); LAN discovery over UDP (§7); `player_positions` filters on Y and leaves out spectators, invisible and vanished players (§4.6); clients drop a link after 6 s of silence (§4.10) and don't retry after 4001/4003 (§5). Fixtures `region_changed.json` (now with `limits`), `discovery_probe.json`, `discovery_reply.json`.
 
 ## 4.13–4.16 Runtime region control (v1, additive)
 
 - `region_request` (client→server): `{"origin":[x,y,z],"dims":[dx,dy,dz]}` or `{"center":[x,y,z],"size":[dx,dy,dz],"y_origin"?:y}` (origin = center − size/2). The server checks it against `max_region` in config.yml (x, y, z, blocks, bytes). Over the cap it returns `error{code:"region_too_large", max_dims, max_blocks, max_bytes}`.
-- `region_changed` (server→all shared sessions): `{world, origin, dims, by_session, ref_seq}`, followed by a full `chunk_snapshot`. When several clients write, the last request wins.
+- `region_changed` (server→all shared sessions): `{world, origin, dims, by_session, ref_seq}`, followed by a full `chunk_snapshot`. When several clients write, the last request wins. Next version: it also carries `view_margin` (§4.17) and `limits` as in `region_info` (`max_dims`, `max_blocks`, `max_bytes`, `max_view_width` and the region's world's `build_height`), so a client that moved to another world (area setup centred on a player in the Nether, say) glides within the right height at once.
 - `region_query` → `region_info{region, players:[{name,uuid,world,pos,yaw}], limits, ref_seq}` (used for "center on me").
 - `welcome.limits` gains `max_dims`, `max_blocks`, `max_bytes`. `chunk_snapshot` may carry `server_timing{read_ms,remap_ms,encode_ms}`, which clients ignore if they don't recognise it.
 - Growth triggers a full re-snapshot for `rle_palette_v1` clients. For `sections_v1` clients a resize whose origin moves by whole sections is a delta with only the new sections (§4.25); `limits` also carry `max_view_width` (§4.25).

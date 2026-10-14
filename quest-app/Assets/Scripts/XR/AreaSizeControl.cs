@@ -32,10 +32,17 @@ namespace TabletopCraft.XR
         public Action<float> SetBlockSize;
         public Func<Vector2> TableSize;            // usable table top in metres (TablePlacement)
         public int StartWidth;                     // tabletop.json "area_width" (0 = keep the server's area)
+        /// <summary>[comfort] At the first snapshot (once the table is placed): fit the block size to the table (no saved
+        /// or configured block size), or rescale a saved one chosen at StartBlockWidth to the width the server has now.</summary>
+        public bool StartFit;
+        public int StartBlockWidth;
+        public Func<bool> TableReady;              // TablePlacement.Settled: the table size is known
         public float PerfLogSeconds = 5f;
         public RegionLimits Limits = RegionLimits.Default;
 
         public string Status { get; private set; } = "";
+        /// <summary>[comfort] The first area has arrived and the start-up sizing ran (prefs.json is saved from then on).</summary>
+        public bool Started => _started;
         string _note = "";
 
         // ---- the menu's three operations ----
@@ -79,8 +86,10 @@ namespace TabletopCraft.XR
             Debug.Log($"[Tabletop] AREA_RESIZED width {oldWidth} -> {now} (asked {_sentWidth}) block {BlockSize() * 1000:F2} mm in {(Time.unscaledTime - _sentAt) * 1000:F0} ms");
         }
 
-        void FitToTable(int width)
+        /// <summary>Block size = min(table width, depth) / width x 0.95 (area setup's auto-fit), for the width given.</summary>
+        public void FitToTable(int width)
         {
+            if (width <= 0) return;
             var t = TableSize != null ? TableSize() : new Vector2(0.8f, 0.6f);
             float bs = AreaMath.FitBlockSize(t.x, t.y, width, width);
             SetBlockSize?.Invoke(Mathf.Clamp(bs, AreaSizing.MinBlockM, AreaSizing.MaxBlockM));
@@ -91,15 +100,19 @@ namespace TabletopCraft.XR
             float now = Time.unscaledTime;
             Perf(now);
             if (Nav == null || !Nav.Loaded) { Status = ""; return; }
-            if (!_started)
+            if (!_started && (TableReady == null || TableReady()))
             {
                 _started = true;
+                int cur = AreaSizing.Current(Nav);
                 if (StartWidth > 0)
                 {
                     int w = AreaSizing.Snap(StartWidth, AreaSizing.MaxWidth(Limits, Margin));
-                    if (w != AreaSizing.Current(Nav)) { _wanted = w; _fitOnArrival = true; }
+                    if (w != cur) { _wanted = w; _fitOnArrival = true; }
                     else FitToTable(w);
                 }
+                else if (StartFit) FitToTable(cur);   // [comfort] first run: the area fills the table
+                else if (StartBlockWidth > 0 && StartBlockWidth != cur && cur > 0)   // [comfort] keep the saved footprint
+                    SetBlockSize?.Invoke(AreaSizing.ScaleBlockSize(BlockSize(), StartBlockWidth, cur));
             }
             bool blocked = Blocked != null && Blocked();
             if (!blocked && OVRInput.GetDown(OVRInput.Button.PrimaryThumbstick, OVRInput.Controller.LTouch))

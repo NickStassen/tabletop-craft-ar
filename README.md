@@ -34,7 +34,7 @@ Java players (LAN) ──game protocol──▶ Paper 26.3 + tabletop plugin ◀
 | Giant avatar following poses | Floating head + hands (default): positions and head rotation match the poses exactly on a 26.3 test server, and a mineflayer player receives the three displays (TESTING section 7); not yet seen by eye. Mannequin modes: on the first headset session a Java client on an online-mode server saw the giant follow the headset wearing the user's skin (exact placement); ground placement was tried and replaced as the default |
 | Java players on the table (skinned, animated figures) | Geometry, UVs, animation and skin rules unit-tested; skin download checked in the Unity Editor; not yet seen on a headset |
 | Quest C# protocol/mesher code | Compiled and unit-tested with .NET 8 outside Unity, plus a live session against the plugin |
-| Block editing from the headset (break, place, pick) | Plugin side and the Quest's targeting/edit code tested live against Paper 26.3 (unit tests, `Tests~ --live-edit`, `tools/edit_check.py`); not yet tried on a headset. See [TESTING](docs/TESTING.md) "Block editing" and [QUEST_SETUP](docs/QUEST_SETUP.md) Part I |
+| Block editing from the headset (break, place, pick) | Verified on a Quest 3 (the screenshots below), and tested live against Paper 26.3 (unit tests, `Tests~ --live-edit`, `tools/edit_check.py`). See [TESTING](docs/TESTING.md) "Block editing" and [QUEST_SETUP](docs/QUEST_SETUP.md) Part I |
 | Quest app in Unity | Compiles and builds an APK on Linux, headless (Unity 6000.0.84f1, Meta XR 85.0.0); see [TESTING](docs/TESTING.md) section 5 |
 | Quest app on a headset | First session on a Quest 3: passthrough, Wi-Fi link to Paper 26.3 (RTT 13-42 ms), a 64x96x64 area textured from the 26.3 client jar at a steady 72 FPS (~2.5 ms app GPU), the Java player on the table, and the giant (with the user's skin) seen from a Java client. MRUK table detection, area setup and the newer rendering work are still to be checked; see [TESTING](docs/TESTING.md) "First headset session" |
 
@@ -59,15 +59,15 @@ The player name labels in these recordings are blurred, and the shots are croppe
 Requires JDK 25 (Paper 26.x needs Java 25; the Gradle 9.8.0 wrapper runs on it).
 
 ```bash
-cd server-plugin && ./gradlew build          # -> build/libs/tabletop-craft-ar-plugin-0.1.0.jar
+cd server-plugin && ./gradlew build          # -> build/libs/tabletop-craft-ar-plugin-<VERSION>.jar
 ```
 
-Copy the jar into a Paper **26.3** server's `plugins/`, start the server once, then edit `plugins/TabletopCraftAR/config.yml` (region origin and size, port, optional token). A new 26.x server has `white-list=true` in `server.properties`, so Java players are rejected until you `whitelist add <name>` or set `white-list=false`. In game or in the console:
+Copy the jar into a Paper **26.3** server's `plugins/`, start the server once, then edit `plugins/TabletopCraftAR/config.yml` (region origin and size, port, optional token). A new 26.x server has `white-list=true` in `server.properties`, so Java players are rejected until you `whitelist add <name>` or set `white-list=false`. The log lists the addresses the headset can use (`Headset URL: ws://<lan-ip>:8765/tabletop`), and the headset can also find the server by itself (block menu > Info > Server > Find servers; UDP 8765). In game or in the console:
 
 ```
 /tabletop status
 /tabletop setorigin [x y z]        # region min corner (your position if omitted)
-/tabletop setsize <dx> <dy> <dz>   # max 64 x 384 x 64
+/tabletop setsize <dx> <dy> <dz>   # within config.yml max_region (default 288 x 384 x 288)
 /tabletop avatar status|spawn|remove|blocksize <m>
 /tabletop avatar placement floating|ground|exact   # head + hands at the headset/controllers (default), or a Mannequin
 /tabletop avatar skin <java name>         # giant's skin (also tabletop.json skin_player / config avatar.skin-player)
