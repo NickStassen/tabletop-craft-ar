@@ -56,10 +56,12 @@ public final class Protocol {
 
     /**
      * One part of a {@code sections_v1} chunk_snapshot (PROTOCOL.md 4.18). baseId &lt; 0 = full snapshot, else a delta
-     * against the client's snapshot baseId with the origin moved by shift (whole sections).
+     * against the client's snapshot baseId with the origin moved by shift (whole sections). With light, each section
+     * carries its own "light" runs and the top-level "light" says so; biomes (whole region) go on part 0.
      */
     public static JsonObject chunkSnapshotSections(int snapshotId, RegionSpec r, List<String> palette, int[] viewMargin,
-                                                   int part, int parts, int baseId, int[] shift, List<SectionCodec.Section> sections) {
+                                                   int part, int parts, int baseId, int[] shift, List<SectionCodec.Section> sections,
+                                                   boolean light, BiomeGrid biomes) {
         JsonObject o = body("chunk_snapshot");
         o.addProperty("snapshot_id", snapshotId);
         o.addProperty("world", r.world());
@@ -84,15 +86,46 @@ public final class Protocol {
             JsonObject e = new JsonObject();
             e.add("s", ints(s.sx(), s.sy(), s.sz()));
             e.add("data", ints(s.data()));
+            if (s.light() != null) e.add("light", ints(s.light()));
             secs.add(e);
         }
         o.add("sections", secs);
-        o.add("biomes", null);
-        o.add("light", null);
+        o.add("biomes", biomes != null && part == 0 ? biomes.toJson() : null);
+        if (light) {
+            JsonObject l = new JsonObject();
+            l.addProperty("encoding", "rle_v1");
+            l.addProperty("in_sections", true);
+            o.add("light", l);
+        } else o.add("light", null);
         return o;
     }
 
+    /** Optional per-session features a client opts into via hello.caps (PROTOCOL.md 4.4.1). */
+    public static final String CAP_LIGHT = "light_v1", CAP_BIOMES = "biomes_v1";
+
+    /** Fills the snapshot's optional "light" / "biomes" fields (left null when the session didn't ask for them). */
+    public static void addExtras(JsonObject snapshot, byte[] light, BiomeGrid biomes) {
+        if (light != null) {
+            JsonObject l = new JsonObject();
+            l.addProperty("encoding", "rle_v1");
+            l.add("data", ints(BlockCodec.encode(light)));
+            snapshot.add("light", l);
+        }
+        if (biomes != null) snapshot.add("biomes", biomes.toJson());
+    }
+
     public record Change(int lx, int ly, int lz, int paletteIndex) {}
+
+    /** block_update, plus the optional "light" list of [x, y, z, sky << 4 | block] for cells whose light changed. */
+    public static JsonObject blockUpdate(int snapshotId, List<String> paletteAdd, List<Change> changes, List<int[]> light) {
+        JsonObject o = blockUpdate(snapshotId, paletteAdd, changes);
+        if (light != null && !light.isEmpty()) {
+            JsonArray a = new JsonArray();
+            for (int[] c : light) a.add(ints(c));
+            o.add("light", a);
+        }
+        return o;
+    }
 
     public static JsonObject blockUpdate(int snapshotId, List<String> paletteAdd, List<Change> changes) {
         JsonObject o = body("block_update");

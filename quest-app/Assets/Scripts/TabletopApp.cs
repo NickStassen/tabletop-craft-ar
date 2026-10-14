@@ -46,8 +46,6 @@ namespace TabletopCraft
         // [nav] moving around, streaming, clip caps
         NavController _nav;
         ClipCaps _caps;
-        Transform _playersT;
-        List<PlayerInfo> _lastPlayers;
         readonly SnapshotAssembler _snaps = new SnapshotAssembler();
         readonly Queue<Dictionary<string, object>> _held = new Queue<Dictionary<string, object>>();
         int _modelVersion;
@@ -78,7 +76,7 @@ namespace TabletopCraft
             _renderer = _blocks.gameObject.AddComponent<TabletopRenderer>();
             _renderer.Model = _world; _renderer.Atlas = _atlas; _renderer.OpaqueMaterial = OpaqueMaterial; _renderer.TransparentMaterial = TransparentMaterial;
             _players = playersT.gameObject.AddComponent<PlayerMarkers>();
-            _players.Model = _world; _players.MarkerMaterial = MarkerMaterial;
+            _players.Model = _world; _players.MarkerMaterial = MarkerMaterial; _players.Atlas = _atlas;
 
             _placement = gameObject.AddComponent<TablePlacement>();
             _placement.Anchor = _anchor; _placement.Head = Head; _placement.RightHand = RightHand;
@@ -91,7 +89,6 @@ namespace TabletopCraft
             _area.ApplyBlockSize = bs => SetBlockSize(bs, false);
 
             // [nav] solid sides for the clipped box, and moving around (XR/NavController)
-            _playersT = playersT;
             _caps = new GameObject("Caps").AddComponent<ClipCaps>();
             _caps.transform.SetParent(_blocks, false);
             _caps.Model = _world; _caps.Faces = _atlas; _caps.OpaqueMaterial = OpaqueMaterial; _caps.TransparentMaterial = TransparentMaterial;
@@ -125,6 +122,8 @@ namespace TabletopCraft
                 Token = c.S("token") ?? Token;
                 BlockSizeM = (float)c.D("block_size_m", BlockSizeM);
                 SkinPlayer = c.S("skin_player") ?? SkinPlayer;
+                BlockShading.SmoothLighting = c.B("smooth_lighting", true);       // lighting look (BlockShading.cs)
+                BlockShading.Brightness = (float)c.D("brightness", 0.5);
             }
             catch (Exception e) { Debug.LogWarning("[Tabletop] bad tabletop.json: " + e.Message); }
         }
@@ -175,12 +174,17 @@ namespace TabletopCraft
             }
             if (_status)
                 _status.text = $"LINK {(_link.Connected ? "OK" : _link.Status)}  RTT {(_rttMs < 0 ? "-" : _rttMs + "ms")}\n" +
-                               $"WORLD {(_world.Loaded ? $"{_world.Dims.x}x{_world.Dims.y}x{_world.Dims.z} @ {_world.Origin}" : "-")}  PACK {(_atlas.HasPack ? "yes" : "flat")}\n" +
+                               $"WORLD {(_world.Loaded ? $"{_world.Dims.x}x{_world.Dims.y}x{_world.Dims.z} @ {_world.Origin}" : "-")}  PACK {(_atlas.HasPack ? "yes" : "flat")}  LIGHT {LightStatus()}\n" +
                                $"TABLE {_placement.Status}\nPOSES {(_poses ? _poses.Sent : 0)}  MESH {_renderer.Quads / 1000}k faces" +
                                (_renderer.Pending > 0 ? $" ({_renderer.Pending} sections pending)" : "") + $"  {_lastError}\n" +
                                _nav.Status + "\n" +   // [nav]
                                (_area.Active ? _area.Status : (_area.Status.Length > 0 ? _area.Status : "Y (left) = set up area   left stick = move"));
         }
+
+        /// <summary>Status text: server light (smooth/flat/off), biome count and whether the pack has colour maps.</summary>
+        string LightStatus() =>
+            (_world.Light == null ? "off" : BlockShading.SmoothLighting ? "smooth" : "flat") +
+            (_world.Biomes != null ? $" BIOMES {_world.Biomes.Palette.Length}{(BiomeColors.GrassMap != null ? "" : " (no colormap)")}" : "");
 
         void Handle(Dictionary<string, object> m)
         {
@@ -191,6 +195,8 @@ namespace TabletopCraft
                     _session = m.S("session");
                     _area.State.Limits = RegionLimits.From(m.O("limits"), RegionLimits.Default);
                     _nav.OnWelcome(m);   // [nav] server caps, limits, build height
+                    // Light from the server makes faces merge less: scale the area-setup face estimate (soft cap).
+                    AreaMath.LightFactor = AreaMath.LightFactorFor(m.A("caps")?.Contains(Protocol.CapLight) == true, BlockShading.SmoothLighting);
                     _link.Send(Protocol.AvatarConfig(true, BlockSizeM, SkinPlayer, true, "Tabletop Giant"));
                     break;
                 case "region_info":
@@ -211,15 +217,8 @@ namespace TabletopCraft
                     break;
                 case "player_positions":
                     var list = new List<PlayerInfo>();
-                    foreach (var o in m.A("players"))
-                    {
-                        var p = (Dictionary<string, object>)o;
-                        var pos = Json.Doubles(p.A("pos"));
-                        list.Add(new PlayerInfo { Uuid = p.S("uuid"), Name = p.S("name"), Pos = new Vector3((float)pos[0], (float)pos[1], (float)pos[2]),
-                            Yaw = (float)p.D("yaw"), Pitch = (float)p.D("pitch"), Sneaking = p.B("sneaking"), Skin = p.S("skin") });
-                    }
+                    foreach (var o in m.A("players")) list.Add(PlayerInfo.From((Dictionary<string, object>)o));
                     _players.Apply(list);
-                    _lastPlayers = list;   // [nav] re-applied when the origin moves
                     break;
                 case "pong":
                     _rttMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - (long)m.D("echo_t");
@@ -240,8 +239,8 @@ namespace TabletopCraft
             }
         }
 
-        // [nav] Apply a decoded snapshot without emptying the table (TabletopRenderer.OnSnapshot) and keep the view,
-        // the player markers and the pose frame where they are in the world.
+        // [nav] Apply a decoded snapshot without emptying the table (TabletopRenderer.OnSnapshot) and keep the view
+        // where it is in the world. (Player figures keep world positions and follow Model.Origin by themselves.)
         void ApplySnapshot(SnapshotAssembler.Result r)
         {
             if (r.Snapshot == null) { BadSnapshot(r.SnapshotId, r.Error); return; }
@@ -252,7 +251,6 @@ namespace TabletopCraft
             _renderer.OnSnapshot(r.Plan, oldOrigin, s.Origin);
             _caps.ModelVersion = ++_modelVersion;
             _nav.OnSnapshot(s.World, s.Origin, s.Dims, r.ViewMargin);
-            if (had) ShiftPlayers(new Vector3Int(s.Origin.x - oldOrigin.x, s.Origin.y - oldOrigin.y, s.Origin.z - oldOrigin.z));
             Debug.Log($"[Tabletop] snapshot {s.SnapshotId}: {s.Dims} palette {s.Palette.Length} parts {r.Parts}" +
                       (r.Delta ? $" delta ({r.Listed} sections sent)" : "") +
                       (r.Plan.Rekey ? $" re-keyed by {r.Plan.ShiftBlocks}: {r.Plan.Mesh.Count} to mesh, {r.Plan.Kept} kept" : " full re-mesh") +
@@ -265,15 +263,6 @@ namespace TabletopCraft
             Debug.LogWarning("[Tabletop] " + _lastError);
             // The server answers with a full snapshot (PROTOCOL.md 4.18).
             _link.Send(new Dictionary<string, object> { ["type"] = "error", ["code"] = "bad_snapshot", ["message"] = why, ["snapshot_id"] = snapshotId, ["fatal"] = false });
-        }
-
-        /// <summary>Markers are placed relative to the region origin; when it moves, move them with it so they don't jump.</summary>
-        void ShiftPlayers(Vector3Int d)
-        {
-            if (d == Vector3Int.zero || _playersT == null) return;
-            var off = new Vector3(d.x, d.y, -d.z) * BlockSizeM;
-            foreach (Transform c in _playersT) c.localPosition -= off;
-            if (_lastPlayers != null) _players.Apply(_lastPlayers);
         }
 
         void CreateStatus()

@@ -16,12 +16,15 @@ public final class SectionCodec {
 
     private SectionCodec() {}
 
-    /** One encoded section: key (sx, sy, sz) and its RLE pairs. */
-    public record Section(int sx, int sy, int sz, int[] data) {
-        /** Rough JSON size: {"s":[x,y,z],"data":[...]} with digits and commas. */
+    /** One encoded section: key (sx, sy, sz), its block RLE pairs, and (light_v1) its packed-light RLE pairs or null. */
+    public record Section(int sx, int sy, int sz, int[] data, int[] light) {
+        public Section(int sx, int sy, int sz, int[] data) { this(sx, sy, sz, data, null); }
+
+        /** Rough JSON size: {"s":[x,y,z],"data":[...],"light":[...]} with digits and commas. */
         public long estimatedBytes() {
             long b = 30;
             for (int v : data) b += RegionRequest.digits(v) + 1;
+            if (light != null) { b += 10; for (int v : light) b += RegionRequest.digits(v) + 1; }
             return b;
         }
     }
@@ -61,6 +64,26 @@ public final class SectionCodec {
         return Arrays.copyOf(tmp, n);
     }
 
+    /** RLE pairs of packed light (0..255, PROTOCOL.md 4.5.1) over section (kx, ky, kz) of a yzx light array. */
+    public static int[] encodeSectionLight(byte[] light, int dx, int dy, int dz, int kx, int ky, int kz) {
+        int x0 = kx * S, y0 = ky * S, z0 = kz * S;
+        int sx = Math.min(S, dx - x0), sy = Math.min(S, dy - y0), sz = Math.min(S, dz - z0);
+        int[] tmp = new int[16];
+        int n = 0, cur = -1, run = 0;
+        for (int y = 0; y < sy; y++)
+            for (int z = 0; z < sz; z++) {
+                int base = ((y0 + y) * dz + z0 + z) * dx + x0;
+                for (int x = 0; x < sx; x++) {
+                    int v = light[base + x] & 0xFF;
+                    if (v == cur) { run++; continue; }
+                    if (run > 0) { if (n + 2 > tmp.length) tmp = Arrays.copyOf(tmp, tmp.length * 2); tmp[n++] = cur; tmp[n++] = run; }
+                    cur = v; run = 1;
+                }
+            }
+        if (run > 0) { if (n + 2 > tmp.length) tmp = Arrays.copyOf(tmp, tmp.length + 2); tmp[n++] = cur; tmp[n++] = run; }
+        return Arrays.copyOf(tmp, n);
+    }
+
     /** Decodes one section's RLE into a yzx grid (tests and tools). Throws on a wrong run total. */
     public static void decodeSection(int[] data, int[] grid, int dx, int dy, int dz, int kx, int ky, int kz) {
         int x0 = kx * S, y0 = ky * S, z0 = kz * S;
@@ -91,15 +114,31 @@ public final class SectionCodec {
      * same dims), plus sections that weren't in the old region. Unlisted sections lie fully inside the old region.
      */
     public static List<int[]> changedSections(int[] oldGrid, int[] newGrid, int dx, int dy, int dz, int[] shiftBlocks) {
+        return changedSections(oldGrid, newGrid, null, null, dx, dy, dz, shiftBlocks);
+    }
+
+    /** As above; with light (both arrays non-null) a section whose light changed is listed too. */
+    public static List<int[]> changedSections(int[] oldGrid, int[] newGrid, byte[] oldLight, byte[] newLight, int dx, int dy, int dz, int[] shiftBlocks) {
         List<int[]> keys = new ArrayList<>();
         int ox = shiftBlocks[0], oy = shiftBlocks[1], oz = shiftBlocks[2];
+        boolean light = oldLight != null && newLight != null;
         for (int[] k : allSections(dx, dy, dz)) {
             int x0 = k[0] * S, y0 = k[1] * S, z0 = k[2] * S;
             int sx = Math.min(S, dx - x0), sy = Math.min(S, dy - y0), sz = Math.min(S, dz - z0);
             boolean inside = x0 + ox >= 0 && x0 + sx + ox <= dx && y0 + oy >= 0 && y0 + sy + oy <= dy && z0 + oz >= 0 && z0 + sz + oz <= dz;
-            if (!inside || !same(oldGrid, newGrid, dx, dz, x0, y0, z0, sx, sy, sz, ox, oy, oz)) keys.add(k);
+            if (!inside || !same(oldGrid, newGrid, dx, dz, x0, y0, z0, sx, sy, sz, ox, oy, oz)
+                || (light && !sameLight(oldLight, newLight, dx, dz, x0, y0, z0, sx, sy, sz, ox, oy, oz))) keys.add(k);
         }
         return keys;
+    }
+
+    private static boolean sameLight(byte[] oldL, byte[] newL, int dx, int dz, int x0, int y0, int z0, int sx, int sy, int sz, int ox, int oy, int oz) {
+        for (int y = 0; y < sy; y++)
+            for (int z = 0; z < sz; z++) {
+                int ni = ((y0 + y) * dz + z0 + z) * dx + x0, oi = ((y0 + y + oy) * dz + z0 + z + oz) * dx + x0 + ox;
+                if (!Arrays.equals(newL, ni, ni + sx, oldL, oi, oi + sx)) return false;
+            }
+        return true;
     }
 
     private static boolean same(int[] oldGrid, int[] newGrid, int dx, int dz, int x0, int y0, int z0, int sx, int sy, int sz, int ox, int oy, int oz) {

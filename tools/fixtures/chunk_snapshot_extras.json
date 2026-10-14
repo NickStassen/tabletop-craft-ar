@@ -1,0 +1,80 @@
+{
+ "v": 1,
+ "type": "chunk_snapshot",
+ "seq": 2,
+ "t": 1760370000150,
+ "snapshot_id": 7,
+ "world": "world",
+ "origin": [
+  102,
+  62,
+  -42
+ ],
+ "dims": [
+  4,
+  2,
+  4
+ ],
+ "order": "yzx",
+ "palette": [
+  "minecraft:air",
+  "minecraft:grass_block[snowy=false]",
+  "minecraft:oak_leaves[distance=1,persistent=false,waterlogged=false]"
+ ],
+ "encoding": "rle_palette_v1",
+ "data": [
+  1,
+  16,
+  0,
+  15,
+  2,
+  1
+ ],
+ "light": {
+  "encoding": "rle_v1",
+  "data": [
+   0,
+   16,
+   240,
+   14,
+   254,
+   1,
+   0,
+   1
+  ]
+ },
+ "biomes": {
+  "res": 4,
+  "q_origin": [
+   25,
+   15,
+   -11
+  ],
+  "q_dims": [
+   2,
+   1,
+   2
+  ],
+  "palette": [
+   "minecraft:plains",
+   "minecraft:swamp"
+  ],
+  "climate": [
+   [
+    0.8,
+    0.4
+   ],
+   [
+    0.8,
+    0.9
+   ]
+  ],
+  "encoding": "rle_palette_v1",
+  "data": [
+   0,
+   2,
+   1,
+   2
+  ]
+ }
+}

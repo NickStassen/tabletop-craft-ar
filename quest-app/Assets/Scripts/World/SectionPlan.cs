@@ -97,6 +97,9 @@ namespace TabletopCraft.World
             int sx = Math.Min(S, d.x - nx), sy = Math.Min(S, d.y - ny), sz = Math.Min(S, d.z - nz);
             if (sx != Math.Min(S, d.x - ox) || sy != Math.Min(S, d.y - oy) || sz != Math.Min(S, d.z - oz)) return false;
             var og = old.Grid; var ng = neu.Grid;
+            // Light (light_v1) is baked into the mesh too: a section whose light changed is re-meshed.
+            var ol = old.Light; var nl = neu.Light;
+            if ((ol == null) != (nl == null)) return false;
             for (int y = 0; y < sy; y++)
                 for (int z = 0; z < sz; z++)
                 {
@@ -105,6 +108,7 @@ namespace TabletopCraft.World
                     {
                         int ov = og[oi + x];
                         if (ov >= remap.Length || remap[ov] != ng[ni + x]) { compared += x + 1; return false; }
+                        if (nl != null && nl[ni + x] != ol[oi + x]) { compared += x + 1; return false; }
                     }
                     compared += sx;
                 }

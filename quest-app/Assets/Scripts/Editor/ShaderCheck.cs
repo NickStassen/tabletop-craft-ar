@@ -13,7 +13,7 @@ namespace TabletopCraft.EditorTools
 {
     public static class ShaderCheck
     {
-        static readonly string[] Shaders = { "TabletopCraft/Blocks", "TabletopCraft/BlocksTransparent" };
+        static readonly string[] Shaders = { "TabletopCraft/Blocks", "TabletopCraft/BlocksTransparent", "TabletopCraft/PlayerSkin" };
         static readonly string[][] Keywords = { new string[0], new[] { "STEREO_MULTIVIEW_ON" }, new[] { "STEREO_INSTANCING_ON" }, new[] { "INSTANCING_ON" }, new[] { "UNITY_SINGLE_PASS_STEREO" } };
 
         public static void Run()

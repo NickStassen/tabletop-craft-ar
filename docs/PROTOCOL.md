@@ -61,13 +61,13 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
  "client":"quest-app","client_version":"0.1.0",
  "protocols":[1],
  "token":"changeme",
- "caps":["rle_palette_v1","avatar"]}
+ "caps":["rle_palette_v1","avatar","light_v1","biomes_v1"]}
 ```
 
 - `client`: free string, e.g. `quest-app` or `fake-quest`.
 - `protocols`: protocol versions the client speaks. The server picks the highest one it also supports.
 - `token`: shared secret from the plugin `config.yml` (`auth.token`). If it's empty in config, auth is disabled (LAN dev only). A wrong token gets `error` `auth_failed` and then close code 4003.
-- `caps`: capability strings. v1 defines `rle_palette_v1` (required) and `avatar` (client will send poses).
+- `caps`: capability strings. v1 defines `rle_palette_v1` (required) and `avatar` (client will send poses). Optional extras: `light_v1` and `biomes_v1` (§4.5.1); unknown caps are ignored.
 - The client MUST NOT send anything else before it gets `welcome`. The server closes with 4002 if `hello` doesn't arrive within 5 s.
 
 ### 4.2 `welcome` (S→C)
@@ -79,10 +79,12 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
  "world":"world",
  "region":{"origin":[100,60,-40],"dims":[32,64,32]},
  "limits":{"max_dims":[64,384,64],"pose_hz_max":60,"player_hz":10},
- "avatar_supported":true}
+ "avatar_supported":true,
+ "caps":["light_v1","biomes_v1"]}
 ```
 
 - `session`: opaque id for logs.
+- `caps` (optional): the optional features granted to this session (§4.5.1). Missing or empty means none (e.g. an older server).
 - `region`: the default region from config. The server immediately follows `welcome` with a `chunk_snapshot` for it unless the client sends `subscribe` first. (Send order: `welcome`, then a snapshot, which the server builds async, so a `subscribe` arriving in the meantime replaces it.)
 - `limits.max_dims`: the largest `dims` the server accepts in `subscribe`.
 
@@ -116,7 +118,7 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 - `palette`: array of **full block-state strings** exactly as `BlockData#getAsString()` produces them (namespaced id plus `[k=v,...]` with properties sorted alphabetically, as Minecraft does). Index 0 SHOULD be `minecraft:air` when air is present. The palette only lists states that appear in this region.
 - `order`: always `"yzx"` in v1. Linear index `i = (y * dz + z) * dx + x`, so X varies fastest, then Z, then Y (the same order Minecraft uses inside a section).
 - `encoding: "rle_palette_v1"`: `data` is a flat int array of pairs `[paletteIndex, runLength, paletteIndex, runLength, …]` over the linear order. The sum of all `runLength` values MUST equal `dx*dy*dz`, and each `runLength` ≥ 1. A decoder that gets a wrong total MUST drop the snapshot and send `error` `bad_snapshot`.
-- `biomes`, `light`: reserved, always `null` in v1.
+- `biomes`, `light`: `null` unless the session was granted `biomes_v1` / `light_v1` (§4.5.1).
 - Size: if a snapshot would be over 4 MiB, the server sends `error` `region_too_large` instead.
 
 ### 4.5 `block_update` (S→C)
@@ -135,6 +137,49 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 - If more than 4096 changes occur in one tick (an explosion, or a `/fill`), the server MAY send a fresh `chunk_snapshot` instead.
 - Sources the server MUST cover: block break and place by players, physics, fluids, fire, explosions, pistons, and commands. Implementation: listen to the main events and also run a cheap per-tick diff of affected sections. See ARCHITECTURE.md §3.3.
 
+### 4.5.1 Light and biomes (optional, additive: `light_v1`, `biomes_v1`)
+
+Per-block light and biomes let a client draw Minecraft-style lighting (dark caves, torch light, smooth lighting) and per-biome grass, foliage and water colours. Both are **opt-in** so older clients never pay the bytes:
+
+- The client lists `light_v1` and/or `biomes_v1` in `hello.caps`. The server grants each one unless it is turned off in its config (`stream.light`, `stream.biomes`) and echoes the granted ones in `welcome.caps`. Without a grant, `chunk_snapshot.light` / `.biomes` stay `null` and `block_update` carries no `light`.
+- Nothing else changes: old servers ignore the caps and send `null`, and clients fall back to fixed tints and no lighting.
+
+**`chunk_snapshot.light`** (with `light_v1`):
+
+```json
+"light":{"encoding":"rle_v1","data":[0,16,240,14,254,1,0,1]}
+```
+
+- One packed value per block, `sky * 16 + block` (0..255): the sky and block light levels 0..15 the server stores for that position (Paper `ChunkSnapshot#getBlockSkyLight` / `getBlockEmittedLight`). Opaque blocks normally hold 0; light-emitting blocks hold their own emission. Cells above the build height are `240` (open sky), below it `0`.
+- Same yzx order as `data`, and the same pair encoding: `[value, runLength, …]`, runs summing to `dx*dy*dz`. A wrong total is a `bad_snapshot`.
+
+**`chunk_snapshot.biomes`** (with `biomes_v1`):
+
+```json
+"biomes":{"res":4,"q_origin":[25,15,-11],"q_dims":[2,1,2],
+ "palette":["minecraft:plains","minecraft:swamp"],
+ "climate":[[0.8,0.4],[0.8,0.9]],
+ "encoding":"rle_palette_v1","data":[0,2,1,2]}
+```
+
+- One biome per world-aligned 4x4x4 cell, vanilla's storage resolution. `q_origin = floor(origin / 4)` per axis (quart coordinates) and `q_dims` covers every cell the region touches. A block at region-local `(x,y,z)` uses cell `floor((origin + local) / 4) - q_origin`, linear index `(qy * qdz + qz) * qdx + qx` (x fastest, like the block grid).
+- `palette`: biome keys (`minecraft:plains`, or a datapack key). `data`: `rle_palette_v1` pairs over the cells.
+- `climate` (optional, may be missing or contain `null`): `[temperature, downfall]` per palette entry from `World#getTemperature` / `getHumidity` at the lowest cell where the biome was seen. Vanilla colours use the base temperature, which this equals except for biomes only seen above sea level + 17 (height cooling), so clients SHOULD prefer their own table for vanilla ids and use `climate` for unknown ones. Grass/foliage colour maps, per-biome override colours, water colours and the swamp/dark-forest modifiers are client knowledge (the Quest ships a table taken from the 26.3 biome data).
+- Biomes are only sent in snapshots (they change only through commands like `/fillbiome`; the next snapshot picks that up).
+
+**`block_update.light`** (with `light_v1`):
+
+```json
+{"v":1,"type":"block_update","seq":4,"t":1760370001050,"snapshot_id":7,
+ "palette_add":["minecraft:torch"],"changes":[[1,1,1,3]],
+ "light":[[1,1,1,254],[2,1,1,253],[1,1,2,253]]}
+```
+
+- `[x, y, z, value]`, region-local, packed as above, for every cell whose light differs from what this session last received. Applied after `changes`. A `block_update` MAY carry only `light` (`changes: []`).
+- The light engine updates light a little after the block change event, so the server diffs the region again 4 ticks after a change event, and the periodic safety diff (`stream.safety-diff-ticks`, default 20) catches the rest. More than 16384 light changes (or 4096 block changes) in one diff are sent as a fresh `chunk_snapshot` instead.
+
+Sizes on real terrain (seed 12345, see TESTING.md "Lighting and biome colours"): light adds about 15% to a 64x96x64 snapshot (9 KB) and 25% to a 128x96x128 one (60 KB); biomes add under 2 KB. Fixtures: `tools/fixtures/chunk_snapshot_extras.json`, `block_update_light.json`; `hello.json` / `welcome.json` show the caps.
+
 ### 4.6 `player_positions` (S→C)
 
 Sent at `limits.player_hz` (default 10 Hz) whenever there's at least one player in the region bounds expanded by 16 blocks horizontally, plus once with an empty list when the last one leaves.
@@ -143,12 +188,14 @@ Sent at `limits.player_hz` (default 10 Hz) whenever there's at least one player 
 {"v":1,"type":"player_positions","seq":4,"t":1760370001050,
  "players":[
   {"uuid":"0f1e…","name":"Alex","pos":[112.5,64.0,-30.25],"yaw":135.0,"pitch":10.0,
-   "sneaking":false,"skin":"https://textures.minecraft.net/texture/…"}
+   "sneaking":false,"skin":"https://textures.minecraft.net/texture/…","skin_model":"slim"}
  ]}
 ```
 
 - `pos`: world coordinates (doubles) of the player's feet. The client subtracts `origin` itself.
-- `skin`: optional skin texture URL taken from the player's profile. It's sent only in the first message that includes that UUID on the connection (and after it changes), and it can be `null`.
+- `yaw`/`pitch`: the player's head (look) direction, §3 convention. The body yaw isn't sent; clients derive it as the game client does (it lags the head by up to 50° and turns toward the walking direction).
+- `skin`: optional skin texture URL taken from the player's profile. It's sent only in the first message that includes that UUID on the connection (and after it changes), and it can be `null` (no textures, e.g. on an offline-mode server: show the game's default skin for that UUID). Profile URLs are usually `http://textures.minecraft.net/texture/<hash>`; clients may fetch the same path over https and SHOULD refuse other hosts.
+- `skin_model` (optional, additive): `"wide"` (4 px arms, Mojang's "classic") or `"slim"` (3 px arms), from the textures payload's metadata. Sent together with a non-null `skin`; missing means `"wide"`.
 - The giant avatar's own entities are **not** included.
 
 ### 4.7 `pose` (C→S)
@@ -183,7 +230,8 @@ The Quest sends poses at about 30 Hz (allowed 1–`limits.pose_hz_max`). The ser
 ```
 
 - `enabled`: spawn (true) or despawn (false) the giant.
-- Skin source, in priority order: `skin_url` (must be a `https://textures.minecraft.net/texture/…` URL), then `skin_player` (an account name that the server resolves through the Mojang profile lookup once and caches), then the default skin. Every field is optional. Missing fields keep their previous value.
+- Skin source, in priority order: `skin_url` (must be a `https://textures.minecraft.net/texture/…` URL), then `skin_player` (an account name that the server resolves through the Mojang profile lookup once and caches), then the default skin. Every field is optional. Missing fields keep their previous value. A blank `skin_player` means the server's default (plugin `config.yml` `avatar.skin-player`).
+- The plugin resolves `skin_player` off the main thread (also on an offline-mode server; it needs internet access) and then gives the giant the signed textures. Until that finishes, and if it fails, the giant carries the bare name, which Java clients since 1.21.9 resolve themselves. A failed lookup sends `error` `skin_failed`.
 - `model`: `"wide"` or `"slim"`.
 - `block_size_m`: how many real meters one block occupies on the table (same as the scale the Quest renders the miniature at). Range 0.002–0.1.
 - `max_scale`: cap on the Mannequin scale attribute, clamped by the server to the attribute's real max (16 on current versions).
@@ -198,6 +246,9 @@ Sent after each `avatar_config`, and when the server changes something by itself
  "enabled":true,"entity_uuid":"9a…","scale":16.0,"world_height_blocks":28.8,
  "skin_resolved":true,"note":"scale clamped from 175.0 to 16.0"}
 ```
+
+- `skin_resolved`: the server holds signed textures for `skin_player` (it also sends a fresh `avatar_state` when a lookup finishes). `false` doesn't always mean Java players see the default skin: their clients may still resolve the name.
+- Where the giant stands is server policy (ARCHITECTURE.md §3.5, `config.yml` `avatar.placement`): by default on the terrain under the headset's X/Z, clamped into the region, with hand offsets scaled to its size; `exact` maps the head and hands as in §4.7. With `debug.avatar-state` on, the `debug` object also reports `placement`, `ground_y`, `body_yaw` and `skin_player`.
 
 ### 4.10 `ping` / `pong` (both directions)
 
@@ -263,6 +314,7 @@ Then it closes with code 1000. When the Quest client disconnects (with or withou
 ## Changelog
 
 - **v1 (2026-10-13):** initial.
+- **v1, light and biomes (2026-10-13, additive):** optional per-block light and 4x4x4 biomes in `chunk_snapshot`, light changes in `block_update`, opted into with the `light_v1` / `biomes_v1` caps and echoed in `welcome.caps` (§4.5.1). Peers without the caps are unaffected.
 
 ## 4.13–4.16 Runtime region control (v1, additive)
 
@@ -273,6 +325,7 @@ Then it closes with code 1000. When the Quest client disconnects (with or withou
 - Growth always triggers a full re-snapshot. Incremental edge growth is deferred.
 - Fixtures: `tools/fixtures/region_request.json`, `region_query.json`, `region_changed.json`, `region_info.json`, `error_region_too_large.json` (also parsed by the C# tests).
 - Changelog: v1.1 adds the messages above. v1 clients are unaffected.
+- Changelog (additive, no version bump): adds `player_positions[].skin_model` (§4.6) and documents the giant's placement and skin lookup (§4.8, §4.9). Fixture: `tools/fixtures/player_positions.json`.
 
 ## 4.17–4.19 Moving around: view margin, sectioned and delta snapshots (v1.2, additive)
 
@@ -281,7 +334,7 @@ These let a headset glide across the world while the miniature stays a box on th
 ### 4.17 View margin, build height, server caps, pose frame
 
 - `region_request` MAY carry `view_margin: [mx, my, mz]` (ints ≥ 0): blocks on each side of the region that the client keeps loaded but doesn't show. The visible box (the "window") is `dims − 2·view_margin`, and the client slides it inside the region by fractional blocks; terrain from the margin slides into view while the next region loads. The server clamps each value to `⌊(dims − 1) / 2⌋`, keeps it with the shared region (config.yml `region.view_margin`) and echoes it as `view_margin` in `region_changed`, `welcome.region`, `region_info.region` and every `chunk_snapshot`. Missing means `[0,0,0]` (the window is the whole region, as in v1).
-- `welcome` MAY carry `caps`: server capability strings. This server sends `["view_margin","sections_v1","pose_snapshot_id"]`. A client only asks for a region with a margin it added itself (padding the region) when `caps` has `view_margin`; otherwise the margin would be lost and the region would look bigger after every request.
+- `welcome.caps` (§4.5.1) lists what is in effect for the session: the optional client caps it granted (`light_v1`, `biomes_v1`, and `sections_v1` when the client asked for it and `stream.sections-v1` is on) plus `view_margin` and `pose_snapshot_id`, which this server always supports. A client only asks for a region with a margin it added itself (padding the region) when `caps` has `view_margin`; otherwise the margin would be lost and the region would look bigger after every request.
 - `welcome.limits` and `region_info.limits` MAY carry `build_height: [minY, maxY)` of the region's world. Clients never request a region outside it (the server would clamp `dims.y`).
 - `pose` MAY carry `snapshot_id`: the snapshot whose `origin` the tabletop frame refers to. A headset moves its region root only when it applies a new snapshot, so poses sent while a moved region is in flight are still relative to the old origin. The server maps a pose with the origin of that snapshot (it remembers the last 8 per connection), or the current region if the id is unknown or absent. Without it, the giant jumps by the shift for a round trip.
 
@@ -307,12 +360,13 @@ A client that puts `"sections_v1"` in `hello.caps` MAY receive `chunk_snapshot` 
 - `part` (0-based) and `parts` (≥ 1): one snapshot MAY be split over several messages with the same `snapshot_id`, sent in order. Each part carries the full `palette`, `origin`, `dims` and (if any) `base`; together the parts list each section at most once. The server keeps each message under `stream.max-message-bytes` (default 1 MiB), so regions bigger than the 4 MiB frame limit (§1) can be sent. Other message types MAY arrive between parts; `block_update`s for this `snapshot_id` only follow the last part. The client applies the snapshot when it has all parts.
 - Without `base`, every section of the region is listed (a full snapshot).
 - With `base: {snapshot_id, shift}` it is a **delta** against the client's current snapshot `snapshot_id` (as updated by the `block_update`s it got for it). `shift` is new `origin` − old `origin`, each component a multiple of 16, and `dims` are the same. The client first copies every block of the new region that was in the old one (new local `p` = old local `p + shift`), then decodes the listed sections over it. The server only leaves out sections that lie fully inside the old region and whose blocks are all unchanged. The base palette stays valid: `palette` starts with the client's current palette, unchanged, followed by new entries.
+- **Light and biomes** (§4.5.1). With `light_v1` granted, the top-level `light` is `{"encoding":"rle_v1","in_sections":true}` and every listed section also carries `light`: pairs `[value, run]` of packed light (`sky·16 + block`, 0..255) over the section's box, in the same order as `data`. A delta lists a section when its blocks *or* its light changed, and unlisted sections keep the base's light (the base must have light). With `biomes_v1`, part 0 carries the region's whole `biomes` object as in §4.5.1, deltas included, and the other parts have `biomes: null`. Fixture: `tools/fixtures/chunk_snapshot_sections_light.json`.
 - A client that can't apply a snapshot (unknown base, wrong totals, a missing section) drops it and sends `error` `bad_snapshot`, optionally with `snapshot_id`. The server then sends the region again as a full snapshot (at most every 2 s per connection).
 - `server_timing` (if present) is on part 0.
 - Sizes on real terrain (docs/TESTING.md "Navigation and bigger areas"): a full sectioned snapshot is about 15% bigger than the same region as one `rle_palette_v1` message, and a one-section shift of a 160×128×160 region is a delta of about 90–160 KB instead of about 800 KB.
 
 ### 4.19 Fixtures and tests
 
-- `tools/fixtures/chunk_snapshot_sections.json` (full, snapshot 8), `chunk_snapshot_delta.json` (snapshot 9 as a delta against 8, one section) and `region_request_nav.json` (origin form with `view_margin`). Java `SectionCodecTest`, Python `test_tabletop_protocol.py` and C# `Tests~/NavTests.cs` decode them and rebuild snapshot 9 from 8.
+- `tools/fixtures/chunk_snapshot_sections.json` (full, snapshot 8), `chunk_snapshot_delta.json` (snapshot 9 as a delta against 8, one section), `region_request_nav.json` (origin form with `view_margin`) and `chunk_snapshot_sections_light.json` (per-section light, biomes on part 0). Java `SectionCodecTest`, Python `test_tabletop_protocol.py` and C# `Tests~/NavTests.cs` decode them and rebuild snapshot 9 from 8.
 - `tools/nav_e2e.py` runs a `sections_v1` headset across the world on a live server and checks each delta-assembled region block by block against a v1 client's full snapshot of the same region.
-- Changelog: v1.2 (2026-10-13) adds `view_margin`, `welcome.caps`, `limits.build_height`, `pose.snapshot_id`, the `sections_v1` encoding and the full resend after `bad_snapshot`. v1 and v1.1 clients are unaffected.
+- Changelog: v1.2 (2026-10-13) adds `view_margin`, the server features in `welcome.caps`, `limits.build_height`, `pose.snapshot_id`, the `sections_v1` encoding (with per-section light), and the full resend after `bad_snapshot`. v1 and v1.1 clients are unaffected.

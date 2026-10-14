@@ -39,9 +39,14 @@ namespace TabletopCraft.Net
             int total = m0.I("parts", 1);
             if (parts.Count != total) throw new FormatException($"have {parts.Count} of {total} parts");
 
+            // light_v1 (PROTOCOL.md 4.5.1): the top-level "light" says light travels inside the sections.
+            var lightObj = m0.O("light");
+            if (lightObj != null && lightObj.S("encoding") != "rle_v1") throw new FormatException("unsupported light encoding " + lightObj.S("encoding"));
+            var light = lightObj != null ? new byte[volume] : null;
+
             var bas = m0.O("base");
             Vector3Int shift = default;
-            if (bas != null) shift = CopyBase(bas, s, current, grid);
+            if (bas != null) shift = CopyBase(bas, s, current, grid, light);
             var keys = new HashSet<Vector3Int>();
 
             for (int pi = 0; pi < parts.Count; pi++)
@@ -59,6 +64,7 @@ namespace TabletopCraft.Net
                     if (covered[ci]) throw new FormatException("section listed twice");
                     covered[ci] = true;
                     DecodeSection(sec.A("data"), s.Dims, k[0], k[1], k[2], names.Length, grid);
+                    if (light != null) DecodeSectionLight(sec.A("light") ?? throw new FormatException("section without light"), s.Dims, k[0], k[1], k[2], light);
                     keys.Add(new Vector3Int(k[0], k[1], k[2]));
                     listed?.Add(new Vector3Int(k[0], k[1], k[2]));
                 }
@@ -67,12 +73,15 @@ namespace TabletopCraft.Net
                 for (int i = 0; i < covered.Length; i++) if (!covered[i]) throw new FormatException("section missing from a full sectioned snapshot");
             if (bas != null) CheckDeltaCoverage(s.Dims, shift, keys);
             s.Grid = grid;
+            s.Light = light;
+            s.Biomes = BiomeGrid.From(m0.O("biomes"));   // biomes_v1: the whole region, on part 0
             return s;
         }
 
         /// <summary>Delta: copy everything that overlaps the base region; listed sections overwrite their part afterwards.</summary>
-        static Vector3Int CopyBase(Dictionary<string, object> bas, ChunkSnapshot s, WorldModel cur, ushort[] grid)
+        static Vector3Int CopyBase(Dictionary<string, object> bas, ChunkSnapshot s, WorldModel cur, ushort[] grid, byte[] light)
         {
+            if (light != null && (cur?.Light == null || cur.Light.Length != light.Length)) throw new FormatException("delta with light against a snapshot without light");
             int baseId = bas.I("snapshot_id", -1);
             var sh = Json.Ints(bas.A("shift"));
             if (cur == null || !cur.Loaded || cur.SnapshotId != baseId) throw new FormatException($"base snapshot {baseId} is not the current one ({cur?.SnapshotId})");
@@ -95,9 +104,32 @@ namespace TabletopCraft.Net
                     int oz = z + sh[2];
                     if (oz < 0 || oz >= d.z) continue;
                     Array.Copy(old, (oy * d.z + oz) * d.x + x0 + sh[0], grid, (y * d.z + z) * d.x + x0, x1 - x0);
+                    if (light != null) Array.Copy(cur.Light, (oy * d.z + oz) * d.x + x0 + sh[0], light, (y * d.z + z) * d.x + x0, x1 - x0);
                 }
             }
             return shift;
+        }
+
+        /// <summary>A section's packed light (sky &lt;&lt; 4 | block): RLE pairs over its box in yzx order.</summary>
+        static void DecodeSectionLight(List<object> data, Vector3Int dims, int kx, int ky, int kz, byte[] light)
+        {
+            if (data.Count % 2 != 0) throw new FormatException("section light must be [value, run] pairs");
+            int S = WorldModel.Section;
+            int bx = kx * S, by = ky * S, bz = kz * S;
+            int sx = Math.Min(S, dims.x - bx), sy = Math.Min(S, dims.y - by), sz = Math.Min(S, dims.z - bz);
+            int vol = sx * sy * sz, p = 0, x = 0, y = 0, z = 0;
+            for (int i = 0; i < data.Count; i += 2)
+            {
+                int v = (int)(double)data[i], run = (int)(double)data[i + 1];
+                if (run < 1 || p + run > vol || v < 0 || v > 255) throw new FormatException($"bad light run in section {kx},{ky},{kz}");
+                for (int j = 0; j < run; j++)
+                {
+                    light[((by + y) * dims.z + bz + z) * dims.x + bx + x] = (byte)v;
+                    if (++x == sx) { x = 0; if (++z == sz) { z = 0; y++; } }
+                }
+                p += run;
+            }
+            if (p != vol) throw new FormatException($"section {kx},{ky},{kz} light covers {p} of {vol}");
         }
 
         /// <summary>RLE pairs over one section's box (clamped to dims) in yzx order.</summary>

@@ -11,6 +11,8 @@
  "token": "changeme",
  "caps": [
   "rle_palette_v1",
-  "avatar"
+  "avatar",
+  "light_v1",
+  "biomes_v1"
  ]
 }

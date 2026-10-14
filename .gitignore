@@ -15,3 +15,5 @@ __pycache__/
 .venv/
 # User-supplied game assets
 *.zip
+# Claude Code agent worktrees
+.claude/worktrees/

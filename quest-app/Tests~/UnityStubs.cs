@@ -37,6 +37,15 @@ namespace UnityEngine
         public Quaternion(float x, float y, float z, float w) { this.x = x; this.y = y; this.z = z; this.w = w; }
     }
     public struct Color32 { public byte r, g, b, a; public Color32(byte r, byte g, byte b, byte a) { this.r = r; this.g = g; this.b = b; this.a = a; } }
-    public static class Mathf { public static int Min(int a, int b) => Math.Min(a, b); }
+    public static class Mathf
+    {
+        public static int Min(int a, int b) => Math.Min(a, b);
+        public static float Max(float a, float b) => Math.Max(a, b);
+        public static int Max(int a, int b) => Math.Max(a, b);
+        public static int Clamp(int v, int lo, int hi) => v < lo ? lo : v > hi ? hi : v;
+        public static float Clamp(float v, float lo, float hi) => v < lo ? lo : v > hi ? hi : v;
+        public static float Clamp01(float v) => v < 0 ? 0 : v > 1 ? 1 : v;
+        public static float Lerp(float a, float b, float t) => a + (b - a) * Clamp01(t);
+    }
     public static class Debug { public static void Log(object o) => Console.WriteLine(o); public static void LogWarning(object o) => Console.WriteLine("WARN " + o); }
 }

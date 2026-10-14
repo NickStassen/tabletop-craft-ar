@@ -4,8 +4,10 @@
 // sends region_request when the view needs the region shifted.
 //
 //   Left stick                 glide across the world, relative to where you look (forward = away from you)
-//   Left trigger + left stick  up / down (stick forward = up), sideways still works
-//   (Right stick X turns the table and right stick Y scales it: TablePlacement.)
+//   Left grip + left stick     up / down (stick forward = up), sideways still works
+//   (Right stick X turns the table and right stick Y scales it: TablePlacement. Both grips = drag the table, so the
+//   left stick is ignored while both are held.)
+// Locomotion stays on the sticks and grips: the index triggers and B belong to block editing.
 // Area setup (Y) owns the sticks while it is active.
 using System;
 using System.Collections.Generic;
@@ -68,10 +70,12 @@ namespace TabletopCraft.XR
             {
                 Vector2 ls = OVRInput.Get(OVRInput.Axis2D.PrimaryThumbstick, OVRInput.Controller.LTouch);
                 float mag = Mathf.Min(1f, ls.magnitude);
-                if (mag > DeadZone)
+                bool leftGrip = OVRInput.Get(OVRInput.Button.PrimaryHandTrigger, OVRInput.Controller.LTouch);
+                bool dragging = leftGrip && OVRInput.Get(OVRInput.Button.PrimaryHandTrigger, OVRInput.Controller.RTouch);
+                if (mag > DeadZone && !dragging)
                 {
                     _held += dt;
-                    bool vertical = OVRInput.Get(OVRInput.Button.PrimaryIndexTrigger, OVRInput.Controller.LTouch);
+                    bool vertical = leftGrip;
                     // Head yaw in the anchor's frame, projected onto the table.
                     Vector3 f = Head ? Anchor.InverseTransformDirection(Head.forward) : Vector3.forward;
                     f.y = 0;

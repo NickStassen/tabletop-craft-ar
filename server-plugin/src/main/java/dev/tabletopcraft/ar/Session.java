@@ -52,6 +52,12 @@ public final class Session {
         RegionSpec r = snapshotId < 0 ? null : recentRegions.get(snapshotId);
         return r != null ? r : region;
     }
+    /** Opted into light_v1 / biomes_v1 in hello.caps (and enabled in config); PROTOCOL.md 4.4.1. */
+    public volatile boolean wantsLight, wantsBiomes;
+    public byte[] lastLight;               // packed light, as last sent (main thread), null without light_v1
+
+    /** RegionReader extras this session needs in its snapshots and diffs. */
+    public int readExtras() { return (wantsLight ? RegionReader.LIGHT : 0) | (wantsBiomes ? RegionReader.BIOMES : 0); }
 
     public Session(WebSocket conn) { this.conn = conn; }
 

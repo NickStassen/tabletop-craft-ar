@@ -218,6 +218,29 @@ static class NavTests
         asm.Offer(v1, w, new HashSet<Vector3Int>());
         var r1 = asm.Wait();
         Check(r1.Error == null && r1.Snapshot.Dims == new Vector3Int(32, 64, 32) && r1.ViewMargin == default, "assembler: v1 rle snapshot still works");
+        // light_v1 + biomes_v1 inside sections: per-section light, biomes from part 0, deltas keep the base light.
+        var lit = Load(fixture, "chunk_snapshot_sections_light.json");
+        var ls = SectionedSnapshot.Assemble(new[] { lit }, null, null);
+        Check(ls.Light != null && ls.Light[0] == 0 && ls.Light[256] == 240 && ls.Light[1023] == 254 && ls.Biomes != null && ls.Biomes.Palette[0] == "minecraft:plains",
+              "sections_v1: per-section light and biomes decode");
+        var lw = new WorldModel(); lw.ApplySnapshot(ls);
+        var keep = Load(fixture, "chunk_snapshot_sections_light.json");
+        keep["snapshot_id"] = 4.0; keep["sections"] = new List<object>(); keep["biomes"] = null;
+        keep["base"] = new Dictionary<string, object> { ["snapshot_id"] = 3.0, ["shift"] = new List<object> { 0.0, 0.0, 0.0 } };
+        var kd = SectionedSnapshot.Assemble(new[] { keep }, lw, null);
+        Check(kd.Light != null && kd.Light[1023] == 254 && kd.Grid[5] == 1, "sections_v1: delta copies the base light");
+        var noBaseLight = new WorldModel(); noBaseLight.ApplySnapshot(SectionedSnapshot.Assemble(new[] { Load(fixture, "chunk_snapshot_sections.json") }, null, null));
+        var litDelta = Load(fixture, "chunk_snapshot_delta.json"); litDelta["light"] = new Dictionary<string, object> { ["encoding"] = "rle_v1", ["in_sections"] = true };
+        Check(Throws(() => SectionedSnapshot.Assemble(new[] { litDelta }, noBaseLight, null)), "sections_v1: light delta against a base without light is rejected");
+        // A section whose blocks are the same but whose light changed must be re-meshed (light is baked into the mesh).
+        var a0 = Snap(Terrain(new Vector3Int(0, 0, 0), new Vector3Int(32, 16, 16), new[] { "minecraft:air", "minecraft:stone", "minecraft:grass_block" }, Hills), 1);
+        a0.Light = new byte[a0.Grid.Length];
+        var wa = new WorldModel(); wa.ApplySnapshot(a0); wa.DirtySections.Clear();
+        var a1 = Snap(Terrain(new Vector3Int(0, 0, 0), new Vector3Int(32, 16, 16), new[] { "minecraft:air", "minecraft:stone", "minecraft:grass_block" }, Hills, 2), 2);
+        a1.Light = new byte[a1.Grid.Length]; a1.Light[(15 * 16 + 3) * 32 + 20] = 0xFE;
+        var lp = SectionPlan.Compute(wa, a1, new HashSet<Vector3Int>(), null);
+        Check(lp.Rekey && lp.Mesh.Count == 1 && lp.Mesh.Contains(new Vector3Int(1, 0, 0)), $"plan: a light change re-meshes its section ({string.Join(" ", lp.Mesh)})");
+
         var req = Load(fixture, "region_request_nav.json");
         var built = Protocol.RegionRequest("world", new Vector3Int(16, 60, 0), new Vector3Int(32, 16, 16), new Vector3Int(8, 0, 0));
         Check(Json.Write(built.A("view_margin")) == Json.Write(req.A("view_margin")) && Json.Write(built.A("origin")) == Json.Write(req.A("origin")), "region_request with view_margin matches the fixture");

@@ -76,7 +76,7 @@ class SectionCodecTest {
             secs.add(s); est += s.estimatedBytes();
         }
         JsonObject m = Protocol.chunkSnapshotSections(1, new RegionSpec("world", 0, 0, 0, dx, dy, dz), List.of("minecraft:air", "minecraft:stone", "minecraft:grass_block"),
-            new int[] { 8, 0, 8 }, 0, 1, -1, null, secs);
+            new int[] { 8, 0, 8 }, 0, 1, -1, null, secs, false, null);
         int real = Protocol.GSON.toJson(m).length();
         assertTrue(Math.abs(est - real) < real * 0.1 + 200, "estimate " + est + " vs real " + real);
         assertFalse(m.has("base"));
@@ -125,6 +125,37 @@ class SectionCodecTest {
         assertArrayEquals(listed.get(0), want.get(0));
         // And the fixture's view_margin parses like a region_request's.
         assertArrayEquals(new int[] { 8, 0, 0 }, RegionRequest.viewMargin(fixture("region_request_nav")));
+    }
+
+    @Test void lightTravelsPerSectionAndDeltasListLightChanges() throws Exception {
+        int dx = 48, dy = 16, dz = 32;
+        int[] oldG = grid(0, 0, 0, dx, dy, dz), newG = grid(16, 0, 0, dx, dy, dz);
+        byte[] oldL = new byte[oldG.length], newL = new byte[newG.length];
+        for (int i = 0; i < oldL.length; i++) { oldL[i] = (byte) (oldG[i] == 0 ? 240 : 0); newL[i] = (byte) (newG[i] == 0 ? 240 : 0); }
+        // Same blocks after the shift, but a torch's light reaches into a kept section: it must be listed.
+        newL[(15 * dz + 3) * dx + 4] = (byte) 254;
+        int[] shift = { 16, 0, 0 };
+        assertEquals(2, SectionCodec.changedSections(oldG, newG, dx, dy, dz, shift).size(), "blocks alone");
+        assertEquals(3, SectionCodec.changedSections(oldG, newG, oldL, newL, dx, dy, dz, shift).size(), "blocks or light");
+        // Per-section light round trip (same pair format as blocks).
+        int[] back = new int[newL.length];
+        for (int[] k : SectionCodec.allSections(dx, dy, dz))
+            SectionCodec.decodeSection(SectionCodec.encodeSectionLight(newL, dx, dy, dz, k[0], k[1], k[2]), back, dx, dy, dz, k[0], k[1], k[2]);
+        for (int i = 0; i < back.length; i++) assertEquals(newL[i] & 0xFF, back[i]);
+        // The message: per-section "light", top-level light marker, biomes on part 0 only.
+        JsonObject f = fixture("chunk_snapshot_sections_light");
+        assertTrue(f.getAsJsonObject("light").get("in_sections").getAsBoolean());
+        var sec = f.getAsJsonArray("sections").get(0).getAsJsonObject();
+        int[] l = new int[16 * 4 * 16];
+        SectionCodec.decodeSection(ints(sec.getAsJsonArray("light")), l, 16, 4, 16, 0, 0, 0);
+        assertEquals(0, l[0]); assertEquals(240, l[256]); assertEquals(254, l[1023]);
+        BiomeGrid b = BiomeGrid.covering(new RegionSpec("world", 0, 60, 0, 16, 4, 16));
+        List<SectionCodec.Section> one = List.of(new SectionCodec.Section(0, 0, 0, new int[] { 1, 1024 }, new int[] { 240, 1024 }));
+        JsonObject p0 = Protocol.chunkSnapshotSections(1, new RegionSpec("world", 0, 60, 0, 16, 4, 16), List.of("minecraft:air", "minecraft:stone"), null, 0, 2, -1, null, one, true, b);
+        JsonObject p1 = Protocol.chunkSnapshotSections(1, new RegionSpec("world", 0, 60, 0, 16, 4, 16), List.of("minecraft:air", "minecraft:stone"), null, 1, 2, -1, null, List.of(), true, b);
+        assertTrue(p0.get("biomes").isJsonObject() && p1.get("biomes").isJsonNull());
+        assertEquals("rle_v1", p1.getAsJsonObject("light").get("encoding").getAsString());
+        assertEquals(2, p0.getAsJsonArray("sections").get(0).getAsJsonObject().getAsJsonArray("light").size());
     }
 
     @Test void diffIndicesStopAtTheLimit() {

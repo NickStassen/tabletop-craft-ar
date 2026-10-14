@@ -4,7 +4,7 @@ import pathlib
 
 import pytest
 
-from tabletop_protocol import Envelope, WorldMirror, decode_rle, parse_region, scripted_pose, validate
+from tabletop_protocol import CAP_BIOMES, CAP_LIGHT, Envelope, WorldMirror, decode_light, decode_rle, parse_region, scripted_pose, validate
 
 FIX = pathlib.Path(__file__).parent / "fixtures"
 
@@ -18,6 +18,16 @@ def snap():
 @pytest.mark.parametrize("path", sorted(FIX.glob("*.json")), ids=lambda p: p.stem)
 def test_spec_fixtures_validate(path):
     validate(json.loads(path.read_text()))
+
+
+def test_player_positions_skin_model():
+    msg = json.loads((FIX / "player_positions.json").read_text())
+    assert msg["players"][0]["skin_model"] == "slim"
+    msg["players"][0]["skin_model"] = "huge"
+    with pytest.raises(ValueError):
+        validate(msg)
+    del msg["players"][0]["skin_model"]
+    validate(msg)  # optional field
 
 
 def test_decode_pairs_index_then_run():
@@ -98,3 +108,58 @@ def test_sections_validation():
     short = dict(full, sections=full["sections"][:1])
     with pytest.raises(ValueError):
         WorldMirror().apply_snapshot(short)
+
+
+def test_snapshot_extras_light_and_biomes():
+    m = WorldMirror()
+    m.apply_snapshot(json.loads((FIX / "chunk_snapshot_extras.json").read_text()))
+    assert m.light is not None and len(m.light) == 32
+    assert m.light_at_world(104, 63, -39) == (15, 14)   # local (2, 1, 3)
+    assert m.light_at_world(102, 62, -42) == (0, 0)     # inside the grass block
+    assert m.biomes.at_world(102, 62, -42) == "minecraft:plains"
+    assert m.biomes.at_world(105, 63, -39) == "minecraft:swamp"   # quart (26, 15, -10)
+    assert m.biomes.climate[1] == [0.8, 0.9]
+
+
+def test_block_update_light_applies_and_old_snapshots_ignore_it():
+    m = WorldMirror()
+    m.apply_snapshot(json.loads((FIX / "chunk_snapshot_extras.json").read_text()))
+    assert m.apply_block_update(json.loads((FIX / "block_update_light.json").read_text()))
+    assert m.at_world(103, 63, -41) == "minecraft:torch"
+    assert m.light_at_world(103, 63, -41) == (15, 14)
+    assert m.apply_block_update({"snapshot_id": 7, "changes": [], "light": [[0, 1, 0, 17]]})
+    assert m.light_at_world(102, 63, -42) == (1, 1)
+    v1 = WorldMirror()
+    v1.apply_snapshot(snap())   # light: null -> no light mirror, light entries are ignored
+    assert v1.light is None and v1.biomes is None
+    assert v1.apply_block_update({"snapshot_id": 1, "changes": [], "light": [[0, 0, 0, 240]]})
+
+
+def test_decode_light_rejects_bad_data():
+    assert decode_light({"encoding": "rle_v1", "data": [240, 2, 0, 1]}, 3) == [240, 240, 0]
+    with pytest.raises(ValueError):
+        decode_light({"encoding": "rle_v2", "data": [0, 3]}, 3)
+    with pytest.raises(ValueError):
+        decode_light({"encoding": "rle_v1", "data": [0, 2]}, 3)
+    with pytest.raises(ValueError):
+        decode_light({"encoding": "rle_v1", "data": [256, 3]}, 3)
+
+
+def test_caps_in_hello_and_welcome_fixtures():
+    assert {CAP_LIGHT, CAP_BIOMES} <= set(json.loads((FIX / "hello.json").read_text())["caps"])
+    assert json.loads((FIX / "welcome.json").read_text())["caps"] == [CAP_LIGHT, CAP_BIOMES]
+
+
+def test_sections_with_light_and_biomes():
+    """sections_v1 + light_v1/biomes_v1: per-section light, biomes on part 0, deltas keep the base light."""
+    m = WorldMirror()
+    full = json.loads((FIX / "chunk_snapshot_sections_light.json").read_text())
+    assert m.apply_snapshot(full)
+    assert m.light_at_world(0, 60, 0) == (0, 0) and m.light_at_world(0, 61, 0) == (15, 0) and m.light_at_world(15, 63, 15) == (15, 14)
+    assert m.biomes.at_world(5, 61, 5) == "minecraft:plains"
+    # A delta with no sections listed: blocks and light carried over (here: shift 0, same region).
+    delta = dict(full, snapshot_id=4, base={"snapshot_id": 3, "shift": [0, 0, 0]}, sections=[], biomes=None)
+    assert m.apply_snapshot(delta) and m.light_at_world(15, 63, 15) == (15, 14) and m.at_world(3, 60, 3) == "minecraft:stone"
+    no_light = dict(full, sections=[{"s": [0, 0, 0], "data": [1, 256, 0, 768]}])
+    with pytest.raises(ValueError):
+        WorldMirror().apply_snapshot(no_light)   # light announced but a section has none

@@ -15,8 +15,11 @@ namespace TabletopCraft.Net
         {
             ["type"] = "hello", ["client"] = ClientName, ["client_version"] = ClientVersion,
             ["protocols"] = new List<object> { Version }, ["token"] = token ?? "",
-            ["caps"] = new List<object> { "rle_palette_v1", "avatar", SectionedSnapshot.Cap },
+            ["caps"] = new List<object> { "rle_palette_v1", "avatar", CapLight, CapBiomes, SectionedSnapshot.Cap },
         };
+
+        /// <summary>Optional snapshot extras (PROTOCOL.md 4.4.1): per-block light and 4x4x4 biomes.</summary>
+        public const string CapLight = "light_v1", CapBiomes = "biomes_v1";
 
         public static Dictionary<string, object> Subscribe(string world, Vector3Int origin, Vector3Int dims) => new Dictionary<string, object>
         {
@@ -104,6 +107,8 @@ namespace TabletopCraft.Net
         public Vector3Int Origin, Dims;
         public string[] Palette;
         public ushort[] Grid; // yzx
+        public byte[] Light;  // optional light_v1: sky << 4 | block per cell, yzx (null = not sent)
+        public TabletopCraft.World.BiomeGrid Biomes; // optional biomes_v1 (null = not sent)
 
         public static ChunkSnapshot From(Dictionary<string, object> m)
         {
@@ -117,7 +122,29 @@ namespace TabletopCraft.Net
                 Origin = new Vector3Int(o[0], o[1], o[2]), Dims = new Vector3Int(d[0], d[1], d[2]), Palette = names,
             };
             s.Grid = DecodeRle(m.A("data"), d[0] * d[1] * d[2], names.Length);
+            s.Light = DecodeLight(m.O("light"), s.Grid.Length);
+            s.Biomes = TabletopCraft.World.BiomeGrid.From(m.O("biomes"));
             return s;
+        }
+
+        /// <summary>chunk_snapshot.light (rle_v1 pairs of packed values over the yzx grid); null when absent.</summary>
+        public static byte[] DecodeLight(Dictionary<string, object> o, int volume)
+        {
+            if (o == null) return null;
+            if (o.S("encoding") != "rle_v1") throw new FormatException("unsupported light encoding " + o.S("encoding"));
+            var data = o.A("data");
+            if (data == null || data.Count % 2 != 0) throw new FormatException("bad light data");
+            var b = new byte[volume];
+            int p = 0;
+            for (int k = 0; k < data.Count; k += 2)
+            {
+                int v = (int)(double)data[k], n = (int)(double)data[k + 1];
+                if (n < 1 || p + n > volume || v < 0 || v > 255) throw new FormatException("bad light run at " + k);
+                if (v != 0) for (int j = 0; j < n; j++) b[p + j] = (byte)v;
+                p += n;
+            }
+            if (p != volume) throw new FormatException($"light runs cover {p} of {volume}");
+            return b;
         }
 
         /// <summary>rle_palette_v1: pairs [paletteIndex, runLength]. Throws on a wrong total (caller sends bad_snapshot).</summary>
@@ -141,9 +168,23 @@ namespace TabletopCraft.Net
     public struct PlayerInfo
     {
         public string Uuid, Name, Skin;
+        public string SkinModel; // "wide", "slim" or null (PROTOCOL.md 4.6, optional)
+        public bool HasSkin;     // the message carried "skin" (sent once per UUID per connection, may be null)
         public Vector3 Pos; // world coords (feet)
         public float Yaw, Pitch;
         public bool Sneaking;
+
+        /// <summary>One entry of player_positions.players.</summary>
+        public static PlayerInfo From(Dictionary<string, object> p)
+        {
+            var pos = Json.Doubles(p.A("pos"));
+            return new PlayerInfo
+            {
+                Uuid = p.S("uuid"), Name = p.S("name"), Pos = new Vector3((float)pos[0], (float)pos[1], (float)pos[2]),
+                Yaw = (float)p.D("yaw"), Pitch = (float)p.D("pitch"), Sneaking = p.B("sneaking"),
+                HasSkin = p.ContainsKey("skin"), Skin = p.S("skin"), SkinModel = p.S("skin_model"),
+            };
+        }
     }
 
     /// <summary>Server limits from welcome.limits, region_info.limits or a region_too_large error.</summary>

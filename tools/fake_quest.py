@@ -18,7 +18,7 @@ import time
 
 import websockets
 
-from tabletop_protocol import Envelope, WorldMirror, parse_region, scripted_pose, validate
+from tabletop_protocol import CAP_BIOMES, CAP_LIGHT, Envelope, WorldMirror, parse_region, scripted_pose, validate
 
 
 async def run(a: argparse.Namespace) -> dict:
@@ -28,8 +28,9 @@ async def run(a: argparse.Namespace) -> dict:
                 "poses_sent": 0, "rtt_ms": [], "snapshot": None}
     t0 = time.monotonic()
     async with websockets.connect(a.url, max_size=8 * 1024 * 1024) as ws:
+        caps = ["rle_palette_v1", "avatar", *([CAP_LIGHT, CAP_BIOMES] if a.extras else [])]
         await ws.send(json.dumps(env.wrap("hello", client="fake-quest", client_version="0.1.0", protocols=[1],
-                                          token=a.token, caps=["rle_palette_v1", "avatar"])))
+                                          token=a.token, caps=caps)))
         welcomed = asyncio.Event()
 
         async def sender() -> None:
@@ -83,13 +84,16 @@ async def run(a: argparse.Namespace) -> dict:
                     st["snapshot"] = {"server_timing": m.get("server_timing"),
                                       "id": m["snapshot_id"], "origin": m["origin"], "dims": m["dims"], "bytes": len(raw),
                                       "palette": len(m["palette"]), "runs": len(m["data"]) // 2,
-                                      "at_ms": round((time.monotonic() - t0) * 1000)}
+                                      "at_ms": round((time.monotonic() - t0) * 1000),
+                                      "light_runs": len(m["light"]["data"]) // 2 if m.get("light") else None,
+                                      "biomes": m["biomes"]["palette"] if m.get("biomes") else None}
                 elif t == "region_changed":
                     st.setdefault("region_changes", []).append({k: m[k] for k in ("origin", "dims", "by_session")})
                 elif t == "region_info":
                     st["region_info"] = {"region": m["region"], "players": m["players"], "limits": m["limits"]}
                 elif t == "block_update":
                     if mirror.apply_block_update(m):
+                        st["light_updates"] = st.get("light_updates", 0) + len(m.get("light") or [])
                         for x, y, z, p in m["changes"][:20]:
                             st["block_updates"].append([x, y, z, mirror.palette[p]])
                 elif t == "player_positions":
@@ -115,6 +119,11 @@ async def run(a: argparse.Namespace) -> dict:
             x, y, z = (int(v) for v in pos.split(","))
             got = mirror.at_world(x, y, z)
             checks.append({"pos": [x, y, z], "want": want, "got": got, "ok": got.split("[")[0] == want})
+        for spec in a.expect_light:
+            pos, want = spec.split("=", 1)
+            x, y, z = (int(v) for v in pos.split(","))
+            got = list(mirror.light_at_world(x, y, z)) if mirror.light is not None else None
+            checks.append({"light": [x, y, z], "want": want, "got": got, "ok": got == [int(v) for v in want.split(",")]})
         for spec in a.expect_count:
             name, n = spec.rsplit("=", 1)
             got = mirror.count(name)
@@ -148,6 +157,8 @@ def main() -> int:
     ap.add_argument("--query", nargs="?", const="", help="send region_query (optionally for one player name)")
     ap.add_argument("--expect", action="append", default=[], help="x,y,z=minecraft:block (world coords)")
     ap.add_argument("--expect-count", action="append", default=[], help="minecraft:block=N in the region")
+    ap.add_argument("--extras", action="store_true", help="ask for per-block light + biomes (hello caps light_v1, biomes_v1)")
+    ap.add_argument("--expect-light", action="append", default=[], help="x,y,z=sky,block (world coords; needs --extras)")
     ap.add_argument("--report")
     ap.add_argument("-v", "--verbose", action="store_true")
     a = ap.parse_args()

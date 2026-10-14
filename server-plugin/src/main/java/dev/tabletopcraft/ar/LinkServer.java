@@ -148,6 +148,13 @@ public final class LinkServer extends WebSocketServer {
             for (var e : m.getAsJsonArray("caps")) if (e.isJsonPrimitive()) caps.add(e.getAsString());
             s.caps = java.util.Set.copyOf(caps);
         }
+        if (m.has("caps") && m.get("caps").isJsonArray())
+            for (var e : m.getAsJsonArray("caps")) {
+                if (!e.isJsonPrimitive()) continue;
+                String c = e.getAsString();
+                if (c.equals(Protocol.CAP_LIGHT)) s.wantsLight = plugin.lightEnabled();
+                else if (c.equals(Protocol.CAP_BIOMES)) s.wantsBiomes = plugin.biomesEnabled();
+            }
         s.state = Session.State.READY;
         plugin.getLogger().info("Hello from " + s.client + " (session " + s.id + ") @ " + s.conn.getRemoteSocketAddress());
         plugin.enqueue(() -> plugin.onReady(s));

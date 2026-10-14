@@ -23,12 +23,13 @@ SIZES = [16, 32, 64, 128, 64, 16]
 
 
 class Client:
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, caps: list[str] | None = None) -> None:
         self.name, self.env, self.mirror, self.q = name, Envelope(), WorldMirror(), asyncio.Queue()
+        self.caps = caps or []
 
     async def open(self) -> None:
         self.ws = await websockets.connect(URL, max_size=8 * 1024 * 1024)
-        await self.send("hello", client=self.name, protocols=[1])
+        await self.send("hello", client=self.name, protocols=[1], caps=["rle_palette_v1", *self.caps])
         self.task = asyncio.create_task(self.reader())
 
     async def send(self, t: str, **kw) -> None:

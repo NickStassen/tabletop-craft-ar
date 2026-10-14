@@ -2,6 +2,8 @@ package dev.tabletopcraft.ar;
 
 import com.google.gson.JsonObject;
 import com.destroystokyo.paper.profile.PlayerProfile;
+import org.bukkit.HeightMap;
+import org.bukkit.profile.PlayerTextures;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
@@ -36,15 +38,24 @@ public final class TabletopPlugin extends JavaPlugin {
     private int[] sharedMargin = new int[3];              // view_margin of the shared region (config region.view_margin)
     private long configSaveAt = -1;                       // debounced saveConfig (region changes while panning)
     private final AtomicReference<PoseSet> latestPose = new AtomicReference<>();
+    private PoseSet lastPose;                              // re-stepped while the smoothed giant catches up
+    private final Map<String, PlayerProfile> skinCache = new HashMap<>(); // lower-case name -> resolved profile
+    private final Set<String> skinLookups = new HashSet<>();
     private BukkitTask tickTask;
     private Map<String, Set<Long>> ticketed = Map.of();   // world name -> chunk keys holding our plugin ticket
     private Set<Long> giantChunks = Set.of();             // chunks of the giant's last applied pose (ticketed)
     private String giantWorld;
     private final Set<Long> giantLoading = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final Map<String, Set<Long>> giantPending = new HashMap<>(); // loaded for the giant's next move, ticketed until it moves
     private boolean dirty;
     private long tickCount;
     private Session avatarOwner;
     private long avatarOwnerGoneMs = -1;
+    // Light/biome extras (PROTOCOL.md 4.4.1): config switches, and a re-diff a few ticks after block changes so
+    // light the engine propagates after the change event reaches clients quickly (the safety diff catches the rest).
+    private volatile boolean lightOn = true, biomesOn = true;
+    private long lightRecheckTick = -1;
+    static final int LIGHT_RECHECK_TICKS = 4, MAX_LIGHT_CHANGES = 16384;
 
     @Override public void onEnable() {
         saveDefaultConfig();
@@ -62,10 +73,14 @@ public final class TabletopPlugin extends JavaPlugin {
         avatar.blockSizeM = c.getDouble("avatar.block-size-m", 0.01);
         avatar.maxScale = c.getDouble("avatar.max-scale", 16.0);
         avatar.userHeightM = c.getDouble("avatar.user-height-m", 1.75);
-        avatar.skinPlayer = c.getString("avatar.skin-player", "");
+        avatar.skinPlayer = defaultSkinPlayer();
         avatar.interpolationTicks = c.getInt("avatar.interpolation-ticks", 2);
         RegionSpec d = defaultRegion();
         sharedMargin = RegionRequest.clampMargin(new int[] { c.getInt("region.view_margin.x", 0), c.getInt("region.view_margin.y", 0), c.getInt("region.view_margin.z", 0) }, d.sx(), d.sy(), d.sz());
+        avatar.placement = GiantPlacement.Mode.parse(c.getString("avatar.placement", "ground"));
+        avatar.smoothing = c.getDouble("avatar.smoothing", 0.5);
+        lightOn = c.getBoolean("stream.light", true);
+        biomesOn = c.getBoolean("stream.biomes", true);
         outbound = Executors.newSingleThreadExecutor(r -> { Thread t = new Thread(r, "tabletop-outbound"); t.setDaemon(true); return t; });
         link = new LinkServer(this, c.getString("bind.host", "0.0.0.0"), c.getInt("bind.port", 8765), c.getString("bind.path", "/tabletop"), c.getString("auth.token", ""));
         link.start();
@@ -76,6 +91,8 @@ public final class TabletopPlugin extends JavaPlugin {
         if (tickTask != null) tickTask.cancel();
         if (configSaveAt >= 0) { configSaveAt = -1; saveConfig(); }
         avatar.remove();
+        lastPose = null;
+        giantPending.clear();
         releaseTickets();
         if (link != null) {
             for (Session s : link.sessions()) s.conn.close(Protocol.CLOSE_SHUTDOWN, "plugin disabled");
@@ -88,6 +105,8 @@ public final class TabletopPlugin extends JavaPlugin {
     // ---------- thread hand-off ----------
     void enqueue(Runnable r) { queue.add(r); }
     void offerPose(Session s, Pose h, Pose l, Pose r, long seq, int snapshotId) { latestPose.set(new PoseSet(s, h, l, r, seq, snapshotId)); }
+    boolean lightEnabled() { return lightOn; }
+    boolean biomesEnabled() { return biomesOn; }
     private void send(Session s, JsonObject body) { if (outbound != null && !outbound.isShutdown()) outbound.execute(() -> s.send(body)); }
 
     void markDirty(String world, int x, int y, int z) {
@@ -114,7 +133,11 @@ public final class TabletopPlugin extends JavaPlugin {
         long biggest = 0;
         for (Session s : ready()) biggest = Math.max(biggest, s.region.volume());
         safety *= (int) Math.max(1, biggest / 4_000_000L);
-        if (dirty || tickCount % safety == 0) { dirty = false; diffAll(); }
+        if (dirty || tickCount % safety == 0 || tickCount == lightRecheckTick) {
+            if (dirty) lightRecheckTick = tickCount + LIGHT_RECHECK_TICKS;
+            dirty = false;
+            diffAll();
+        }
         if (tickCount % Math.max(1, getConfig().getInt("stream.players-every-ticks", 2)) == 0) sendPlayers();
         if (tickCount % 20 == 0) timeouts();
         if (tickCount % 10 == 0) updateTickets();   // follow the giant
@@ -152,9 +175,15 @@ public final class TabletopPlugin extends JavaPlugin {
         lim.addProperty("player_hz", 20 / Math.max(1, getConfig().getInt("stream.players-every-ticks", 2)));
         w.add("limits", lim);
         w.addProperty("avatar_supported", true);
+        // Caps in effect for this session: the optional features it asked for and was granted (light_v1, biomes_v1,
+        // sections_v1), plus what this server always does (view_margin, pose_snapshot_id). PROTOCOL.md 4.5.1, 4.17-4.18.
         com.google.gson.JsonArray sc = new com.google.gson.JsonArray();
-        SERVER_CAPS.forEach(sc::add);
-        w.add("caps", sc);   // PROTOCOL.md 4.17-4.18 (additive)
+        if (s.wantsLight) sc.add(Protocol.CAP_LIGHT);
+        if (s.wantsBiomes) sc.add(Protocol.CAP_BIOMES);
+        if (sectionsFor(s)) sc.add(SectionCodec.ENCODING);
+        sc.add("view_margin");
+        sc.add("pose_snapshot_id");
+        w.add("caps", sc);
         send(s, w);
         subscribe(s, r, null);
     }
@@ -178,26 +207,36 @@ public final class TabletopPlugin extends JavaPlugin {
         s.region = r;
         s.lastGrid = null; // pause diffs until the new snapshot is captured
         updateTickets();
-        reader.readAsync(r, g -> { if (r.equals(s.region) && s.state == Session.State.READY) sendSnapshot(s, g); });
+        reader.readAsync(r, s.readExtras(), d -> { if (r.equals(s.region) && s.state == Session.State.READY) sendSnapshot(s, d); });
     }
 
-    private void sendSnapshot(Session s, int[] grid) { sendSnapshot(s, grid, false); }
+    private void sendSnapshot(Session s, RegionData d) { sendSnapshot(s, d, false); }
+
+    boolean sectionsFor(Session s) { return s.caps.contains(SectionCodec.ENCODING) && getConfig().getBoolean("stream.sections-v1", true); }
 
     /**
      * Sends the session's region. Clients with the "sections_v1" cap get it as 16^3 sections split into messages of
-     * at most stream.max-message-bytes, and as a delta (only new or changed sections) when the region moved by whole
-     * sections from what they already have (PROTOCOL.md 4.18). Others get one rle_palette_v1 message.
+     * at most stream.max-message-bytes, and as a delta (only sections whose blocks or light changed) when the region
+     * moved by whole sections from what they already have (PROTOCOL.md 4.18). Others get one rle_palette_v1 message.
+     * Light and biomes go to sessions that asked for them (PROTOCOL.md 4.5.1): per section, or whole-region.
      */
-    private void sendSnapshot(Session s, int[] grid, boolean forceFull) {
+    private void sendSnapshot(Session s, RegionData d, boolean forceFull) {
         long t0 = System.nanoTime();
         long readNs = (long) ((reader.lastSnapMs + reader.lastWalkMs) * 1e6);
+        int[] grid = d.grid();
+        byte[] light = s.wantsLight ? d.light() : null;
+        BiomeGrid biomes = s.wantsBiomes ? d.biomes() : null;
         RegionSpec r = s.region;
-        boolean sectioned = s.caps.contains(SectionCodec.ENCODING) && getConfig().getBoolean("stream.sections-v1", true);
+        boolean sectioned = sectionsFor(s);
         int[] oldGrid = s.lastGrid;
+        byte[] oldLight = s.lastLight;
         int baseId = s.snapshotId;
         // A delta keeps the session palette (base indices stay valid); cap its growth with an occasional full snapshot.
-        int[] shift = sectioned && !forceFull && oldGrid != null && s.paletteSize < 4096 ? SectionCodec.deltaShift(s.gridRegion, r) : null;
+        // With light, the client's light must be known too (lastLight), since unlisted sections keep theirs.
+        int[] shift = sectioned && !forceFull && oldGrid != null && s.paletteSize < 4096 && (light == null || oldLight != null)
+            ? SectionCodec.deltaShift(s.gridRegion, r) : null;
         s.lastGrid = grid;
+        s.lastLight = light;
         s.gridRegion = r;
         s.snapshotId++;
         s.rememberRegion(s.snapshotId, r);
@@ -234,37 +273,49 @@ public final class TabletopPlugin extends JavaPlugin {
             timing.addProperty("remap_ms", Math.round(remapNs / 1e4) / 100.0);
             if (sectioned) {
                 int dx = r.sx(), dy = r.sy(), dz = r.sz();
-                List<int[]> keys = shift != null ? SectionCodec.changedSections(oldGrid, grid, dx, dy, dz, shift) : SectionCodec.allSections(dx, dy, dz);
+                List<int[]> keys = shift != null ? SectionCodec.changedSections(oldGrid, grid, light != null ? oldLight : null, light, dx, dy, dz, shift)
+                                                 : SectionCodec.allSections(dx, dy, dz);
                 List<SectionCodec.Section> secs = new ArrayList<>(keys.size());
-                for (int[] k : keys) secs.add(new SectionCodec.Section(k[0], k[1], k[2], SectionCodec.encodeSection(local, dx, dy, dz, k[0], k[1], k[2])));
-                long fixed = 400;
+                for (int[] k : keys)
+                    secs.add(new SectionCodec.Section(k[0], k[1], k[2], SectionCodec.encodeSection(local, dx, dy, dz, k[0], k[1], k[2]),
+                        light != null ? SectionCodec.encodeSectionLight(light, dx, dy, dz, k[0], k[1], k[2]) : null));
+                long fixed = 400 + (biomes != null ? 200 + biomes.palette.size() * 40L + biomes.cells.length * 4L : 0);
                 for (String p : palette) fixed += p.length() + 3;
                 List<List<SectionCodec.Section>> parts = SectionCodec.split(secs, maxMsg, fixed);
                 long encNs = System.nanoTime() - e0;
                 timing.addProperty("encode_ms", Math.round(encNs / 1e4) / 100.0);
-                long j0 = System.nanoTime(), bytes = 0, runs = 0;
-                for (SectionCodec.Section sec : secs) runs += sec.data().length / 2;
+                long j0 = System.nanoTime(), bytes = 0, runs = 0, lightRuns = 0;
+                for (SectionCodec.Section sec : secs) { runs += sec.data().length / 2; if (sec.light() != null) lightRuns += sec.light().length / 2; }
                 for (int i = 0; i < parts.size(); i++) {
-                    JsonObject msg = Protocol.chunkSnapshotSections(id, r, palette, margin, i, parts.size(), shift != null ? baseId : -1, shift, parts.get(i));
+                    JsonObject msg = Protocol.chunkSnapshotSections(id, r, palette, margin, i, parts.size(), shift != null ? baseId : -1, shift, parts.get(i),
+                        light != null, biomes);
                     if (i == 0) msg.add("server_timing", timing);
                     bytes += s.sendCounted(msg);
                 }
                 int total = SectionCodec.sections(dx) * SectionCodec.sections(dy) * SectionCodec.sections(dz);
-                getLogger().info(String.format("SNAPSHOT session=%s dims=%dx%dx%d blocks=%d palette=%d encoding=sections_v1 %s sections=%d/%d parts=%d runs=%d bytes=%d read_ms=%.2f remap_ms=%.2f encode_ms=%.2f json_send_ms=%.2f",
-                    s.id, dx, dy, dz, r.volume(), palette.size(), shift != null ? "delta=" + shift[0] + "," + shift[1] + "," + shift[2] : "full", secs.size(), total, parts.size(), runs, bytes,
-                    readNs / 1e6, remapNs / 1e6, encNs / 1e6, (System.nanoTime() - j0) / 1e6));
+                getLogger().info(String.format("SNAPSHOT session=%s dims=%dx%dx%d blocks=%d palette=%d encoding=sections_v1 %s sections=%d/%d parts=%d runs=%d light_runs=%d biomes=%d bytes=%d read_ms=%.2f remap_ms=%.2f encode_ms=%.2f json_send_ms=%.2f",
+                    s.id, dx, dy, dz, r.volume(), palette.size(), shift != null ? "delta=" + shift[0] + "," + shift[1] + "," + shift[2] : "full", secs.size(), total, parts.size(), runs,
+                    light != null ? lightRuns : -1, biomes != null ? biomes.palette.size() : -1, bytes, readNs / 1e6, remapNs / 1e6, encNs / 1e6, (System.nanoTime() - j0) / 1e6));
                 return;
             }
             int[] data = BlockCodec.encode(local);
             long encNs = System.nanoTime() - e0;
             JsonObject msg = Protocol.chunkSnapshot(id, r, palette, data);
+            long x0 = System.nanoTime();
+            Protocol.addExtras(msg, light, biomes);
+            long extrasNs = System.nanoTime() - x0;
             msg.add("view_margin", Protocol.ints(margin));   // PROTOCOL.md 4.17
             timing.addProperty("encode_ms", Math.round(encNs / 1e4) / 100.0);
+            if (light != null || biomes != null) timing.addProperty("extras_encode_ms", Math.round(extrasNs / 1e4) / 100.0);
             msg.add("server_timing", timing); // additive extension, ignored by older clients
             long j0 = System.nanoTime();
             int bytes = s.sendCounted(msg);
-            getLogger().info(String.format("SNAPSHOT session=%s dims=%dx%dx%d blocks=%d palette=%d runs=%d bytes=%d read_ms=%.2f remap_ms=%.2f encode_ms=%.2f json_send_ms=%.2f",
-                s.id, r.sx(), r.sy(), r.sz(), r.volume(), palette.size(), data.length / 2, bytes, readNs / 1e6, remapNs / 1e6, encNs / 1e6, (System.nanoTime() - j0) / 1e6));
+            JsonObject lj = msg.has("light") && msg.get("light").isJsonObject() ? msg.getAsJsonObject("light") : null;
+            JsonObject bj = msg.has("biomes") && msg.get("biomes").isJsonObject() ? msg.getAsJsonObject("biomes") : null;
+            getLogger().info(String.format("SNAPSHOT session=%s dims=%dx%dx%d blocks=%d palette=%d runs=%d bytes=%d read_ms=%.2f remap_ms=%.2f encode_ms=%.2f json_send_ms=%.2f light_runs=%d biomes=%d biome_runs=%d extras_ms=%.2f",
+                s.id, r.sx(), r.sy(), r.sz(), r.volume(), palette.size(), data.length / 2, bytes, readNs / 1e6, remapNs / 1e6, encNs / 1e6, (System.nanoTime() - j0) / 1e6,
+                lj == null ? -1 : lj.getAsJsonArray("data").size() / 2, bj == null ? -1 : bj.getAsJsonArray("palette").size(),
+                bj == null ? -1 : bj.getAsJsonArray("data").size() / 2, extrasNs / 1e6));
         });
     }
 
@@ -276,7 +327,7 @@ public final class TabletopPlugin extends JavaPlugin {
         s.lastFullResendMs = now;
         RegionSpec r = s.region;
         getLogger().info("BAD_SNAPSHOT from session " + s.id + ": resending in full");
-        reader.readAsync(r, g -> { if (r.equals(s.region) && s.state == Session.State.READY) sendSnapshot(s, g, true); });
+        reader.readAsync(r, s.readExtras(), d -> { if (r.equals(s.region) && s.state == Session.State.READY) sendSnapshot(s, d, true); });
     }
 
     private void addBuildHeight(JsonObject limits, String world) {
@@ -291,16 +342,28 @@ public final class TabletopPlugin extends JavaPlugin {
             if (!diffInFlight.add(r)) continue;
             Map<Session, Integer> gen = new HashMap<>();
             Map<Session, int[]> base = new HashMap<>();
-            for (Session s : ready()) if (r.equals(s.region) && s.lastGrid != null) { gen.put(s, s.snapshotId); base.put(s, s.lastGrid); }
+            Map<Session, byte[]> baseLight = new HashMap<>();
+            int extras = 0; // read light/biomes if any session on this region wants them (a re-snapshot may need biomes)
+            for (Session s : ready()) if (r.equals(s.region) && s.lastGrid != null) {
+                gen.put(s, s.snapshotId); base.put(s, s.lastGrid); baseLight.put(s, s.lastLight); extras |= s.readExtras();
+            }
             try {
-                // The O(volume) compare runs on the async worker (sessions usually share one base array).
-                reader.readAsync(r, g -> {
-                    Map<int[], int[]> changes = new java.util.IdentityHashMap<>();
-                    for (int[] old : base.values()) changes.computeIfAbsent(old, o -> changedIndices(o, g, 4097));
-                    return changes;
-                }, (g, changes) -> { diffInFlight.remove(r); applyDiff(r, g, gen, base, changes); });
+                // The O(volume) compares run on the async worker (sessions usually share one base array).
+                reader.readAsync(r, extras, d -> {
+                    Diff diff = new Diff();
+                    for (int[] old : base.values()) diff.blocks.computeIfAbsent(old, o -> changedIndices(o, d.grid(), 4097));
+                    if (d.light() != null)
+                        for (byte[] old : baseLight.values()) if (old != null) diff.light.computeIfAbsent(old, o -> lightDiff(o, d.light(), r, MAX_LIGHT_CHANGES + 1));
+                    return diff;
+                }, (d, diff) -> { diffInFlight.remove(r); applyDiff(r, d, gen, base, baseLight, diff); });
             } catch (IllegalStateException e) { diffInFlight.remove(r); }
         }
+    }
+
+    /** Block and light changes against each distinct base array (identity), computed off the main thread. */
+    private static final class Diff {
+        final Map<int[], int[]> blocks = new java.util.IdentityHashMap<>();
+        final Map<byte[], List<int[]>> light = new java.util.IdentityHashMap<>();
     }
 
     /** Indices where the grids differ, stopping after limit (more than 4096 means "send a snapshot instead"). */
@@ -316,18 +379,33 @@ public final class TabletopPlugin extends JavaPlugin {
         return java.util.Arrays.copyOf(out, n);
     }
 
-    private void applyDiff(RegionSpec r, int[] g, Map<Session, Integer> gen, Map<Session, int[]> base, Map<int[], int[]> changes) {
+    /** Cells whose packed light changed, as block_update "light" entries [x, y, z, value], stopping after limit. */
+    static List<int[]> lightDiff(byte[] old, byte[] now, RegionSpec r, int limit) {
+        List<int[]> out = new ArrayList<>();
+        if (old.length != now.length) return out;
+        for (int i = 0; i < now.length && out.size() < limit; i++)
+            if (old[i] != now[i]) out.add(new int[] { i % r.sx(), i / (r.sx() * r.sz()), (i / r.sx()) % r.sz(), now[i] & 0xFF });
+        return out;
+    }
+
+    private void applyDiff(RegionSpec r, RegionData d, Map<Session, Integer> gen, Map<Session, int[]> base, Map<Session, byte[]> baseLight, Diff diff) {
+        int[] g = d.grid();
         for (var e : gen.entrySet()) {
             Session s = e.getKey();
             // Drop results that started before a newer snapshot, a region change or another diff.
-            if (s.state != Session.State.READY || !r.equals(s.region) || s.snapshotId != e.getValue() || s.lastGrid == null || s.lastGrid != base.get(s)) continue;
-            int[] idx = changes.get(s.lastGrid);
+            if (s.state != Session.State.READY || !r.equals(s.region) || s.snapshotId != e.getValue() || s.lastGrid == null
+                || s.lastGrid != base.get(s) || s.lastLight != baseLight.get(s)) continue;
+            int[] idx = diff.blocks.get(s.lastGrid);
             if (idx == null) continue;
-            if (idx.length == 0) { s.lastGrid = g; continue; }
+            boolean withLight = s.wantsLight && d.light() != null;
+            List<int[]> light = withLight && s.lastLight != null ? diff.light.getOrDefault(s.lastLight, List.of()) : List.of();
             // Many changes: a snapshot instead (a sectioned client gets only the changed sections, against lastGrid).
-            if (idx.length > 4096) { sendSnapshot(s, g); continue; }
+            if (idx.length > 4096 || light.size() > MAX_LIGHT_CHANGES) { sendSnapshot(s, d); continue; }
             s.lastGrid = g;
+            if (withLight) s.lastLight = d.light();
+            if (idx.length == 0 && light.isEmpty()) continue;
             int snap = s.snapshotId;
+            List<int[]> lightOut = light;
             // Palette indices are assigned on the outbound thread, in message order with snapshots (see sendSnapshot).
             if (outbound != null) outbound.execute(() -> {
                 List<String> added = new ArrayList<>();
@@ -336,7 +414,7 @@ public final class TabletopPlugin extends JavaPlugin {
                     int lx = i % r.sx(), lz = (i / r.sx()) % r.sz(), ly = i / (r.sx() * r.sz());
                     out.add(new Protocol.Change(lx, ly, lz, s.localIndex(g[i], reader.palette(), added)));
                 }
-                s.send(Protocol.blockUpdate(snap, added, out));
+                s.send(Protocol.blockUpdate(snap, added, out, lightOut));
             });
         }
     }
@@ -360,8 +438,11 @@ public final class TabletopPlugin extends JavaPlugin {
                 e.addProperty("sneaking", p.isSneaking());
                 if (s.skinSent.add(p.getUniqueId())) {
                     PlayerProfile prof = p.getPlayerProfile();
-                    var skin = prof.getTextures().getSkin();
+                    var textures = prof.getTextures();
+                    var skin = textures.getSkin();
                     e.addProperty("skin", skin == null ? null : skin.toString());
+                    // Additive (PROTOCOL.md 4.6): arm width from the textures payload's metadata.
+                    if (skin != null) e.addProperty("skin_model", SkinLookup.model(textures.getSkinModel() == PlayerTextures.SkinModel.SLIM));
                 }
                 arr.add(e);
             }
@@ -421,15 +502,18 @@ public final class TabletopPlugin extends JavaPlugin {
         RegionSpec r = new RegionSpec(wn, q.ox(), y0, q.oz(), q.dx(), y1 - y0, q.dz());
         int[] margin = RegionRequest.clampMargin(viewMargin, r.sx(), r.sy(), r.sz());
         long t0 = System.nanoTime();
-        // Byte cap: estimate from the global-palette RLE (same run structure as each session's encoding), off the main thread.
-        reader.readAsync(r, g -> {
-            int[] data = BlockCodec.encode(g);
+        int extras = s.readExtras(); // every shared session gets this read: include what any of them wants
+        for (Session o : ready()) if (o.shared) extras |= o.readExtras();
+        // Byte cap: estimate from the global-palette RLE (same run structure as each session's encoding), plus the
+        // light/biome fields (estimated by the reader), all off the main thread.
+        reader.readAsync(r, extras, d -> {
+            int[] data = BlockCodec.encode(d.grid());
             java.util.Set<Integer> ids = new java.util.HashSet<>();
             for (int k = 0; k < data.length; k += 2) ids.add(data[k]);
             List<String> pal = new ArrayList<>();
             for (int id : ids) pal.add(reader.palette().state(id));
-            return RegionRequest.estimateSnapshotBytes(data, pal);
-        }, (grid, est) -> {
+            return RegionRequest.estimateSnapshotBytes(data, pal) + d.extraBytes();
+        }, (d, est) -> {
             if (s.state != Session.State.READY) return;
             if (est > caps.maxBytes()) {
                 String msg = String.format("snapshot would be about %d bytes, over max %d (try a smaller region)", est, caps.maxBytes());
@@ -450,7 +534,7 @@ public final class TabletopPlugin extends JavaPlugin {
                 if (!o.shared) continue;
                 send(o, regionChanged(r, s, o == s ? refSeq : null));
                 o.region = r;
-                sendSnapshot(o, grid);
+                sendSnapshot(o, d);
             }
             updateTickets();
         });
@@ -492,11 +576,12 @@ public final class TabletopPlugin extends JavaPlugin {
     void onAvatarConfig(Session s, AvatarConfig c, Long refSeq) {
         // Block size / max_scale changes (the headset sends them while scaling) only rescale the spawned giant;
         // new entities are needed only when its appearance changes.
-        boolean looks = (c.skinPlayer() != null && !c.skinPlayer().equals(avatar.skinPlayer))
+        boolean looks = (c.skinPlayer() != null && !(c.skinPlayer().isBlank() ? defaultSkinPlayer() : c.skinPlayer()).equals(avatar.skinPlayer))
             || (c.model() != null && !c.model().equals(avatar.model))
             || (c.showHands() != null && c.showHands() != avatar.showHands)
             || (c.nameTagPresent() && !java.util.Objects.equals(c.nameTag(), avatar.nameTag));
-        if (c.skinPlayer() != null) avatar.skinPlayer = c.skinPlayer();
+        // A blank skin_player falls back to the plugin default (config.yml avatar.skin-player); missing keeps the current one.
+        if (c.skinPlayer() != null) avatar.skinPlayer = c.skinPlayer().isBlank() ? defaultSkinPlayer() : c.skinPlayer();
         if (c.model() != null) avatar.model = c.model();
         if (c.blockSizeM() != null) avatar.blockSizeM = c.blockSizeM();
         if (c.maxScale() != null) avatar.maxScale = c.maxScale();
@@ -511,17 +596,82 @@ public final class TabletopPlugin extends JavaPlugin {
         send(s, avatar.state(getConfig().getBoolean("debug.avatar-state", false)));
     }
 
+    private String defaultSkinPlayer() { return getConfig().getString("avatar.skin-player", ""); }
+
     private void spawnAvatarAtAnchor() {
         RegionSpec r = defaultRegion();
         World w = Bukkit.getWorld(r.world());
         if (w == null) return;
-        avatar.spawn(w, new Location(w, r.ox() + r.sx() / 2.0, r.oy(), r.oz() + r.sz() / 2.0));
-        getLogger().info(String.format("Avatar spawned: scale %.2f (%s)", avatar.scale(), avatar.note == null ? "no clamp" : avatar.note));
+        // Stand on the ground in the middle of the region until the first pose arrives (region chunks are ticketed).
+        int cx = r.ox() + r.sx() / 2, cz = r.oz() + r.sz() / 2;
+        double y = w.isChunkLoaded(cx >> 4, cz >> 4) ? w.getHighestBlockYAt(cx, cz, HeightMap.MOTION_BLOCKING_NO_LEAVES) + 1 : r.oy();
+        avatar.resolvedSkin = skinCache.get(avatar.skinPlayer.toLowerCase(Locale.ROOT));
+        avatar.spawn(w, new Location(w, cx + 0.5, y, cz + 0.5));
+        resolveSkin(avatar.skinPlayer);
+        getLogger().info(String.format("Avatar spawned: scale %.2f (%s), placement %s, skin %s", avatar.scale(),
+            avatar.note == null ? "no clamp" : avatar.note, avatar.placement.id(), avatar.skinPlayer.isBlank() ? "default" : avatar.skinPlayer));
+    }
+
+    // ---------- giant skin ----------
+    /**
+     * Resolves skin_player to a signed textures property off the main thread, then gives the giant a static
+     * profile. Until then (and if this fails) it keeps the name-only profile, which Java clients resolve
+     * themselves. Paper's own lookup follows the server's online-mode setting (an offline server turns the name
+     * into an offline UUID without textures), so ask with online=true and, if that finds nothing, look the UUID up
+     * on the Mojang API directly.
+     */
+    private void resolveSkin(String name) {
+        if (name == null || name.isBlank()) { avatar.skinNote = null; return; }
+        String key = name.toLowerCase(Locale.ROOT);
+        if (skinCache.containsKey(key)) { avatar.skinNote = null; return; }
+        if (!skinLookups.add(key)) return;
+        avatar.skinNote = "resolving skin " + name;
+        PlayerProfile profile = Bukkit.createProfile(name);
+        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+            PlayerProfile done = null;
+            String why = null;
+            try {
+                if (profile.complete(true, true) && profile.hasTextures()) done = profile;
+                else {
+                    java.util.UUID id = SkinLookup.uuidForName(name);
+                    if (id == null) why = "no Java account named " + name;
+                    else {
+                        PlayerProfile byId = Bukkit.createProfile(id, name);
+                        if (byId.complete(true, true) && byId.hasTextures()) done = byId;
+                        else why = "no textures for " + name;
+                    }
+                }
+            } catch (Exception e) { why = e.getClass().getSimpleName() + ": " + e.getMessage(); }
+            PlayerProfile result = done;
+            String reason = why;
+            enqueue(() -> onSkinResolved(name, key, result, reason));
+        });
+    }
+
+    private void onSkinResolved(String name, String key, PlayerProfile p, String why) {
+        skinLookups.remove(key);
+        boolean current = avatar.skinPlayer.equalsIgnoreCase(name);
+        if (p != null) {
+            skinCache.put(key, p);
+            getLogger().info("SKIN resolved " + name + " -> " + p.getId() + " (" + (p.getTextures().getSkinModel() == PlayerTextures.SkinModel.SLIM ? "slim" : "wide") + ")");
+            if (current) { avatar.resolvedSkin = p; avatar.skinNote = null; avatar.refreshSkin(); }
+        } else {
+            getLogger().warning("SKIN lookup failed for " + name + ": " + why);
+            if (current) avatar.skinNote = "server skin lookup failed (" + why + "); Java clients may still resolve " + name;
+        }
+        if (!current || avatarOwner == null || avatarOwner.state != Session.State.READY) return;
+        if (p == null) send(avatarOwner, Protocol.error("skin_failed", "skin_player " + name + ": " + why, null, false));
+        send(avatarOwner, avatar.state(getConfig().getBoolean("debug.avatar-state", false)));
     }
 
     private void applyPose() {
         PoseSet ps = latestPose.getAndSet(null);
-        if (ps == null || ps.s().region == null) return;
+        if (ps == null) {
+            // No new pose this tick: keep easing toward the last one so the giant settles where the user is.
+            if (lastPose == null || !avatar.settling()) return;
+            ps = lastPose;
+        } else lastPose = ps;
+        if (ps.s().region == null) return;
         if (!avatar.enabled && getConfig().getBoolean("avatar.spawn-on-first-pose", true) && !avatar.spawned()) {
             avatar.enabled = true; avatarOwner = ps.s(); spawnAvatarAtAnchor();
             send(ps.s(), avatar.state(getConfig().getBoolean("debug.avatar-state", false)));
@@ -532,27 +682,50 @@ public final class TabletopPlugin extends JavaPlugin {
         RegionSpec r = ps.s().regionFor(ps.snapshotId());
         World w = Bukkit.getWorld(r.world());
         if (w == null) return;
-        double bs = avatar.blockSizeM;
-        double[] hp = ps.head().toWorld(r.ox(), r.oy(), r.oz(), bs);
-        double[] lp = ps.left() == null ? null : ps.left().toWorld(r.ox(), r.oy(), r.oz(), bs);
-        double[] rp = ps.right() == null ? null : ps.right().toWorld(r.ox(), r.oy(), r.oz(), bs);
+        GiantPlacement.Placement target = GiantPlacement.place(avatar.placement, ps.head(), ps.left(), ps.right(), r,
+            avatar.blockSizeM, avatar.scale(), avatar.userHeightM, (x, z) -> groundFeetY(w, x, z), w.getMinHeight());
+        if (target == null) {
+            // Ground mode, column not loaded (the region's chunks are ticketed, so this is rare): load it, hold.
+            double[] hp = ps.head().toWorld(r.ox(), r.oy(), r.oz(), avatar.blockSizeM);
+            int bx = (int) Math.floor(GiantPlacement.clamp(hp[0], r.ox(), r.ox() + r.sx(), GiantPlacement.EDGE_INSET));
+            int bz = (int) Math.floor(GiantPlacement.clamp(hp[2], r.oz(), r.oz() + r.sz(), GiantPlacement.EDGE_INSET));
+            loadAsync(w, chunkKey(bx >> 4, bz >> 4));
+            return;
+        }
+        GiantAvatar.Step step = avatar.step(target, ps.head());
         // Never move the giant into an unloaded chunk: that deletes its non-persistent entities on the spot. Load
         // the target chunks asynchronously (no main-thread stall), hold the giant meanwhile, then ticket and move.
         Set<Long> targets = new HashSet<>();
-        for (double[] p : new double[][] { hp, lp, rp })
+        for (double[] p : new double[][] { step.eye(), step.left(), step.right() })
             if (p != null) targets.add(chunkKey((int) Math.floor(p[0]) >> 4, (int) Math.floor(p[2]) >> 4));
         boolean loaded = true;
-        for (long k : targets) {
-            int cx = (int) k, cz = (int) (k >> 32);
-            if (w.isChunkLoaded(cx, cz)) continue;
-            loaded = false;
-            if (giantLoading.add(k)) w.getChunkAtAsync(cx, cz).whenComplete((c, err) -> giantLoading.remove(k));
-        }
+        for (long k : targets) if (!w.isChunkLoaded((int) k, (int) (k >> 32))) { loaded = false; loadAsync(w, k); }
         if (!loaded) return;
-        if (!targets.equals(giantChunks) || !w.getName().equals(giantWorld)) { giantChunks = targets; giantWorld = w.getName(); updateTickets(); }
-        avatar.apply(w, hp, ps.head(), lp, ps.left(), rp, ps.right(), ps.seq());
+        if (!targets.equals(giantChunks) || !w.getName().equals(giantWorld) || !giantPending.isEmpty()) {
+            giantChunks = targets; giantWorld = w.getName(); giantPending.clear(); updateTickets();
+        }
+        avatar.commit(w, step, ps.left(), ps.right(), ps.seq());
         if (getConfig().getBoolean("debug.log-poses", false))
-            getLogger().info(String.format("pose seq=%d head=%.2f,%.2f,%.2f yaw=%.1f", ps.seq(), hp[0], hp[1], hp[2], ps.head().yawDeg()));
+            getLogger().info(String.format("pose seq=%d eye=%.2f,%.2f,%.2f yaw=%.1f ground=%.1f", ps.seq(), step.eye()[0], step.eye()[1], step.eye()[2], step.yaw(), step.groundY()));
+    }
+
+    private void loadAsync(World w, long k) {
+        if (!giantLoading.add(k)) return;
+        String wn = w.getName();
+        w.getChunkAtAsync((int) k, (int) (k >> 32)).whenComplete((c, err) -> {
+            giantLoading.remove(k);
+            if (c == null) return;
+            // Ticket it right away: with no player nearby a chunk loaded this way unloads again before the next
+            // tick, and the giant would wait for it forever. The ticket is cheap here because it's loaded.
+            Runnable hold = () -> { giantPending.computeIfAbsent(wn, x -> new HashSet<>()).add(k); updateTickets(); };
+            if (Bukkit.isPrimaryThread()) hold.run(); else enqueue(hold);
+        });
+    }
+
+    /** Feet Y on the ground in column (x, z), ignoring leaves so the giant wades through forests; NaN if not loaded. */
+    private static double groundFeetY(World w, int x, int z) {
+        if (!w.isChunkLoaded(x >> 4, z >> 4)) return Double.NaN;
+        return w.getHighestBlockYAt(x, z, HeightMap.MOTION_BLOCKING_NO_LEAVES) + 1;
     }
 
     // ---------- chunk tickets ----------
@@ -573,6 +746,7 @@ public final class TabletopPlugin extends JavaPlugin {
                 for (int cz = r.oz() >> 4; cz <= (r.oz() + r.sz() - 1) >> 4; cz++) keys.add(chunkKey(cx, cz));
         }
         if (giantWorld != null && avatar.spawned()) want.computeIfAbsent(giantWorld, k -> new HashSet<>()).addAll(giantChunks);
+        if (avatar.spawned()) giantPending.forEach((name, keys) -> want.computeIfAbsent(name, k -> new HashSet<>()).addAll(keys));
         if (want.equals(ticketed)) return;
         Set<String> worlds = new HashSet<>(want.keySet());
         worlds.addAll(ticketed.keySet());
@@ -600,8 +774,8 @@ public final class TabletopPlugin extends JavaPlugin {
         switch (args[0].toLowerCase(Locale.ROOT)) {
             case "status" -> {
                 RegionSpec r = defaultRegion();
-                sender.sendMessage(String.format("[tabletop] default region %s origin %d %d %d dims %d %d %d; clients %d; avatar %s scale %.2f; poses applied %d",
-                    r.world(), r.ox(), r.oy(), r.oz(), r.sx(), r.sy(), r.sz(), ready().size(), avatar.spawned() ? "spawned" : "none", avatar.scale(), avatar.posesApplied));
+                sender.sendMessage(String.format("[tabletop] default region %s origin %d %d %d dims %d %d %d; clients %d; avatar %s scale %.2f placement %s; poses applied %d",
+                    r.world(), r.ox(), r.oy(), r.oz(), r.sx(), r.sy(), r.sz(), ready().size(), avatar.spawned() ? "spawned" : "none", avatar.scale(), avatar.placement.id(), avatar.posesApplied));
             }
             case "setorigin" -> {
                 int x, y, z; String world;
@@ -634,6 +808,18 @@ public final class TabletopPlugin extends JavaPlugin {
                 switch (sub) {
                     case "spawn" -> { avatar.enabled = true; spawnAvatarAtAnchor(); sender.sendMessage("[tabletop] avatar spawned, scale " + avatar.scale()); }
                     case "remove" -> { avatar.enabled = false; avatar.remove(); sender.sendMessage("[tabletop] avatar removed"); }
+                    case "placement" -> {
+                        if (args.length < 3 || !(args[2].equalsIgnoreCase("ground") || args[2].equalsIgnoreCase("exact"))) { sender.sendMessage("[tabletop] usage: /tabletop avatar placement <ground|exact>"); return true; }
+                        avatar.placement = GiantPlacement.Mode.parse(args[2]);
+                        getConfig().set("avatar.placement", avatar.placement.id()); saveConfig();
+                        sender.sendMessage("[tabletop] giant placement: " + avatar.placement.id());
+                    }
+                    case "skin" -> {
+                        if (args.length < 3) { sender.sendMessage("[tabletop] usage: /tabletop avatar skin <java account name>"); return true; }
+                        avatar.skinPlayer = args[2];
+                        if (avatar.spawned()) spawnAvatarAtAnchor(); else resolveSkin(args[2]);
+                        sender.sendMessage("[tabletop] giant skin: " + args[2]);
+                    }
                     case "blocksize" -> {
                         if (args.length < 3) { sender.sendMessage("[tabletop] usage: /tabletop avatar blocksize <metres per block>"); return true; }
                         try { double b = Double.parseDouble(args[2]); if (b < 0.002 || b > 0.1) throw new NumberFormatException(); avatar.blockSizeM = b; getConfig().set("avatar.block-size-m", b); saveConfig(); }
@@ -668,7 +854,8 @@ public final class TabletopPlugin extends JavaPlugin {
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (args.length == 1) return List.of("status", "setorigin", "setsize", "avatar", "reload");
-        if (args.length == 2 && args[0].equalsIgnoreCase("avatar")) return List.of("status", "spawn", "remove", "blocksize");
+        if (args.length == 2 && args[0].equalsIgnoreCase("avatar")) return List.of("status", "spawn", "remove", "blocksize", "placement", "skin");
+        if (args.length == 3 && args[0].equalsIgnoreCase("avatar") && args[1].equalsIgnoreCase("placement")) return List.of("ground", "exact");
         return List.of();
     }
 }

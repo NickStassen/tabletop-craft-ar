@@ -14,11 +14,20 @@ namespace TabletopCraft.World
 
     public static class AreaMath
     {
-        // Calibrated from greedy-mesher counts on real generated terrain (docs/TESTING.md "Real terrain").
+        // Calibrated from mesher counts on real generated terrain with the 26.3 pack: greedy cubes plus block models
+        // (docs/TESTING.md "Block models from the resource pack").
         // Quads ~= SurfacePerColumn * dx*dz (the visible surface) + CavePerBlock * blocks below the surface band.
-        public const double SurfacePerColumn = 3.5;
-        public const double CavePerBlock = 0.035;
+        public const double SurfacePerColumn = 5.5;
+        public const double CavePerBlock = 0.04;
         public const int SurfaceBand = 96;
+        /// <summary>
+        /// Extra faces from per-vertex light (BlockShading): greedy faces with different light/AO don't merge (model
+        /// and fluid faces barely change). Measured with the 26.3 pack on real terrain (docs/TESTING.md "Lighting with
+        /// models and water"): x1.24-1.38 with smooth lighting, x1.04-1.17 flat. 1.0 = no light data. Set from
+        /// welcome.caps (light_v1) by TabletopApp.
+        /// </summary>
+        public static double LightFactor = 1.0;
+        public static double LightFactorFor(bool serverLight, bool smooth) => !serverLight ? 1.0 : smooth ? 1.35 : 1.15;
 
         /// <summary>Default soft cap (ESTIMATE for Quest 3 at 72 Hz with the unlit block shader): 250k quads = 1M vertices, 500k triangles.</summary>
         public const long DefaultQuadBudget = 250_000;
@@ -37,7 +46,7 @@ namespace TabletopCraft.World
         {
             double cols = (double)dx * dz;
             double deep = Math.Max(0, dy - SurfaceBand);
-            return new MeshEstimate { Quads = (long)Math.Ceiling(cols * SurfacePerColumn * Math.Min(dy, SurfaceBand) / SurfaceBand * 1.0 + cols * deep * CavePerBlock) };
+            return new MeshEstimate { Quads = (long)Math.Ceiling((cols * SurfacePerColumn * Math.Min(dy, SurfaceBand) / SurfaceBand * 1.0 + cols * deep * CavePerBlock) * LightFactor) };
         }
 
         /// <summary>True when the estimate exceeds the budget and the user has not chosen to override.</summary>
