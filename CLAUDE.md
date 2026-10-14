@@ -50,7 +50,11 @@ Work through these in order and record what you verify in `README.md` Status and
 10. Enable CI: `gh auth refresh -s workflow`, then `git mv ci/github-actions-ci.yml .github/workflows/ci.yml`.
 
 ## Protocol rules
-- `docs/PROTOCOL.md` is the contract for the plugin, Quest app and tools. A breaking change bumps the version and adds a changelog entry. Golden examples are in `tools/fixtures/`; Java (`FixtureTest`) and Python tests read them.
+- **Versioning (pre-1.0):**
+  - The project is versioned 0.X: plugin `version` in build.gradle.kts, the app's `bundleVersion`, and the version line in PROTOCOL.md, all kept equal.
+  - Bump the minor version for each new feature set and add a changelog entry.
+  - Backwards compatibility is NOT required before 1.0: old capability flags and compatibility paths may be removed or replaced freely; plugin, app and tools just have to match.
+- `docs/PROTOCOL.md` is the contract for the plugin, Quest app and tools. Golden examples are in `tools/fixtures/`; Java (`FixtureTest`) and Python tests read them.
 - Frames: tabletop frame is right-handed, metres, axes parallel to the world, origin at the region's local (0,0,0) corner. Unity conversion is `p=[ux,uy,-uz]`, `q=[-qx,-qy,qz,qw]` (PoseSender/TabletopPose). Mesh vertices are mirrored on Z and triangles re-wound in TabletopRenderer.
 - Known gaps vs the spec are listed in `docs/TESTING.md` under "Spec deviations".
 
