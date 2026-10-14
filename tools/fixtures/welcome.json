@@ -29,6 +29,7 @@
   ],
   "max_blocks": 2097152,
   "max_bytes": 4194304,
+  "max_view_width": 96,
   "pose_hz_max": 60,
   "player_hz": 10
  },

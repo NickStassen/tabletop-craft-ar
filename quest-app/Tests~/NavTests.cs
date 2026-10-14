@@ -142,13 +142,17 @@ static class NavTests
         Check(a.RequestMargin == new Vector3Int(0, 16, 8), $"area: margin shrinks to fit the caps ({a.RequestMargin})");
         a.Size = new Vector3Int(64, 96, 64); a.MinY = 24;
         Check(a.RequestMargin.y == 8, "area: margin stops at the build height");
-        // Section-mesh (draw call) soft cap, calibrated on seed 12345: 160x128x160 had 328 non-empty sections, 224x128x224 had 706.
+        // [area] Draw calls follow the mesh batches now (BatchRules.Columns^2 section columns each), not the sections.
         a.MinY = int.MinValue; a.Size = new Vector3Int(128, 96, 128); a.OverrideBudget = false;
-        Check(a.EstimatedMeshes == 400 && a.Blocker() == null, $"area: 128x96x128 window (+margin) is within the budgets ({a.EstimatedMeshes} meshes, {a.Estimate})");
+        int cols = BatchRules.Columns; BatchRules.Columns = 2;
+        Check(a.EstimatedMeshes == 36 && a.Blocker() == null, $"area: 128x96x128 window (+margin) is within the budgets ({a.EstimatedMeshes} batches, {a.Estimate})");
         a.Size = new Vector3Int(192, 96, 192);
-        Check(a.EstimatedMeshes == 784 && a.Blocker() != null && a.Blocker().Contains("section meshes"), $"area: 192 window warns about draw calls ({a.Blocker()})");
+        Check(a.EstimatedMeshes == 64 && a.Blocker() != null && a.Blocker().Contains("faces"), $"area: 192 window is fine for draw calls, warns about faces ({a.Blocker()})");
+        a.SectionBudget = 50;
+        Check(a.Blocker() != null && a.Blocker().Contains("mesh batches"), $"area: the batch budget still warns when set low ({a.Blocker()})");
         a.OverrideBudget = true;
-        Check(a.Blocker() == null, "area: hold B overrides the section budget too");
+        Check(a.Blocker() == null, "area: hold B overrides the batch budget too");
+        BatchRules.Columns = cols; a.SectionBudget = AreaMath.DefaultSectionBudget;
     }
 
     static WorldModel Terrain(Vector3Int origin, Vector3Int dims, string[] palette, Func<int, int, int, string> f, int id = 1)
@@ -196,7 +200,9 @@ static class NavTests
         Check(!SectionPlan.Compute(old, Snap(odd, 2), null, null).Rekey, "plan: 8-block shift -> full re-mesh");
         var big = Terrain(new Vector3Int(0, 0, 0), new Vector3Int(64, 16, 32), pal, Hills, 2);
         var pb = SectionPlan.Compute(old, Snap(big, 2), null, null);
-        Check(!pb.Rekey && pb.Mesh.Count == 8, "plan: new dims -> full re-mesh");
+        Check(pb.Rekey && pb.Mesh.Count == 2 && pb.Kept == 6, $"plan: [area] grown dims on the same section grid re-key, only the new column is meshed ({pb.Mesh.Count} meshed, {pb.Kept} kept)");
+        var far = Terrain(new Vector3Int(64, 0, 0), new Vector3Int(64, 16, 32), pal, Hills, 2);
+        Check(!SectionPlan.Compute(old, Snap(far, 2), null, null).Rekey, "plan: new dims without overlap -> full re-mesh");
         // Unaligned dims: a partial old section can't stand in for a full new one.
         var w40 = Terrain(new Vector3Int(0, 0, 0), new Vector3Int(40, 16, 16), pal, Hills);
         var w40b = Terrain(new Vector3Int(16, 0, 0), new Vector3Int(40, 16, 16), pal, Hills, 2);

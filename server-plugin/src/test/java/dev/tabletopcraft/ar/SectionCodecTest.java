@@ -45,7 +45,8 @@ class SectionCodecTest {
         newG[(15 * dz + 3) * dx + 4] = 7;   // a block changed inside the overlap
         assertEquals(3, SectionCodec.changedSections(oldG, newG, dx, dy, dz, shift).size());
         assertNull(SectionCodec.deltaShift(a, new RegionSpec("world", 8, 0, 0, dx, dy, dz)), "not whole sections");
-        assertNull(SectionCodec.deltaShift(a, new RegionSpec("world", 16, 0, 0, dx + 16, dy, dz)), "other dims");
+        assertArrayEquals(new int[] { -16, 0, 0 }, SectionCodec.deltaShift(a, new RegionSpec("world", -16, 0, 0, dx + 32, dy, dz)), "[area] a resize is a delta too");
+        assertNull(SectionCodec.deltaShift(a, new RegionSpec("world", -64, 0, 0, 64, dy, dz)), "resize without overlap");
         assertNull(SectionCodec.deltaShift(a, new RegionSpec("nether", 16, 0, 0, dx, dy, dz)), "other world");
         assertNull(SectionCodec.deltaShift(a, new RegionSpec("world", 48, 0, 0, dx, dy, dz)), "no overlap");
     }
@@ -156,6 +157,66 @@ class SectionCodecTest {
         assertTrue(p0.get("biomes").isJsonObject() && p1.get("biomes").isJsonNull());
         assertEquals("rle_v1", p1.getAsJsonObject("light").get("encoding").getAsString());
         assertEquals(2, p0.getAsJsonArray("sections").get(0).getAsJsonObject().getAsJsonArray("light").size());
+    }
+
+    /** [area] A resize (other dims, section-aligned origin) lists only sections that aren't fully inside the old region. */
+    @Test void resizeDeltasListOnlyTheNewRing() {
+        RegionSpec a = new RegionSpec("world", 0, 0, 0, 64, 32, 64);
+        RegionSpec grown = new RegionSpec("world", -32, 0, -32, 128, 32, 128), shrunk = new RegionSpec("world", 16, 0, 16, 32, 32, 32);
+        int[] gs = SectionCodec.deltaShift(a, grown), ss = SectionCodec.deltaShift(a, shrunk);
+        assertArrayEquals(new int[] { -32, 0, -32 }, gs);
+        assertArrayEquals(new int[] { 16, 0, 16 }, ss);
+        int[] oldG = grid(0, 0, 0, 64, 32, 64);
+        int[] od = { 64, 32, 64 };
+        // Grow: an 8x8 section footprint around the old 4x4 one; the 48 ring columns x 2 layers are new.
+        List<int[]> g = SectionCodec.changedSections(oldG, grid(-32, 0, -32, 128, 32, 128), null, null, od, new int[] { 128, 32, 128 }, gs);
+        assertEquals((64 - 16) * 2, g.size());
+        for (int[] k : g) assertFalse(k[0] >= 2 && k[0] < 6 && k[2] >= 2 && k[2] < 6, "a kept section was listed");
+        // Shrink: everything is inside the old region and unchanged, so nothing is sent.
+        int[] small = grid(16, 0, 16, 32, 32, 32);
+        assertEquals(0, SectionCodec.changedSections(oldG, small, null, null, od, new int[] { 32, 32, 32 }, ss).size());
+        small[(5 * 32 + 3) * 32 + 4] = 9;   // a change inside the kept part is still listed
+        assertEquals(1, SectionCodec.changedSections(oldG, small, null, null, od, new int[] { 32, 32, 32 }, ss).size());
+        // A partial edge section (x 48..56 -> old 64..72) reaches past the old region, so it's sent (2 layers x 2 rows).
+        int[] odd = grid(16, 0, 16, 56, 32, 32);
+        assertEquals(4, SectionCodec.changedSections(oldG, odd, null, null, od, new int[] { 56, 32, 32 }, ss).size());
+    }
+
+    @Test void resizeFixturesRebuildFromTheFullSnapshot() throws Exception {
+        JsonObject full = fixture("chunk_snapshot_sections");
+        int[] od = ints(full.getAsJsonArray("dims"));
+        int[] g8 = new int[od[0] * od[1] * od[2]];
+        for (var e : full.getAsJsonArray("sections")) {
+            JsonObject s = e.getAsJsonObject();
+            int[] k = ints(s.getAsJsonArray("s"));
+            SectionCodec.decodeSection(ints(s.getAsJsonArray("data")), g8, od[0], od[1], od[2], k[0], k[1], k[2]);
+        }
+        for (String name : List.of("chunk_snapshot_grow", "chunk_snapshot_shrink")) {
+            JsonObject m = fixture(name);
+            int[] nd = ints(m.getAsJsonArray("dims"));
+            int[] shift = ints(m.getAsJsonObject("base").getAsJsonArray("shift"));
+            assertEquals(8, m.getAsJsonObject("base").get("snapshot_id").getAsInt());
+            int[] g = new int[nd[0] * nd[1] * nd[2]];
+            java.util.Arrays.fill(g, -1);
+            for (int y = 0; y < nd[1]; y++) for (int z = 0; z < nd[2]; z++) for (int x = 0; x < nd[0]; x++) {
+                int ox = x + shift[0], oy = y + shift[1], oz = z + shift[2];
+                if (ox >= 0 && ox < od[0] && oy >= 0 && oy < od[1] && oz >= 0 && oz < od[2]) g[(y * nd[2] + z) * nd[0] + x] = g8[(oy * od[2] + oz) * od[0] + ox];
+            }
+            List<int[]> listed = new ArrayList<>();
+            for (var e : m.getAsJsonArray("sections")) {
+                JsonObject s = e.getAsJsonObject();
+                int[] k = ints(s.getAsJsonArray("s"));
+                listed.add(k);
+                SectionCodec.decodeSection(ints(s.getAsJsonArray("data")), g, nd[0], nd[1], nd[2], k[0], k[1], k[2]);
+            }
+            for (int v : g) assertTrue(v >= 0, name + ": every cell is either copied or listed");
+            List<int[]> want = SectionCodec.changedSections(g8, g, null, null, od, nd, shift);
+            assertEquals(listed.size(), want.size(), name);
+            for (int i = 0; i < want.size(); i++) assertArrayEquals(want.get(i), listed.get(i), name);
+            RegionSpec from = new RegionSpec("world", 0, 60, 0, od[0], od[1], od[2]);
+            int[] o = ints(m.getAsJsonArray("origin"));
+            assertArrayEquals(shift, SectionCodec.deltaShift(from, new RegionSpec("world", o[0], o[1], o[2], nd[0], nd[1], nd[2])), name);
+        }
     }
 
     @Test void diffIndicesStopAtTheLimit() {

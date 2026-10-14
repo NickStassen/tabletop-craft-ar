@@ -105,6 +105,41 @@ def test_sections_snapshot_and_delta():
         m.apply_snapshot(delta)  # base 8 is no longer the current snapshot
 
 
+def test_resize_deltas_grow_and_shrink():
+    """[area] PROTOCOL.md 4.25: a delta whose dims differ from the base (a section-aligned resize)."""
+    full = json.loads((FIX / "chunk_snapshot_sections.json").read_text())
+    m = WorldMirror()
+    m.apply_snapshot(full)
+    before = {(x, y, z): m.at_world(x, y, z) for x in range(0, 32) for y in range(60, 76) for z in range(0, 16)}
+    assert m.apply_snapshot(json.loads((FIX / "chunk_snapshot_grow.json").read_text()))
+    assert m.dims == (64, 16, 16) and m.origin == (-16, 60, 0) and m.sections_sent == 2
+    assert all(m.at_world(*p) == s for p, s in before.items()), "the old region is copied unchanged"
+    assert m.at_world(-16, 67, 0) == "minecraft:stone" and m.at_world(-16, 68, 0).startswith("minecraft:grass_block")
+    assert m.at_world(47, 63, 15) == "minecraft:stone" and m.at_world(47, 64, 15) == "minecraft:air"
+    m2 = WorldMirror()
+    m2.apply_snapshot(full)
+    assert m2.apply_snapshot(json.loads((FIX / "chunk_snapshot_shrink.json").read_text()))
+    assert m2.dims == (16, 16, 16) and m2.sections_sent == 0
+    assert all(m2.at_world(x, y, z) == before[(x, y, z)] for x in range(16, 32) for y in range(60, 76) for z in range(0, 16))
+    # A delta that leaves out a section reaching past the base is refused.
+    bad = json.loads((FIX / "chunk_snapshot_grow.json").read_text())
+    bad["sections"] = bad["sections"][:1]
+    m3 = WorldMirror()
+    m3.apply_snapshot(full)
+    with pytest.raises(ValueError):
+        m3.apply_snapshot(bad)
+
+
+def test_limits_carry_max_view_width():
+    """[area] welcome/region_info limits and region_too_large carry max_view_width (PROTOCOL.md 4.25)."""
+    assert json.loads((FIX / "welcome.json").read_text())["limits"]["max_view_width"] == 96
+    assert json.loads((FIX / "region_info.json").read_text())["limits"]["max_view_width"] == 96
+    assert json.loads((FIX / "error_region_too_large.json").read_text())["max_view_width"] == 96
+    rq = json.loads((FIX / "region_request_resize.json").read_text())
+    window = [d - 2 * m for d, m in zip(rq["dims"], rq["view_margin"], strict=True)]
+    assert window[0] == window[2] == 320
+
+
 def test_sections_parts_wait_for_the_last_one():
     full = json.loads((FIX / "chunk_snapshot_sections.json").read_text())
     a, b = dict(full), dict(full)

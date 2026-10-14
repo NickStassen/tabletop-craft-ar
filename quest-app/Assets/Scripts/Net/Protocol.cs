@@ -209,6 +209,8 @@ namespace TabletopCraft.Net
     public struct RegionLimits
     {
         public int MaxX, MaxY, MaxZ; public long MaxBlocks, MaxBytes;
+        /// <summary>[area] limits.max_view_width (PROTOCOL.md 4.25): widest visible window; 0 = not sent.</summary>
+        public int MaxViewWidth;
         public static RegionLimits Default => new RegionLimits { MaxX = 128, MaxY = 384, MaxZ = 128, MaxBlocks = 2097152, MaxBytes = 4194304 };
         public static RegionLimits From(Dictionary<string, object> o, RegionLimits fallback)
         {
@@ -217,6 +219,7 @@ namespace TabletopCraft.Net
             if (o.A("max_dims") is List<object> md && md.Count == 3) { var v = Json.Doubles(md); r.MaxX = (int)v[0]; r.MaxY = (int)v[1]; r.MaxZ = (int)v[2]; }
             if (o.ContainsKey("max_blocks")) r.MaxBlocks = (long)o.D("max_blocks");
             if (o.ContainsKey("max_bytes")) r.MaxBytes = (long)o.D("max_bytes");
+            if (o.ContainsKey("max_view_width")) r.MaxViewWidth = (int)o.D("max_view_width");   // [area]
             return r;
         }
     }

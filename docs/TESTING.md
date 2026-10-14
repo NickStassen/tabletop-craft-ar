@@ -513,7 +513,7 @@ Light adds about 40–60% to snapshots and deltas, and reading it about 20–30 
 
 ### Quest 3 capacity guidance (ESTIMATES; only 64×96×64 has run on the headset)
 
-- **Draw calls are the likely limit.** Every non-empty 16³ section is its own mesh (one draw call, two when it has water, glass or plants). The headset has only been measured at 64×96×64: about 50 meshes, 72 FPS, 2.5 ms app GPU time. A 128-wide window loads about 330 meshes; 192 about 700; 256 about 1,200–1,800. Area setup now warns above about 600 estimated meshes (and still above 250k faces); hold B to try bigger areas anyway. Bigger areas need the section meshes batched (for example 2×2×2 sections per mesh), which is the next step.
+- **Draw calls are the likely limit.** Every non-empty 16³ section is its own mesh (one draw call, two when it has water, glass or plants). The headset has only been measured at 64×96×64: about 50 meshes, 72 FPS, 2.5 ms app GPU time. A 128-wide window loads about 330 meshes; 192 about 700; 256 about 1,200–1,800. Area setup now warns above about 600 estimated meshes (and still above 250k faces); hold B to try bigger areas anyway. Bigger areas need the section meshes batched (for example 2×2×2 sections per mesh), which is the next step. (Done since: batches of 2×2 section columns, 100 renderers at 256; see "Area size presets and batching" below.)
 - **Defaults**: the plugin's `max_region` is now 288×384×288 / 16,777,216 blocks / 32 MiB in total, so a 256-wide window with its margin fits. The recommended maximum window stays 128×96×128, now with a margin to glide; you can move anywhere in the world.
 - **Streaming**: a 128-wide window needs one delta of about 90–160 KB per 16 blocks travelled, so gliding at 30 blocks/s is about 0.3 MB/s. The headset assembles it on a worker (copy plus a few dozen sections) and meshes about 80 new sections, plus about 80 neighbours refreshed when idle; the old meshes stay up the whole time.
 - **Speed limit**: the view can't leave the loaded margin, so the glide speed is capped at about 12 blocks of slack divided by 1.3 × the measured round trip until the new terrain is meshed. On this box that's about 50 blocks/s for a 128 window; the headset's meshing time adds to it.
@@ -666,3 +666,70 @@ Without `entity_models.json` every entity is a box and nobody wears armour (play
 
 ### Not verified (needs the headset)
 Readability and size of the panel at arm's length (0.31 × 0.25 m, 30 mm cells, text 8–10 mm), the panel's position beside the left hand, the ray/trigger feel and the 1 cm rim, that the right stick never scales the table while on the panel, icon upload cost (CopyTexture, 6 per frame) and the worker's render time on the Quest's CPU, the small hotbar's position by the right controller, toast placement, the area-setup panel, and the Show HUD size.
+
+## Area size presets and batching (PROTOCOL.md 4.25; Paper 26.3, seed 12345, 2026-10-14, no headset)
+
+A separate headless test server (Paper 26.3 build 181, JDK 25, offline mode, normal world seed 12345, its own ports, default `max_region` 288×384×288 and `view_width` 256). The window is 96 blocks tall (y 32..128) plus the 16-block margin, so the region is 128 tall (y 16..144), centred on 0,0. Every client asks for `sections_v1` + `light_v1` + `biomes_v1`. All on the x86 box; frame rates on the Quest 3 are still to be measured (below).
+
+### Tests
+
+| Suite | Result |
+|---|---|
+| Plugin (JUnit) | 72 tests, 0 failures. New: `RegionRequestTest.viewWidthIsClampedAroundTheCentre` (the clamp fixture, uneven cuts rounded to whole sections, no margin, a small server max, `max_view_width` in the limits), `SectionCodecTest.resizeDeltasListOnlyTheNewRing` (grow lists the ring only, shrink lists nothing, a change inside is still listed, a partial edge section past the old region is listed) and `resizeFixturesRebuildFromTheFullSnapshot`. |
+| Tools (pytest + ruff) | 63 passed, ruff clean. New: the grow/shrink resize deltas applied to the sections fixture (and a delta missing a ring section refused), `max_view_width` in the limit fixtures (`validate` now requires it in `welcome` and `region_info`). |
+| Quest scripts (`Tests~`, .NET 8) | 373/373 PASS without a client jar, 421/421 with `--jar`. New in `AreaTests.cs`: presets against server limits, next/wrap, slider snapping, block-size scaling and its clamp, the resize plan (centred within 8 blocks and section-aligned for any view, server max, block cap shrinks the margin, a margin added to an old region), `NavState.TryIssue` and the view kept across grow/shrink, re-centring for a region elsewhere, `SectionPlan` for grow (all 72 old sections kept, only the 128-section ring meshed), shrink (nothing meshed, the 40 border sections refreshed) and listed deltas, the grow/shrink fixtures assembled in C#, batch keys (world-aligned, kept across shifts), position + offset = section corner for any y anchor, rebuild planning after shift/vertical shift/grow/shrink, `SectionMesh` (normals, Z mirror, winding, zero normal for a double-sided quad), `BatchData.Assemble` (every vertex kept, index ranges, bounds, water-back submesh) and `FrameStats`. |
+| Unity 6000.0.84f1 batch compile | 0 errors, no warnings in `Assets/`. |
+| `Editor/ShaderCheck` | 80 variants, 0 errors (no shader changed). |
+| `TabletopBatch.BuildApk` (IL2CPP ARM64) | Build succeeded in 1:41, first try (not installed). |
+| `Editor/BatchMeshCheck.Run` | 0 errors: four real sections (cubes, slabs, glass, plants, water) uploaded as one batch match the old per-section path vertex by vertex: positions, colours, UVs, triangles per submesh, bounds, and normals against `Mesh.RecalculateNormals` (27,748 vertices, 3,000 of them zero normals on double-sided plant quads, also zero in the batch). |
+| `Editor/BatchMeshCheck.RunRenderer` | 8/8 PASS: the real `TabletopRenderer` driven frame by frame (atlas without pack) through first load, a one-section shift, a block edit (3 frames), grow 96 → 160, shrink 160 → 64, a vertical shift, a staged jump far away and the underwater submesh; each time what is on screen (vertex and triangle counts, summed positions) equals the model meshed under the re-key contract. 16 → 12 → 30 → 6 → 4 batches. |
+| `Tests~ --live-resize` on the server | all PASS: 256 → 64 → 256 → 96, each a delta that re-keys (64 → 256: 2,304 sections sent, 288 kept, 679 ms; shrinking: 0 sections, about 150 ms), the view stays put, and a full resend (`bad_snapshot`) matches the delta-assembled region in blocks and light. |
+| `tools/area_e2e.py --light` | `ok: true` in every run below: after each resize a fresh client's full snapshot equals the headset's delta-assembled grid, blocks and light. With `--server-clamp` a 320-wide request is narrowed to 256 (`REGION_CLAMP dims=352x128x352 -> 288x128x288`), still as a delta. |
+
+### Resizing on the live server (`tools/area_e2e.py --widths 64,96,128,192,256,64 --light`, chunks generated)
+
+The left-stick path, one click at a time:
+
+| step | region | request → snapshot | resize delta | full snapshot of the same region | server walk (async) |
+|---|---|---|---|---|---|
+| start 64 | 96×128×96 | 164 ms | – | 336 KB, 1 part | 19 ms |
+| 64 → 96 | 128×128×128 | 270 ms | 287 KB, 224 of 512 sections | 651 KB, 1 part | 32 ms |
+| 96 → 128 | 160×128×160 | 361 ms | 482 KB, 288 of 800 | 1.12 MB, 2 parts | 51 ms |
+| 128 → 192 | 224×128×224 | 712 ms | 1.55 MB, 768 of 1,568, 3 parts | 2.70 MB, 5 parts | 100 ms |
+| 192 → 256 | 288×128×288 | 884 ms | 2.12 MB, 1,025 of 2,592, 6 parts | 4.91 MB, 13 parts | 186 ms |
+| 256 → 64 | 96×128×96 | 134 ms | 17 KB, 0 sections | 336 KB | 19 ms |
+
+Jumps: 64 → 256 in one go sends the whole ring, 4.4–4.5 MB (2,304 sections, 12 parts) in 1.6–1.7 s (2.6 s on the first run, which generated the chunks); 256 → 96 sends 18–33 KB (0–3 sections changed by the world in between) in 135–198 ms.
+
+### Server main thread
+
+- **Before:** taking the ChunkSnapshots for a 288×288 region (361 chunks with light and biomes) cost 2.99 ms in one tick with the chunks warm and 5.83 ms right after generating them, at or over the 3 ms budget, and every diff of a 256-wide area pays it again.
+- **After** (`stream.snapshot-budget-ms` 1.5): REGION_SET at 288×288 takes 2.8–3.8 ms of main thread spread over 2–4 ticks; far away on fresh terrain (3000, −3000) 2.99 ms over 4 ticks (the chunk generation itself, 2.65 s, is off the main thread). 224 wide: 1.7–1.9 ms over 2 ticks; 160 and smaller: one tick, under 1 ms.
+- **Holding a 256-wide area** with one client (`READS` lines): the world keeps the region dirty (water, kelp, mobs), so it is diffed about 4 times a second, 120 reads per 30 s at 3.0 ms each: 366–374 ms per 30 s, 1.2 % of the main thread. Max per tick 1.51–1.53 ms; right after a region change up to 4.2–4.7 ms in one tick (one slow chunk). The diff compares, palette remap and encoding stay on the worker and the outbound thread (read 170–190 ms, encode 23–30 ms at 288×128×288).
+
+### Batching (`Tests~ --jar 26.3.jar --measure-batches DIR`, the full snapshots above with the pack and smooth light, x86, one thread)
+
+`columns` = section columns per batch side (a batch spans the full height). Draw calls count opaque + transparent submeshes (the water's inside faces add one per batch with water while the eye is under water).
+
+| window (region) | non-empty sections | faces | vertices | per-section meshes: renderers / draw calls | 1×1 | **2×2 (default)** | 4×4 | GPU vertex + index data |
+|---|---|---|---|---|---|---|---|---|
+| 64 (96×128×96) | 108 | 72k | 310k | 108 / 206 | 36 / 72 | **16 / 32** | 4 / 8 | 11 MB |
+| 96 (128×128×128) | 196 | 119k | 506k | 196 / 374 | 64 / 128 | **16 / 32** | 4 / 8 | 18 MB |
+| 128 (160×128×160) | 328 | 190k | 805k | 328 / 605 | 100 / 200 | **36 / 72** | 16 / 32 | 29 MB |
+| 192 (224×128×224) | 706 | 426k | 1.78M | 706 / 1,230 | 196 / 392 | **64 / 128** | 16 / 32 | 65 MB |
+| 256 (288×128×288) | 1,223 | 702k | 2.92M | 1,223 / 2,058 | 324 / 645 | **100 / 200** | 36 / 72 | 106 MB |
+
+- **Rebuild cost.** The biggest 2×2 batch has 85k vertices (3.2 MB); an edit in the middle of the area re-uploads its batch, 1.35 MB. With 4×4 the biggest is 241k vertices (8.9 MB) and an edit re-uploads 3.2–5.2 MB, which on the headset is several ms of copying per edit (20 per second while a trigger is held). With 1×1 a one-section shift rebuilds 18 batches (19 MB at 256). 2×2 is the default; `"batch_columns"` in `tabletop.json` switches it for headset comparisons.
+- **Assembly** of all 100 batches at 256 takes 8–9 ms of worker time here, the biggest 0.3 ms; meshing the sections themselves takes 1.5 s on one x86 thread (unchanged; the Quest spreads it over 3 workers).
+- **Counts depend on alignment:** batches are world-aligned, so an 18-section-wide region covers 9 or 10 batches per side.
+- **Faces, not draw calls, are now the likely limit:** 702k faces / 2.92M vertices at 256 is about 3.7× the 128 preset, and the face soft cap of area setup (250k) is passed from 192 up. The presets skip that cap on purpose; the headset numbers below decide what stays a preset.
+
+### What to measure on the headset (per preset)
+
+For each width W in 64, 96, 128, 192, 256: put `"area_width": W` in `tabletop.json` (same table, same spot; the block size is fitted to the table so every preset covers the same area), restart the app and read `adb logcat -s Unity | grep Tabletop` next to VrApi's FPS lines:
+
+1. `AREA_LOADED width=W ... load_s=...` (time until the area is complete) and its `renderers`, `draw_calls~`, `verts`, `tris`.
+2. 30 s of `PERF` lines standing still, then 30 s gliding (left stick) and 30 s editing (hold a trigger): `fps`, `frame_ms p50/p90/p99/max`, `over15ms`, and the app GPU time in OVR Metrics.
+3. Click through the presets once (64 → 96 → 128 → 192 → 256 → 64): the table never empties, the area grows/shrinks around the view, its footprint on the table stays the same (`AREA_RESIZED ... block ... mm in ... ms`), and the status line shows `AREA W wide ... server max 256`.
+4. Look for batching artefacts: water, leaves and glass across batch borders (world x or z a multiple of 32), the underwater view (inside faces), the cut faces at the window after a resize, the light at the new border after shrinking, and edits right at a batch border.
+5. At 256, repeat 2 with `"batch_columns": 4` to see whether fewer draw calls beat the bigger re-uploads.

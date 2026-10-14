@@ -52,15 +52,24 @@ namespace TabletopCraft.World
         /// <summary>True when the estimate exceeds the budget and the user has not chosen to override.</summary>
         public static bool OverBudget(MeshEstimate e, long budget, bool overridden) => !overridden && e.Quads > budget;
 
-        // [nav] Every non-empty 16^3 section is its own mesh, i.e. one or two draw calls per frame. On real terrain
-        // (seed 12345, docs/TESTING.md "Navigation and bigger areas") 41-56% of a region's sections are non-empty.
+        // [nav] On real terrain (seed 12345, docs/TESTING.md "Navigation and bigger areas") 41-56% of a region's sections
+        // are non-empty. [area] They no longer are a mesh (and one or two draw calls) each: the renderer merges them into
+        // batches of BatchRules.Columns^2 section columns over the full height (SectionBatches.cs), so the draw calls
+        // follow the batch count, about 100 renderers / 200 draw calls for a 256-wide window with its margin.
         public const double NonEmptyFraction = 0.5;
-        /// <summary>Default soft cap on non-empty sections (ESTIMATE: ~1-1.5 draw calls each, built-in pipeline on Quest 3).</summary>
-        public const int DefaultSectionBudget = 600;
+        /// <summary>Default soft cap on mesh renderers (batches; ESTIMATE: ~2 draw calls each, built-in pipeline on Quest 3).</summary>
+        public const int DefaultSectionBudget = 300;
 
-        /// <summary>Sections in a region, and the non-empty ones that become meshes (estimate).</summary>
+        /// <summary>Sections in a region, and the non-empty ones that get meshed (estimate).</summary>
         public static long Sections(int dx, int dy, int dz) => (long)((dx + 15) / 16) * ((dy + 15) / 16) * ((dz + 15) / 16);
-        public static long EstimateMeshes(int dx, int dy, int dz) => (long)Math.Ceiling(Sections(dx, dy, dz) * NonEmptyFraction);
+        public static long EstimateSections(int dx, int dy, int dz) => (long)Math.Ceiling(Sections(dx, dy, dz) * NonEmptyFraction);
+        /// <summary>[area] Mesh renderers (batches) for a region, worst-case alignment: one extra batch row and column.</summary>
+        public static long EstimateMeshes(int dx, int dy, int dz)
+        {
+            int c = Math.Max(1, BatchRules.Columns);
+            long bx = ((dx + 15) / 16 + c - 1) / c + 1, bz = ((dz + 15) / 16 + c - 1) / c + 1;
+            return dy <= 0 ? 0 : bx * bz;
+        }
 
         /// <summary>Clamp requested dims to the server's advertised caps (welcome/region_info limits).</summary>
         public static (int, int, int) ClampToCaps(int dx, int dy, int dz, int maxX, int maxY, int maxZ, long maxBlocks)

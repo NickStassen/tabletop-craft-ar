@@ -49,6 +49,30 @@ class RegionRequestTest {
         assertNotNull(c.check(1, 0, 1));
     }
 
+    /** [area] PROTOCOL.md 4.25: a visible width over max_view_width is narrowed around its centre, by whole sections. */
+    @Test void viewWidthIsClampedAroundTheCentre() throws Exception {
+        RegionCaps c = new RegionCaps(288, 384, 288, 1L << 24, 32L << 20, 256);
+        var j = JsonParser.parseString(java.nio.file.Files.readString(java.nio.file.Path.of("..", "tools", "fixtures", "region_request_resize.json"))).getAsJsonObject();
+        RegionRequest q = RegionRequest.parse(j);
+        RegionRequest r = c.clampView(q, RegionRequest.viewMargin(j));
+        assertEquals(new RegionRequest("world", -144, 32, -144, 288, 128, 288), r, "window 320 -> 256, centre and margin kept");
+        assertNull(c.check(r.dx(), r.dy(), r.dz()));
+        RegionRequest ok = new RegionRequest("world", 0, 0, 0, 288, 128, 160);
+        assertSame(ok, c.clampView(ok, new int[] { 16, 16, 16 }), "256 x 128 is allowed as is");
+        // Only the over-wide axis changes; a cut that isn't a multiple of 32 moves the origin by the nearest whole section.
+        assertEquals(new RegionRequest(null, 26, 0, 20, 288, 64, 100), c.clampView(new RegionRequest(null, 10, 0, 20, 330, 64, 100), new int[] { 16, 0, 16 }));
+        // No margin: the whole region is the window.
+        assertEquals(new RegionRequest(null, 64, 0, 0, 256, 64, 64), c.clampView(new RegionRequest(null, 0, 0, 0, 384, 64, 64), null));
+        // A small server max.
+        RegionCaps small = new RegionCaps(288, 384, 288, 1L << 24, 32L << 20, 96);
+        assertEquals(new RegionRequest(null, 80, 0, 80, 128, 64, 128), small.clampView(new RegionRequest(null, 0, 0, 0, 288, 64, 288), new int[] { 16, 0, 16 }));
+        com.google.gson.JsonObject lim = new com.google.gson.JsonObject();
+        small.addTo(lim);
+        assertEquals(96, lim.get("max_view_width").getAsInt());
+        assertEquals(RegionCaps.DEFAULT_VIEW_WIDTH, RegionCaps.DEFAULT.maxViewWidth());
+        assertTrue(RegionCaps.DEFAULT.maxX() >= RegionCaps.DEFAULT_VIEW_WIDTH + 32, "default max_region fits a 256 window plus the 16-block margins");
+    }
+
     @Test void byteEstimateIsCloseToRealJson() {
         Palette pal = new Palette();
         int a = pal.id("minecraft:air"), s = pal.id("minecraft:stone");

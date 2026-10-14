@@ -27,6 +27,10 @@ stream:
   # PROTOCOL.md 4.4.1). Clients without those caps never pay the bytes. Set false to never send them.
   light: true
   biomes: true
+  # [area] Main-thread time per tick for copying chunks (ChunkSnapshots) when a region is read or diffed. A 288x288
+  # region (a 256-wide window plus margins) is 361 chunks, about 3 ms warm and 6 ms right after generation, so it
+  # is spread over a few ticks. A READS line every 30 s logs the cost. 0 = all in one tick.
+  snapshot-budget-ms: 1.5
 # Non-player entities (boats, minecarts, mobs, dropped items, item frames...) for clients that ask for them in
 # hello.caps (entities_v1, PROTOCOL.md 4.21), sent with player_positions as deltas. Players are always in
 # player_positions; the giant's own entities are never sent.
@@ -107,3 +111,9 @@ max_region:
   # Max estimated snapshot JSON size in bytes, all parts together. One message is at most 4 MiB, so a client
   # without "sections_v1" gets region_too_large for anything bigger than that.
   bytes: 33554432
+  # [area] Largest visible width (x and z) a headset may ask for: the region minus its view_margin on both sides
+  # (PROTOCOL.md 4.25). The headset's width presets are 64/96/128/192/256 (left stick click); a wider request is
+  # narrowed to this around its centre (moved by whole 16-block sections, so the reply is still a delta) instead of
+  # refused, and the reply carries the accepted size. Keep it a multiple of 32 so a narrowed preset stays exactly
+  # centred, and keep view_width + 2 * 16 (the headset's margin) within x/z above: 256 + 32 = 288.
+  view_width: 256

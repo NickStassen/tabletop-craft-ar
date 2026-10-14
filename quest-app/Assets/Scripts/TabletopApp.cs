@@ -4,6 +4,8 @@
 //                                                                               > Entities ([entities])
 // Config file (optional): <persistentDataPath>/tabletop.json, e.g.
 //   {"server":"ws://192.168.1.50:8765/tabletop","token":"","block_size_m":0.01,"skin_player":""}
+// [area] optional: "area_width": 192 (start at that width preset, block size fitted to the table),
+//   "batch_columns": 4 (sections per mesh batch side, TabletopRenderer)
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -64,6 +66,9 @@ namespace TabletopCraft
         ActionEffects _effects;
         EntityTextures _entityTex;
         readonly List<GameAction> _actions = new List<GameAction>();
+        // [area] visible-width presets (left stick click; Presets/Current/Request for a menu), tabletop.json "area_width"
+        public AreaSizeControl AreaSize { get; private set; }
+        int _areaWidth;
 
         void Start()
         {
@@ -129,6 +134,11 @@ namespace TabletopCraft
             _nav.BlockSize = () => BlockSizeM; _nav.Suspended = () => _area.Active; _nav.Send = b => _link.Send(b);
             _area.Nav = _nav.State;
             eye.Caps = _caps;   // water cuts of the visible window get inside faces too (EyeEffects.cs)
+            // [area] width presets: left stick click, or a menu through Presets/Current/Request (XR/AreaSizeControl.cs)
+            AreaSize = gameObject.AddComponent<AreaSizeControl>();
+            AreaSize.Nav = _nav.State; AreaSize.Renderer = _renderer; AreaSize.Blocked = () => _area.Active; AreaSize.Send = b => _link.Send(b);
+            AreaSize.BlockSize = () => BlockSizeM; AreaSize.SetBlockSize = bs => SetBlockSize(bs, false);
+            AreaSize.TableSize = () => _placement.TableSize; AreaSize.StartWidth = _areaWidth;
 
             // Block editing: right trigger break, left trigger place, B pick (XR/BlockEditMode.cs, PROTOCOL.md 4.20).
             _edit = gameObject.AddComponent<BlockEditMode>();
@@ -149,6 +159,9 @@ namespace TabletopCraft
             _menu.Model.ShowHud = _showHud;
             _menu.HudChanged = on => _hud.ShowHud = on;
             _edit.Picked = s => _menu.OnPicked(s);
+            // [menu+area] the menu's area-size row drives AreaSizeControl; the left-stick size click is off while the menu is open
+            _menu.AreaPresets = AreaSize.Presets; _menu.AreaCurrent = AreaSize.Current; _menu.AreaRequest = AreaSize.Request;
+            AreaSize.Blocked = () => _area.Active || _menu.Open;
             _nav.Suspended = () => _area.Active || _menu.CapturesRight;
             _placement.StickBlocked = () => _menu.CapturesRight;
             _hud = gameObject.AddComponent<Hud>();
@@ -183,6 +196,8 @@ namespace TabletopCraft
                 BlockShading.Brightness = (float)c.D("brightness", BlockShading.Brightness);   // vanilla slider, default 1 = Bright
                 BlockShading.MinLight = (float)c.D("min_light", BlockShading.MinLight);         // brightness of light level 0
                 _showHud = c.B("show_hud", false);   // [menu] small head-locked status (also "Show HUD" in the menu's Info tab)
+                _areaWidth = c.I("area_width", 0);                                              // [area] starting width preset
+                BatchRules.Columns = Math.Max(1, c.I("batch_columns", BatchRules.Columns));     // [area] sections per batch side
             }
             catch (Exception e) { Debug.LogWarning("[Tabletop] bad tabletop.json: " + e.Message); }
         }
@@ -242,6 +257,7 @@ namespace TabletopCraft
             $"TABLE {_placement.Status}\nPOSES {(_poses ? _poses.Sent : 0)}  MESH {_renderer.Quads / 1000}k faces  ENTITIES {_entities.Count}{(EntityModels.Loaded ? "" : " (boxes)")}" +
             (_renderer.Pending > 0 ? $" ({_renderer.Pending} sections pending)" : "") + $"  {_lastError}\n" +
             _nav.Status + "\n" +   // [nav]
+            AreaSize.Status + "\n" +   // [area]
             (_area.Active ? _area.Status : (_area.Status.Length > 0 ? _area.Status : "Y (left) = set up area   left stick = move") + "\n" + _edit.Status) +
             $"\nBLOCKS {(_registry != null ? _registry.Count + " placeable" : "-")}  {_icons.Status}";
 
@@ -281,6 +297,7 @@ namespace TabletopCraft
                     _edit.Editor.ServerAllows = m.A("caps")?.Contains(Protocol.CapEdit) == true;   // block editing granted
                     _area.State.Limits = RegionLimits.From(m.O("limits"), RegionLimits.Default);
                     _nav.OnWelcome(m);   // [nav] server caps, limits, build height
+                    AreaSize.OnLimits(m.O("limits"));   // [area] max_view_width
                     // Light from the server makes faces merge less: scale the area-setup face estimate (soft cap).
                     AreaMath.LightFactor = AreaMath.LightFactorFor(m.A("caps")?.Contains(Protocol.CapLight) == true, BlockShading.SmoothLighting);
                     _link.Send(Protocol.AvatarConfig(true, BlockSizeM, SkinPlayer, true, "Tabletop Giant"));
@@ -288,6 +305,7 @@ namespace TabletopCraft
                 case "region_info":
                     _area.OnRegionInfo(RegionInfo.From(m));
                     _nav.OnLimits(m.O("limits"));   // [nav]
+                    AreaSize.OnLimits(m.O("limits"));   // [area]
                     break;
                 case "region_changed":
                     // A snapshot of the new region follows; just note who changed it (shared region, last writer wins).
@@ -344,6 +362,7 @@ namespace TabletopCraft
                     // [menu] a toast, unless area setup reports it itself (its status becomes a toast in Notify)
                     if (_area.Status == areaBefore && HudText.ForError(m.S("code"), m.S("message")) is string toast) _hud.Toast(toast, ToastKind.Error);
                     _edit.Editor.OnError(_world, m);   // undoes an optimistic edit the server refused
+                    AreaSize.OnError(m);   // [area] a refused resize
                     if (m.S("code") == "region_too_large" && _nav.State.Pending) _nav.OnRegionError(m.S("message"));   // [nav]
                     Debug.LogWarning("[Tabletop] server error " + _lastError);
                     break;
@@ -363,7 +382,9 @@ namespace TabletopCraft
             _renderer.OnSnapshot(r.Plan, oldOrigin, s.Origin);
             if (oldOrigin != s.Origin) _effects.OnRegionChanged();   // [entities] cracks sit at region-local positions
             _caps.ModelVersion = ++_modelVersion;
+            int oldWidth = AreaSizing.Current(_nav.State);   // [area]
             _nav.OnSnapshot(s.World, s.Origin, s.Dims, r.ViewMargin);
+            AreaSize.OnRegionApplied(oldWidth);   // [area] a new width: scale the block size to keep the footprint
             Debug.Log($"[Tabletop] snapshot {s.SnapshotId}: {s.Dims} palette {s.Palette.Length} parts {r.Parts}" +
                       (r.Delta ? $" delta ({r.Listed} sections sent)" : "") +
                       (r.Plan.Rekey ? $" re-keyed by {r.Plan.ShiftBlocks}: {r.Plan.Mesh.Count} to mesh, {r.Plan.Kept} kept" : " full re-mesh") +

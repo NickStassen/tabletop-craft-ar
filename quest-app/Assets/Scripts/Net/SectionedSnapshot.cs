@@ -71,40 +71,43 @@ namespace TabletopCraft.Net
             }
             if (bas == null)
                 for (int i = 0; i < covered.Length; i++) if (!covered[i]) throw new FormatException("section missing from a full sectioned snapshot");
-            if (bas != null) CheckDeltaCoverage(s.Dims, shift, keys);
+            if (bas != null) CheckDeltaCoverage(s.Dims, current.Dims, shift, keys);
             s.Grid = grid;
             s.Light = light;
             s.Biomes = BiomeGrid.From(m0.O("biomes"));   // biomes_v1: the whole region, on part 0
             return s;
         }
 
-        /// <summary>Delta: copy everything that overlaps the base region; listed sections overwrite their part afterwards.</summary>
+        /// <summary>
+        /// Delta: copy everything that overlaps the base region; listed sections overwrite their part afterwards. [area]
+        /// The base may have other dims (a section-aligned resize, PROTOCOL.md 4.25): new local p = old local p + shift.
+        /// </summary>
         static Vector3Int CopyBase(Dictionary<string, object> bas, ChunkSnapshot s, WorldModel cur, ushort[] grid, byte[] light)
         {
-            if (light != null && (cur?.Light == null || cur.Light.Length != light.Length)) throw new FormatException("delta with light against a snapshot without light");
+            if (light != null && (cur?.Light == null || cur.Light.Length != cur.Grid.Length)) throw new FormatException("delta with light against a snapshot without light");
             int baseId = bas.I("snapshot_id", -1);
             var sh = Json.Ints(bas.A("shift"));
             if (cur == null || !cur.Loaded || cur.SnapshotId != baseId) throw new FormatException($"base snapshot {baseId} is not the current one ({cur?.SnapshotId})");
-            if (cur.Dims != s.Dims || cur.World != s.World) throw new FormatException("base has different dims or world");
+            if (cur.World != s.World) throw new FormatException("base has a different world");
             if (sh.Length != 3 || sh[0] % WorldModel.Section != 0 || sh[1] % WorldModel.Section != 0 || sh[2] % WorldModel.Section != 0) throw new FormatException("shift must be whole sections");
             if (cur.Origin.x + sh[0] != s.Origin.x || cur.Origin.y + sh[1] != s.Origin.y || cur.Origin.z + sh[2] != s.Origin.z) throw new FormatException("shift does not match the origins");
             // The base palette must be a prefix of the new one, so base indices stay valid.
             if (cur.Palette.Count > s.Palette.Length) throw new FormatException("palette shrank");
             for (int i = 0; i < cur.Palette.Count; i++) if (cur.Palette[i] != s.Palette[i]) throw new FormatException("palette prefix differs at " + i);
-            var d = s.Dims; var old = cur.Grid;
+            var d = s.Dims; var od = cur.Dims; var old = cur.Grid;
             var shift = new Vector3Int(sh[0], sh[1], sh[2]);
-            int x0 = Math.Max(0, -sh[0]), x1 = Math.Min(d.x, d.x - sh[0]);
+            int x0 = Math.Max(0, -sh[0]), x1 = Math.Min(d.x, od.x - sh[0]);
             if (x1 <= x0) return shift;
             for (int y = 0; y < d.y; y++)
             {
                 int oy = y + sh[1];
-                if (oy < 0 || oy >= d.y) continue;
+                if (oy < 0 || oy >= od.y) continue;
                 for (int z = 0; z < d.z; z++)
                 {
                     int oz = z + sh[2];
-                    if (oz < 0 || oz >= d.z) continue;
-                    Array.Copy(old, (oy * d.z + oz) * d.x + x0 + sh[0], grid, (y * d.z + z) * d.x + x0, x1 - x0);
-                    if (light != null) Array.Copy(cur.Light, (oy * d.z + oz) * d.x + x0 + sh[0], light, (y * d.z + z) * d.x + x0, x1 - x0);
+                    if (oz < 0 || oz >= od.z) continue;
+                    Array.Copy(old, (oy * od.z + oz) * od.x + x0 + sh[0], grid, (y * d.z + z) * d.x + x0, x1 - x0);
+                    if (light != null) Array.Copy(cur.Light, (oy * od.z + oz) * od.x + x0 + sh[0], light, (y * d.z + z) * d.x + x0, x1 - x0);
                 }
             }
             return shift;
@@ -156,7 +159,7 @@ namespace TabletopCraft.Net
         }
 
         /// <summary>Unlisted sections of a delta must lie fully inside the base region (else data would be missing).</summary>
-        static void CheckDeltaCoverage(Vector3Int dims, Vector3Int sh, HashSet<Vector3Int> listed)
+        static void CheckDeltaCoverage(Vector3Int dims, Vector3Int baseDims, Vector3Int sh, HashSet<Vector3Int> listed)
         {
             var n = SectionPlan.Sections(dims); int S = WorldModel.Section;
             for (int x = 0; x < n.x; x++) for (int y = 0; y < n.y; y++) for (int z = 0; z < n.z; z++)
@@ -166,7 +169,7 @@ namespace TabletopCraft.Net
                 for (int a = 0; a < 3; a++)
                 {
                     int lo = k[a] * S + sh[a], hi = Math.Min(dims[a], k[a] * S + S) + sh[a];
-                    if (lo < 0 || hi > dims[a]) throw new FormatException($"section {x},{y},{z} is neither listed nor inside the base");
+                    if (lo < 0 || hi > baseDims[a]) throw new FormatException($"section {x},{y},{z} is neither listed nor inside the base");
                 }
             }
         }
