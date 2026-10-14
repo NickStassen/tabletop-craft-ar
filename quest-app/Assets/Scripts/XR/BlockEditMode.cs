@@ -87,7 +87,8 @@ namespace TabletopCraft.XR
             if (_hapticOff >= 0 && now >= _hapticOff) { _hapticOff = -1; OVRInput.SetControllerVibration(0, 0, OVRInput.Controller.RTouch); OVRInput.SetControllerVibration(0, 0, OVRInput.Controller.LTouch); }
             var w = World?.Invoke();
             Editor.Tick(w, Time.unscaledTimeAsDouble);
-            bool active = w != null && w.Loaded && RightHand && Blocks && !(Blocked?.Invoke() ?? false);
+            // Nothing to aim with until the server grants edit_v1 (the status line says why), or while area setup runs.
+            bool active = Editor.ServerAllows && w != null && w.Loaded && RightHand && Blocks && !(Blocked?.Invoke() ?? false);
             ShowPreview(active);
             if (!active) { Target = default; _outline.gameObject.SetActive(false); _laser.gameObject.SetActive(false); _breakAt = _placeAt = -1; return; }
 
@@ -157,10 +158,9 @@ namespace TabletopCraft.XR
 
         void ShowPreview(bool active)
         {
-            bool show = active && Editor.ServerAllows;
-            _preview.gameObject.SetActive(show);
-            _label.gameObject.SetActive(show);
-            if (!show) return;
+            _preview.gameObject.SetActive(active);
+            _label.gameObject.SetActive(active);
+            if (!active) return;
             if (_previewState != Editor.Selected) BuildPreview(Editor.Selected);
             _preview.localRotation = Quaternion.Euler(20f, Time.unscaledTime * 30f % 360f, 0f);
             if (Head) _label.transform.rotation = Quaternion.LookRotation(_label.transform.position - Head.position, Vector3.up);
