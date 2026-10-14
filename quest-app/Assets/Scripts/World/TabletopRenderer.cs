@@ -225,6 +225,8 @@ namespace TabletopCraft.World
             for (int d = 0; d < 6; d++) { Atlas.Face(FluidRules.WaterState, d); Atlas.Face(FluidRules.LavaState, d); }
             for (; _prewarmedCount < Model.Palette.Count; _prewarmedCount++)
                 for (int d = 0; d < 6; d++) Atlas.Face(Model.Palette[_prewarmedCount], d);
+            // [piston] what moving_piston cells draw instead (PistonGhosts): piston heads may not be in the palette.
+            if (!Model.MovingShown.IsEmpty) foreach (var s in Model.MovingShown.Values) Atlas.Face(s, 0);
             Atlas.Commit();
             if (Atlas.Array != null)
             {

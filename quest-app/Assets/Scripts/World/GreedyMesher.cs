@@ -190,6 +190,7 @@ namespace TabletopCraft.World
             int S = WorldModel.Section;
             Vector3Int b0 = section * S;
             var models = faces as IModelSource;   // baked resource-pack models (BlockModels.cs), null without a pack
+            bool moving = !w.MovingShown.IsEmpty;  // [piston] moving_piston cells draw what moves through them (PistonGhosts)
             for (int y = b0.y; y < Mathf.Min(b0.y + S, w.Dims.y); y++)
                 for (int z = b0.z; z < Mathf.Min(b0.z + S, w.Dims.z); z++)
                     for (int x = b0.x; x < Mathf.Min(b0.x + S, w.Dims.x); x++)
@@ -198,7 +199,11 @@ namespace TabletopCraft.World
                         var shape = BlockRules.Shape(st);
                         if (shape == BlockShape.Cross) Cross(m, w, x, y, z, faces.Face(st, 4));
                         else if (shape == BlockShape.Slab) Box(m, w, new Vector3Int(x, y, z), new Vector3(x, y + (st.Contains("type=top") ? 0.5f : 0), z), new Vector3(1, 0.5f, 1), faces, st);
-                        else if (shape == BlockShape.Model) BlockModelMesher.Emit(m, w, x, y, z, st, models?.Model(st), models);
+                        else if (shape == BlockShape.Model)
+                        {
+                            if (moving && w.MovingShown.TryGetValue(w.Index(x, y, z), out var shown)) st = shown;
+                            BlockModelMesher.Emit(m, w, x, y, z, st, models?.Model(st), models);
+                        }
                     }
             // Water/lava, including waterlogged blocks and kelp/seagrass cells. Last, so water blends over the plants
             // and models inside it in the transparent submesh.

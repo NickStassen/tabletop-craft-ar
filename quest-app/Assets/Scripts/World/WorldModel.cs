@@ -21,6 +21,9 @@ namespace TabletopCraft.World
         BlockShape[] _shapes = new BlockShape[0];   // per palette index; swapped whole, read by workers
         volatile int _shapesVersion = -1;           // BlockRules.Version the cache was built for
         public readonly HashSet<Vector3Int> DirtySections = new HashSet<Vector3Int>();
+        /// <summary>[piston] Cells that are moving_piston right now (cell index -> the state drawn there instead of nothing),
+        /// until the cell's final state arrives. Written on the main thread, read by the meshing workers (PistonGhosts).</summary>
+        public readonly System.Collections.Concurrent.ConcurrentDictionary<int, string> MovingShown = new System.Collections.Concurrent.ConcurrentDictionary<int, string>();
         public bool Loaded => SnapshotId >= 0;
         public Vector3Int SectionCount => new Vector3Int((Dims.x + Section - 1) / Section, (Dims.y + Section - 1) / Section, (Dims.z + Section - 1) / Section);
 
@@ -56,6 +59,7 @@ namespace TabletopCraft.World
             Light = s.Light;
             Biomes = s.Biomes;
             Tints = s.Biomes != null ? new BiomeTints(s.Biomes, s.Origin, s.Dims) : null;
+            MovingShown.Clear();
             RebuildShapes();
             DirtySections.Clear();
             var n = SectionCount;
@@ -68,14 +72,17 @@ namespace TabletopCraft.World
             if (m.I("snapshot_id", -2) != SnapshotId) return false;
             var add = m.A("palette_add");
             if (add != null) { foreach (var s in add) Palette.Add((string)s); RebuildShapes(); }
+            var before = PistonGhosts.Begin(this);   // [piston] old states of the changed cells
             foreach (var c in m.A("changes") ?? new List<object>())
             {
                 var a = (List<object>)c;
                 int x = (int)(double)a[0], y = (int)(double)a[1], z = (int)(double)a[2], p = (int)(double)a[3];
                 if (!InBounds(x, y, z) || p >= Palette.Count) continue;
+                before?.Record(Index(x, y, z), Grid[Index(x, y, z)]);
                 Grid[Index(x, y, z)] = (ushort)p;
                 MarkDirty(x, y, z);
             }
+            before?.Apply(this);
             // Optional light changes (PROTOCOL.md 4.4.1): [x, y, z, sky << 4 | block], also sent without block changes.
             var light = Light;
             if (light != null && m.A("light") is List<object> lc)
@@ -95,6 +102,7 @@ namespace TabletopCraft.World
         {
             if (!InBounds(x, y, z) || id >= Palette.Count) return;
             Grid[Index(x, y, z)] = id;
+            MovingShown.TryRemove(Index(x, y, z), out _);
             MarkDirty(x, y, z);
         }
 

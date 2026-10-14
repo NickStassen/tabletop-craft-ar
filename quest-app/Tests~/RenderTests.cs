@@ -34,6 +34,7 @@ static class RenderTests
     {
         Randomness(check);
         UvCodes(check);
+        Pistons(check, jar);
         if (jar != null) Pack(check, jar);
         else Console.WriteLine("SKIP render pack tests: set MC_CLIENT_JAR or pass --jar PATH");
     }
@@ -174,6 +175,63 @@ static class RenderTests
         var dt = RandomUv.Table(dirt[3].Random);
         int lo = (int)packed[dirt[3].Random * 4 + 1];
         check(packed[dirt[3].Random * 4] == dt.Length && Enumerable.Range(0, dt.Length).All(k => ((lo >> (3 * k)) & 7) == dt[k]), "random UV tables pack into the shader's float4 layout");
+        BlockRules.ResetShapes();
+    }
+
+    /// <summary>Moving pistons (PistonGhosts): the block_updates 26.3 sends for a push, a retraction and a sticky pull,
+    /// and what each moving_piston cell draws meanwhile.</summary>
+    static void Pistons(Action<bool, string> check, string jar)
+    {
+        string[] pal =
+        {
+            "minecraft:air", "minecraft:piston[extended=false,facing=east]", "minecraft:stone", "minecraft:dirt", "minecraft:piston[extended=true,facing=east]",
+            "minecraft:moving_piston[facing=east,type=normal]", "minecraft:piston_head[facing=east,short=false,type=normal]",
+            "minecraft:sticky_piston[extended=true,facing=east]", "minecraft:moving_piston[facing=east,type=sticky]", "minecraft:piston_head[facing=east,short=false,type=sticky]",
+            "minecraft:sticky_piston[extended=false,facing=east]",
+        };
+        WorldModel Row(params int[] ids)
+        {
+            var w = new WorldModel { SnapshotId = 1, Dims = new Vector3Int(ids.Length, 1, 1) };
+            w.Palette.AddRange(pal);
+            w.Grid = ids.Select(i => (ushort)i).ToArray();
+            return w;
+        }
+        bool Update(WorldModel w, params int[][] changes) =>
+            w.ApplyBlockUpdate(TabletopCraft.Net.Json.Parse("{\"snapshot_id\":1,\"changes\":[" + string.Join(",", changes.Select(c => "[" + c[0] + ",0,0," + c[1] + "]")) + "]}") as Dictionary<string, object>);
+        string Shown(WorldModel w, int x) => w.MovingShown.TryGetValue(x, out var s) ? s : null;
+
+        // Push: base at x 0 facing east, stone and dirt in front.
+        var push = Row(1, 2, 3, 0, 0);
+        Update(push, new[] { 0, 4 }, new[] { 1, 5 }, new[] { 2, 5 }, new[] { 3, 5 });
+        bool pushed = Shown(push, 1) == pal[6] && Shown(push, 2) == pal[2] && Shown(push, 3) == pal[3] && Shown(push, 0) == null;
+        Update(push, new[] { 1, 6 }, new[] { 2, 2 }, new[] { 3, 3 });
+        check(pushed && push.MovingShown.IsEmpty, "piston push: the head cell draws the piston head, each pushed block its new cell, until the final states");
+        // Retract (normal): the base cell moves (it keeps its extended look), the head cell goes straight to air.
+        var pull = Row(4, 6, 0);
+        Update(pull, new[] { 0, 5 }, new[] { 1, 0 });
+        bool retracted = Shown(pull, 0) == pal[4] && Shown(pull, 1) == null;
+        Update(pull, new[] { 0, 1 });
+        // Sticky pull: base and head cell move, the stone two cells out is pulled into the head cell.
+        var sticky = Row(7, 9, 2, 0);
+        Update(sticky, new[] { 0, 8 }, new[] { 1, 8 }, new[] { 2, 0 });
+        bool pulled = Shown(sticky, 0) == pal[7] && Shown(sticky, 1) == pal[2];
+        check(retracted && pull.MovingShown.IsEmpty && pulled, "piston retract: the base keeps its extended look; a sticky piston's pulled block shows in the head cell");
+        // A world without pistons never records anything (cheap path).
+        check(PistonGhosts.Begin(new WorldModel { Palette = { "minecraft:air", "minecraft:stone" } }) == null, "no moving_piston in the palette: block updates skip the piston bookkeeping");
+
+        if (jar == null) return;
+        using var assets = new ZipAssets(jar);
+        BlockRules.ResetShapes();
+        var pf = new PackFaces(assets);
+        var w2 = Row(1, 2, 3, 0, 0);
+        pf.Prewarm(w2);
+        Update(w2, new[] { 0, 4 }, new[] { 1, 5 }, new[] { 2, 5 }, new[] { 3, 5 });
+        pf.Prewarm(w2); foreach (var s in w2.MovingShown.Values) pf.Face(s, 0);   // as TabletopRenderer.Prewarm
+        var m = new MeshData();
+        GreedyMesher.BuildSpecials(w2, new Vector3Int(0, 0, 0), pf, m);
+        int In(float lo, float hi) => Enumerable.Range(0, m.Verts.Count / 4).Count(q => Enumerable.Range(0, 4).All(i => m.Verts[q * 4 + i].x >= lo - 1e-4f && m.Verts[q * 4 + i].x <= hi + 1e-4f));
+        int head = In(1, 2), stoneQuads = In(2, 3), dirtQuads = In(3, 4);
+        check(head > 0 && stoneQuads >= 5 && dirtQuads >= 5, $"piston push meshes the head and both blocks in their moving cells (quads {head}/{stoneQuads}/{dirtQuads})");
         BlockRules.ResetShapes();
     }
 
