@@ -188,12 +188,14 @@ Sent at `limits.player_hz` (default 10 Hz) whenever there's at least one player 
 {"v":1,"type":"player_positions","seq":4,"t":1760370001050,
  "players":[
   {"uuid":"0f1e…","name":"Alex","pos":[112.5,64.0,-30.25],"yaw":135.0,"pitch":10.0,
-   "sneaking":false,"skin":"https://textures.minecraft.net/texture/…"}
+   "sneaking":false,"skin":"https://textures.minecraft.net/texture/…","skin_model":"slim"}
  ]}
 ```
 
 - `pos`: world coordinates (doubles) of the player's feet. The client subtracts `origin` itself.
-- `skin`: optional skin texture URL taken from the player's profile. It's sent only in the first message that includes that UUID on the connection (and after it changes), and it can be `null`.
+- `yaw`/`pitch`: the player's head (look) direction, §3 convention. The body yaw isn't sent; clients derive it as the game client does (it lags the head by up to 50° and turns toward the walking direction).
+- `skin`: optional skin texture URL taken from the player's profile. It's sent only in the first message that includes that UUID on the connection (and after it changes), and it can be `null` (no textures, e.g. on an offline-mode server: show the game's default skin for that UUID). Profile URLs are usually `http://textures.minecraft.net/texture/<hash>`; clients may fetch the same path over https and SHOULD refuse other hosts.
+- `skin_model` (optional, additive): `"wide"` (4 px arms, Mojang's "classic") or `"slim"` (3 px arms), from the textures payload's metadata. Sent together with a non-null `skin`; missing means `"wide"`.
 - The giant avatar's own entities are **not** included.
 
 ### 4.7 `pose` (C→S)
@@ -228,7 +230,8 @@ The Quest sends poses at about 30 Hz (allowed 1–`limits.pose_hz_max`). The ser
 ```
 
 - `enabled`: spawn (true) or despawn (false) the giant.
-- Skin source, in priority order: `skin_url` (must be a `https://textures.minecraft.net/texture/…` URL), then `skin_player` (an account name that the server resolves through the Mojang profile lookup once and caches), then the default skin. Every field is optional. Missing fields keep their previous value.
+- Skin source, in priority order: `skin_url` (must be a `https://textures.minecraft.net/texture/…` URL), then `skin_player` (an account name that the server resolves through the Mojang profile lookup once and caches), then the default skin. Every field is optional. Missing fields keep their previous value. A blank `skin_player` means the server's default (plugin `config.yml` `avatar.skin-player`).
+- The plugin resolves `skin_player` off the main thread (also on an offline-mode server; it needs internet access) and then gives the giant the signed textures. Until that finishes, and if it fails, the giant carries the bare name, which Java clients since 1.21.9 resolve themselves. A failed lookup sends `error` `skin_failed`.
 - `model`: `"wide"` or `"slim"`.
 - `block_size_m`: how many real meters one block occupies on the table (same as the scale the Quest renders the miniature at). Range 0.002–0.1.
 - `max_scale`: cap on the Mannequin scale attribute, clamped by the server to the attribute's real max (16 on current versions).
@@ -243,6 +246,9 @@ Sent after each `avatar_config`, and when the server changes something by itself
  "enabled":true,"entity_uuid":"9a…","scale":16.0,"world_height_blocks":28.8,
  "skin_resolved":true,"note":"scale clamped from 175.0 to 16.0"}
 ```
+
+- `skin_resolved`: the server holds signed textures for `skin_player` (it also sends a fresh `avatar_state` when a lookup finishes). `false` doesn't always mean Java players see the default skin: their clients may still resolve the name.
+- Where the giant stands is server policy (ARCHITECTURE.md §3.5, `config.yml` `avatar.placement`): by default on the terrain under the headset's X/Z, clamped into the region, with hand offsets scaled to its size; `exact` maps the head and hands as in §4.7. With `debug.avatar-state` on, the `debug` object also reports `placement`, `ground_y`, `body_yaw` and `skin_player`.
 
 ### 4.10 `ping` / `pong` (both directions)
 
@@ -319,3 +325,4 @@ Then it closes with code 1000. When the Quest client disconnects (with or withou
 - Growth always triggers a full re-snapshot. Incremental edge growth is deferred.
 - Fixtures: `tools/fixtures/region_request.json`, `region_query.json`, `region_changed.json`, `region_info.json`, `error_region_too_large.json` (also parsed by the C# tests).
 - Changelog: v1.1 adds the messages above. v1 clients are unaffected.
+- Changelog (additive, no version bump): adds `player_positions[].skin_model` (§4.6) and documents the giant's placement and skin lookup (§4.8, §4.9). Fixture: `tools/fixtures/player_positions.json`.

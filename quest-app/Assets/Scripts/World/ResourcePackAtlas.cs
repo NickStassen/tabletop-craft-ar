@@ -1,7 +1,8 @@
 // Builds a Texture2DArray from a USER-SUPPLIED resource pack zip (or the user's own client .jar renamed to .zip),
 // copied to Application.persistentDataPath/pack.zip. Nothing from Mojang ships with this app.
 // Resolution: blockstates/<name>.json -> first/matching variant model -> models/... parent chain -> element face
-// textures ("#var" resolved recursively) -> textures/<path>.png. Animated strips use the first frame.
+// textures ("#var" resolved recursively) -> textures/<path>.png. Animated textures keep all their frames and are
+// advanced by Animate() (ResourcePackAtlas.Animation.cs).
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -12,7 +13,7 @@ using UnityEngine;
 
 namespace TabletopCraft.World
 {
-    public sealed class ResourcePackAtlas : IFaceSource, IDisposable
+    public sealed partial class ResourcePackAtlas : IFaceSource, IDisposable
     {
         public Texture2DArray Array { get; private set; }
         public int TileSize { get; private set; } = 16;
@@ -44,14 +45,24 @@ namespace TabletopCraft.World
             catch (Exception e) { Status = "pack error: " + e.Message; _zip = null; return false; }
         }
 
+        /// <summary>Raw bytes of a file in the pack, or null. Main thread only (used by PlayerSkins for default skins).</summary>
+        public byte[] ReadBytes(string path)
+        {
+            var e = _zip?.GetEntry(path);
+            if (e == null) return null;
+            using (var s = e.Open()) using (var ms = new MemoryStream()) { s.CopyTo(ms); return ms.ToArray(); }
+        }
+
         public FaceKey Face(string state, int dir)
         {
             if (!_faceCache.TryGetValue(state, out var faces))
             {
+                if (OffMainThread) return Unresolved(state);   // see ResourcePackAtlas.Models.cs
                 faces = new FaceKey[6];
                 Color32 flat = BlockRules.FlatColor(state);
                 for (int i = 0; i < 6; i++) faces[i] = new FaceKey { Layer = -1, Color = flat };
                 if (_zip != null) { try { Resolve(state, faces); } catch (Exception e) { Debug.LogWarning($"[Tabletop] texture for {state}: {e.Message}"); } }
+                PrepareModel(state, faces);   // bake the block model; full cubes get rotated faces (ResourcePackAtlas.Models.cs)
                 _faceCache[state] = faces;
             }
             return faces[dir];
@@ -167,7 +178,7 @@ namespace TabletopCraft.World
             var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
             if (!tex.LoadImage(bytes)) { UnityEngine.Object.Destroy(tex); _layers[texture] = -1; return -1; }
             if (_pixels.Count == 0) TileSize = tex.width;
-            _pixels.Add(FirstFrame(tex, TileSize));
+            _pixels.Add(LoadAnimation(entry.FullName, tex, _pixels.Count) ?? FirstFrame(tex, TileSize));   // animated: all frames kept
             UnityEngine.Object.Destroy(tex);
             l = _pixels.Count - 1;
             _layers[texture] = l;
@@ -200,6 +211,7 @@ namespace TabletopCraft.World
             for (int i = 0; i < _pixels.Count; i++) Array.SetPixels32(_pixels[i], i);
             Array.Apply(false, true);
             _arrayDirty = false;
+            CommitAnimations();   // frame store + current frames into the new array
         }
 
         Dictionary<string, object> ReadJson(string path)
@@ -209,6 +221,6 @@ namespace TabletopCraft.World
             using (var r = new StreamReader(e.Open())) return Json.Parse(r.ReadToEnd()) as Dictionary<string, object>;
         }
 
-        public void Dispose() { _zip?.Dispose(); if (Array != null) UnityEngine.Object.Destroy(Array); }
+        public void Dispose() { DisposeAnimations(); _zip?.Dispose(); if (Array != null) UnityEngine.Object.Destroy(Array); }
     }
 }

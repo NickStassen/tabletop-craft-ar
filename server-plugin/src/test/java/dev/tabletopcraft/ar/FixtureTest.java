@@ -106,6 +106,12 @@ class FixtureTest {
         assertEquals(135.0, h.yawDeg(), 0.01);
     }
 
+    @Test void playerPositionsFixtureHasSkinModel() throws Exception {
+        JsonObject p = fixture("player_positions").getAsJsonArray("players").get(0).getAsJsonObject();
+        assertTrue(p.get("skin").getAsString().startsWith("https://textures.minecraft.net/"));
+        assertEquals(SkinLookup.model(true), p.get("skin_model").getAsString());
+    }
+
     @Test void avatarConfigFixtureParses() throws Exception {
         AvatarConfig c = AvatarConfig.parse(fixture("avatar_config"));
         assertEquals(0.01, c.blockSizeM());

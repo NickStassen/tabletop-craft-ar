@@ -107,6 +107,31 @@ Headless, with `tools/patch-meta-sdk-linux.sh` and `TabletopBatch` (see QUEST_SE
 - **APK**: builds in about 2 minutes clean (45 MB, `com.tabletopcraft.ar`, arm64-v8a). Its manifest has INTERNET, USE_SCENE, USE_ANCHOR_API, PASSTHROUGH required, `quest3|quest3s` and `usesCleartextTraffic=true`. Meta's `enableNSCConfig` (on by default) had added a `network_sec_config.xml` with `cleartextTrafficPermitted="false"`, which would override that, so the builder now turns it off.
 - **Build contents** (from the build log): TabletopCraft/Blocks, BlocksTransparent, Unlit/Color (Marker.mat) and Sprites/Default are compiled in. Standard is not, so `CreatePrimitive` objects now get the unlit marker material. The TextMesh font (`LegacyRuntime.ttf`) and its shader ship in the built-in "unity default resources".
 
+## First headset session (Quest 3, 2026-10-13)
+
+Quest 3 on Android 14-based Horizon OS, USB for install and logcat, Wi-Fi for the link. The PC ran the plugin on Paper 26.3 (seed 12345, a 64x96x64 area at y 32..128 around 0,0) and the APK from section 5. `pack.zip` was the user's 26.3 client jar.
+
+- **Works on the headset**:
+  - Passthrough, and the link to the server (`welcome ... mc 26.3`, RTT 13-14 ms in the log, up to 42 ms on the status panel).
+  - The 64x96x64 snapshot (palette 43), textured from the jar. `pack loaded`, so `System.IO.Compression` works on IL2CPP.
+  - `USE_SCENE` granted on first launch.
+  - VrApi `FPS=72/72` with ~2.4-2.6 ms app GPU time. Passthrough rendered at 72 fps.
+  - A Java player shown on the table as a marker.
+  - The giant followed the headset in a Java client, wearing the user's skin once the server was in online mode (`skin_player` set in tabletop.json; exact placement).
+  - The demo media in `docs/media/` comes from this session's headset recording. It's cropped and blurred so no screens or usernames show.
+- **Bugs found on the headset and fixed the same day**:
+  - **Meshing race:** a few sections failed with NullReferenceException in the first meshing batch, so terrain was missing. Fixed by making the shape and face caches concurrent; Tests~ has a regression check.
+  - **avatar_config spam:** the app sent `avatar_config` every frame while scaling, and the server respawned the giant each time (1,193 respawns in a few minutes). The app now debounces it, and the server rescales in place.
+  - **Giant deleted outside the area:** stepping back from the table or shrinking the miniature moved the giant out of the area into unloaded chunks, which deleted it (26.x has no spawn chunks). It now only moves into loaded, ticketed chunks.
+- **Setup notes**:
+  - The USB debugging prompt didn't appear at first. A headset restart with the cable in, then "Always allow", fixed it.
+  - Unity's batch builds kill the adb server, so expect to re-approve until "Always allow" sticks.
+- **Not yet checked on the headset**:
+  - MRUK table detection. The log has "MRUK Shared: Unable to bind OpenXR function" warnings, and the table was placed with A.
+  - Area setup.
+  - Live block edits.
+  - Everything added after this session: water, animation, lighting, block models, navigation, player figures.
+
 ## 6. Paper 26.3 (Java 25, 2026-10-13)
 
 Paper 26.3 build 181 (stable), Temurin JDK 25.0.4.1, plugin built against `paper-api 26.3.build.181-stable` with Gradle 9.8.0 / Shadow 9.6.1. No plugin source changes were needed.
@@ -136,11 +161,35 @@ Paper 26.3 build 181 (stable), Temurin JDK 25.0.4.1, plugin built against `paper
 - **26.x differences** that needed tooling changes: Java 25, `white-list=false`, explicit flat `generator-settings` layers, and worlds now keep every dimension under `world/dimensions/`.
 - **Resource pack (26.3 client jar), offline**: a Python mirror of `ResourcePackAtlas.Resolve` over all 1,288 block states found two gaps, both fixed. 26.x models may give a texture as `{"sprite": ..., "force_translucent": true}` (107 models: glass, stained glass and panes, redstone), and fluids only name a `particle` texture. Now 940 states resolve all six faces, including grass, stone, logs, leaves, ores, sand, glass and water. The ~95 that resolve none are mostly entity-rendered (chests, banners, heads, shulker boxes, decorated pots) or invisible, and keep flat colours. Cross plants use the north face, which resolves.
 
+## 7. Giant placement, giant skin, player figures (2026-10-13)
+
+Paper 26.3 build 181 test server (offline mode, seed 12345, region 64x96x64 from (0, 32, 0)), JDK 25, .NET 8, Unity 6000.0.84f1 batch mode. No headset, no Java client.
+
+- **Unit tests**: plugin 33 JUnit tests, 0 failures (new: `GiantPlacementTest` 8, `SkinLookupTest` 3, `FixtureTest` +1 for `skin_model`). pytest 24 passed, ruff clean. `Tests~` 68/68 PASS (35 new: model geometry and UVs, winding, slim arms, animation, sneak pose, legacy skin conversion, default skin per UUID checked against the JDK's `UUID.hashCode`, skin URL filter, `PlayerInfo.From` on the fixture). `Tests~ --live` against the test server: all PASS.
+- **Ground placement, live** (a scripted client in place of the headset, block size 0.01, `debug.avatar-state: true`). The user stands 0.4 m west of the table, head 0.6 m up, looking east, hands 0.3 m forward, 0.45 m down and 0.2 m to each side:
+  ```
+  placement ground: feet [0.5, 63.0, 32.0] (clamped to the region's west edge, on the ground; exact would be x -40, feet y 66)
+    eye y 88.92 = 63 + 1.62 x 16; yaw -90 (east); body_yaw -40 (lags the head by 50)
+    hands [5.44, 81.51, 28.71] / [5.44, 81.51, 35.29] = eye + (0.3, -0.45, -/+0.2) m x 28.8/1.75 blocks per metre
+  walking along the south edge, looking north: feet x 0.5 -> 63.5 over 6 s at z 63.5, y 63.0; right hand east of the body
+  ```
+  `exact` (via `/tabletop avatar placement exact`) maps the head to x -40 / y 92, outside the region. Before this change the giant never moved there on a server with no player nearby. The chunk loaded by `getChunkAtAsync` unloaded again before the next tick, and the giant waited for it forever. Async-loaded chunks are now ticketed when the load completes, and the same run shows the giant at (-40, 66.08, 32) and following the walk.
+- **Giant skin, offline-mode server**: `skin_player` set to a real Java account name gives `SKIN resolved <name> -> <uuid> (wide)` 0.25 s after spawn, then `avatar_state` with `skin_resolved: true`. The Mannequin switched to the signed static profile. A name with no account gives `skin_failed` ("no Java account named ...") and `skin_resolved: false` with a note.
+- **Unity**: 0 `error CS`, no new warnings in `Assets/` (the only one is the existing CS0618 in the scene builder), no shader errors. A temporary editor script (not committed) checked these:
+  - `Resources/TabletopPlayer.mat` loads with `TabletopCraft/PlayerSkin` (supported, no errors).
+  - The default skin for the offline UUID of "Steve" comes from the 26.3 jar as `wide/efe.png`, matching `DefaultPlayerSkin`. Without a pack it falls back to the plain-colour skin.
+  - A figure builds with 6 parts and 288 vertices, and the sneak pose puts the head pivot at 17.8 px.
+  - A real profile skin URL (`http://textures.minecraft.net/...`) is fetched over https through `UnityWebRequestTexture`, converted from legacy 64x32 to 64x64, point-filtered, and not readable on the CPU after upload. A non-Mojang URL is refused.
+- **Offline render of the generated meshes** (a Python rasteriser of the `PlayerModel` output with the 26.3 jar's Steve and Alex skins; front, side, back and top views): faces, hair, sleeves and trousers land on the right boxes. The side view shows the head pitched down, the legs and arms counter-swinging, and Alex's sneak pose (lean, lowered head, legs back).
+
+Still needs the headset and a Java client: the figures' look on the table (size at 1 cm/block, shading, label), skin downloads on the Quest (https from the headset), the giant's movement as seen by Java players (Mannequin interpolation plus server smoothing), and `skin_model`/`skin` from an online-mode server.
+
 ## Not verified (and why)
 
-- **Anything on the Quest**: compiled and built (section 5), but not yet run on a headset. Passthrough, MRUK table detection, the resource-pack atlas (`System.IO.Compression` on IL2CPP, `Texture2DArray`; the 26.3 jar was only checked offline, section 6), frame rate and Wi-Fi latency are untested.
-- **Visual check of the giant** in a real Java client (that it renders at the right size, skin, hands orientation). Verified only through entity data, logs and the mineflayer bot.
-- **Skins**: offline mode can't resolve profiles, so `skin_resolved` is false in tests. `skin_player` resolution needs an online-mode server.
+- **On the Quest** (see "First headset session"): MRUK table detection, area setup and live block edits haven't been checked yet.
+- **Block models on the Quest**: they are checked offline only, with tests on the 26.3 jar and the offline renderer ("Block models from the resource pack").
+- **The giant in a Java client**: seen once, with exact placement and the user's skin. Ground placement, hand orientation and smoothness haven't been looked at by eye.
+- **Player skins on the table**: `player_positions` skins only exist on an online-mode server. The figures that use them haven't been on a headset yet.
 - **Windows**: the server steps in QUEST_SETUP.md are written for Windows but were run on Linux.
 
 ## Spec deviations (PROTOCOL.md v1, known and intentional for v0.1)
@@ -204,24 +253,105 @@ Greedy-mesher output for the same snapshots: the real `GreedyMesher.cs`, flat-co
 | 32×384×32 | 10,909 | 1,408 | 49k | 25k | 954 | 66 ms | 14k |
 | 64×384×64 | 39,394 | 7,242 | 187k | 93k | 998 | 262 ms | 56k |
 
-With a resource pack, faces only merge when they share a texture, so expect more quads than the flat-colour counts above (my guess: 1.2–1.5×; not measured).
+With a resource pack, faces only merge when they share a texture, and since the block-model work every non-cube block is drawn from its model. The measured counts are in "Block models from the resource pack" below; the capacity guidance uses them.
 
 ### Quest 3 capacity guidance (ESTIMATES, not measured on a headset)
 
-- **Estimator** (`AreaMath.Estimate`, used for the soft cap): about 3.5 faces per column for a 96-block surface band, plus 0.035 faces per block below that band (caves). It overestimates every case above except 128×128×128, which it underestimates by about 9%.
+- **Estimator** (`AreaMath.Estimate`, used for the soft cap): recalibrated for block models to about 5.5 faces per column for a 96-block surface band, plus 0.04 faces per block below that band (caves). It overestimates every measured pack case except 128×128×128, which it underestimates by about 5%. (Before block models: 3.5 and 0.035.)
 - **Default soft cap:** 250k faces = 1M vertices / 500k triangles. This assumes the scene is only the unlit block shader at 72 Hz. The headset shows a warning above the cap; holding B overrides it.
-- **Recommended sizes:**
-  - **64×96×64**: comfortable everywhere (about 13k faces).
-  - **128×96×128**: the recommended maximum for normal play (about 47k faces measured, about 60–70k with textures).
-  - **128×128×128 / 64×384×64**: fine for rendering (about 85–100k faces). Snapshots are 0.4–0.7 MB.
-  - **128×384×128** (full height): estimated at about 220k faces / 890k vertices. That is near the cap, and it is over the server's default `max_blocks` (2,097,152), so the server operator would have to raise it.
-- **Meshing on the headset:** the box meshes about 1 ms per 16³ section. Assuming the Quest's mobile CPU is 3–5× slower (estimate), a 128×96×128 re-mesh is about 1–1.5 s spread across 3 worker threads. The main thread only uploads meshes, within a 3 ms per-frame budget.
+- **Recommended sizes** (pack counts):
+  - **64×96×64**: comfortable everywhere (about 21k faces).
+  - **128×96×128**: the recommended maximum for normal play (74–79k faces measured at spawn, in a village and in snowy plains).
+  - **128×128×128 / 64×384×64**: fine for rendering (about 63–117k faces). Snapshots are 0.4–0.7 MB.
+  - **128×384×128** (full height): estimated at about 280k faces / 1.1M vertices (4× the measured 64×384×64 is about 250k). That is over the soft cap, so it needs the B override, and it is over the server's default `max_blocks` (2,097,152), so the server operator would have to raise it.
+- **Meshing on the headset:** with block models the box meshes about 0.4–0.5 ms per 16³ section (under 1 ms worst case). Assuming the Quest's mobile CPU is 3–5× slower (estimate), a 128×96×128 re-mesh is about 0.6–1 s spread across 3 worker threads. The main thread only uploads meshes, within a 3 ms per-frame budget.
+
+## Block models from the resource pack (26.3 client jar, 2026-10-13)
+
+Engine-free, run on the x86 Linux box: .NET 8, the user's 26.3 client jar passed with `--jar` (or `MC_CLIENT_JAR`), never copied into the repo. The live data came from a local Paper 26.3 build 181 test server: normal world, seed 12345, offline mode.
+
+- **Tests:** `cd quest-app/Tests~ && dotnet run -- --jar CLIENT.jar`: **68/68 PASS**. Without a jar, 34/34 PASS and the model tests are skipped. The model tests cover:
+  - Full cubes: stone, grass (tinted top, dirt bottom), and `oak_log[axis=x]`, which has its ends west/east and rotated bark (`UvMap`).
+  - Stairs: 11 faces, with the step moving with `facing` and flipping for `half=top`. Cullfaces rotate with the model. Inner stairs have 15 faces.
+  - Multipart: fence post + north arm (16 faces), the east arm, a wall (post + low + tall), and redstone (dot / line / corner / climbing via `OR` and `side|up`, colour follows power). Glass panes are translucent through 26.x `force_translucent`.
+  - Rotated elements: the wall torch leans off its wall, the poppy is a 4-face cross, and a hanging sign uses 26.x `x`/`y`/`z` rotation.
+  - Heights: a snow layer is 6/16 high with its inner helper face skipped; snow at 8 layers is a full cube.
+  - Block-entity boxes: single and double chests, banner (wool flag), skull, bell body, shulker box. 26.x bed and sign models bake. Powder snow stays a cube, and a spawner doesn't.
+  - Classification after prewarm.
+  - Meshing: stairs on stone = 6 + 10 faces (bottom culled), two snow layers = 8 faces, joined glass panes drop the faces between them, and the greedy east face of grass is upright.
+- **Every blockstate** (`dotnet run -- --jar CLIENT.jar --list-shapes`, first variant of each of the 1,288 states): 404 stay greedy cubes (5 of them were cross placeholders before, such as mushroom stems), 33 stay see-through cubes (glass, leaves, ice), and 9 opaque-by-name cubes become see-through cubes (copper grates, frosted ice). 833 become block models: 310 that were drawn as full cubes before (stairs, beds, chests, cauldrons, anvils, paths, farmland...), 403 cross placeholders (plants, torches, fences, walls, rails, doors...), 101 slabs, and 19 glass panes / iron bars / honey / slime. Air and fluids are unchanged.
+- **Face counts** (`tools/measure_regions.py` + `dotnet run -- --jar CLIENT.jar --measure DIR`). "flat" is the mesher with flat-colour keys and the old placeholders (no pack). "pack" is greedy cubes with one texture layer per texture, plus block models.
+
+| region (y range) | flat faces | pack faces | of which model faces | `AreaMath.Estimate` (new) | pack mesh time, all sections |
+|---|---|---|---|---|---|
+| 32×96×32 spawn (32..128) | 2,676 | 4,451 | 1,926 | 5.6k | 9 ms |
+| 64×96×64 spawn (32..128) | 12,811 | 20,657 | 10,510 | 22.5k | 38 ms |
+| 128×96×128 spawn, mostly ocean (32..128) | 45,470 | 73,692 | 38,253 | 90.1k | 148 ms |
+| 128×96×128 village at -144,-832 (32..128) | 59,638 | 78,603 | 22,391 | 90.1k | 183 ms |
+| 128×96×128 snowy plains at 672,-608 (32..128) | 67,072 | 76,009 | 29,583 | 90.1k | 170 ms |
+| 128×128×128 spawn (0..128) | 82,224 | 116,715 | 42,835 | 111.1k | 226 ms |
+| 32×384×32 spawn (full height) | 12,138 | 15,556 | 4,202 | 17.4k | 82 ms |
+| 64×384×64 spawn (full height) | 47,004 | 62,710 | 22,461 | 69.7k | 178 ms |
+
+  Every face is 4 vertices and 2 triangles. Model faces are single-sided, while the old cross placeholders were double-sided, so triangles grew less than faces: 128×96×128 spawn went from 115k to 147k triangles. Meshing is 0.4–0.5 ms per 16³ section, with the worst section under 1 ms. Outliers of 7–9 ms on the first sections are .NET JIT warm-up. Baking all palette states (main thread, prewarm) took 45–53 ms for 110–171 states. That includes the test reader's PNG decoding. On the headset, the atlas's texture loading for new states already ran in the same step.
+- **Where the model faces come from:** underwater plants dominate the ocean (seagrass and tall seagrass 8 faces per block, kelp 4). In the village, the main sources are short grass (4), leaf litter (about 2.6), dirt paths (about 3.7, 15/16 high), pink petals (about 27) and stairs (about 5). In snowy plains, 10,136 snow layers cost 2.2 faces each after side culling against each other.
+- **Offline visual check:** `dotnet run -- --jar CLIENT.jar --scene OUT.json` dumps a demo scene of about 90 odd blocks (or `--snapshot FILE x0,y0,z0,dx,dy,dz` crops a saved region). Then `uv run --no-project --with pillow --with numpy python tools/render_mesh.py OUT.json CLIENT.jar OUT.png --view se|nw [--box ...]` renders it. The renderer follows the shader rules: layer texture with repeat, tint, face shading, alpha test for the opaque submesh and blending for the transparent one. Checked from both diagonal views:
+  - stairs (all facings, upside down, corners) with world-aligned plank tops (uvlock), slabs, fences, walls, panes, iron bars and fence gates;
+  - logs on all three axes, furnace fronts upright, hay bales;
+  - standing, wall and hanging torches and lanterns, flowers, tall grass, crops, sugar cane, berry bushes, potted plants, carpets, rails, redstone (red);
+  - doors and trapdoors, ladders, vines, snow layers 1–8, dirt path, farmland, cauldron, hopper;
+  - chests (double chests join), banner, skull, bed, sign, bell, anvil, enchanting table, lectern, campfire, decorated pot, brewing stand and shulker box;
+  - a crop of the real village (stair roofs, farm, paths, lamp posts).
+
+  Grass sides keep the fringe up on all four sides. Before, east/west greedy faces had it sideways.
+- **Needs the headset:** frame rate at 75–80k faces for 128×96×128, the prewarm hitch on the Quest CPU when a new region's palette is baked, and the look of face shading on rotated faces. Plants come out at 0.8 brightness from their diagonal normals, where vanilla draws them at full brightness.
 
 ## C# client tests (`cd quest-app/Tests~ && dotnet run`)
 
 - **33/33 PASS.** This adds tests for `AreaMath` (block-size fit, clamping, the estimate, soft cap and override, clamping to server caps), `AreaSetupState` (centre on origin/player, resize clamps, request matches the fixture, warn/override), and `region_info`/`region_too_large` fixture parsing.
 - **`--live`** against the real-terrain server: all checks PASS, including the area-setup resize. The live test uses the same `AreaSetupState`: it requests +16 x/z, which the server's `max_blocks` limit clamps to 80×327×80, and gets back `region_changed` from its own session plus a snapshot with the new dims.
 - **`tools/e2e.sh`:** re-run after the async reader change and PASS. The block_update check found 0/65536 cells differing between the live and fresh snapshots, error paths returned the expected codes, and the avatar entities spawned. The earlier hang was caused by a stray test server still holding ports 25565/8765. The script now checks those ports before it starts and exits with an error if either is in use.
+
+## Water, waterlogging and animated textures (Quest mesher and atlas, 2026-10-13)
+
+What changed: `World/FluidMesher.cs` draws water and lava, including the water inside waterlogged blocks and in kelp, kelp_plant, seagrass, tall_seagrass and bubble_column cells (the 26.3 blocks that always hold water, found by listing the client's `getFluidState` overrides). It culls faces between cells that hold the same fluid and uses vanilla surface heights (a source is 8/9, flowing water is amount/9, corners are averaged with the neighbours). `World/TextureAnimation.cs` parses `<texture>.png.mcmeta`, and `ResourcePackAtlas.Animation.cs` advances animated textures at 20 ticks/s by GPU-copying single frames into their atlas layers.
+
+**Engine-free tests** (`Tests~/WaterTests.cs`, part of `dotnet run`; all PASS, 95 checks with master's player tests merged):
+- Water next to kelp makes 6 merged water quads and none between the cells. The kelp cross is still drawn, and it comes before the water in the transparent index list, so the water blends over the plant.
+- A kelp_plant inside 3×3×3 water: the cross plus 10 merged outer water quads, no faces around the kelp cell. All water quads wind counter-clockwise seen from outside.
+- A two-high water column: the top is lowered to 1 + 8/9, with no face between the cells. A 16×4×16 ocean merges into 10 quads.
+- `water[level=1]` next to air slopes from about 0.88 to about 0.39 (vanilla corner averaging).
+- Waterlogged bottom slab: slab box plus 5 water quads; the slab's own bottom face hides the water's. Waterlogged top slab: its top hides the water surface.
+- Waterlogged stairs hold water and get no face from the water beside them. While `BlockRules` still meshes stairs as an opaque cube, the cube hides that water. With a real stair shape the cell fills, and the back and bottom faces are culled. `FluidRules.FullFaces` is the hook for that.
+- Water next to stone: 5 water quads, and stone keeps all 6 faces. Lava: 6 quads, all opaque.
+- mcmeta: a `frames` list with `{index,time}` entries; a bad index is dropped; the schedule wraps; `texture`-only files and single frames are static; explicit `width`/`height` grids.
+- Against the user's 26.3 client jar (`--jar PATH` or `TABLETOP_CLIENT_JAR`, skipped when missing):
+  - water_still: 32 frames × 2 ticks (3.2 s cycle).
+  - kelp: 20 × 2.
+  - prismarine: a 22-step sequence over 4 frames, 300 ticks each, interpolated; tick 150 is a 0.5 blend toward the next frame.
+  - lava_still: a 38-step ping-pong over 20 frames.
+  - All 54 animated block textures parse. 105 block mcmeta files exist; the other 51 only carry `texture` hints such as mipmap strategy.
+
+**Real terrain** (seed 12345, centred on 0,0, y 32..128, `tools/measure_regions.py` against a local 26.3 server). The 128² region holds 258k water cells, 5.9k kelp/seagrass and 14 waterlogged blocks; 121 of its 384 sections have visible water. Counts use flat-colour keys. Times are on the x86 box, with `Tests~` built in Release and tiered JIT off (`dotnet run -c Release -- --measure DIR --measure-fluids DIR`).
+
+| region | total quads master → now | water quads master → now | whole mesh master → now | fluid pass alone (worst section) |
+|---|---|---|---|---|
+| 32×96×32 | 2,676 → 2,465 | 465 → 254 | 13 → 13 ms | 1 ms (0.12 ms) |
+| 64×96×64 | 13,019 → 11,094 | 2,949 → 1,029 | 51 → 49 ms | 4 ms (0.13 ms) |
+| 128×96×128 | 45,704 → 38,239 | 11,546 → 4,097 | 180 → 194 ms | 16 ms (0.14 ms) |
+
+Before this change, water drew faces against every plant and every change of water level. Removing those faces more than pays for the new water cells. The fluid pass costs about 0.04 ms per section. A Debug build of `Tests~` is much slower (8× for the whole mesher here, far more for the fluid pass), so compare timings in Release only. `--live` against the same server also passed.
+
+**Animation cost (estimate; the CPU side was measured):**
+- Scheduling all 54 animations takes 0.7 µs per tick on the box.
+- A layer copy is one 16×16 RGBA32 frame (1 KB), GPU to GPU, and happens only when a frame changes. A typical ocean view (water, kelp ×2, seagrass ×3, each changing every 2 ticks) needs about 60 copies/s. The worst case, with all 54 animated block textures on screen at once, is 814 copies/s.
+- Interpolated textures (prismarine, magma, command blocks, sculk, ...) also blend 256 pixels on the CPU and upload 1 KB to a one-layer staging array, at most 20 times/s each.
+- The frame store holds every frame of the textures that are loaded, at 1 KB per frame (about 150 KB for an ocean scene). The atlas is only rebuilt when the palette brings new textures, as before.
+
+**Needs the headset:**
+- `Graphics.CopyTexture` between `Texture2DArray`s on Quest Vulkan. Watch logcat for `[Tabletop] ANIM N animated textures`. If the copy is unsupported, it logs `ANIM off` and the first frames stay.
+- How water transparency and sorting look with kelp/seagrass and at region edges.
+- 72 FPS with animation running.
 
 ## Lighting and biome colours (`light_v1` / `biomes_v1`, PROTOCOL §4.5.1; 2026-10-13, no headset)
 

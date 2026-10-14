@@ -2,6 +2,8 @@ package dev.tabletopcraft.ar;
 
 import com.google.gson.JsonObject;
 import com.destroystokyo.paper.profile.PlayerProfile;
+import org.bukkit.HeightMap;
+import org.bukkit.profile.PlayerTextures;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
@@ -32,11 +34,15 @@ public final class TabletopPlugin extends JavaPlugin {
     private final ConcurrentLinkedQueue<Runnable> queue = new ConcurrentLinkedQueue<>();
     private record PoseSet(Session s, Pose head, Pose left, Pose right, long seq) {}
     private final AtomicReference<PoseSet> latestPose = new AtomicReference<>();
+    private PoseSet lastPose;                              // re-stepped while the smoothed giant catches up
+    private final Map<String, PlayerProfile> skinCache = new HashMap<>(); // lower-case name -> resolved profile
+    private final Set<String> skinLookups = new HashSet<>();
     private BukkitTask tickTask;
     private Map<String, Set<Long>> ticketed = Map.of();   // world name -> chunk keys holding our plugin ticket
     private Set<Long> giantChunks = Set.of();             // chunks of the giant's last applied pose (ticketed)
     private String giantWorld;
     private final Set<Long> giantLoading = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final Map<String, Set<Long>> giantPending = new HashMap<>(); // loaded for the giant's next move, ticketed until it moves
     private boolean dirty;
     private long tickCount;
     private Session avatarOwner;
@@ -62,8 +68,10 @@ public final class TabletopPlugin extends JavaPlugin {
         avatar.blockSizeM = c.getDouble("avatar.block-size-m", 0.01);
         avatar.maxScale = c.getDouble("avatar.max-scale", 16.0);
         avatar.userHeightM = c.getDouble("avatar.user-height-m", 1.75);
-        avatar.skinPlayer = c.getString("avatar.skin-player", "");
+        avatar.skinPlayer = defaultSkinPlayer();
         avatar.interpolationTicks = c.getInt("avatar.interpolation-ticks", 2);
+        avatar.placement = GiantPlacement.Mode.parse(c.getString("avatar.placement", "ground"));
+        avatar.smoothing = c.getDouble("avatar.smoothing", 0.5);
         lightOn = c.getBoolean("stream.light", true);
         biomesOn = c.getBoolean("stream.biomes", true);
         outbound = Executors.newSingleThreadExecutor(r -> { Thread t = new Thread(r, "tabletop-outbound"); t.setDaemon(true); return t; });
@@ -75,6 +83,8 @@ public final class TabletopPlugin extends JavaPlugin {
     private void stop() {
         if (tickTask != null) tickTask.cancel();
         avatar.remove();
+        lastPose = null;
+        giantPending.clear();
         releaseTickets();
         if (link != null) {
             for (Session s : link.sessions()) s.conn.close(Protocol.CLOSE_SHUTDOWN, "plugin disabled");
@@ -292,8 +302,11 @@ public final class TabletopPlugin extends JavaPlugin {
                 e.addProperty("sneaking", p.isSneaking());
                 if (s.skinSent.add(p.getUniqueId())) {
                     PlayerProfile prof = p.getPlayerProfile();
-                    var skin = prof.getTextures().getSkin();
+                    var textures = prof.getTextures();
+                    var skin = textures.getSkin();
                     e.addProperty("skin", skin == null ? null : skin.toString());
+                    // Additive (PROTOCOL.md 4.6): arm width from the textures payload's metadata.
+                    if (skin != null) e.addProperty("skin_model", SkinLookup.model(textures.getSkinModel() == PlayerTextures.SkinModel.SLIM));
                 }
                 arr.add(e);
             }
@@ -421,11 +434,12 @@ public final class TabletopPlugin extends JavaPlugin {
     void onAvatarConfig(Session s, AvatarConfig c, Long refSeq) {
         // Block size / max_scale changes (the headset sends them while scaling) only rescale the spawned giant;
         // new entities are needed only when its appearance changes.
-        boolean looks = (c.skinPlayer() != null && !c.skinPlayer().equals(avatar.skinPlayer))
+        boolean looks = (c.skinPlayer() != null && !(c.skinPlayer().isBlank() ? defaultSkinPlayer() : c.skinPlayer()).equals(avatar.skinPlayer))
             || (c.model() != null && !c.model().equals(avatar.model))
             || (c.showHands() != null && c.showHands() != avatar.showHands)
             || (c.nameTagPresent() && !java.util.Objects.equals(c.nameTag(), avatar.nameTag));
-        if (c.skinPlayer() != null) avatar.skinPlayer = c.skinPlayer();
+        // A blank skin_player falls back to the plugin default (config.yml avatar.skin-player); missing keeps the current one.
+        if (c.skinPlayer() != null) avatar.skinPlayer = c.skinPlayer().isBlank() ? defaultSkinPlayer() : c.skinPlayer();
         if (c.model() != null) avatar.model = c.model();
         if (c.blockSizeM() != null) avatar.blockSizeM = c.blockSizeM();
         if (c.maxScale() != null) avatar.maxScale = c.maxScale();
@@ -440,17 +454,82 @@ public final class TabletopPlugin extends JavaPlugin {
         send(s, avatar.state(getConfig().getBoolean("debug.avatar-state", false)));
     }
 
+    private String defaultSkinPlayer() { return getConfig().getString("avatar.skin-player", ""); }
+
     private void spawnAvatarAtAnchor() {
         RegionSpec r = defaultRegion();
         World w = Bukkit.getWorld(r.world());
         if (w == null) return;
-        avatar.spawn(w, new Location(w, r.ox() + r.sx() / 2.0, r.oy(), r.oz() + r.sz() / 2.0));
-        getLogger().info(String.format("Avatar spawned: scale %.2f (%s)", avatar.scale(), avatar.note == null ? "no clamp" : avatar.note));
+        // Stand on the ground in the middle of the region until the first pose arrives (region chunks are ticketed).
+        int cx = r.ox() + r.sx() / 2, cz = r.oz() + r.sz() / 2;
+        double y = w.isChunkLoaded(cx >> 4, cz >> 4) ? w.getHighestBlockYAt(cx, cz, HeightMap.MOTION_BLOCKING_NO_LEAVES) + 1 : r.oy();
+        avatar.resolvedSkin = skinCache.get(avatar.skinPlayer.toLowerCase(Locale.ROOT));
+        avatar.spawn(w, new Location(w, cx + 0.5, y, cz + 0.5));
+        resolveSkin(avatar.skinPlayer);
+        getLogger().info(String.format("Avatar spawned: scale %.2f (%s), placement %s, skin %s", avatar.scale(),
+            avatar.note == null ? "no clamp" : avatar.note, avatar.placement.id(), avatar.skinPlayer.isBlank() ? "default" : avatar.skinPlayer));
+    }
+
+    // ---------- giant skin ----------
+    /**
+     * Resolves skin_player to a signed textures property off the main thread, then gives the giant a static
+     * profile. Until then (and if this fails) it keeps the name-only profile, which Java clients resolve
+     * themselves. Paper's own lookup follows the server's online-mode setting (an offline server turns the name
+     * into an offline UUID without textures), so ask with online=true and, if that finds nothing, look the UUID up
+     * on the Mojang API directly.
+     */
+    private void resolveSkin(String name) {
+        if (name == null || name.isBlank()) { avatar.skinNote = null; return; }
+        String key = name.toLowerCase(Locale.ROOT);
+        if (skinCache.containsKey(key)) { avatar.skinNote = null; return; }
+        if (!skinLookups.add(key)) return;
+        avatar.skinNote = "resolving skin " + name;
+        PlayerProfile profile = Bukkit.createProfile(name);
+        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+            PlayerProfile done = null;
+            String why = null;
+            try {
+                if (profile.complete(true, true) && profile.hasTextures()) done = profile;
+                else {
+                    java.util.UUID id = SkinLookup.uuidForName(name);
+                    if (id == null) why = "no Java account named " + name;
+                    else {
+                        PlayerProfile byId = Bukkit.createProfile(id, name);
+                        if (byId.complete(true, true) && byId.hasTextures()) done = byId;
+                        else why = "no textures for " + name;
+                    }
+                }
+            } catch (Exception e) { why = e.getClass().getSimpleName() + ": " + e.getMessage(); }
+            PlayerProfile result = done;
+            String reason = why;
+            enqueue(() -> onSkinResolved(name, key, result, reason));
+        });
+    }
+
+    private void onSkinResolved(String name, String key, PlayerProfile p, String why) {
+        skinLookups.remove(key);
+        boolean current = avatar.skinPlayer.equalsIgnoreCase(name);
+        if (p != null) {
+            skinCache.put(key, p);
+            getLogger().info("SKIN resolved " + name + " -> " + p.getId() + " (" + (p.getTextures().getSkinModel() == PlayerTextures.SkinModel.SLIM ? "slim" : "wide") + ")");
+            if (current) { avatar.resolvedSkin = p; avatar.skinNote = null; avatar.refreshSkin(); }
+        } else {
+            getLogger().warning("SKIN lookup failed for " + name + ": " + why);
+            if (current) avatar.skinNote = "server skin lookup failed (" + why + "); Java clients may still resolve " + name;
+        }
+        if (!current || avatarOwner == null || avatarOwner.state != Session.State.READY) return;
+        if (p == null) send(avatarOwner, Protocol.error("skin_failed", "skin_player " + name + ": " + why, null, false));
+        send(avatarOwner, avatar.state(getConfig().getBoolean("debug.avatar-state", false)));
     }
 
     private void applyPose() {
         PoseSet ps = latestPose.getAndSet(null);
-        if (ps == null || ps.s().region == null) return;
+        if (ps == null) {
+            // No new pose this tick: keep easing toward the last one so the giant settles where the user is.
+            if (lastPose == null || !avatar.settling()) return;
+            ps = lastPose;
+        } else lastPose = ps;
+        if (ps.s().region == null) return;
         if (!avatar.enabled && getConfig().getBoolean("avatar.spawn-on-first-pose", true) && !avatar.spawned()) {
             avatar.enabled = true; avatarOwner = ps.s(); spawnAvatarAtAnchor();
             send(ps.s(), avatar.state(getConfig().getBoolean("debug.avatar-state", false)));
@@ -459,27 +538,50 @@ public final class TabletopPlugin extends JavaPlugin {
         RegionSpec r = ps.s().region;
         World w = Bukkit.getWorld(r.world());
         if (w == null) return;
-        double bs = avatar.blockSizeM;
-        double[] hp = ps.head().toWorld(r.ox(), r.oy(), r.oz(), bs);
-        double[] lp = ps.left() == null ? null : ps.left().toWorld(r.ox(), r.oy(), r.oz(), bs);
-        double[] rp = ps.right() == null ? null : ps.right().toWorld(r.ox(), r.oy(), r.oz(), bs);
+        GiantPlacement.Placement target = GiantPlacement.place(avatar.placement, ps.head(), ps.left(), ps.right(), r,
+            avatar.blockSizeM, avatar.scale(), avatar.userHeightM, (x, z) -> groundFeetY(w, x, z), w.getMinHeight());
+        if (target == null) {
+            // Ground mode, column not loaded (the region's chunks are ticketed, so this is rare): load it, hold.
+            double[] hp = ps.head().toWorld(r.ox(), r.oy(), r.oz(), avatar.blockSizeM);
+            int bx = (int) Math.floor(GiantPlacement.clamp(hp[0], r.ox(), r.ox() + r.sx(), GiantPlacement.EDGE_INSET));
+            int bz = (int) Math.floor(GiantPlacement.clamp(hp[2], r.oz(), r.oz() + r.sz(), GiantPlacement.EDGE_INSET));
+            loadAsync(w, chunkKey(bx >> 4, bz >> 4));
+            return;
+        }
+        GiantAvatar.Step step = avatar.step(target, ps.head());
         // Never move the giant into an unloaded chunk: that deletes its non-persistent entities on the spot. Load
         // the target chunks asynchronously (no main-thread stall), hold the giant meanwhile, then ticket and move.
         Set<Long> targets = new HashSet<>();
-        for (double[] p : new double[][] { hp, lp, rp })
+        for (double[] p : new double[][] { step.eye(), step.left(), step.right() })
             if (p != null) targets.add(chunkKey((int) Math.floor(p[0]) >> 4, (int) Math.floor(p[2]) >> 4));
         boolean loaded = true;
-        for (long k : targets) {
-            int cx = (int) k, cz = (int) (k >> 32);
-            if (w.isChunkLoaded(cx, cz)) continue;
-            loaded = false;
-            if (giantLoading.add(k)) w.getChunkAtAsync(cx, cz).whenComplete((c, err) -> giantLoading.remove(k));
-        }
+        for (long k : targets) if (!w.isChunkLoaded((int) k, (int) (k >> 32))) { loaded = false; loadAsync(w, k); }
         if (!loaded) return;
-        if (!targets.equals(giantChunks) || !w.getName().equals(giantWorld)) { giantChunks = targets; giantWorld = w.getName(); updateTickets(); }
-        avatar.apply(w, hp, ps.head(), lp, ps.left(), rp, ps.right(), ps.seq());
+        if (!targets.equals(giantChunks) || !w.getName().equals(giantWorld) || !giantPending.isEmpty()) {
+            giantChunks = targets; giantWorld = w.getName(); giantPending.clear(); updateTickets();
+        }
+        avatar.commit(w, step, ps.left(), ps.right(), ps.seq());
         if (getConfig().getBoolean("debug.log-poses", false))
-            getLogger().info(String.format("pose seq=%d head=%.2f,%.2f,%.2f yaw=%.1f", ps.seq(), hp[0], hp[1], hp[2], ps.head().yawDeg()));
+            getLogger().info(String.format("pose seq=%d eye=%.2f,%.2f,%.2f yaw=%.1f ground=%.1f", ps.seq(), step.eye()[0], step.eye()[1], step.eye()[2], step.yaw(), step.groundY()));
+    }
+
+    private void loadAsync(World w, long k) {
+        if (!giantLoading.add(k)) return;
+        String wn = w.getName();
+        w.getChunkAtAsync((int) k, (int) (k >> 32)).whenComplete((c, err) -> {
+            giantLoading.remove(k);
+            if (c == null) return;
+            // Ticket it right away: with no player nearby a chunk loaded this way unloads again before the next
+            // tick, and the giant would wait for it forever. The ticket is cheap here because it's loaded.
+            Runnable hold = () -> { giantPending.computeIfAbsent(wn, x -> new HashSet<>()).add(k); updateTickets(); };
+            if (Bukkit.isPrimaryThread()) hold.run(); else enqueue(hold);
+        });
+    }
+
+    /** Feet Y on the ground in column (x, z), ignoring leaves so the giant wades through forests; NaN if not loaded. */
+    private static double groundFeetY(World w, int x, int z) {
+        if (!w.isChunkLoaded(x >> 4, z >> 4)) return Double.NaN;
+        return w.getHighestBlockYAt(x, z, HeightMap.MOTION_BLOCKING_NO_LEAVES) + 1;
     }
 
     // ---------- chunk tickets ----------
@@ -500,6 +602,7 @@ public final class TabletopPlugin extends JavaPlugin {
                 for (int cz = r.oz() >> 4; cz <= (r.oz() + r.sz() - 1) >> 4; cz++) keys.add(chunkKey(cx, cz));
         }
         if (giantWorld != null && avatar.spawned()) want.computeIfAbsent(giantWorld, k -> new HashSet<>()).addAll(giantChunks);
+        if (avatar.spawned()) giantPending.forEach((name, keys) -> want.computeIfAbsent(name, k -> new HashSet<>()).addAll(keys));
         if (want.equals(ticketed)) return;
         Set<String> worlds = new HashSet<>(want.keySet());
         worlds.addAll(ticketed.keySet());
@@ -527,8 +630,8 @@ public final class TabletopPlugin extends JavaPlugin {
         switch (args[0].toLowerCase(Locale.ROOT)) {
             case "status" -> {
                 RegionSpec r = defaultRegion();
-                sender.sendMessage(String.format("[tabletop] default region %s origin %d %d %d dims %d %d %d; clients %d; avatar %s scale %.2f; poses applied %d",
-                    r.world(), r.ox(), r.oy(), r.oz(), r.sx(), r.sy(), r.sz(), ready().size(), avatar.spawned() ? "spawned" : "none", avatar.scale(), avatar.posesApplied));
+                sender.sendMessage(String.format("[tabletop] default region %s origin %d %d %d dims %d %d %d; clients %d; avatar %s scale %.2f placement %s; poses applied %d",
+                    r.world(), r.ox(), r.oy(), r.oz(), r.sx(), r.sy(), r.sz(), ready().size(), avatar.spawned() ? "spawned" : "none", avatar.scale(), avatar.placement.id(), avatar.posesApplied));
             }
             case "setorigin" -> {
                 int x, y, z; String world;
@@ -561,6 +664,18 @@ public final class TabletopPlugin extends JavaPlugin {
                 switch (sub) {
                     case "spawn" -> { avatar.enabled = true; spawnAvatarAtAnchor(); sender.sendMessage("[tabletop] avatar spawned, scale " + avatar.scale()); }
                     case "remove" -> { avatar.enabled = false; avatar.remove(); sender.sendMessage("[tabletop] avatar removed"); }
+                    case "placement" -> {
+                        if (args.length < 3 || !(args[2].equalsIgnoreCase("ground") || args[2].equalsIgnoreCase("exact"))) { sender.sendMessage("[tabletop] usage: /tabletop avatar placement <ground|exact>"); return true; }
+                        avatar.placement = GiantPlacement.Mode.parse(args[2]);
+                        getConfig().set("avatar.placement", avatar.placement.id()); saveConfig();
+                        sender.sendMessage("[tabletop] giant placement: " + avatar.placement.id());
+                    }
+                    case "skin" -> {
+                        if (args.length < 3) { sender.sendMessage("[tabletop] usage: /tabletop avatar skin <java account name>"); return true; }
+                        avatar.skinPlayer = args[2];
+                        if (avatar.spawned()) spawnAvatarAtAnchor(); else resolveSkin(args[2]);
+                        sender.sendMessage("[tabletop] giant skin: " + args[2]);
+                    }
                     case "blocksize" -> {
                         if (args.length < 3) { sender.sendMessage("[tabletop] usage: /tabletop avatar blocksize <metres per block>"); return true; }
                         try { double b = Double.parseDouble(args[2]); if (b < 0.002 || b > 0.1) throw new NumberFormatException(); avatar.blockSizeM = b; getConfig().set("avatar.block-size-m", b); saveConfig(); }
@@ -594,7 +709,8 @@ public final class TabletopPlugin extends JavaPlugin {
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (args.length == 1) return List.of("status", "setorigin", "setsize", "avatar", "reload");
-        if (args.length == 2 && args[0].equalsIgnoreCase("avatar")) return List.of("status", "spawn", "remove", "blocksize");
+        if (args.length == 2 && args[0].equalsIgnoreCase("avatar")) return List.of("status", "spawn", "remove", "blocksize", "placement", "skin");
+        if (args.length == 3 && args[0].equalsIgnoreCase("avatar") && args[1].equalsIgnoreCase("placement")) return List.of("ground", "exact");
         return List.of();
     }
 }

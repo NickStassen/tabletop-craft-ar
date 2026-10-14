@@ -25,9 +25,21 @@ stream:
 avatar:
   # Real metres per block on the table; the Quest overrides it with avatar_config.
   block-size-m: 0.01
+  # Cap on the Mannequin SCALE attribute (16 = 28.8 blocks tall, the attribute's maximum).
   max-scale: 16.0
+  # Real height of the headset user. Hand offsets are scaled by giant height / this.
   user-height-m: 1.75
+  # Where the giant stands (ARCHITECTURE.md 3.5):
+  #   ground: on the terrain under the headset's head X/Z, clamped into the region; head turns with the
+  #           headset; hands keep your real head-to-hand offsets scaled up to the giant's size.
+  #   exact:  head and hands at exactly origin + pose / block-size-m (far away and high up at small block sizes).
+  placement: ground
+  # Per-tick smoothing of the giant's position and head rotation, 0.05..1 (1 = off). Jumps over 16 blocks snap.
+  smoothing: 0.5
+  # Java account whose skin the giant wears when the headset sends no skin_player (tabletop.json). The server
+  # looks it up on the Mojang API (works in offline mode too, needs internet); Java clients also resolve it.
   skin-player: ""
+  # Teleport/transform interpolation of the hand displays, in ticks.
   interpolation-ticks: 2
   # Spawn the giant when poses arrive even if no avatar_config was sent.
   spawn-on-first-pose: true

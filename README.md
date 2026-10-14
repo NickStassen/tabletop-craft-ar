@@ -4,6 +4,10 @@ A live block world from a **Minecraft: Java Edition** server, shown as a miniatu
 
 > Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft. This project ships no Mojang assets: textures come from a resource pack you supply.
 
+![The miniature on a desk in passthrough, with the Java client on the monitor behind it showing the headset user as a giant](docs/media/tabletop-giant.gif)
+
+*First run on a Quest 3: the server's world as a miniature on the desk, with a Java client on the monitor behind it showing the headset user as a giant wearing their skin. The orange capsule on the table is that Java player.*
+
 Related: the idea write-up [VR-7 in NickStassen/ideas](https://github.com/NickStassen/ideas/blob/master/vr/07-minecraft-ar-tabletop.md) and the sister project [ironman-quest3-hud](https://github.com/NickStassen/ironman-quest3-hud), which has the Unity 6000.0.84f1 + Meta XR setup this project reuses.
 
 ## How it works
@@ -16,7 +20,7 @@ Java players (LAN) ──game protocol──▶ Paper 26.3 + tabletop plugin ◀
 ```
 
 - **server-plugin/**: Paper plugin (Java 25, Gradle Kotlin DSL, Java-WebSocket 1.6.0 shaded). Streams a configurable box (default 32x64x32) and drives the giant.
-- **quest-app/**: Unity 6000.0.84f1 project skeleton + C# scripts (link client, protocol, greedy mesher, resource-pack atlas, MRUK table placement, pose sender, player markers). Compiles and builds headless on Linux; not yet run on a headset. See [docs/QUEST_SETUP.md](docs/QUEST_SETUP.md).
+- **quest-app/**: Unity 6000.0.84f1 project skeleton + C# scripts (link client, protocol, greedy mesher, resource-pack atlas, MRUK table placement, pose sender, player markers). Runs on a Quest 3 (first session 2026-10-13) and builds headless on Linux. See [docs/QUEST_SETUP.md](docs/QUEST_SETUP.md).
 - **tools/**: Python fake-Quest client, protocol fixtures, the mineflayer second-player bot, and `e2e.sh`, which runs the whole server-side stack headless.
 - **docs/**: [ARCHITECTURE](docs/ARCHITECTURE.md), [PROTOCOL](docs/PROTOCOL.md) (normative wire format, v1), [PLAN](docs/PLAN.md), [RESEARCH](docs/RESEARCH.md), [TESTING](docs/TESTING.md), [QUEST_SETUP](docs/QUEST_SETUP.md).
 
@@ -25,10 +29,21 @@ Java players (LAN) ──game protocol──▶ Paper 26.3 + tabletop plugin ◀
 | Part | State |
 |---|---|
 | Plugin: snapshot, block updates, players, subscribe, errors, timeouts | Tested end to end on a headless Paper 26.3 server (and earlier on 1.21.11); see [TESTING](docs/TESTING.md) |
-| Giant avatar (Mannequin scale 16 + hands) following fake poses | Tested on 26.3: a mineflayer player (joining as 26.1 through ViaBackwards) receives the entity spawns and movement |
+| Giant avatar (Mannequin scale 16 + hands) following fake poses | Tested on 26.3: a mineflayer player (joining as 26.1 through ViaBackwards) receives the entity spawns and movement. On the first headset session a Java client on an online-mode server saw the giant follow the headset wearing the user's skin (exact placement). Ground placement and the server-side skin lookup were checked with entity positions and logs (TESTING section 7), not yet by eye |
+| Java players on the table (skinned, animated figures) | Geometry, UVs, animation and skin rules unit-tested; skin download checked in the Unity Editor; not yet seen on a headset |
 | Quest C# protocol/mesher code | Compiled and unit-tested with .NET 8 outside Unity, plus a live session against the plugin |
 | Quest app in Unity | Compiles and builds an APK on Linux, headless (Unity 6000.0.84f1, Meta XR 85.0.0); see [TESTING](docs/TESTING.md) section 5 |
-| Quest app on a headset | **Not tested yet** |
+| Quest app on a headset | First session on a Quest 3: passthrough, Wi-Fi link to Paper 26.3 (RTT 13-42 ms), a 64x96x64 area textured from the 26.3 client jar at a steady 72 FPS (~2.5 ms app GPU), the Java player on the table, and the giant (with the user's skin) seen from a Java client. MRUK table detection, area setup and the newer rendering work are still to be checked; see [TESTING](docs/TESTING.md) "First headset session" |
+
+## Screenshots
+
+From the same recording on the headset. Leaning into the miniature: stone, seagrass and an abandoned mineshaft inside the terrain.
+
+![Leaning into the terrain on the table: stone, seagrass and mineshaft planks with cobwebs](docs/media/tabletop-closeup.gif)
+
+| | |
+|---|---|
+| ![Terrain and seagrass on the desk](docs/media/tabletop-terrain.jpg) | ![Inside the terrain: mineshaft planks and cobwebs](docs/media/tabletop-mineshaft.jpg) |
 
 ## Quick start (server)
 
@@ -45,6 +60,8 @@ Copy the jar into a Paper **26.3** server's `plugins/`, start the server once, t
 /tabletop setorigin [x y z]        # region min corner (your position if omitted)
 /tabletop setsize <dx> <dy> <dz>   # max 64 x 384 x 64
 /tabletop avatar status|spawn|remove|blocksize <m>
+/tabletop avatar placement ground|exact   # giant on the terrain (default) or at the exact mapped head position
+/tabletop avatar skin <java name>         # giant's skin (also tabletop.json skin_player / config avatar.skin-player)
 /tabletop reload
 ```
 

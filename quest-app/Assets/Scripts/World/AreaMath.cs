@@ -14,10 +14,11 @@ namespace TabletopCraft.World
 
     public static class AreaMath
     {
-        // Calibrated from greedy-mesher counts on real generated terrain (docs/TESTING.md "Real terrain").
+        // Calibrated from mesher counts on real generated terrain with the 26.3 pack: greedy cubes plus block models
+        // (docs/TESTING.md "Block models from the resource pack").
         // Quads ~= SurfacePerColumn * dx*dz (the visible surface) + CavePerBlock * blocks below the surface band.
-        public const double SurfacePerColumn = 3.5;
-        public const double CavePerBlock = 0.035;
+        public const double SurfacePerColumn = 5.5;
+        public const double CavePerBlock = 0.04;
         public const int SurfaceBand = 96;
         /// <summary>
         /// Extra quads from per-vertex light (BlockShading): faces with different light/AO don't merge. Measured on real

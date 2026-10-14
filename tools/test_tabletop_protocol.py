@@ -20,6 +20,16 @@ def test_spec_fixtures_validate(path):
     validate(json.loads(path.read_text()))
 
 
+def test_player_positions_skin_model():
+    msg = json.loads((FIX / "player_positions.json").read_text())
+    assert msg["players"][0]["skin_model"] == "slim"
+    msg["players"][0]["skin_model"] = "huge"
+    with pytest.raises(ValueError):
+        validate(msg)
+    del msg["players"][0]["skin_model"]
+    validate(msg)  # optional field
+
+
 def test_decode_pairs_index_then_run():
     assert decode_rle([0, 2, 1, 1], 3) == [0, 0, 1]
     with pytest.raises(ValueError):
