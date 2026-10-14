@@ -26,11 +26,16 @@ REQUIRED = {
     "region_query": [],
     "region_changed": ["world", "origin", "dims", "by_session"],
     "region_info": ["region", "players", "limits"],
+    "block_edit": ["op", "pos"],
 }
 ERROR_CODES = {"version_mismatch", "auth_failed", "bad_message", "unknown_type", "unsupported", "region_too_large",
-               "world_not_found", "bad_snapshot", "rate_limited", "skin_failed", "internal"}
+               "world_not_found", "bad_snapshot", "rate_limited", "skin_failed", "internal",
+               "edit_denied", "out_of_region", "bad_state"}   # the last three: block_edit (PROTOCOL.md 4.17)
 # Optional snapshot extras a client can ask for in hello.caps (PROTOCOL.md 4.4.1).
 CAP_LIGHT, CAP_BIOMES = "light_v1", "biomes_v1"
+# Block editing from the headset (PROTOCOL.md 4.17): block_edit, granted in welcome.caps.
+CAP_EDIT = "edit_v1"
+FACES = ("west", "east", "down", "up", "north", "south")
 
 
 def validate(msg: dict) -> None:
@@ -51,6 +56,21 @@ def validate(msg: dict) -> None:
         for p in msg["players"]:
             if p.get("skin_model") not in (None, "wide", "slim"):
                 raise ValueError(f"player_positions skin_model must be wide or slim, got {p['skin_model']}")
+    if t == "block_edit":
+        validate_block_edit(msg)
+
+
+def validate_block_edit(msg: dict) -> None:
+    """block_edit (PROTOCOL.md 4.17): op break|place, integer world pos, state for place, optional face."""
+    if msg["op"] not in ("break", "place"):
+        raise ValueError(f"block_edit op must be break or place, got {msg['op']}")
+    pos = msg["pos"]
+    if not isinstance(pos, list) or len(pos) != 3 or not all(isinstance(v, int) and not isinstance(v, bool) for v in pos):
+        raise ValueError(f"block_edit pos must be [x, y, z] integers, got {pos}")
+    if msg["op"] == "place" and not (isinstance(msg.get("state"), str) and msg["state"].strip()):
+        raise ValueError("block_edit place needs a state")
+    if msg.get("face") is not None and msg["face"] not in FACES:
+        raise ValueError(f"block_edit face must be one of {FACES}, got {msg['face']}")
 
 
 def decode_rle(data: list[int], volume: int) -> list[int]:
@@ -178,6 +198,16 @@ class Envelope:
         self.seq = (self.seq + 1) & 0xFFFFFFFF
         m.update(payload)
         return m
+
+
+def block_edit(op: str, pos, state: str | None = None, face: str | None = None) -> dict:
+    """block_edit payload (PROTOCOL.md 4.17); wrap it with Envelope.wrap("block_edit", **payload)."""
+    d: dict = {"op": op, "pos": [int(v) for v in pos]}
+    if state is not None:
+        d["state"] = state
+    if face is not None:
+        d["face"] = face
+    return d
 
 
 def parse_region(spec: str) -> dict:

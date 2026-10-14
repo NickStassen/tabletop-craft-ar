@@ -4,7 +4,19 @@ import pathlib
 
 import pytest
 
-from tabletop_protocol import CAP_BIOMES, CAP_LIGHT, Envelope, WorldMirror, decode_light, decode_rle, parse_region, scripted_pose, validate
+from tabletop_protocol import (
+    CAP_BIOMES,
+    CAP_EDIT,
+    CAP_LIGHT,
+    Envelope,
+    WorldMirror,
+    block_edit,
+    decode_light,
+    decode_rle,
+    parse_region,
+    scripted_pose,
+    validate,
+)
 
 FIX = pathlib.Path(__file__).parent / "fixtures"
 
@@ -108,3 +120,43 @@ def test_decode_light_rejects_bad_data():
 def test_caps_in_hello_and_welcome_fixtures():
     assert {CAP_LIGHT, CAP_BIOMES} <= set(json.loads((FIX / "hello.json").read_text())["caps"])
     assert json.loads((FIX / "welcome.json").read_text())["caps"] == [CAP_LIGHT, CAP_BIOMES]
+
+
+def test_block_edit_fixtures_and_builder():
+    place = json.loads((FIX / "block_edit.json").read_text())
+    brk = json.loads((FIX / "block_edit_break.json").read_text())
+    env = Envelope()
+    built = env.wrap("block_edit", **block_edit("place", (105, 64, -35), "minecraft:oak_log[axis=x]", "east"))
+    validate(built)
+    assert {k: built[k] for k in ("op", "pos", "state", "face")} == {k: place[k] for k in ("op", "pos", "state", "face")}
+    assert set(env.wrap("block_edit", **block_edit("break", [104, 63, -35], face="up"))) == set(brk)
+    err = json.loads((FIX / "error_edit_denied.json").read_text())
+    assert err["code"] == "edit_denied" and err["pos"] == place["pos"] and err["op"] == "place"
+
+
+@pytest.mark.parametrize("patch", [
+    {"op": "explode"},
+    {"pos": [1, 2]},
+    {"pos": [1, 2.5, 3]},
+    {"pos": [1, True, 3]},
+    {"state": None},
+    {"state": "  "},
+    {"face": "sideways"},
+])
+def test_block_edit_rejects_bad_fields(patch):
+    msg = json.loads((FIX / "block_edit.json").read_text())
+    msg.update(patch)
+    if msg.get("state") is None:
+        del msg["state"]
+    with pytest.raises(ValueError):
+        validate(msg)
+
+
+def test_block_edit_break_needs_no_state_and_edit_errors_are_known():
+    msg = json.loads((FIX / "block_edit_break.json").read_text())
+    validate(msg)
+    del msg["face"]
+    validate(msg)   # face is optional
+    for code in ("edit_denied", "out_of_region", "bad_state", "rate_limited"):
+        validate({"v": 1, "type": "error", "seq": 0, "t": 0, "code": code, "message": "x", "pos": [0, 0, 0]})
+    assert CAP_EDIT == "edit_v1"
