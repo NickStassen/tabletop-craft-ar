@@ -45,6 +45,9 @@ namespace TabletopCraft.World
         {
             if (_prewarmedSnapshot != Model.SnapshotId) { _prewarmedSnapshot = Model.SnapshotId; _prewarmedCount = 0; }
             if (Atlas == null) { _prewarmedCount = Model.Palette.Count; return; }
+            // FluidMesher meshes water/lava (incl. waterlogged blocks, kelp, seagrass) with these two states' faces. Always
+            // ready, so a worker never resolves them, even for a block_update that lands mid-mesh (cached after the first call).
+            for (int d = 0; d < 6; d++) { Atlas.Face(FluidRules.WaterState, d); Atlas.Face(FluidRules.LavaState, d); }
             for (; _prewarmedCount < Model.Palette.Count; _prewarmedCount++)
                 for (int d = 0; d < 6; d++) Atlas.Face(Model.Palette[_prewarmedCount], d);
             Atlas.Commit();
@@ -57,6 +60,7 @@ namespace TabletopCraft.World
 
         void Update()
         {
+            Atlas?.Animate(Time.unscaledTimeAsDouble);   // animated textures: 20 game ticks/s, one layer copy per frame change
             if (Model == null || !Model.Loaded) return;
             Upload();
             if (Model.DirtySections.Count == 0 || _inFlight >= MaxJobsInFlight) return;

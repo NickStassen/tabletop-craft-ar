@@ -120,6 +120,7 @@ static class Program
         Check(Protocol.RegionQuery("Bob").S("player") == "Bob" && !Protocol.RegionQuery().ContainsKey("player"), "region_query builder");
 
         PlayerTests.Run(Check, Fixture);
+        WaterTests.Run(Check, args);   // fluids, waterlogging, texture animation (WaterTests.cs)
 
         int measIdx = Array.IndexOf(args, "--measure");
         if (measIdx >= 0) { Measure(args[measIdx + 1]); return 0; }

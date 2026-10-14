@@ -60,7 +60,7 @@ namespace TabletopCraft.World
                             ushort id = w.Get(p.x, p.y, p.z);
                             string st = w.State(id);
                             var shape = BlockRules.Shape(st);
-                            if (shape != BlockShape.Cube && shape != BlockShape.TransparentCube && shape != BlockShape.Fluid) continue;
+                            if (shape != BlockShape.Cube && shape != BlockShape.TransparentCube) continue;   // fluids: FluidMesher
                             var q = p + n;
                             ushort nid = w.Get(q.x, q.y, q.z);
                             if (nid != 0xFFFF)
@@ -127,6 +127,9 @@ namespace TabletopCraft.World
                         if (shape == BlockShape.Cross) Cross(m, x, y, z, faces.Face(st, 4));
                         else if (shape == BlockShape.Slab) Box(m, new Vector3(x, y + (st.Contains("type=top") ? 0.5f : 0), z), new Vector3(1, 0.5f, 1), faces, st);
                     }
+            // Water/lava, including waterlogged blocks and kelp/seagrass cells. Last, so water blends over the plants
+            // and models inside it in the transparent submesh.
+            FluidMesher.Build(w, section, faces, m);
         }
 
         static void Cross(MeshData m, int x, int y, int z, FaceKey key)
