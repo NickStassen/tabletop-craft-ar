@@ -411,6 +411,7 @@ static class AreaTests
         int asked = 0; Vector3 viewBefore = default; string[] mine = null; byte[] mineLight = null;
         SnapshotAssembler.Result resized = null; var t0 = DateTime.UtcNow;
         var deadline = DateTime.UtcNow.AddSeconds(150); var nextPing = DateTime.UtcNow;
+        DateTime askResendAt = DateTime.MaxValue, lastResend = DateTime.MinValue;
         float Now() => (float)(DateTime.UtcNow - DateTime.UnixEpoch).TotalSeconds;
         while (DateTime.UtcNow < deadline && (widths.Count > 0 || phase != 0))
         {
@@ -444,7 +445,7 @@ static class AreaTests
                                   $"live-resize: {oldWidth} -> {got} (asked {asked}) as a delta: {r.Listed} sections sent, {r.Plan.Mesh.Count} to mesh, {r.Plan.Kept} kept, view kept {kept}, {(DateTime.UtcNow - t0).TotalMilliseconds:F0} ms");
                             if (got > oldWidth) Check(r.Plan.Kept > 0 && r.Plan.Mesh.Count >= r.Listed, "live-resize: growing keeps every old section mesh, meshes the new ring");
                             else Check(r.Plan.Mesh.Count == r.Listed && r.Listed < 8, $"live-resize: shrinking meshes only changed sections ({r.Listed})");
-                            link.Send(new Dictionary<string, object> { ["type"] = "error", ["code"] = "bad_snapshot", ["message"] = "live resize check", ["snapshot_id"] = world.SnapshotId, ["fatal"] = false });
+                            askResendAt = lastResend.AddSeconds(2.2);   // the server resends at most every 2 s per session
                         }
                         else if (phase == 2)
                         {
@@ -457,6 +458,11 @@ static class AreaTests
                         }
                         break;
                 }
+            }
+            if (phase == 2 && askResendAt != DateTime.MaxValue && DateTime.UtcNow >= askResendAt)
+            {
+                askResendAt = DateTime.MaxValue; lastResend = DateTime.UtcNow;
+                link.Send(new Dictionary<string, object> { ["type"] = "error", ["code"] = "bad_snapshot", ["message"] = "live resize check", ["snapshot_id"] = world.SnapshotId, ["fatal"] = false });
             }
             if (phase == 0 && world.Loaded && widths.Count > 0)
             {

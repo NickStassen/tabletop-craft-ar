@@ -239,9 +239,14 @@ namespace TabletopCraft.World
     /// <summary>[area] Engine-free rules for when batches are rebuilt (TabletopRenderer); tested in Tests~/AreaTests.cs.</summary>
     public static class BatchRules
     {
-        /// <summary>Sections per batch side (x and z; a batch spans the full height). Chosen by measurement (TESTING.md
-        /// "Area size presets and batching"); tabletop.json "batch_columns" overrides it.</summary>
-        public static int Columns = 4;
+        /// <summary>
+        /// Sections per batch side (x and z; a batch spans the full height). Chosen by measurement (TESTING.md "Area size
+        /// presets and batching", seed 12345 with the 26.3 pack and light): 2 gives 36 renderers / 72 draw calls at a
+        /// 128-wide window and 100 / 200 at 256 (per-section meshes: 328 / 605 and 1,223 / 2,058), while a batch stays
+        /// under ~90k vertices (3 MB), so an edit re-uploads about 1.3 MB. 4 halves the draw calls again but an edit
+        /// re-uploads 5-9 MB. tabletop.json "batch_columns" overrides it for headset comparisons.
+        /// </summary>
+        public static int Columns = 2;
 
         /// <summary>
         /// Rebuild a dirty batch now? Right away when none of its sections is waiting to be meshed. While some are, wait

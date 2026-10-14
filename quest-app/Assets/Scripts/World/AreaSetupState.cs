@@ -117,8 +117,8 @@ namespace TabletopCraft.World
         {
             if (Size.x > Limits.MaxX || Size.y > Limits.MaxY || Size.z > Limits.MaxZ || Blocks > Limits.MaxBlocks)
                 return $"over server limit {Limits.MaxX}x{Limits.MaxY}x{Limits.MaxZ} / {Limits.MaxBlocks} blocks";
-            if (OverBudget && EstimatedMeshes > SectionBudget)
-                return $"~{EstimatedMeshes} section meshes is over the headset budget (~{SectionBudget} draw calls). Hold B to override";
+            if (OverBudget && EstimatedMeshes > SectionBudget)   // [area] mesh batches, ~2 draw calls each
+                return $"~{EstimatedMeshes} mesh batches is over the headset budget (~{SectionBudget}, ~2 draw calls each). Hold B to override";
             if (OverBudget) return $"{Estimate} is over the headset budget (~{QuadBudget / 1000}k faces). Hold B to override";
             return null;
         }

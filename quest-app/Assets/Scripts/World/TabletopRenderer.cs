@@ -107,7 +107,8 @@ namespace TabletopCraft.World
             _staging = false;
         }
 
-        static void Kill(Batch b) { b.Dead = true; if (b.Mesh) Destroy(b.Mesh); if (b.Go) Destroy(b.Go); }
+        static void Kill(Batch b) { b.Dead = true; Gone(b.Mesh); Gone(b.Go); }
+        static void Gone(Object o) { if (!o) return; if (Application.isPlaying) Destroy(o); else DestroyImmediate(o); }   // edit mode: Editor/BatchMeshCheck
 
         /// <summary>Old section keys whose mesh is out of date (dirty or being meshed): a SectionPlan must re-mesh them.</summary>
         public HashSet<Vector3Int> Unsettled()
