@@ -10,8 +10,6 @@ import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.data.BlockData;
-import org.bukkit.block.data.Levelled;
-import org.bukkit.block.data.Waterlogged;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Entity;
@@ -36,6 +34,7 @@ public final class TabletopPlugin extends JavaPlugin {
     private final RegionReader reader = new RegionReader(this);
     private final java.util.Set<RegionSpec> diffInFlight = new java.util.HashSet<>();
     private final GiantAvatar avatar = new GiantAvatar();
+    private EditWorld editWorld;                          // applies block_edit (onEnable: needs the logger)
     private final ConcurrentLinkedQueue<Runnable> queue = new ConcurrentLinkedQueue<>();
     private record PoseSet(Session s, Pose head, Pose left, Pose right, long seq, int snapshotId) {}
     /** Server capabilities in welcome.caps (PROTOCOL.md 4.17-4.18). */
@@ -73,6 +72,7 @@ public final class TabletopPlugin extends JavaPlugin {
 
     @Override public void onEnable() {
         saveDefaultConfig();
+        editWorld = new EditWorld(getLogger(), avatar::entities);
         getServer().getPluginManager().registerEvents(new BlockListener(this), this);
         getServer().getPluginManager().registerEvents(actions, this);
         start();
@@ -658,10 +658,11 @@ public final class TabletopPlugin extends JavaPlugin {
     int editRate() { return editRate; }
 
     /**
-     * Applies one block_edit on the main thread: only inside the session's region, never into an occupied cell, never
-     * a state from edit.deny. Breaking a block that holds water leaves water and placing a waterloggable block into a
-     * water source waterlogs it (vanilla). A plugin's setBlockData fires no block events, so the region is marked dirty
-     * here and the change reaches every headset through the normal block_update diff (this tick).
+     * Applies one block_edit on the main thread: only inside the session's region and the world border, only blocks
+     * from block_registry and not from edit.deny, the way vanilla places and breaks them (EditWorld: replaceable
+     * cells, nobody in the way, both halves of doors, beds and tall plants, persistent leaves, waterlogging from the
+     * cell, connections to the neighbours). A plugin's setBlockData fires no block events, so the region is marked
+     * dirty here and the change reaches every headset through the normal block_update diff (this tick).
      */
     void onBlockEdit(Session s, BlockEdit e, Long refSeq) {
         if (s.state != Session.State.READY) return;
@@ -671,41 +672,31 @@ public final class TabletopPlugin extends JavaPlugin {
         World w = Bukkit.getWorld(r.world());
         if (w == null) { denyEdit(s, e, "world_not_found", "no world " + r.world(), refSeq); return; }
         if (!w.isChunkLoaded(e.x() >> 4, e.z() >> 4)) { denyEdit(s, e, "edit_denied", "chunk not loaded", refSeq); return; }
-        Block b = w.getBlockAt(e.x(), e.y(), e.z());
-        BlockData old = b.getBlockData(), next;
-        if (e.op() == BlockEdit.Op.BREAK) {
-            if (old.getMaterial().isAir()) { getLogger().info(String.format("EDIT session=%s break %d,%d,%d: already air", s.id, e.x(), e.y(), e.z())); return; }
-            next = Bukkit.createBlockData(holdsWater(old) ? Material.WATER : Material.AIR);
-        } else {
+        long t0 = System.nanoTime();
+        EditWorld.Outcome o;
+        if (e.op() == BlockEdit.Op.BREAK) o = editWorld.breakBlock(w, e, editPhysics);
+        else {
+            BlockData next;
             try { next = Bukkit.createBlockData(e.state()); }
             catch (IllegalArgumentException ex) { denyEdit(s, e, "bad_state", "not a block state: " + e.state(), refSeq); return; }
             String id = BlockEdit.blockId(next.getAsString());
             if (next.getMaterial().isAir()) { denyEdit(s, e, "bad_state", "use op break to remove a block", refSeq); return; }
-            if (editDeny.contains(id)) { denyEdit(s, e, "edit_denied", id + " can't be placed from the headset (edit.deny)", refSeq); return; }
-            String notPlaceable = blockRegistry.refusePlace(id);   // [menu] only blocks from block_registry (PROTOCOL.md 4.24)
-            if (notPlaceable != null) { denyEdit(s, e, "bad_state", notPlaceable, refSeq); return; }
-            if (!b.isReplaceable()) { denyEdit(s, e, "edit_denied", "cell is occupied by " + old.getAsString(), refSeq); return; }
-            if (next instanceof Waterlogged wl && old.getMaterial() == Material.WATER && old instanceof Levelled lv && lv.getLevel() == 0) wl.setWaterlogged(true);
+            if (editDeny.contains(id)) { denyEdit(s, e, "edit_denied", EditRules.label(id) + " can't be placed from the headset (edit.deny)", refSeq); return; }
+            if (!blockRegistry.placeable(id)) {   // [menu] only blocks from block_registry (PROTOCOL.md 4.24)
+                denyEdit(s, e, "bad_state", EditRules.label(id) + " is not a placeable block (not in block_registry)", refSeq); return;
+            }
+            o = editWorld.place(w, r, e, next, editPhysics);
         }
-        long t0 = System.nanoTime();
-        b.setBlockData(next, editPhysics);
-        markDirty(w.getName(), e.x(), e.y(), e.z());
-        getLogger().info(String.format("EDIT session=%s %s %s %d,%d,%d%s %s -> %s (%.2f ms)", s.id, e.op().id(), w.getName(), e.x(), e.y(), e.z(),
-            e.face() == null ? "" : " face=" + e.face(), old.getAsString(), b.getBlockData().getAsString(), (System.nanoTime() - t0) / 1e6));
+        if (o.denied() != null) { denyEdit(s, e, o.denied().code(), o.denied().message(), refSeq); return; }
+        if (o.cells().isEmpty()) { getLogger().info(String.format("EDIT session=%s %s %d,%d,%d: already air", s.id, e.op().id(), e.x(), e.y(), e.z())); return; }
+        for (int[] c : o.cells()) markDirty(w.getName(), c[0], c[1], c[2]);
+        getLogger().info(String.format("EDIT session=%s %s %s %d,%d,%d%s %s -> %s%s (%.2f ms)", s.id, e.op().id(), w.getName(), e.x(), e.y(), e.z(),
+            e.face() == null ? "" : " face=" + e.face(), o.before(), o.after(), o.cells().size() > 1 ? " cells=" + o.cells().size() : "", (System.nanoTime() - t0) / 1e6));
     }
 
     private void denyEdit(Session s, BlockEdit e, String code, String why, Long refSeq) {
         getLogger().info(String.format("EDIT_DENIED session=%s %s %d,%d,%d %s: %s", s.id, e.op().id(), e.x(), e.y(), e.z(), code, why));
         send(s, e.error(code, why, refSeq));
-    }
-
-    /** Waterlogged blocks and the always-underwater plants leave a water source when broken. */
-    private static boolean holdsWater(BlockData d) {
-        if (d instanceof Waterlogged wl && wl.isWaterlogged()) return true;
-        return switch (d.getMaterial()) {
-            case KELP, KELP_PLANT, SEAGRASS, TALL_SEAGRASS, BUBBLE_COLUMN -> true;
-            default -> false;
-        };
     }
 
     // ---------- avatar ----------
