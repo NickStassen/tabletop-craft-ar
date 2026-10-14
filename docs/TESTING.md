@@ -418,3 +418,51 @@ The quad counts above were measured before block models and the fluid mesher exi
 **Tests after the merge:** plugin 37 tests, 0 failures; pytest 30 passed, ruff clean; `Tests~ dotnet run -- --jar …/26.3.jar` 180/180 PASS (adds model quads lit like cube faces, rotated quads with own-cell light, tinted model quads, fluid light and merge splitting, WaterColor per biome with the atlas alpha, and with the jar: grass_block top, short_grass cross and oak_stairs through the real models); Unity 6000.0.84f1 batch compile clean (no errors, no shader errors, no new warnings).
 
 **Headset to check:** the new face shading (east/west sides darker and north/south sides brighter than before, crosses at full brightness), cave darkness at brightness 0.5, AO on stairs/slabs/fences, water colour and light at depth (deep water faces darken: water light follows vanilla's sky attenuation), and FPS with about 25% more faces.
+
+## Eye in water, lava, powder snow or a block (Quest, 2026-10-13, no headset yet)
+
+What changed:
+- `World/EyeMedium.cs` (engine-free) decides the medium at the centre eye, filters it and gives the look per medium.
+- `World/EyeEffects.cs` applies the result on the headset: fog globals, the passthrough tint and the water's inside faces.
+- `Shaders/TabletopFog.cginc` adds distance fog to the Blocks, BlocksTransparent and PlayerSkin shaders.
+- `Shaders/EyeOverlay.shader` with `Resources/TabletopEyeOverlay.mat` draws the tint.
+- `FluidMesher` and `MeshData.WaterBack` hold the reversed inside copies of water faces, and `TabletopRenderer.Underwater` turns that third submesh on.
+- The design and the edge-case decisions are in ARCHITECTURE.md §4 under "Eye in a fluid".
+
+**Tests** (`Tests~/EyeTests.cs`; `dotnet run -- --jar <26.3 jar>`: 204 checks, all PASS):
+- Medium:
+  - The lower cell of a two-high water column is water up to y 1. The surface cell ends at 1 + 8/9, exactly at the surface is air, and 1e-4 below it is water.
+  - A lone source cell is 8/9 high.
+  - Flowing water: level 4 is 4/9 high, level 7 is 1/9. Falling water (level 8) is 8/9.
+  - Kelp, seagrass, bubble columns and waterlogged fences count as water.
+  - Waterlogged stairs are solid while they mesh as a cube (no pack), and water up to 8/9 once they are a model.
+  - Waterlogged slabs: the slab's half is solid, the other half is water.
+  - Lava; powder snow (whole cell); stone solid; glass air.
+  - Under ice the water ends at 8/9, as in vanilla.
+  - Outside the region (sides, below, above) is air. The region's top cutting through water is a surface at 8/9. No snapshot means air.
+- Filter, with 1 cm blocks (the 4 mm margin is 0.4 block):
+  - Water is taken after the 50 ms dwell, not on the first frame.
+  - Hovering ±0.2 block around the surface for 100 frames never switches.
+  - The eye leaves water once 0.6 block above the surface.
+  - A one-frame dip doesn't switch.
+- Fade and looks:
+  - The tint fades in 0.07 → 0.38 → 0.45 over 0.2 s with no colour shift, and fades out to nothing.
+  - Vanilla water vision: 24 blocks of visibility on entering, 96 after 30 s. Ramp values 0 / 0.6 / 1 at 0 / 100 / 600 ticks.
+  - Without biomes the fog uses the default water colour 0x3F76E4.
+  - Lava visibility is 1 block with a strong tint. Solid is dim, not black.
+- Inside faces:
+  - One water cell gives 6 outside faces and 6 reversed copies with their own vertices, wound to face into the water, never in the transparent list. The 8/9 surface is among them.
+  - Lava has none.
+  - A merged 16×4×16 ocean has a copy for each of its 10 quads.
+- **Real terrain** (the seed-12345 snapshots from the water section, `--measure-fluids`): the 128×96×128 ocean region has 4,097 water quads, so 4,097 inside copies. That is about 16k extra vertices (+11%) in memory, drawn only while the eye is in water. Fluid meshing still takes 17 ms for all 384 sections (Release, x86).
+
+**Unity:**
+- The C# compile check is clean.
+- The four changed shaders were compiled through `ShaderData.Pass.CompileVariant` for Android Vulkan and GLES3, with and without `STEREO_INSTANCING_ON`/`INSTANCING_ON`: 32 vertex/fragment variants, 0 errors. A temporary editor script did this and was not committed.
+
+**Needs the headset:**
+- Whether the overlay box really tints the passthrough underlay. This depends on how the compositor uses the eye buffer's alpha: premultiplied output is assumed.
+- How the four looks feel, in particular water at 45% tint and fog strength 0.95 against the real room. Values are in `EyeMediumRules.Look`.
+- The surface seen from below and the aquarium walls from inside, including their sorting with kelp.
+- Logcat should show `[Tabletop] EYE Water` / `Air` when the head dips into the miniature ocean.
+- No flicker at the surface, and FPS. The fog adds one distance per fragment in the block shaders.
