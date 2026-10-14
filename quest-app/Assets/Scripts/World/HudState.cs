@@ -17,20 +17,29 @@ namespace TabletopCraft.World
         public const double Life = 2.5, ErrorLife = 3.0, FadeIn = 0.15, FadeOut = 0.5;
         public const int MaxVisible = 3, MaxChars = 72;
 
-        sealed class Toast { public string Text; public ToastKind Kind; public double Start, End; }
+        sealed class Toast { public string Text, Key; public ToastKind Kind; public double Start, End; }
         readonly List<Toast> _list = new List<Toast>();
         /// <summary>Bumped when a toast is added, restarted or expires.</summary>
         public int Version { get; private set; }
         public int Count => _list.Count;
 
-        public void Push(string text, ToastKind kind, double now)
+        /// <summary>
+        /// Shows a toast for life seconds (0 = the default for its kind). A toast with the same text restarts instead of
+        /// stacking; with a key, the toast with that key is updated in place (progress like "Loading area 40 %").
+        /// </summary>
+        public void Push(string text, ToastKind kind, double now, double life = 0, string key = null)
         {
             if (string.IsNullOrEmpty(text)) return;
             if (text.Length > MaxChars) text = text.Substring(0, MaxChars - 3) + "...";
-            double end = now + (kind == ToastKind.Error ? ErrorLife : Life);
-            var same = _list.Find(t => t.Text == text);
-            if (same != null) { _list.Remove(same); same.End = end; same.Kind = kind; _list.Add(same); }   // restart, move to newest
-            else _list.Add(new Toast { Text = text, Kind = kind, Start = now, End = end });
+            double end = now + (life > 0 ? life : kind == ToastKind.Error ? ErrorLife : Life);
+            var same = _list.Find(t => key != null ? t.Key == key : t.Text == text && t.Key == null);
+            if (same != null)
+            {
+                _list.Remove(same); same.End = end; same.Kind = kind; same.Text = text; _list.Add(same);   // restart, move to newest
+                Version++;
+                return;
+            }
+            _list.Add(new Toast { Text = text, Kind = kind, Start = now, End = end, Key = key });
             while (_list.Count > MaxVisible) _list.RemoveAt(0);
             Version++;
         }

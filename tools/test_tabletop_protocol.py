@@ -10,6 +10,7 @@ from tabletop_protocol import (
     CAP_EDIT,
     CAP_ENTITIES,
     CAP_LIGHT,
+    DISCOVERY_PORT,
     REGISTRY_CATEGORIES,
     EntityMirror,
     Envelope,
@@ -334,5 +335,33 @@ def test_block_registry_fixture():
 def test_block_registry_rejects_bad_fields(patch):
     msg = json.loads((FIX / "block_registry.json").read_text())
     msg.update(patch)
+    with pytest.raises(ValueError):
+        validate(msg)
+
+
+def test_discovery_probe_and_reply_fixtures():
+    """LAN discovery (PROTOCOL.md 7): UDP probe and reply, no envelope."""
+    probe = json.loads((FIX / "discovery_probe.json").read_text())
+    reply = json.loads((FIX / "discovery_reply.json").read_text())
+    validate(probe)
+    validate(reply)
+    assert probe == {"type": "tabletop_discover", "v": 1}
+    assert reply["port"] == DISCOVERY_PORT and reply["path"] == "/tabletop" and reply["token"] is False
+
+
+@pytest.mark.parametrize("patch", [{"port": 0}, {"port": 70000}, {"path": "tabletop"}, {"token": "no"}, {"v": 2}])
+def test_discovery_reply_rejects_bad_fields(patch):
+    msg = json.loads((FIX / "discovery_reply.json").read_text())
+    msg.update(patch)
+    with pytest.raises(ValueError):
+        validate(msg)
+
+
+def test_region_changed_carries_the_new_worlds_build_height():
+    """next version: region_changed has limits (build_height of the region's world) for gliding after a world change."""
+    msg = json.loads((FIX / "region_changed.json").read_text())
+    validate(msg)
+    assert msg["limits"]["build_height"] == [0, 256] and msg["world"] == "world_nether"
+    msg["limits"]["build_height"] = [320, -64]
     with pytest.raises(ValueError):
         validate(msg)

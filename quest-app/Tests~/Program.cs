@@ -156,6 +156,7 @@ static class Program
         EditTests.Run(Check, Fixture);  // block editing: DDA targeting, Z mirror, optimistic edits (EditTests.cs)
         MenuTests.Run(Check, Fixture, JarPath(args), args);   // [menu] block registry, menu model, hotbar, HUD toasts, icons (MenuTests.cs)
         EyeTests.Run(Check);            // eye in water/lava/powder snow/blocks, water inside faces (EyeTests.cs)
+        ComfortTests.Run(Check, Fixture, args);   // [comfort] keyboard, Info tab, prefs.json, discovery, link health (ComfortTests.cs)
 
         // Block models from a real client jar / resource pack (never committed; MC_CLIENT_JAR or --jar PATH).
         string jar = JarPath(args);
