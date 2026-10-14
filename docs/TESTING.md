@@ -107,6 +107,31 @@ Headless, with `tools/patch-meta-sdk-linux.sh` and `TabletopBatch` (see QUEST_SE
 - **APK**: builds in about 2 minutes clean (45 MB, `com.tabletopcraft.ar`, arm64-v8a). Its manifest has INTERNET, USE_SCENE, USE_ANCHOR_API, PASSTHROUGH required, `quest3|quest3s` and `usesCleartextTraffic=true`. Meta's `enableNSCConfig` (on by default) had added a `network_sec_config.xml` with `cleartextTrafficPermitted="false"`, which would override that, so the builder now turns it off.
 - **Build contents** (from the build log): TabletopCraft/Blocks, BlocksTransparent, Unlit/Color (Marker.mat) and Sprites/Default are compiled in. Standard is not, so `CreatePrimitive` objects now get the unlit marker material. The TextMesh font (`LegacyRuntime.ttf`) and its shader ship in the built-in "unity default resources".
 
+## First headset session (Quest 3, 2026-10-13)
+
+Quest 3 on Android 14-based Horizon OS, USB for install and logcat, Wi-Fi for the link. The PC ran the plugin on Paper 26.3 (seed 12345, a 64x96x64 area at y 32..128 around 0,0) and the APK from section 5. `pack.zip` was the user's 26.3 client jar.
+
+- **Works on the headset**:
+  - Passthrough, and the link to the server (`welcome ... mc 26.3`, RTT 13-14 ms in the log, up to 42 ms on the status panel).
+  - The 64x96x64 snapshot (palette 43), textured from the jar. `pack loaded`, so `System.IO.Compression` works on IL2CPP.
+  - `USE_SCENE` granted on first launch.
+  - VrApi `FPS=72/72` with ~2.4-2.6 ms app GPU time. Passthrough rendered at 72 fps.
+  - A Java player shown on the table as a marker.
+  - The giant followed the headset in a Java client, wearing the user's skin once the server was in online mode (`skin_player` set in tabletop.json; exact placement).
+  - The demo media in `docs/media/` comes from this session's headset recording. It's cropped and blurred so no screens or usernames show.
+- **Bugs found on the headset and fixed the same day**:
+  - **Meshing race:** a few sections failed with NullReferenceException in the first meshing batch, so terrain was missing. Fixed by making the shape and face caches concurrent; Tests~ has a regression check.
+  - **avatar_config spam:** the app sent `avatar_config` every frame while scaling, and the server respawned the giant each time (1,193 respawns in a few minutes). The app now debounces it, and the server rescales in place.
+  - **Giant deleted outside the area:** stepping back from the table or shrinking the miniature moved the giant out of the area into unloaded chunks, which deleted it (26.x has no spawn chunks). It now only moves into loaded, ticketed chunks.
+- **Setup notes**:
+  - The USB debugging prompt didn't appear at first. A headset restart with the cable in, then "Always allow", fixed it.
+  - Unity's batch builds kill the adb server, so expect to re-approve until "Always allow" sticks.
+- **Not yet checked on the headset**:
+  - MRUK table detection. The log has "MRUK Shared: Unable to bind OpenXR function" warnings, and the table was placed with A.
+  - Area setup.
+  - Live block edits.
+  - Everything added after this session: water, animation, lighting, block models, navigation, player figures.
+
 ## 6. Paper 26.3 (Java 25, 2026-10-13)
 
 Paper 26.3 build 181 (stable), Temurin JDK 25.0.4.1, plugin built against `paper-api 26.3.build.181-stable` with Gradle 9.8.0 / Shadow 9.6.1. No plugin source changes were needed.
@@ -161,9 +186,9 @@ Still needs the headset and a Java client: the figures' look on the table (size 
 
 ## Not verified (and why)
 
-- **Anything on the Quest**: compiled and built (section 5), but not yet run on a headset. Passthrough, MRUK table detection, the resource-pack atlas (`System.IO.Compression` on IL2CPP, `Texture2DArray`; the 26.3 jar was only checked offline, section 6), frame rate and Wi-Fi latency are untested.
-- **Visual check of the giant** in a real Java client (that it renders at the right size, skin, hands orientation). Verified only through entity data, logs and the mineflayer bot.
-- **Skins in a real client**: the server-side giant skin lookup works (section 7), but no Java client has looked at the giant, and `player_positions` skins only exist on an online-mode server, which the test setup doesn't use.
+- **On the Quest** (see "First headset session"): MRUK table detection, area setup and live block edits haven't been checked yet.
+- **The giant in a Java client**: seen once, with exact placement and the user's skin. Ground placement, hand orientation and smoothness haven't been looked at by eye.
+- **Player skins on the table**: `player_positions` skins only exist on an online-mode server. The figures that use them haven't been on a headset yet.
 - **Windows**: the server steps in QUEST_SETUP.md are written for Windows but were run on Linux.
 
 ## Spec deviations (PROTOCOL.md v1, known and intentional for v0.1)
