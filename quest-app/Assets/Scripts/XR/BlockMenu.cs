@@ -32,6 +32,11 @@ namespace TabletopCraft.XR
         public Func<int[]> AreaPresets;
         public Func<int> AreaCurrent;
         public Action<int> AreaRequest;
+        /// <summary>[comfort] Info tab: Reset view, the Server field's LAN search and connect (a normalised ws:// URL).</summary>
+        public Action ResetView, ServerFind;
+        public Action<string> ServerConnect;
+        /// <summary>[comfort] The line under the small hotbar: coordinates and facing (shown while the menu is closed).</summary>
+        public Func<string> Readout;
         public BlockIconAtlas Icons;
         public float MaxRayM = 1.5f;
         public int UploadsPerFrame = 6;
@@ -48,6 +53,7 @@ namespace TabletopCraft.XR
         static readonly Color TextMain = new Color(0.92f, 0.95f, 1f), TextDim = new Color(0.62f, 0.68f, 0.76f);
 
         Transform _panel, _mini;
+        TextMesh _miniText;
         Mesh _bg, _icon, _over, _miniBg, _miniIcon;
         Material _bgMat, _iconMat, _overMat, _textMat;
         Font _font;
@@ -158,7 +164,7 @@ namespace TabletopCraft.XR
             _panel.gameObject.SetActive(Model.Open);
             _laser.gameObject.SetActive(Model.CapturesRight);
             if (Model.Open) Draw();
-            DrawMini(!Model.Open && !blocked && (CanEdit?.Invoke() ?? true));
+            DrawMini(!Model.Open && !blocked, CanEdit?.Invoke() ?? true);
             Icons?.Update(UploadsPerFrame);
         }
 
@@ -178,6 +184,9 @@ namespace TabletopCraft.XR
                 case MenuActionKind.Select: case MenuActionKind.HotbarSlot: SelectedChanged?.Invoke(a.State); Haptic(0.35f); break;
                 case MenuActionKind.Area: AreaRequest?.Invoke(a.Value); Haptic(0.35f); break;
                 case MenuActionKind.HudToggle: HudChanged?.Invoke(a.Value != 0); Haptic(0.25f); break;
+                case MenuActionKind.ResetView: ResetView?.Invoke(); Haptic(0.35f); break;
+                case MenuActionKind.ServerEdit: case MenuActionKind.ServerFind: ServerFind?.Invoke(); Haptic(0.2f); break;   // opening the field searches at once
+                case MenuActionKind.ServerConnect: ServerConnect?.Invoke(a.State); Haptic(0.35f); break;
                 case MenuActionKind.None: break;
                 default: Haptic(0.15f); break;
             }
@@ -305,9 +314,14 @@ namespace TabletopCraft.XR
                         break;
                     }
                     case MenuPart.Key:
-                        Box(_b, it.R, hover ? SlotHover : Tab, 0, 0.0012f);
+                    {
+                        // [comfort] shift lit while on, the layer key and enter as accents (World/KeyboardModel.cs)
+                        var kb = Model.ActiveKeys;
+                        bool on = kb != null && it.Index == KeyboardModel.KeyShift && kb.Shift != ShiftState.Off;
+                        Box(_b, it.R, hover ? SlotHover : on || it.Index == KeyboardModel.KeyEnter ? TabActive : Tab, 0, 0.0012f);
                         Label("key" + it.Index, it.Label, it.R.CX, it.R.CY, it.Label.Length > 1 ? 0.0016f : 0.0021f, TextAnchor.MiddleCenter, TextMain);
                         break;
+                    }
                     case MenuPart.AreaStep:
                     {
                         bool cur = Model.AreaPresets != null && it.Index < Model.AreaPresets.Length && Model.AreaPresets[it.Index] == Model.AreaCurrent;
@@ -319,7 +333,22 @@ namespace TabletopCraft.XR
                         Box(_b, it.R, Model.ShowHud ? TabActive : hover ? SlotHover : Tab, 0, 0.001f);
                         Label("hud", it.Label, it.R.CX, it.R.CY, 0.0017f, TextAnchor.MiddleCenter, TextMain);
                         break;
+                    // [comfort] Info tab buttons: Reset view, the Server button, and the open Server field's buttons
+                    case MenuPart.ResetView: case MenuPart.ServerFind: case MenuPart.ServerConnect: case MenuPart.ServerCancel: case MenuPart.FoundServer:
+                        Box(_b, it.R, hover ? SlotHover : it.Part == MenuPart.ServerConnect ? TabActive : Tab, 0, 0.001f);
+                        Label(it.Part + "" + it.Index, Short(it.Label, 34), it.R.CX, it.R.CY, 0.0016f, TextAnchor.MiddleCenter, TextMain);
+                        break;
+                    case MenuPart.ServerField:
+                        Box(_b, it.R, hover ? SlotHover : Slot, 0, 0.001f);
+                        Label("serverfield", Short(it.Label, 60), it.R.X + 0.004f, it.R.CY, 0.0015f, TextAnchor.MiddleLeft, TextMain);
+                        break;
                 }
+            }
+            if (Lo.ServerText.W > 0)
+            {
+                Box(_b, Lo.ServerText, Slot, 0, 0.0008f);
+                Label("servertext", "Server: " + Model.ServerKeys.Display(52), Lo.ServerText.X + 0.004f, Lo.ServerText.CY, 0.0017f, TextAnchor.MiddleLeft, TextMain);
+                if (Model.Found.Count == 0) Label("foundnote", Model.FoundNote, Lo.FoundNote.CX, Lo.FoundNote.CY, 0.0016f, TextAnchor.MiddleCenter, TextDim);
             }
             if (Lo.ScrollTrack.H > 0 && Model.MaxScroll > 0)
             {
@@ -371,16 +400,31 @@ namespace TabletopCraft.XR
             t.transform.localPosition = L(x, y, -0.001f);
         }
 
-        /// <summary>The hotbar by the right controller while the menu is closed: 9 small slots, the selected one framed.</summary>
-        void DrawMini(bool show)
+        /// <summary>The hotbar by the right controller while the menu is closed: 9 small slots, the selected one framed
+        /// (only when editing is allowed), and [comfort] the coordinates + facing line under it.</summary>
+        void DrawMini(bool show, bool hotbar)
         {
-            show &= Model.Hotbar.Count > 0 && RightHand;
+            show &= RightHand;
             if (_mini.gameObject.activeSelf != show) _mini.gameObject.SetActive(show);
             if (!show) return;
             if (Head) _mini.rotation = Quaternion.LookRotation(_mini.position - Head.position, Vector3.up);
+            if (!_miniText)
+            {
+                var go = new GameObject("Readout");
+                go.transform.SetParent(_mini, false);
+                go.transform.localPosition = new Vector3(0, -0.0075f, -0.0005f);
+                _miniText = go.AddComponent<TextMesh>();
+                TabletopApp.SetBuiltinFont(_miniText);
+                go.GetComponent<MeshRenderer>().sharedMaterial = _textMat;
+                _miniText.fontSize = 48; _miniText.characterSize = 0.0011f; _miniText.anchor = TextAnchor.UpperCenter;
+                _miniText.color = QualitySettings.activeColorSpace == ColorSpace.Linear ? TextMain.linear : TextMain;
+            }
+            string readout = Readout?.Invoke() ?? "";
+            if (_miniText.text != readout) _miniText.text = readout;
             const float cell = 0.011f, gap = 0.001f;
             float w = Hotbar.Size * cell, x0 = -w / 2;
             _b.Clear(); _i.Clear();
+            if (!hotbar || Model.Hotbar.Count == 0) { _b.Apply(_miniBg); _i.Apply(_miniIcon); return; }
             string selId = BlockRegistry.IdOf(Model.Selected);
             for (int k = 0; k < Hotbar.Size; k++)
             {

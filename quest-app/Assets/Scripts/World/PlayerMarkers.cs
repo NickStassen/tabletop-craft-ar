@@ -22,6 +22,9 @@ namespace TabletopCraft.World
         // [entities] held items/armour textures, vehicles to sit in, light (PlayerExtras)
         public EntityTextures Textures;
         public EntityRenderer Entities;
+        /// <summary>[comfort] Is a world position inside the visible window (NavState.InWindow)? Name labels of players
+        /// outside it are hidden: the figure is clipped by the window, a bare floating name isn't.</summary>
+        public System.Func<Vector3, bool> InWindow;
 
         sealed class Marker
         {
@@ -120,7 +123,10 @@ namespace TabletopCraft.World
                 root.localScale = Vector3.one * scale;
                 m.Fig.Apply(pose);
                 m.Extras.AfterApply(m.Fig, SkinMaterial, Textures, Entities != null ? Entities.LightAt(m.Shown, 1f) : Color.white);   // [entities]
-                if (cam != null) m.Fig.Label.transform.rotation = Quaternion.LookRotation(m.Fig.Label.transform.position - cam.transform.position);
+                // [comfort] the label only while the feet or the head are inside the visible window
+                bool label = InWindow == null || InWindow(m.Shown) || InWindow(m.Shown + Vector3.up * 1.8f);
+                if (m.Fig.Label.gameObject.activeSelf != label) m.Fig.Label.gameObject.SetActive(label);
+                if (label && cam != null) m.Fig.Label.transform.rotation = Quaternion.LookRotation(m.Fig.Label.transform.position - cam.transform.position);
             }
         }
 

@@ -43,6 +43,7 @@ namespace TabletopCraft.XR
         int _dragHandle = -1; Vector3 _dragStart; Vector3Int _dragSize0;
         bool _nudging; Vector3 _nudgeStart, _nudgeCenter0; int _nudgeY0;
         bool _awaitingResult; float _requestedBlockSize;
+        Dictionary<string, object> _queued; RegionMove _queuedMove; float _queuedAt;   // [comfort] confirmed, waiting for TryIssue
 
         void Start()
         {
@@ -111,6 +112,7 @@ namespace TabletopCraft.XR
         void Update()
         {
             if (OVRInput.GetDown(OVRInput.Button.Two, OVRInput.Controller.LTouch)) Toggle();   // Y: on LTouch alone X = One, Y = Two (Three/Four are unmapped)
+            IssueQueued();   // [comfort] a confirmed area waits for NavState's one-in-flight slot (a glide shift or resize)
             if (!Active) return;
             float now = Time.unscaledTime;
 
@@ -145,7 +147,12 @@ namespace TabletopCraft.XR
                 else
                 {
                     _requestedBlockSize = FittedBlockSize; _awaitingResult = true;
-                    Send(State.BuildRequest());
+                    // [comfort] Through NavState.TryIssue like glide shifts and width presets, so it can't race them.
+                    var d = State.RequestDims; var m = State.RequestMargin;
+                    _queuedMove = new RegionMove { Dims = d, Margin = m, Kind = "area",
+                        Origin = new Vector3Int(Mathf.FloorToInt(State.Center.x - d.x / 2f), State.YOrigin - m.y, Mathf.FloorToInt(State.Center.z - d.z / 2f)) };
+                    _queued = State.BuildRequest(); _queuedAt = now;
+                    IssueQueued();
                     Exit($"requested {State.Size.x}x{State.Size.y}x{State.Size.z}...");
                     return;
                 }
@@ -154,6 +161,20 @@ namespace TabletopCraft.XR
             Status = State.Describe() + $"\nblock {(AutoFit ? $"auto-fit {FittedBlockSize * 1000:F1} mm" : $"manual {bs * 1000:F1} mm")}" +
                      (blocker != null ? $"\nWARNING {blocker}" : "\nA confirm  B cancel");
             _box.startColor = _box.endColor = blocker != null ? new Color(1f, 0.4f, 0.3f) : new Color(0.3f, 1f, 1f);
+        }
+
+        /// <summary>[comfort] Sends the confirmed request once NavState has no other request in flight.</summary>
+        void IssueQueued()
+        {
+            if (_queued == null) return;
+            float now = Time.unscaledTime;
+            if (Nav != null && Nav.Loaded && !Nav.TryIssue(_queuedMove, now))
+            {
+                if (now - _queuedAt > Nav.RequestTimeout + 2f) { _queued = null; _awaitingResult = false; Status = "cannot confirm: another area request never finished"; }
+                return;
+            }
+            Send(_queued);
+            _queued = null;
         }
 
         // Box corners in RegionRoot-local metres. RegionRoot local = block coords relative to the current origin * bs, Z mirrored.
