@@ -461,6 +461,8 @@ namespace TabletopCraft
                 TabletopRenderer.Workers = Mathf.Clamp(c.I("mesh_workers", TabletopRenderer.Workers), 1, 8);                    // [mesh] meshing threads
                 SurfaceSkirt.Enabled = c.B("surface_skirt", SurfaceSkirt.Enabled);                                            // [mesh] low-detail surface ahead
                 SurfaceSkirt.SpeedFactor = Mathf.Clamp((float)c.D("skirt_speed", SurfaceSkirt.SpeedFactor), 1f, 4f);          // [mesh] glide past meshing
+                SolidLayers.Enabled = c.B("solid_pass", SolidLayers.Enabled);                 // [gpu] opaque faces without alpha test
+                BlockKeywords.UseClipPlanes = c.B("clip_planes", BlockKeywords.UseClipPlanes);   // [gpu] hardware clip planes for the window
             }
             catch (Exception e) { Debug.LogWarning("[Tabletop] bad tabletop.json: " + e.Message); }
         }

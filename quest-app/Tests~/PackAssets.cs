@@ -18,7 +18,7 @@ sealed class ZipAssets : IModelAssets, IDisposable
     readonly List<int> _alpha = new List<int>();
     public readonly List<string> Names = new List<string>();
 
-    public ZipAssets(string path) { _zip = ZipFile.OpenRead(path); }
+    public ZipAssets(string path) { _zip = ZipFile.OpenRead(path); SolidLayers.Clear(); }
 
     public Dictionary<string, object> ReadJson(string path)
     {
@@ -36,7 +36,7 @@ sealed class ZipAssets : IModelAssets, IDisposable
         {
             var e = _zip.GetEntry($"assets/{ns}/textures/{p}.png");
             l = -1;
-            if (e != null) { l = Names.Count; Names.Add(key); _alpha.Add(AlphaOf(e)); }
+            if (e != null) { l = Names.Count; Names.Add(key); _alpha.Add(AlphaOf(e)); SolidLayers.Set(l, _alpha[l] == 0); }   // [gpu] as ResourcePackAtlas.PublishSolid
             _layers[key] = l;
         }
         return l;

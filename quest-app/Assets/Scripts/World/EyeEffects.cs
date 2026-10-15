@@ -61,6 +61,7 @@ namespace TabletopCraft.World
             Shader.SetGlobalVector(FogColorId, Render(look.Fog, 1f));
             Shader.SetGlobalVector(FogParamsId, new Vector4(start, 1f / (end - start), look.Strength, 0f));
             Shader.SetGlobalVector(FogEyeId, Head.position);
+            BlockKeywords.Set(BlockKeywords.Fog, look.Strength > 0f);   // [gpu] the block shaders' fog only while there is some
             if (_overlay)
             {
                 bool on = look.TintAlpha > 0.002f;
@@ -94,6 +95,7 @@ namespace TabletopCraft.World
         void OnDestroy()
         {
             Shader.SetGlobalVector(FogParamsId, Vector4.zero);
+            BlockKeywords.Set(BlockKeywords.Fog, false);
             if (_overlayMat) Destroy(_overlayMat);
         }
     }

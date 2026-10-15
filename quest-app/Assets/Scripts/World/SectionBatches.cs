@@ -12,8 +12,10 @@
 //                100k-vertex batches). Built on the meshing worker, immutable, kept per section so a batch can be
 //                rebuilt when one of its sections changes (edits, block_update, light) without re-meshing the rest.
 //   BatchLayout  which batch a section belongs to, where a batch sits under "Blocks", and a section's offset in it.
-//   BatchData    one batch's vertices and indices (opaque, transparent, water-back submeshes), assembled on a worker
-//                from its sections' SectionMeshes with pooled arrays; the main thread only copies it into a Mesh.
+//   BatchData    one batch's vertices and indices (solid, cutout, transparent, water-back submeshes), assembled on a
+//                worker from its sections' SectionMeshes with pooled arrays; the main thread only copies it into a Mesh.
+//   SolidLayers  [gpu] which texture layers are fully opaque: their faces are drawn without the alpha test ("solid"),
+//                so the GPU keeps early depth rejection for most of the terrain (a shader with discard loses it).
 using System;
 using System.Buffers;
 using System.Collections.Generic;
@@ -34,16 +36,62 @@ namespace TabletopCraft.World
         public const int Size = 32;
     }
 
+    /// <summary>
+    /// [gpu] Texture layers whose texels (every animation frame) are all opaque, filled by the atlas as it adds layers (main
+    /// thread) and read by the meshing workers. Faces on such a layer with opaque vertex colours, and flat-colour faces, go
+    /// to the solid submesh (no alpha test); anything unknown stays in the cutout one, which looks the same, only slower.
+    /// </summary>
+    public static class SolidLayers
+    {
+        static byte[] _solid = Array.Empty<byte>();   // grown by copy, then published; flags are only ever set
+        static readonly object Gate = new object();
+
+        /// <summary>tabletop.json "solid_pass": false puts every opaque face back in the alpha-tested pass (A/B checks).</summary>
+        public static bool Enabled = true;
+
+        public static void Set(int layer, bool solid)
+        {
+            if (layer < 0) return;
+            lock (Gate)
+            {
+                var a = _solid;
+                if (layer >= a.Length) { var b = new byte[Math.Max(layer + 1, Math.Max(64, a.Length * 2))]; Array.Copy(a, b, a.Length); a = b; }
+                a[layer] = solid ? (byte)1 : (byte)0;
+                _solid = a;
+            }
+        }
+
+        /// <summary>Forget every layer (a new atlas numbers its layers from 0 again).</summary>
+        public static void Clear() { lock (Gate) _solid = Array.Empty<byte>(); }
+
+        public static bool Layer(int layer) { var a = _solid; return layer >= 0 && layer < a.Length && a[layer] != 0; }
+
+        /// <summary>Is a face with this uv.z (layer + LayerStride * table, below 0 = flat colour) drawn without alpha test?
+        /// [flow] Table 64 picks one of four layers per 2-block cell: all four must be solid.</summary>
+        public static bool Face(float uvz)
+        {
+            if (!Enabled) return false;
+            int z = (int)Math.Round(uvz);
+            if (z < 0) return true;
+            int table = z / RandomUv.LayerStride, layer = z - table * RandomUv.LayerStride;
+            if (table == FluidRules.QuadTable) return Layer(layer) && Layer(layer + 1) && Layer(layer + 2) && Layer(layer + 3);
+            return Layer(layer);
+        }
+    }
+
     public sealed class SectionMesh
     {
         public readonly BatchVertex[] Verts;
-        /// <summary>Section-local indices: Opaque, then Transparent, then WaterBack (winding already flipped for Unity).</summary>
+        /// <summary>Section-local indices: Opaque (Solid ones first, then the alpha-tested ones), then Transparent, then
+        /// WaterBack (winding already flipped for Unity).</summary>
         public readonly int[] Indices;
         public readonly int Opaque, Transparent, WaterBack;
+        /// <summary>[gpu] How many of the Opaque indices (at the start) are solid: drawn without alpha test.</summary>
+        public readonly int Solid;
         /// <summary>Faces seen from outside (the water's inside copies are not counted), as the status line shows.</summary>
         public readonly int Quads;
 
-        SectionMesh(BatchVertex[] v, int[] i, int o, int t, int w, int q) { Verts = v; Indices = i; Opaque = o; Transparent = t; WaterBack = w; Quads = q; }
+        SectionMesh(BatchVertex[] v, int[] i, int o, int s, int t, int w, int q) { Verts = v; Indices = i; Opaque = o; Solid = s; Transparent = t; WaterBack = w; Quads = q; }
 
         /// <summary>
         /// Converts a mesher result (Minecraft region-local block coordinates) into batch form: relative to the section
@@ -73,6 +121,7 @@ namespace TabletopCraft.World
             var idx = new int[o + t + w];
             int at = 0;
             at = Flip(d.Opaque, idx, at, v, acc);
+            int solid = SplitSolid(idx, o, v);
             at = Flip(d.Transparent, idx, at, v, acc);
             Flip(d.WaterBack, idx, at, v, acc);
             for (int i = 0; i < n; i++)
@@ -82,7 +131,24 @@ namespace TabletopCraft.World
                 if (len < 1e-3f) continue;   // cancelled out: zero normal
                 v[i].Nx = Snorm(x / len); v[i].Ny = Snorm(y / len); v[i].Nz = Snorm(z / len);
             }
-            return new SectionMesh(v, idx, o, t, w, n / 4 - w / 6);
+            return new SectionMesh(v, idx, o, solid, t, w, n / 4 - w / 6);
+        }
+
+        /// <summary>[gpu] Reorders the first n indices (whole triangles) so the solid ones come first, keeping each group in
+        /// mesher order; returns how many indices are solid.</summary>
+        static int SplitSolid(int[] idx, int n, BatchVertex[] v)
+        {
+            if (!SolidLayers.Enabled || n == 0) return 0;
+            int[] cut = null; int nCut = 0, nSolid = 0;
+            for (int i = 0; i + 2 < n; i += 3)
+            {
+                int a = idx[i], b = idx[i + 1], c = idx[i + 2];
+                bool solid = v[a].Color.a == 255 && v[b].Color.a == 255 && v[c].Color.a == 255 && SolidLayers.Face(v[a].Uv.z);
+                if (solid) { idx[nSolid++] = a; idx[nSolid++] = b; idx[nSolid++] = c; }
+                else { if (cut == null) cut = new int[n]; cut[nCut++] = a; cut[nCut++] = b; cut[nCut++] = c; }
+            }
+            if (nCut > 0) Array.Copy(cut, 0, idx, nSolid, nCut);
+            return nSolid;
         }
 
         static sbyte Snorm(float f) => (sbyte)Math.Round(Math.Max(-1f, Math.Min(1f, f)) * 127f);
@@ -180,13 +246,14 @@ namespace TabletopCraft.World
         }
     }
 
-    /// <summary>One assembled batch: vertices, indices (opaque, transparent, water-back ranges) and bounds. Arrays are
-    /// rented from ArrayPool; Release returns them once the mesh has been uploaded.</summary>
+    /// <summary>One assembled batch: vertices, indices (opaque = solid then cutout, transparent, water-back ranges) and
+    /// bounds. Arrays are rented from ArrayPool; Release returns them once the mesh has been uploaded.</summary>
     public sealed class BatchData
     {
         public BatchVertex[] Verts = Array.Empty<BatchVertex>();
         public int[] Indices = Array.Empty<int>();
-        public int VertCount, IndexCount, Opaque, Transparent, WaterBack, Quads, Sections;
+        /// <summary>Opaque counts all opaque indices; the first Solid of them are drawn without alpha test ([gpu]).</summary>
+        public int VertCount, IndexCount, Opaque, Solid, Transparent, WaterBack, Quads, Sections;
         public Vector3 Min, Max;
         public double Ms;
 
@@ -196,14 +263,14 @@ namespace TabletopCraft.World
             var sw = System.Diagnostics.Stopwatch.StartNew();
             var b = new BatchData();
             int nv = 0, ni = 0;
-            foreach (var p in parts) { nv += p.mesh.Verts.Length; ni += p.mesh.Indices.Length; b.Opaque += p.mesh.Opaque; b.Transparent += p.mesh.Transparent; b.WaterBack += p.mesh.WaterBack; b.Quads += p.mesh.Quads; }
+            foreach (var p in parts) { nv += p.mesh.Verts.Length; ni += p.mesh.Indices.Length; b.Opaque += p.mesh.Opaque; b.Solid += p.mesh.Solid; b.Transparent += p.mesh.Transparent; b.WaterBack += p.mesh.WaterBack; b.Quads += p.mesh.Quads; }
             b.VertCount = nv; b.IndexCount = ni; b.Sections = parts.Count;
             if (nv == 0) { b.Ms = sw.Elapsed.TotalMilliseconds; return b; }
             b.Verts = ArrayPool<BatchVertex>.Shared.Rent(nv);
             b.Indices = ArrayPool<int>.Shared.Rent(ni);
             float minX = float.MaxValue, minY = float.MaxValue, minZ = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue, maxZ = float.MinValue;
             int vAt = 0;
-            int oAt = 0, tAt = b.Opaque, wAt = b.Opaque + b.Transparent;
+            int sAt = 0, oAt = b.Solid, tAt = b.Opaque, wAt = b.Opaque + b.Transparent;
             foreach (var (m, off) in parts)
             {
                 var src = m.Verts;
@@ -217,7 +284,8 @@ namespace TabletopCraft.World
                     b.Verts[vAt + i] = v;
                 }
                 var idx = m.Indices;
-                for (int i = 0; i < m.Opaque; i++) b.Indices[oAt++] = idx[i] + vAt;
+                for (int i = 0; i < m.Solid; i++) b.Indices[sAt++] = idx[i] + vAt;
+                for (int i = m.Solid; i < m.Opaque; i++) b.Indices[oAt++] = idx[i] + vAt;
                 for (int i = m.Opaque; i < m.Opaque + m.Transparent; i++) b.Indices[tAt++] = idx[i] + vAt;
                 for (int i = m.Opaque + m.Transparent; i < idx.Length; i++) b.Indices[wAt++] = idx[i] + vAt;
                 vAt += src.Length;
@@ -235,7 +303,7 @@ namespace TabletopCraft.World
         }
 
         /// <summary>Draw calls this batch costs per eye pass: one per non-empty submesh that has a material.</summary>
-        public int DrawCalls(bool underwater) => (Opaque > 0 ? 1 : 0) + (Transparent > 0 ? 1 : 0) + (underwater && WaterBack > 0 ? 1 : 0);
+        public int DrawCalls(bool underwater) => (Solid > 0 ? 1 : 0) + (Opaque > Solid ? 1 : 0) + (Transparent > 0 ? 1 : 0) + (underwater && WaterBack > 0 ? 1 : 0);
         public long Bytes => (long)VertCount * BatchVertex.Size + (long)IndexCount * 4;
     }
 

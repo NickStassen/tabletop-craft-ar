@@ -139,7 +139,7 @@ namespace TabletopCraft.World
             public Vector3Int Key; public GameObject Go; public Mesh Mesh; public MeshRenderer Renderer;
             public int Y0; public bool Assembling, Dead;
             public List<(Vector3Int, int)> Fresh;   // [mesh] the fresh section stamps this assembly covers (skirt)
-            public int Verts, Indices, Opaque, Transparent, WaterBack, Sections;
+            public int Verts, Indices, Opaque, Solid, Transparent, WaterBack, Sections;
             public long Bytes;
         }
 
@@ -168,6 +168,7 @@ namespace TabletopCraft.World
         // Water faces seen from inside (MeshData.WaterBack) are a third submesh. A renderer draws only as many submeshes as
         // it has materials, so they are switched on by giving every batch a third material while the eye is under water.
         Material[] _mats2, _mats3;
+        Material _solid;   // [gpu] OpaqueMaterial without the alpha test (TABLETOP_SOLID), drawn first (Geometry queue)
         bool _underwater;
 
         /// <summary>Draw the water's inside faces (EyeEffects sets this while the eye is in water).</summary>
@@ -183,9 +184,25 @@ namespace TabletopCraft.World
             }
         }
 
+        // Submeshes (Fill): solid, cutout, transparent, water seen from inside (only drawn underwater).
         Material[] Materials() => _underwater
-            ? _mats3 ?? (_mats3 = new[] { OpaqueMaterial, TransparentMaterial, TransparentMaterial })
-            : _mats2 ?? (_mats2 = new[] { OpaqueMaterial, TransparentMaterial });
+            ? _mats3 ?? (_mats3 = new[] { SolidMaterial, OpaqueMaterial, TransparentMaterial, TransparentMaterial })
+            : _mats2 ?? (_mats2 = new[] { SolidMaterial, OpaqueMaterial, TransparentMaterial });
+
+        /// <summary>[gpu] The material of the solid submesh: a copy of OpaqueMaterial with TABLETOP_SOLID (no discard, so the
+        /// GPU keeps early depth rejection) in the Geometry queue, so it is drawn before the alpha-tested faces.</summary>
+        public Material SolidMaterial
+        {
+            get
+            {
+                if (_solid == null && OpaqueMaterial != null)
+                {
+                    _solid = new Material(OpaqueMaterial) { name = "blocks solid", renderQueue = (int)RenderQueue.Geometry };
+                    _solid.EnableKeyword("TABLETOP_SOLID");
+                }
+                return _solid;
+            }
+        }
 
         public void Clear()
         {
@@ -331,6 +348,7 @@ namespace TabletopCraft.World
             if (Atlas.Array != null)
             {
                 OpaqueMaterial.SetTexture("_Blocks", Atlas.Array); OpaqueMaterial.SetFloat("_HasTex", 1);
+                SolidMaterial.SetTexture("_Blocks", Atlas.Array); SolidMaterial.SetFloat("_HasTex", 1);   // [gpu]
                 TransparentMaterial.SetTexture("_Blocks", Atlas.Array); TransparentMaterial.SetFloat("_HasTex", 1);
             }
             if (_randomVersion != RandomUv.Version) UploadRandomTables();
@@ -552,8 +570,9 @@ namespace TabletopCraft.World
             new VertexAttributeDescriptor(VertexAttribute.TexCoord0, VertexAttributeFormat.Float32, 3),
         };
 
-        /// <summary>Copies an assembled batch into a Mesh: one vertex buffer (BatchVertex layout), 32-bit indices, three
-        /// submeshes (opaque, transparent, water seen from inside), bounds from the assembly. Public for Editor checks.</summary>
+        /// <summary>Copies an assembled batch into a Mesh: one vertex buffer (BatchVertex layout), 32-bit indices, four
+        /// submeshes (solid, alpha-tested, transparent, water seen from inside), bounds from the assembly. Public for Editor
+        /// checks.</summary>
         public static void Fill(Mesh m, BatchData d)
         {
             const MeshUpdateFlags F = MeshUpdateFlags.DontValidateIndices | MeshUpdateFlags.DontRecalculateBounds | MeshUpdateFlags.DontResetBoneBounds;
@@ -564,17 +583,18 @@ namespace TabletopCraft.World
             m.SetIndexBufferParams(d.IndexCount, IndexFormat.UInt32);
             m.SetIndexBufferData(d.Indices, 0, 0, d.IndexCount, F);
             var bounds = new Bounds((d.Min + d.Max) * 0.5f, d.Max - d.Min);
-            m.subMeshCount = 3;
-            m.SetSubMesh(0, new SubMeshDescriptor(0, d.Opaque) { bounds = bounds, firstVertex = 0, vertexCount = d.VertCount }, F);
-            m.SetSubMesh(1, new SubMeshDescriptor(d.Opaque, d.Transparent) { bounds = bounds, firstVertex = 0, vertexCount = d.VertCount }, F);
-            m.SetSubMesh(2, new SubMeshDescriptor(d.Opaque + d.Transparent, d.WaterBack) { bounds = bounds, firstVertex = 0, vertexCount = d.VertCount }, F);
+            m.subMeshCount = 4;
+            m.SetSubMesh(0, new SubMeshDescriptor(0, d.Solid) { bounds = bounds, firstVertex = 0, vertexCount = d.VertCount }, F);
+            m.SetSubMesh(1, new SubMeshDescriptor(d.Solid, d.Opaque - d.Solid) { bounds = bounds, firstVertex = 0, vertexCount = d.VertCount }, F);
+            m.SetSubMesh(2, new SubMeshDescriptor(d.Opaque, d.Transparent) { bounds = bounds, firstVertex = 0, vertexCount = d.VertCount }, F);
+            m.SetSubMesh(3, new SubMeshDescriptor(d.Opaque + d.Transparent, d.WaterBack) { bounds = bounds, firstVertex = 0, vertexCount = d.VertCount }, F);
             m.bounds = bounds;
         }
 
         void UploadBatch(Batch b, BatchData d)
         {
             Fill(b.Mesh, d);
-            b.Verts = d.VertCount; b.Indices = d.IndexCount; b.Opaque = d.Opaque; b.Transparent = d.Transparent; b.WaterBack = d.WaterBack;
+            b.Verts = d.VertCount; b.Indices = d.IndexCount; b.Opaque = d.Opaque; b.Solid = d.Solid; b.Transparent = d.Transparent; b.WaterBack = d.WaterBack;
             b.Sections = d.Sections; b.Bytes = d.Bytes;
             b.Go.SetActive(d.VertCount > 0 && !_staging);
         }
@@ -582,10 +602,10 @@ namespace TabletopCraft.World
         /// <summary>[area] What is on screen now (logs: AREA_LOADED, PERF).</summary>
         public struct RenderStats
         {
-            public int Batches, Renderers, Sections, MeshedSections, Vertices, Triangles, DrawCalls;
+            public int Batches, Renderers, Sections, MeshedSections, Vertices, Triangles, SolidTriangles, DrawCalls;
             public long Bytes;
             public override string ToString() =>
-                $"batches={Batches} renderers={Renderers} draw_calls~{DrawCalls} sections={MeshedSections}/{Sections} verts={Vertices} tris={Triangles} gpu_kb={Bytes / 1024}";
+                $"batches={Batches} renderers={Renderers} draw_calls~{DrawCalls} sections={MeshedSections}/{Sections} verts={Vertices} tris={Triangles} solid={SolidTriangles} gpu_kb={Bytes / 1024}";
         }
 
         public RenderStats Stats()
@@ -596,7 +616,8 @@ namespace TabletopCraft.World
             {
                 if (b.Verts == 0) continue;
                 s.Renderers++; s.Vertices += b.Verts; s.Triangles += (b.Opaque + b.Transparent) / 3; s.Bytes += b.Bytes;
-                s.DrawCalls += (b.Opaque > 0 ? 1 : 0) + (b.Transparent > 0 ? 1 : 0) + (_underwater && b.WaterBack > 0 ? 1 : 0);
+                s.DrawCalls += (b.Solid > 0 ? 1 : 0) + (b.Opaque > b.Solid ? 1 : 0) + (b.Transparent > 0 ? 1 : 0) + (_underwater && b.WaterBack > 0 ? 1 : 0);
+                s.SolidTriangles += b.Solid / 3;
             }
             return s;
         }

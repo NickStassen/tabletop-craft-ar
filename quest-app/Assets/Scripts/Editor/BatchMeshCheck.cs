@@ -90,18 +90,27 @@ namespace TabletopCraft.EditorTools
                 if (Mathf.Abs(bn[i].x - rn.x) > 0.02f || Mathf.Abs(bn[i].y - rn.y) > 0.02f || Mathf.Abs(bn[i].z - rn.z) > 0.02f)
                 { if (errors++ < 10) Debug.LogError($"BATCHCHECK normal {i}: {bn[i]} vs RecalculateNormals {rn}"); }
             }
-            for (int sub = 0; sub < 3; sub++)
+            // [gpu] The batch splits the opaque range: solid triangles first (drawn without alpha test), then the rest.
+            var solidRef = new List<int>(); var cutRef = new List<int>();
+            for (int i = 0; i + 2 < refTris[0].Count; i += 3)
+            {
+                int a = refTris[0][i], b1 = refTris[0][i + 1], c1 = refTris[0][i + 2];
+                bool solid = SolidLayers.Enabled && refColors[a].a == 255 && refColors[b1].a == 255 && refColors[c1].a == 255 && SolidLayers.Face(refUvs[a].z);
+                (solid ? solidRef : cutRef).AddRange(new[] { a, b1, c1 });
+            }
+            var wantTris = new[] { solidRef, cutRef, refTris[1], refTris[2] };
+            for (int sub = 0; sub < 4; sub++)
             {
                 var bt = batch.GetTriangles(sub);
-                bool same = bt.Length == refTris[sub].Count;
-                for (int i = 0; same && i < bt.Length; i++) same = bt[i] == refTris[sub][i];
-                if (!same) { errors++; Debug.LogError($"BATCHCHECK submesh {sub}: {bt.Length} vs {refTris[sub].Count} indices differ"); }
+                bool same = bt.Length == wantTris[sub].Count;
+                for (int i = 0; same && i < bt.Length; i++) same = bt[i] == wantTris[sub][i];
+                if (!same) { errors++; Debug.LogError($"BATCHCHECK submesh {sub}: {bt.Length} vs {wantTris[sub].Count} indices differ"); }
             }
             var b = batch.bounds;
             var lo = refVerts[0]; var hi = refVerts[0];
             foreach (var p in refVerts) { lo = Vector3.Min(lo, p); hi = Vector3.Max(hi, p); }
             if ((b.min - lo).sqrMagnitude > 1e-6f || (b.max - hi).sqrMagnitude > 1e-6f) { errors++; Debug.LogError($"BATCHCHECK bounds {b.min}..{b.max} vs {lo}..{hi}"); }
-            Debug.Log($"BATCHCHECK done: {parts.Count} sections, {checkedVerts} vertices ({zeroNormals} with zero normals), submeshes {data.Opaque / 3}/{data.Transparent / 3}/{data.WaterBack / 3} triangles, {errors} errors");
+            Debug.Log($"BATCHCHECK done: {parts.Count} sections, {checkedVerts} vertices ({zeroNormals} with zero normals), submeshes {data.Solid / 3}/{(data.Opaque - data.Solid) / 3}/{data.Transparent / 3}/{data.WaterBack / 3} triangles (solid/cutout/transparent/water back), {errors} errors");
             data.Release();
             Object.DestroyImmediate(batch);
             if (Application.isBatchMode) EditorApplication.Exit(errors == 0 ? 0 : 1);
@@ -137,7 +146,8 @@ namespace TabletopCraft.EditorTools
                 var m = mf.sharedMesh; if (m == null || m.vertexCount == 0) continue;
                 var p = mf.transform.localPosition;
                 foreach (var q in m.vertices) { sx += q.x + p.x; sy += q.y + p.y; sz += q.z + p.z; }
-                v += m.vertexCount; t += (m.GetIndexCount(0) + m.GetIndexCount(1)) / 3;
+                v += m.vertexCount;
+                for (int s = 0; s < Mathf.Min(3, m.subMeshCount); s++) t += m.GetIndexCount(s) / 3;   // [gpu] solid, cutout, transparent
             }
             return (v, t, sx, sy, sz);
         }

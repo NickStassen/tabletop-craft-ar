@@ -28,6 +28,47 @@ static class AreaTests
         LayoutTests();
         SectionMeshTests();
         BatchTests();
+        SolidSplitTests();
+    }
+
+    /// <summary>[gpu] Opaque faces on fully opaque layers (and flat colours) with opaque vertex colours go to the solid range
+    /// (drawn without alpha test), first and in mesher order; the rest stay alpha-tested. Batches keep the split.</summary>
+    static void SolidSplitTests()
+    {
+        SolidLayers.Clear();
+        SolidLayers.Set(0, true); SolidLayers.Set(1, false); SolidLayers.Set(2, true); SolidLayers.Set(3, true); SolidLayers.Set(5, true);
+        // quad layer (uv.z), vertex alpha, expected solid: layer 0; layer 1 (holes); flat colour; layer 0 with alpha 200;
+        // layer 0 with random table 3; [flow] table 64 over layers 0..3 (1 has holes); table 64 over 2..5 (4 unknown);
+        // a layer the atlas never published.
+        var quads = new (float z, byte a, bool solid)[]
+        {
+            (0, 255, true), (1, 255, false), (-1, 255, true), (0, 200, false), (0 + RandomUv.LayerStride * 3, 255, true),
+            (0 + RandomUv.LayerStride * FluidRules.QuadTable, 255, false), (2 + RandomUv.LayerStride * FluidRules.QuadTable, 255, false), (40, 255, false),
+        };
+        var md = new MeshData();
+        for (int q = 0; q < quads.Length; q++)
+        {
+            int s = md.Verts.Count;
+            md.Verts.Add(new Vector3(q, 1, 0)); md.Verts.Add(new Vector3(q + 1, 1, 0)); md.Verts.Add(new Vector3(q + 1, 1, 1)); md.Verts.Add(new Vector3(q, 1, 1));
+            for (int k = 0; k < 4; k++) { md.Uvs.Add(new Vector3(k & 1, k >> 1, quads[q].z)); md.Colors.Add(new Color32(200, 200, 200, quads[q].a)); }
+            md.Opaque.AddRange(new[] { s, s + 1, s + 2, s, s + 2, s + 3 });
+        }
+        var sm = SectionMesh.From(md, new Vector3Int(0, 0, 0));
+        int wantSolid = quads.Count(q => q.solid) * 6;
+        int Quad(int index) => index / 4;
+        var order = Enumerable.Range(0, sm.Opaque / 6).Select(t => Quad(sm.Indices[t * 6])).ToList();
+        var want = Enumerable.Range(0, quads.Length).Where(q => quads[q].solid).Concat(Enumerable.Range(0, quads.Length).Where(q => !quads[q].solid)).ToList();
+        Check(sm.Solid == wantSolid && sm.Opaque == quads.Length * 6 && order.SequenceEqual(want),
+              $"solid split: {sm.Solid / 6} of {quads.Length} quads solid (flat colours, opaque layers, random tables), first and in order (got {sm.Solid / 6}: {string.Join(",", order)})");
+        var b = BatchData.Assemble(new List<(SectionMesh, Vector3)> { (sm, Vector3.zero), (sm, new Vector3(16, 0, 0)) });
+        bool firstSolid = Enumerable.Range(0, b.Solid).All(i => quads[Quad(b.Indices[i] % (quads.Length * 4))].solid);
+        bool restCut = Enumerable.Range(b.Solid, b.Opaque - b.Solid).All(i => !quads[Quad(b.Indices[i] % (quads.Length * 4))].solid);
+        Check(b.Solid == 2 * wantSolid && firstSolid && restCut && b.DrawCalls(false) == 2, "a batch keeps every section's solid faces first (one solid and one alpha-tested draw)");
+        SolidLayers.Enabled = false;
+        var off = SectionMesh.From(md, new Vector3Int(0, 0, 0));
+        SolidLayers.Enabled = true;
+        Check(off.Solid == 0 && off.Opaque == quads.Length * 6, "solid_pass false: every opaque face alpha-tested, as before");
+        SolidLayers.Clear();
     }
 
     static NavState Nav(Vector3Int origin, Vector3Int dims, Vector3Int margin)
@@ -376,7 +417,8 @@ static class AreaTests
             int sectionDraws = secs.Values.Sum(s => (s.Opaque > 0 ? 1 : 0) + (s.Transparent > 0 ? 1 : 0));
             int window = w.Dims.x - 32;
             Console.WriteLine($"MEASURE_BATCH {System.IO.Path.GetFileName(f)} window={window} region={w.Dims.x}x{w.Dims.y}x{w.Dims.z} light={(w.Light != null ? "yes" : "no")} pack={(assets != null ? "yes" : "no")} " +
-                              $"sections={n.x * n.y * n.z} non_empty={secs.Count} verts={verts} tris={tris} faces={secs.Values.Sum(s => (long)s.Quads)} mesh_ms_1thread={meshMs:F0}");
+                              $"sections={n.x * n.y * n.z} non_empty={secs.Count} verts={verts} tris={tris} faces={secs.Values.Sum(s => (long)s.Quads)} mesh_ms_1thread={meshMs:F0} " +
+                              $"opaque_tris={secs.Values.Sum(s => (long)s.Opaque / 3)} solid_tris={secs.Values.Sum(s => (long)s.Solid / 3)} transparent_tris={secs.Values.Sum(s => (long)s.Transparent / 3)}");
             Console.WriteLine($"  per-section meshes (before): renderers={secs.Count} draw_calls={sectionDraws}");
             foreach (int cols in new[] { 1, 2, 3, 4, 6, 8 })
             {
