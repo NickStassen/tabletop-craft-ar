@@ -79,7 +79,7 @@ world-state:
 # work out: note blocks, bells, containers, jukebox songs, explosions, fire lit, buckets and bone meal. Needs actions.
 sound:
   enabled: true
-# [sound] Opt-in asset delivery (PROTOCOL.md "Asset delivery", QUEST_SETUP.md Part N): headsets download the operator's
+# [sound] Opt-in asset delivery (PROTOCOL.md "Asset delivery", QUEST_SETUP.md Part P): headsets download the operator's
 # OWN pack.zip, entity_models.json and sounds.zip from this server instead of over USB (adb). Off by default.
 #   - Only serve copies made from your own Minecraft install, and only to your own headsets. This project ships no
 #     Mojang assets and the files stay yours: don't put the server on the internet with this on.

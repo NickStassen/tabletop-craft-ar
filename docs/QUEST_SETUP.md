@@ -113,7 +113,16 @@ Without a pack the app uses flat colours. To use textures you already own:
    ```
    It reads the game's own model definitions out of `versions/26.3/26.3.jar` and the libraries the launcher downloaded (the game doesn't start) and writes about 90 KB of box sizes, pivots and skin offsets plus the dye colours and sign text colours. Regenerate it after a game update, and after updating the app when its release notes say so (a file from before 0.4 has no block entity layers: chests and banners then stay plain boxes; one from before the living-world update has no gear layers or the ender dragon, wither, giant and the other new types, which then stay boxes or go without their saddles and armour). The app loads it in the background at start; logcat shows `[Tabletop] entity_models.json: 211 models (Minecraft 26.3)`. Without it, entities are boxes of their real size in the average colour of their texture, and the Info tab shows `ENTITIES n (boxes)`.
 
-Don't commit or redistribute the jar, the pack or `entity_models.json` (all three are git-ignored).
+4. Sound. The game keeps its sounds outside the client jar, in the launcher's asset store (`assets/indexes/<id>.json` names every file, `assets/objects/` holds them). Package your own copy for the headset with any JDK 17+ from the repo root, then push it next to `pack.zip`:
+   ```
+   java tools/sounds/PackSounds.java %APPDATA%\.minecraft 26.3 sounds.zip     (Windows)
+   java tools/sounds/PackSounds.java ~/.minecraft 26.3 sounds.zip            (Linux)
+   java tools/sounds/PackSounds.java ~/.minecraft 26.3 --list                (sizes per group, writes nothing)
+   adb push sounds.zip /sdcard/Android/data/com.tabletopcraft.ar/files/sounds.zip
+   ```
+   It reads `versions/26.3/26.3.json` to find the asset index (`34` for 26.3), checks each file's SHA-1 and writes `sounds.json` plus the `.ogg` files it names, laid out like a resource pack. By default it takes blocks, mobs, items, weather, UI and the rest, but not ambient loops, music or records: 1915 events, 4679 files, about 67 MB for 26.3. Add groups as a fourth argument (`blocks,mobs,weather,records` or `all`; music alone is about 260 MB). Launch the version once in the launcher if it says files are missing. Restart the app (or let your server send it, Part P): the Info tab shows `SOUND 80%  1915 events, 4679 sounds (Minecraft 26.3)`. Without it the table is silent and a toast says `No sounds.zip`.
+
+Don't commit or redistribute the jar, the pack, `entity_models.json` or `sounds.zip` (all are git-ignored).
 
 ## Part F: test with a second Java player
 
@@ -233,7 +242,7 @@ Icons: blocks whose inventory icon is flat in the game (flowers, torches, rails,
 
 The old status text in the middle of the view is gone:
 - **Info tab** in the block menu: the full status.
-- **Short messages** (2–3 s, fading, low in your view): link lost and restored, server errors (refused edits, area too large...), local refusals ("Can't place fire"), and area setup results ("Area set", "Requested 64x96x64...", "Area setup cancelled"). `Loading area 40 %` counts up while a new or resized area is meshed (not while gliding). Once, when the first area shows: `No pack.zip` or `No entity_models.json` if those files are missing (Part E).
+- **Short messages** (2–3 s, fading, low in your view): link lost and restored, server errors (refused edits, area too large...), local refusals ("Can't place fire"), and area setup results ("Area set", "Requested 64x96x64...", "Area setup cancelled"). `Loading area 40 %` counts up while a new or resized area is meshed (not while gliding). Once, when the first area shows: `No pack.zip`, `No entity_models.json` or `No sounds.zip` if those files are missing (Part E).
 - **Setup card** (in front of you): no server reached yet, or the server refused the app (Part D).
 - **Offline badge** (on the table's edge): the link dropped; the app is reconnecting (Part D "Headset off, Wi-Fi gone").
 - **N and coordinates**: Part H "Finding your way".
@@ -402,6 +411,18 @@ A box can hold up to 32768 blocks (vanilla's `/fill` limit, `edit.box-max-blocks
 | **Tools tab** | Wand, Brush, Fill, Replace, Clear, Walls, Hollow, Clone, Rotate, Clear corners, Paint, Replace, Erase, Smooth, Radius −/+, Undo, Redo |
 
 Server options (config.yml `edit`): `power`, `power-require-token`, `undo-depth` (10000), `undo-tile-entities` (256), `box-max-blocks` (32768), `box-budget-ms` (2), `brush-max-radius` (8), `brush-blocks-per-second` (20000), `power-actions-per-second` (5). Each box edit, undo and redo is logged as `POWER session=... fill group=... filled changed=... in ... ms over ... ticks, main thread ... ms`.
+
+## Part P: sound, and getting your files from your server
+
+**What you hear.** With `sounds.zip` on the headset (Part E step 4) the table sounds like the game, from where things happen on the miniature: blocks breaking and placed (by Java players and by you), digging, footsteps of players and mobs on what they walk on, mobs talking, getting hurt and dying, items and experience picked up, doors, trapdoors, gates, levers, buttons, pressure plates and pistons, note blocks (with their note), bells, chests and barrels opening, jukebox discs (if you packed `records`), explosions, TNT fuses, thunder, rain on the ground, flowing water, lava and fire near the view, and a soft ping when someone writes in chat. Sounds fade over the game's distance (16 blocks for most) scaled to the table: zoom in (right stick) and they come closer; at a wide preset the far side is quieter. At most 24 play at once; your own actions, explosions and doors win over footsteps and rain.
+
+**Volume.** Block menu (left ≡) > Info: `[-] [Sound 80%] [+]` beside Show HUD and Reset view; the middle button mutes. The headset remembers it (prefs.json). tabletop.json: `"sound": false` starts muted, `"volume": 0.5`, `"sound_range": 8` (how far sounds carry: metres of table per block of hearing range = block size × this), `"max_voices": 24`, `"chat_ping": false`. The Info tab's `SOUND` line shows the volume, the events and sounds loaded, voices in use and clips in memory.
+
+**Getting pack.zip, entity_models.json and sounds.zip from your server instead of adb (optional, off by default).** This is for your own server and your own headset: put the copies you made from your own Minecraft install (Part E) into a folder on the server PC and let the plugin hand them to your headset. The project ships no Mojang assets, and these files stay yours: never serve them to anyone else or on a public server.
+1. Set a token (`auth.token` in config.yml, and the same `"token"` in the headset's tabletop.json, Part D). Without one nothing is served.
+2. In config.yml: `assets.serve: true` and `assets.dir: "C:/Users/you/tabletop-files"` (a folder holding any of `pack.zip`, `entity_models.json`, `sounds.zip`; nothing else in it is ever read). `/tabletop reload`. The log says `ASSETS serving entity_models.json (0.1 MB), sounds.zip (67.0 MB), pack.zip (...)`.
+3. Start the app. Only headsets on the LAN (private, link-local or loopback addresses) that presented the token are offered the files. Files that differ from the headset's copy (size or SHA-256) download one after another (a `Downloading sounds.zip 34% (23/67 MB, 7.9 MB/s)` toast, the Info tab's `ASSETS` line); a dropped link resumes where it stopped, and only a file whose SHA-256 matches replaces the old one. New sounds and entity models load at once; a new `pack.zip` restarts the scene a couple of seconds later to load the textures (`"reload_after_pack": false` in tabletop.json asks you to restart the app instead). `"download_assets": false` turns downloading off on the headset.
+4. Speed: `assets.max-mb-per-second` (8 by default, per headset) keeps the world stream smooth while a big file downloads. The server logs each file sent (`ASSETS session=… sent sounds.zip 67.0 MB in 8.5 s`) and `/tabletop status` the totals.
 
 ## Logs
 

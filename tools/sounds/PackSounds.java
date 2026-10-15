@@ -1,7 +1,7 @@
 // Writes sounds.zip: the game's sound definitions (sounds.json) and the .ogg files they name, copied from YOUR OWN
 // Minecraft launcher install, so the Quest app can play spatial sound on the table (docs/QUEST_SETUP.md Part E). Run it
 // on your PC and copy the result to the headset next to pack.zip (or let your own server hand it to your own headset:
-// QUEST_SETUP.md Part N). The sounds belong to Mojang: never commit, share or redistribute sounds.zip (it is git-ignored).
+// QUEST_SETUP.md Part P). The sounds belong to Mojang: never commit, share or redistribute sounds.zip (it is git-ignored).
 // Any JDK 17+ runs it directly with Java's single-file launcher:
 //
 //   java tools/sounds/PackSounds.java ~/.minecraft 26.3 sounds.zip
