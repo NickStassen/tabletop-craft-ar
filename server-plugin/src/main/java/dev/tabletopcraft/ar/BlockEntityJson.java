@@ -11,7 +11,7 @@ import java.util.Map;
 import java.util.function.LongPredicate;
 
 /**
- * block_entities (PROTOCOL.md 4.26): one entry per block entity whose look depends on more than its block state (sign
+ * block_entities (PROTOCOL.md 4.29): one entry per block entity whose look depends on more than its block state (sign
  * text, banner patterns, player head profiles, pot sherds, spawned mobs, beacon tiers, campfire/shelf/vault items,
  * conduit activity), built from plain values that BlockEntityStreamer reads from the world, and the per-chunk delta
  * against what a session already holds. Pure: unit-tested with the golden fixture.

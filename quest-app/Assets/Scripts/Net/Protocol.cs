@@ -11,12 +11,21 @@ namespace TabletopCraft.Net
         public const string ClientName = "quest-app";
         public const string ClientVersion = "0.1.0";
 
-        public static Dictionary<string, object> Hello(string token) => new Dictionary<string, object>
+        public static Dictionary<string, object> Hello(string token)
         {
-            ["type"] = "hello", ["client"] = ClientName, ["client_version"] = ClientVersion,
-            ["protocols"] = new List<object> { Version }, ["token"] = token ?? "",
-            ["caps"] = new List<object> { "rle_palette_v1", "avatar", CapLight, CapBiomes, SectionedSnapshot.Cap, CapEdit, CapEntities, CapActions, CapBlockEntities },
-        };
+            var d = new Dictionary<string, object>
+            {
+                ["type"] = "hello", ["client"] = ClientName, ["client_version"] = ClientVersion,
+                ["protocols"] = new List<object> { Version }, ["token"] = token ?? "",
+                ["caps"] = new List<object> { "rle_palette_v1", "avatar", CapLight, CapBiomes, SectionedSnapshot.Cap, CapEdit, CapEntities, CapActions,
+                                              ControlProtocol.CapChat, ControlProtocol.CapCommand, ControlProtocol.CapStatus, CapBlockEntities },   // [talk], [blocks]
+            };
+            if (!string.IsNullOrEmpty(OperatorName)) d["operator_name"] = OperatorName;   // [talk] the name in chat (PROTOCOL.md 4.26)
+            return d;
+        }
+
+        /// <summary>[talk] tabletop.json operator_name, else skin_player: the name Java players see in chat (the server sanitises it).</summary>
+        public static string OperatorName;
 
         /// <summary>Optional snapshot extras (PROTOCOL.md 4.4.1): per-block light and 4x4x4 biomes.</summary>
         public const string CapLight = "light_v1", CapBiomes = "biomes_v1";
@@ -24,7 +33,7 @@ namespace TabletopCraft.Net
         public const string CapEntities = "entities_v1", CapActions = "actions_v1";
         /// <summary>Block editing from the headset (PROTOCOL.md 4.20); granted in welcome.caps when the server allows it.</summary>
         public const string CapEdit = "edit_v1";
-        /// <summary>[blocks] Block entity data: sign text, banner patterns, heads, sherds, spawners... (PROTOCOL.md 4.26).</summary>
+        /// <summary>[blocks] Block entity data: sign text, banner patterns, heads, sherds, spawners... (PROTOCOL.md 4.29).</summary>
         public const string CapBlockEntities = "block_entities_v1";
 
         /// <summary>block_edit (PROTOCOL.md 4.20): op "break" or "place", world block position, state (place only), clicked face.</summary>

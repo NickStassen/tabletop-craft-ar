@@ -174,6 +174,7 @@ static class Program
         else if (entSceneIdx >= 0) Console.WriteLine("SKIP --entity-scene: needs --jar and --entity-models");
         EditTests.Run(Check, Fixture);  // block editing: DDA targeting, Z mirror, optimistic edits (EditTests.cs)
         MenuTests.Run(Check, Fixture, JarPath(args), args);   // [menu] block registry, menu model, hotbar, HUD toasts, icons (MenuTests.cs)
+        ControlTests.Run(Check, Fixture);   // [talk] chat, console, operator panel, status (ControlTests.cs)
         EyeTests.Run(Check);            // eye in water/lava/powder snow/blocks, water inside faces (EyeTests.cs)
         ComfortTests.Run(Check, Fixture, args);   // [comfort] keyboard, Info tab, prefs.json, discovery, link health (ComfortTests.cs)
 
@@ -204,6 +205,8 @@ static class Program
         if (liveIdx >= 0) Live(args[liveIdx + 1]);
         int liveEditIdx = Array.IndexOf(args, "--live-edit");
         if (liveEditIdx >= 0) EditTests.Live(args[liveEditIdx + 1], Check);
+        int liveControlIdx = Array.IndexOf(args, "--live-control");   // [talk] --live-control URL TOKEN
+        if (liveControlIdx >= 0) ControlTests.Live(args[liveControlIdx + 1], liveControlIdx + 2 < args.Length ? args[liveControlIdx + 2] : "", Check);
         Console.WriteLine(fails == 0 ? "ALL PASS" : $"{fails} FAILED");
         return fails == 0 ? 0 : 1;
     }

@@ -29,7 +29,7 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class TabletopPlugin extends JavaPlugin {
     private RegionCaps caps = RegionCaps.DEFAULT;
 
-    private LinkServer link;
+    private volatile LinkServer link;   // [talk] volatile: read by the async chat handler
     private ExecutorService outbound;
     private final RegionReader reader = new RegionReader(this);
     private final java.util.Set<RegionSpec> diffInFlight = new java.util.HashSet<>();
@@ -63,13 +63,15 @@ public final class TabletopPlugin extends JavaPlugin {
     static final int LIGHT_RECHECK_TICKS = 4, MAX_LIGHT_CHANGES = 16384;
     private final EntityStreamer entities = new EntityStreamer(this);   // entities_v1 (PROTOCOL.md 4.21)
     private final ActionListener actions = new ActionListener(this);    // actions_v1 (PROTOCOL.md 4.22)
-    private final BlockEntityStreamer blockEntities = new BlockEntityStreamer(this);   // [blocks] block_entities_v1 (PROTOCOL.md 4.26)
+    private final BlockEntityStreamer blockEntities = new BlockEntityStreamer(this);   // [blocks] block_entities_v1 (PROTOCOL.md 4.29)
     // Block editing from the headset (block_edit, PROTOCOL.md 4.20), config section "edit". Read on websocket threads.
     private volatile boolean editEnabled = true, editRequireToken, editTokenSet, editPhysics = true;
     private volatile int editRate = 20;
     private volatile Set<String> editDeny = Set.of();
     // [menu] Placeable blocks for the headset's block menu (block_registry, PROTOCOL.md 4.24), built on start/reload.
     private volatile BlockRegistry blockRegistry = BlockRegistry.empty();
+    // [talk] chat, commands and server status for the headset (PROTOCOL.md 4.26-4.28)
+    final ControlService control = new ControlService(this);
     // [comfort] LAN discovery (PROTOCOL.md 7, config.yml discovery): answers the headset's UDP probe on its own thread.
     private LanBeacon beacon;
     private volatile int onlinePlayers;
@@ -80,6 +82,7 @@ public final class TabletopPlugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(new BlockListener(this), this);
         getServer().getPluginManager().registerEvents(actions, this);
         getServer().getPluginManager().registerEvents(blockEntities, this);   // [blocks] sign edits, interactions
+        getServer().getPluginManager().registerEvents(control, this);   // [talk]
         start();
     }
 
@@ -119,6 +122,7 @@ public final class TabletopPlugin extends JavaPlugin {
         for (String id : c.getStringList("edit.deny")) deny.add(BlockEdit.blockId(id));
         editDeny = Set.copyOf(deny);
         buildBlockRegistry();   // [menu]
+        control.configure(c);   // [talk]
         outbound = Executors.newSingleThreadExecutor(r -> { Thread t = new Thread(r, "tabletop-outbound"); t.setDaemon(true); return t; });
         link = new LinkServer(this, c.getString("bind.host", "0.0.0.0"), c.getInt("bind.port", 8765), c.getString("bind.path", "/tabletop"), c.getString("auth.token", ""));
         link.start();
@@ -170,7 +174,7 @@ public final class TabletopPlugin extends JavaPlugin {
     boolean entitiesEnabled() { return entities.enabled; }
     boolean actionsEnabled() { return actions.enabled; }
     boolean blockEntitiesEnabled() { return blockEntities.enabled; }   // [blocks]
-    private void send(Session s, JsonObject body) { if (outbound != null && !outbound.isShutdown()) outbound.execute(() -> s.send(body)); }
+    void send(Session s, JsonObject body) { if (outbound != null && !outbound.isShutdown()) outbound.execute(() -> s.send(body)); }
     /** Like send, adding the UTF-8 size to a counter (entities bytes/s). */
     void sendCounting(Session s, JsonObject body, java.util.concurrent.atomic.AtomicLong bytes, java.util.concurrent.atomic.AtomicLong total) {
         if (outbound != null && !outbound.isShutdown()) outbound.execute(() -> { int n = s.sendCounted(body); bytes.addAndGet(n); total.addAndGet(n); });
@@ -180,6 +184,12 @@ public final class TabletopPlugin extends JavaPlugin {
     void sendCountingLater(Session s, java.util.function.Supplier<JsonObject> body, java.util.concurrent.atomic.AtomicLong bytes, java.util.concurrent.atomic.AtomicLong total) {
         if (outbound != null && !outbound.isShutdown()) outbound.execute(() -> { int n = s.sendCounted(body.get()); bytes.addAndGet(n); total.addAndGet(n); });
     }
+
+    /** [talk] Every connected session, any state (thread-safe view). */
+    Collection<Session> allSessions() { LinkServer l = link; return l == null ? List.of() : l.sessions(); }
+
+    /** [talk] The operator's chat line as a speech bubble over the giant's head, for Java players. */
+    void giantSays(String text, int seconds) { if (avatar.spawned()) avatar.say(text, seconds); }
 
     void markDirty(String world, int x, int y, int z) {
         if (link == null) return;
@@ -213,7 +223,9 @@ public final class TabletopPlugin extends JavaPlugin {
         }
         if (tickCount % Math.max(1, getConfig().getInt("stream.players-every-ticks", 2)) == 0) { sendPlayers(); entities.tick(ready()); }
         actions.flush(ready());   // swings, digging, breaks, damage of this tick (PROTOCOL.md 4.22)
-        blockEntities.tick(ready());   // [blocks] sign text, banner patterns, heads... (PROTOCOL.md 4.26), budgeted
+        blockEntities.tick(ready());   // [blocks] sign text, banner patterns, heads... (PROTOCOL.md 4.29), budgeted
+        control.tick(tickCount);  // [talk] late command output, server_status
+        avatar.tickBubble();      // [talk] the giant's speech bubble follows the head and expires
         if (tickCount % 20 == 0) { timeouts(); onlinePlayers = Bukkit.getOnlinePlayers().size(); }
         if (tickCount % 600 == 0) { String rs = reader.takeStats(); if (rs != null) getLogger().info("READS " + rs); }   // [area] main-thread cost of reads, per 30 s
         if (tickCount % 10 == 0) updateTickets();   // follow the giant
@@ -259,11 +271,16 @@ public final class TabletopPlugin extends JavaPlugin {
         if (sectionsFor(s)) sc.add(SectionCodec.ENCODING);
         if (s.wantsEntities) sc.add(Protocol.CAP_ENTITIES);   // entities (PROTOCOL.md 4.21)
         if (s.wantsActions) sc.add(Protocol.CAP_ACTIONS);     // actions (PROTOCOL.md 4.22)
-        if (s.wantsBlockEntities) sc.add(Protocol.CAP_BLOCK_ENTITIES);   // [blocks] block entity data (PROTOCOL.md 4.26)
+        if (s.wantsBlockEntities) sc.add(Protocol.CAP_BLOCK_ENTITIES);   // [blocks] block entity data (PROTOCOL.md 4.29)
         sc.add("view_margin");
         sc.add("pose_snapshot_id");
         if (s.canEdit) sc.add(Protocol.CAP_EDIT);   // block editing (PROTOCOL.md 4.20)
+        // [talk] chat, commands, status (PROTOCOL.md 4.26-4.28)
+        if (s.wantsChat) sc.add(ControlMessages.CAP_CHAT);
+        if (s.canCommand) sc.add(ControlMessages.CAP_COMMAND);
+        if (s.wantsStatus) sc.add(ControlMessages.CAP_STATUS);
         w.add("caps", sc);
+        control.welcome(s, w);
         send(s, w);
         send(s, blockRegistry.message());   // [menu] every placeable block, once per connection (PROTOCOL.md 4.24)
         subscribe(s, r, null);
@@ -954,11 +971,22 @@ public final class TabletopPlugin extends JavaPlugin {
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (args.length == 0) return false;
-        switch (args[0].toLowerCase(Locale.ROOT)) {
+        String sub0 = args[0].toLowerCase(Locale.ROOT);
+        // [talk] /tabletop tell is for every player (tabletop.tell, default true); the rest needs tabletop.admin.
+        if (sub0.equals("tell")) {
+            if (!sender.hasPermission("tabletop.tell")) { sender.sendMessage("[tabletop] you may not message the headsets (tabletop.tell)"); return true; }
+            if (args.length < 2) { sender.sendMessage("[tabletop] usage: /tabletop tell <message>"); return true; }
+            int n = control.tell(sender, String.join(" ", Arrays.copyOfRange(args, 1, args.length)));
+            sender.sendMessage(n < 0 ? "[tabletop] message is empty or too long" : n == 0 ? "[tabletop] no headset with chat is connected" : "[tabletop] sent to " + n + (n == 1 ? " headset" : " headsets"));
+            return true;
+        }
+        if (!sender.hasPermission("tabletop.admin")) { sender.sendMessage("[tabletop] you need tabletop.admin for that"); return true; }
+        switch (sub0) {
             case "status" -> {
                 RegionSpec r = defaultRegion();
                 sender.sendMessage(String.format("[tabletop] default region %s origin %d %d %d dims %d %d %d; clients %d; avatar %s scale %.2f placement %s; poses applied %d",
                     r.world(), r.ox(), r.oy(), r.oz(), r.sx(), r.sy(), r.sz(), ready().size(), avatar.spawned() ? "spawned" : "none", avatar.scale(), avatar.placement.id(), avatar.posesApplied));
+                sender.sendMessage("[tabletop] " + control.stats() + "; commands " + (control.commandsAllowed() ? "on, deny " + control.denyList() : "off (" + control.commandsOffReason() + ")"));   // [talk]
             }
             case "setorigin" -> {
                 int x, y, z; String world;
@@ -1039,7 +1067,7 @@ public final class TabletopPlugin extends JavaPlugin {
 
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
-        if (args.length == 1) return List.of("status", "setorigin", "setsize", "avatar", "entities", "reload");
+        if (args.length == 1) return sender.hasPermission("tabletop.admin") ? List.of("status", "setorigin", "setsize", "avatar", "entities", "reload", "tell") : List.of("tell");
         if (args.length == 2 && args[0].equalsIgnoreCase("avatar")) return List.of("status", "spawn", "remove", "blocksize", "placement", "skin");
         if (args.length == 3 && args[0].equalsIgnoreCase("avatar") && args[1].equalsIgnoreCase("placement")) return List.of("floating", "ground", "exact");
         return List.of();

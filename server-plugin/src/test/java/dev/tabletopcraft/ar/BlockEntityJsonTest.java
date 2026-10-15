@@ -14,7 +14,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** block_entities (PROTOCOL.md 4.26): entries from plain values match the golden fixture; per-chunk deltas. */
+/** block_entities (PROTOCOL.md 4.29): entries from plain values match the golden fixture; per-chunk deltas. */
 class BlockEntityJsonTest {
     private static BlockEntityJson.Side side(String color, boolean glowing, String... lines) { return new BlockEntityJson.Side(List.of(lines), color, glowing); }
 

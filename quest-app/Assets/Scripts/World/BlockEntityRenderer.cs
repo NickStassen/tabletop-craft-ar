@@ -5,7 +5,7 @@
 //
 // Where they are comes from the grid: a budgeted main-thread scan of the sections a snapshot brought (all of them, or
 // only the new and changed ones after a glide or resize) plus WorldModel.CellChanged for block_update and local edits.
-// What the block state doesn't say comes from block_entities (BlockEntityStore, PROTOCOL.md 4.26).
+// What the block state doesn't say comes from block_entities (BlockEntityStore, PROTOCOL.md 4.29).
 //
 // Static models are GPU instances: each (mesh, material) pair is one group drawn with Graphics.RenderMeshInstanced,
 // so a village of chests is one draw call per chest texture. Instances are keyed by world position; their matrices
@@ -141,7 +141,7 @@ namespace TabletopCraft.World
 
         // ---------- inputs ----------
 
-        /// <summary>A block_entities message (PROTOCOL.md 4.26).</summary>
+        /// <summary>A block_entities message (PROTOCOL.md 4.29).</summary>
         public void Apply(Dictionary<string, object> m)
         {
             _changed.Clear();

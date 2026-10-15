@@ -138,7 +138,7 @@ class FixtureTest {
         assertEquals(fx.get("count").getAsInt(), n);
     }
 
-    /** [blocks] PROTOCOL.md 4.26: the block_entities fixture is exactly what BlockEntityJson builds from those values. */
+    /** [blocks] PROTOCOL.md 4.29: the block_entities fixture is exactly what BlockEntityJson builds from those values. */
     @Test void blockEntitiesFixtureMatchesBuilders() throws Exception {
         JsonObject f = fixture("block_entities");
         JsonObject m = BlockEntityJson.message(BlockEntityJsonTest.fixtureEntities(), java.util.List.<int[]>of(new int[] { 100, 64, -35 }));

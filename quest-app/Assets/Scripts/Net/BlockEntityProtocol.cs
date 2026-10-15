@@ -1,4 +1,4 @@
-// block_entities (PROTOCOL.md 4.26): what the server knows about block entities in the region that the block state
+// block_entities (PROTOCOL.md 4.29): what the server knows about block entities in the region that the block state
 // doesn't say: sign text, banner patterns, player head skins, pot sherds, spawned mobs, beacon tiers, campfire, shelf
 // and vault items, conduit activity. Engine-free: BlockEntityStore keeps the latest entry per world position;
 // BlockEntityRenderer draws from it, Tests~ parses the fixtures.

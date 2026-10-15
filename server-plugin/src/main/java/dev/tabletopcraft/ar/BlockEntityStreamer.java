@@ -42,7 +42,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Streams block_entities (PROTOCOL.md 4.26) to sessions with block_entities_v1: what a block state doesn't say about a
+ * Streams block_entities (PROTOCOL.md 4.29) to sessions with block_entities_v1: what a block state doesn't say about a
  * block entity (sign text, banner patterns, player head skins, pot sherds, spawned mobs, beacon tiers, campfire, shelf
  * and vault items, conduit activity). ChunkSnapshots carry no block entities, so this reads them on the main thread
  * with Chunk#getTileEntities (only the interesting block types, no snapshot copies), chunk by chunk under a per-tick

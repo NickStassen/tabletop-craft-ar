@@ -1,7 +1,7 @@
 // Block entities (chests, shulker boxes, heads, banners, bells, decorated pots, conduits, copper golem statues, books,
 // end portals, signs, beacons, spawners, campfires, shelves, vaults) drawn the way vanilla 26.3's BlockEntityRenderers
 // do: which model layers (entity_models.json, generated from the user's own client jar), which pack textures, and the
-// renderer's block-space transform, per block state and per server data (block_entities, PROTOCOL.md 4.26).
+// renderer's block-space transform, per block state and per server data (block_entities, PROTOCOL.md 4.29).
 // Engine-free: Tests~ checks the transforms and layer choices; BlockEntityRenderer draws the parts as GPU instances.
 //
 // Conventions. A part's mesh is baked in figure space like every entity mesh here (EntityModels: game model space

@@ -58,12 +58,33 @@ PLAYER_POSES = {"standing", "sneaking", "swimming", "sleeping", "gliding", "ridi
 # Block editing from the headset (PROTOCOL.md 4.20): block_edit, granted in welcome.caps.
 CAP_EDIT = "edit_v1"
 FACES = ("west", "east", "down", "up", "north", "south")
-# Block entity data (PROTOCOL.md 4.26): sign text, banner patterns, heads, sherds, spawners, beacons, items, conduits.
+# Block entity data (PROTOCOL.md 4.29): sign text, banner patterns, heads, sherds, spawners, beacons, items, conduits.
 CAP_BLOCK_ENTITIES = "block_entities_v1"
 BLOCK_ENTITY_KINDS = {"sign", "banner", "skull", "decorated_pot", "spawner", "trial_spawner", "beacon", "campfire", "shelf",
                       "vault", "conduit"}
 DYES = {"white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray", "light_gray", "cyan", "purple", "blue",
         "brown", "green", "red", "black"}
+
+# [talk] Chat, commands and server status (PROTOCOL.md 4.26-4.28).
+CAP_CHAT, CAP_COMMAND, CAP_STATUS = "chat_v1", "command_v1", "status_v1"
+CHAT_KINDS = ("chat", "join", "quit", "death", "advancement", "broadcast", "say", "me", "operator", "whisper")
+CONTROL_REQUIRED = {
+    "chat": ["kind", "text"],
+    "chat_send": ["text"],
+    "command": ["line"],
+    "command_result": ["ref_seq", "ok", "ms", "lines"],
+    "command_output": ["ref_seq", "lines"],
+    "command_complete": ["line"],
+    "command_suggestions": ["ref_seq", "start", "items"],
+    "server_status": ["tps", "mspt", "memory", "players", "tick", "worlds"],
+    "world_query": [],
+    "world_info": ["world", "env", "time", "day", "weather", "difficulty", "spawn", "tick", "gamerules"],
+    "players_query": [],
+    "players_info": ["players"],
+}
+REQUIRED.update(CONTROL_REQUIRED)
+ERROR_CODES |= {"chat_denied", "command_denied"}
+WEATHERS = ("clear", "rain", "thunder")
 
 
 def validate(msg: dict) -> None:
@@ -139,6 +160,8 @@ def validate(msg: dict) -> None:
         validate_block_registry(msg)
     if t == "block_entities":
         validate_block_entities(msg)
+    if t in CONTROL_REQUIRED:
+        validate_control(msg)   # [talk]
 
 
 def _int_pos(p) -> bool:
@@ -146,7 +169,7 @@ def _int_pos(p) -> bool:
 
 
 def validate_block_entities(msg: dict) -> None:
-    """block_entities (PROTOCOL.md 4.26): entries by kind with integer world positions, removed positions."""
+    """block_entities (PROTOCOL.md 4.29): entries by kind with integer world positions, removed positions."""
     for e in msg["entities"]:
         k = e.get("kind")
         if k not in BLOCK_ENTITY_KINDS:
@@ -174,6 +197,71 @@ def validate_block_entities(msg: dict) -> None:
             raise ValueError("vault needs an item")
     if not all(_int_pos(p) for p in msg.get("removed") or []):
         raise ValueError("block_entities removed must be integer positions")
+
+
+def _ints(v, n: int) -> bool:
+    return isinstance(v, list) and len(v) == n and all(isinstance(x, int) and not isinstance(x, bool) for x in v)
+
+
+def _strings(v) -> bool:
+    return isinstance(v, list) and all(isinstance(x, str) for x in v)
+
+
+def validate_control(msg: dict) -> None:
+    """[talk] chat, commands and status messages (PROTOCOL.md 4.26-4.28)."""
+    t = msg["type"]
+    if t == "chat":
+        if msg["kind"] not in CHAT_KINDS:
+            raise ValueError(f"chat kind {msg['kind']} is not one of {CHAT_KINDS}")
+        f = msg.get("from")
+        if f is not None and not (isinstance(f, dict) and isinstance(f.get("name"), str)):
+            raise ValueError("chat from needs a name")
+        if not isinstance(msg["text"], str):
+            raise ValueError("chat text must be a string")
+    elif t == "chat_send":
+        if not isinstance(msg["text"], str) or not msg["text"].strip() or len(msg["text"]) > 256:
+            raise ValueError("chat_send text must be 1..256 characters")
+    elif t in ("command", "command_complete"):
+        line = msg["line"]
+        if not isinstance(line, str) or len(line) > 256 or any(ord(c) < 32 for c in line):
+            raise ValueError(f"{t} line must be one line of at most 256 characters")
+        if t == "command" and not line.strip().lstrip("/").strip():
+            raise ValueError("command line is empty")
+        at = msg.get("at")
+        if at is not None and not (isinstance(at, dict) and _ints(at.get("pos"), 3)):
+            raise ValueError("command at needs pos [x, y, z] integers")
+    elif t in ("command_result", "command_output"):
+        if not _strings(msg["lines"]):
+            raise ValueError(f"{t} lines must be strings")
+        if t == "command_result" and not isinstance(msg["ok"], bool):
+            raise ValueError("command_result ok must be a boolean")
+    elif t == "command_suggestions":
+        if not isinstance(msg["start"], int) or msg["start"] < 0 or not _strings(msg["items"]) or len(msg["items"]) > 50:
+            raise ValueError("command_suggestions needs start >= 0 and at most 50 string items")
+    elif t == "server_status":
+        if len(msg["tps"]) != 3 or not all(isinstance(x, (int, float)) for x in msg["tps"]):
+            raise ValueError("server_status tps must be [1m, 5m, 15m]")
+        for w in msg["worlds"]:
+            if not isinstance(w.get("name"), str) or w.get("weather") not in WEATHERS:
+                raise ValueError(f"server_status world entry {w} needs a name and weather")
+    elif t == "world_info":
+        if msg["weather"] not in WEATHERS or not _ints(msg["spawn"], 3) or not isinstance(msg["gamerules"], dict):
+            raise ValueError("world_info needs weather, spawn [x, y, z] and a gamerules object")
+        for k, v in msg["gamerules"].items():
+            if not isinstance(k, str) or not isinstance(v, (bool, int, float, str)):
+                raise ValueError(f"world_info gamerule {k} has a bad value {v!r}")
+    elif t == "players_info":
+        for p in msg["players"]:
+            for k in ("name", "uuid", "world", "gamemode"):
+                if not isinstance(p.get(k), str):
+                    raise ValueError(f"players_info entry needs {k}")
+            if len(p.get("pos") or []) != 3:
+                raise ValueError("players_info pos must have 3 numbers")
+
+
+def suggestion_apply(line: str, start: int, item: str) -> str:
+    """[talk] The line after accepting a command_suggestions item: everything from start is replaced."""
+    return line[:start] + item
 
 
 def validate_discovery(msg: dict) -> None:
@@ -545,7 +633,7 @@ def scripted_pose(t: float, center=(0.16, 0.0, 0.16), radius: float = 0.10, heig
 
 
 class BlockEntityMirror:
-    """Client-side copy of the block entity data (PROTOCOL.md 4.26), by world position."""
+    """Client-side copy of the block entity data (PROTOCOL.md 4.29), by world position."""
 
     def __init__(self) -> None:
         self.entries: dict[tuple[int, int, int], dict] = {}

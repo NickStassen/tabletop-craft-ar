@@ -1,4 +1,4 @@
-"""Live block entity check (PROTOCOL.md 4.26): a client with block_entities_v1 subscribes to a box in the air while the
+"""Live block entity check (PROTOCOL.md 4.29): a client with block_entities_v1 subscribes to a box in the air while the
 console places a sign (glowing, coloured), a hanging sign, a banner with patterns, a player head with a profile, a
 decorated pot with sherds, a spawner, a beacon on an iron base, a campfire and a shelf with items, and a chest (which
 has no data to send). The mirrored entries must match what was placed; then the sign text is changed with /data (no
