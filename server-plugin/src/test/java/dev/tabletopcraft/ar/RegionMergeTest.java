@@ -133,6 +133,17 @@ class RegionMergeTest {
         assertArrayEquals(new int[] { 5, 2, 7, 2 }, SectionCodec.encodeSection(g, 4, 1, 1, 0, 0, 0));
     }
 
+    /** [nav] The biomes ride on part 0 only: they must not shrink every part (one section per part at 352 wide). */
+    @Test void biomesOnlyWeighOnPartZero() {
+        List<SectionCodec.Section> secs = new java.util.ArrayList<>();
+        for (int i = 0; i < 100; i++) secs.add(new SectionCodec.Section(i, 0, 0, new int[2000]));   // ~4 KB each
+        var parts = SectionCodec.split(secs, 64 * 1024, 1000, 40 * 1024);
+        assertTrue(parts.get(0).size() < parts.get(1).size(), "part 0 makes room for the biomes");
+        assertTrue(parts.size() <= 8, "the other parts are full-sized (" + parts.size() + " parts)");
+        assertEquals(1, SectionCodec.split(secs, 64 * 1024, 1000, 10 * 1024 * 1024).get(0).size(), "huge biomes: part 0 still holds one section");
+        assertTrue(SectionCodec.split(secs, 64 * 1024, 1000, 10 * 1024 * 1024).size() <= 9);
+    }
+
     static Set<String> keySet(List<int[]> keys) {
         Set<String> s = new HashSet<>();
         for (int[] k : keys) s.add(k[0] + "," + k[1] + "," + k[2]);

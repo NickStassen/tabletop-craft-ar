@@ -428,9 +428,13 @@ public final class TabletopPlugin extends JavaPlugin {
                 for (int[] k : keys)
                     secs.add(new SectionCodec.Section(k[0], k[1], k[2], SectionCodec.encodeSection(grid, map, dx, dy, dz, k[0], k[1], k[2]),
                         light != null ? SectionCodec.encodeSectionLight(light, dx, dy, dz, k[0], k[1], k[2]) : null));
-                long fixed = 400 + (biomes != null ? 200 + biomes.palette.size() * 40L + biomes.cells.length * 4L : 0);
+                long fixed = 400;
                 for (String p : palette) fixed += p.length() + 3;
-                List<List<SectionCodec.Section>> parts = SectionCodec.split(secs, maxMsg, fixed);
+                // [nav] Biomes ride on part 0 only, RLE-encoded: estimate them as such. Counting 4 bytes per cell on every
+                // part made a 352-wide region (1.24 MB of cells, over max-message-bytes) send each section in its own part,
+                // the palette repeated 220 times: 6.8 MB for a one-section shift.
+                long biomeBytes = biomes != null ? 200 + biomes.palette.size() * 40L + BlockCodec.encode(biomes.cells).length * 6L : 0;
+                List<List<SectionCodec.Section>> parts = SectionCodec.split(secs, maxMsg, fixed, biomeBytes);
                 long encNs = System.nanoTime() - e0;
                 timing.addProperty("encode_ms", Math.round(encNs / 1e4) / 100.0);
                 long j0 = System.nanoTime(), bytes = 0, runs = 0, lightRuns = 0;

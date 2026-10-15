@@ -167,10 +167,13 @@ public final class SectionCodec {
     }
 
     /** Groups sections into parts whose estimated JSON stays under maxBytes (a single huge section gets its own part). */
-    public static List<List<Section>> split(List<Section> secs, long maxBytes, long fixedBytes) {
+    public static List<List<Section>> split(List<Section> secs, long maxBytes, long fixedBytes) { return split(secs, maxBytes, fixedBytes, 0); }
+
+    /** [nav] As above; part 0 also carries firstExtra bytes (the biomes, PROTOCOL.md 4.18). */
+    public static List<List<Section>> split(List<Section> secs, long maxBytes, long fixedBytes, long firstExtra) {
         List<List<Section>> parts = new ArrayList<>();
         List<Section> cur = new ArrayList<>();
-        long size = fixedBytes;
+        long size = fixedBytes + firstExtra;
         for (Section s : secs) {
             long b = s.estimatedBytes();
             if (!cur.isEmpty() && size + b > maxBytes) { parts.add(cur); cur = new ArrayList<>(); size = fixedBytes; }
