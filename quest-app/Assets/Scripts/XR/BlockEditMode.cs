@@ -14,7 +14,9 @@
 //                   "left_trigger": "place" swaps the two.
 //   Right grip      on a mob or player: pick it up; a ghost box shows where it goes down, release to drop it there. If
 //                   the left grip joins (both grips = drag the table), the grab is let go.
-//   B (right)       pick the targeted block as the selected block (middle click); on a mob: its spawn egg
+//   B (right)       a tap picks the targeted block as the selected block (middle click; on a mob: its spawn egg; with a
+//                   [power] tool on: Replace's filter); holding it 0.6 s undoes the last edit group, and keeps undoing
+//                   every 0.4 s while held (World/PowerTools.cs TapHoldButton). Every trigger press is one edit group.
 // The outline colour says what the left trigger will do: dark (place, with the white ghost outline), cyan (use the
 // block), orange (use the item), yellow (a mob). The selected block floats above the right controller as a small
 // textured cube with its name (an item as its icon); under it, the target's name and world position. Edits go out as
@@ -58,6 +60,13 @@ namespace TabletopCraft.XR
         /// position when the left trigger uses a chest, barrel, shulker box... or a sign. Unset: a toast says it's coming.</summary>
         public Action<Vector3Int> OnContainerUse, OnSignUse;
         public BlockIconAtlas Icons;                        // the selected item's icon above the controller
+        // [power] undo/redo, the box wand and brushes (XR/PowerToolMode.cs, World/PowerTools.cs)
+        public Func<bool> LeftTaken;           // a power tool owns the left trigger (the wand sets corners, the brush paints)
+        public Func<string, bool> PickFilter;  // a B tap with a tool on: the aimed block becomes Replace's filter (true = taken)
+        public Action Undo;                    // B held 0.6 s (and every 0.4 s after while held)
+        public EditGroups Groups = new EditGroups();
+        public readonly TapHoldButton BButton = new TapHoldButton();
+        int _rightGroup, _leftGroup;
         /// <summary>Seconds the right grip must be held on a mob before it is lifted (a quick both-grips drag never lifts it).</summary>
         public float GrabDelaySeconds = 0.25f;
 
@@ -73,7 +82,7 @@ namespace TabletopCraft.XR
         /// <summary>Status line for the HUD text.</summary>
         public string Status =>
             !Editor.ServerAllows ? "EDIT off" + (Editor.Result.Length > 0 ? ": " + Editor.Result : " (server)")
-            : $"EDIT {Label(Editor.Selected)}  R-trig break/hit  L-trig {ActionWord(Action)}  R-grip carry  B pick" + (Editor.Result.Length > 0 ? "\n" + Editor.Result : "");
+            : $"EDIT {Label(Editor.Selected)}  R-trig break/hit  L-trig {((LeftTaken?.Invoke() ?? false) ? "tool" : ActionWord(Action))}  R-grip carry  B pick (hold: undo)" + (Editor.Result.Length > 0 ? "\n" + Editor.Result : "");
 
         LineRenderer _outline, _laser, _placeOutline, _entityOutline, _ghostOutline;
         Transform _preview, _ghost, _icon, _carryGhost;
@@ -213,6 +222,7 @@ namespace TabletopCraft.XR
                 _ghost.gameObject.SetActive(false); SetTargetText("");
                 _breakAt = _placeAt = -1;
                 if (_grab.Active) LetGo(null);
+                BButton.Update(OVRInput.Get(OVRInput.Button.Two, OVRInput.Controller.RTouch), Time.unscaledTimeAsDouble, false);   // [power]
                 return;
             }
 
@@ -234,7 +244,7 @@ namespace TabletopCraft.XR
             bool onMob = EntityRaycast.EntityFirst(Aimed, Target);
             bool leftGrip = OVRInput.Get(OVRInput.Button.PrimaryHandTrigger, OVRInput.Controller.LTouch);
             string block = Target.Hit ? w.State(w.Get(Target.Block.x, Target.Block.y, Target.Block.z)) : null;
-            Action = UseRules.Decide(onMob, block, sel, leftGrip, Mode, interact);
+            Action = (LeftTaken?.Invoke() ?? false) ? LeftAction.None : UseRules.Decide(onMob, block, sel, leftGrip, Mode, interact);   // [power] a tool owns the trigger
             // What the left trigger would place: re-planned when the aim changes, and a few times a second for the rest
             // (look direction, neighbours, server updates).
             if (!Same(prev, Target) || now >= _planAt) { Placement = Editor.Plan(w, Target, d, Time.unscaledTimeAsDouble); _planAt = now + 0.1f; }
@@ -244,9 +254,13 @@ namespace TabletopCraft.XR
             SetTargetText(onMob ? Aimed.Target.Label : BlockEditor.Describe(w, Target));
 
             bool online = Online?.Invoke() ?? true;
+            // [power] every trigger press starts an edit group: one undo takes back one hold
+            if (OVRInput.GetDown(OVRInput.Button.PrimaryIndexTrigger, OVRInput.Controller.RTouch)) _rightGroup = Groups.Begin();
+            if (OVRInput.GetDown(OVRInput.Button.PrimaryIndexTrigger, OVRInput.Controller.LTouch)) _leftGroup = Groups.Begin();
             // Right trigger = break (on a mob: hit it); press acts at once, holding repeats.
             if (Held(OVRInput.Controller.RTouch, ref _breakAt, now, true) && (Target.Hit || onMob))
             {
+                Editor.Group = _rightGroup;
                 if (!online) Editor.Result = "not connected";
                 else if (onMob) Hit(Aimed.Target, d, interact);
                 else Do(Editor.Break(w, Target, Time.unscaledTimeAsDouble), OVRInput.Controller.RTouch);
@@ -255,13 +269,18 @@ namespace TabletopCraft.XR
             // Left trigger = the right-click order (UseRules); placing and item uses repeat while held, the rest don't.
             if (Held(OVRInput.Controller.LTouch, ref _placeAt, now, UseRules.Repeats(Action)) && Action != LeftAction.None)
             {
+                Editor.Group = _leftGroup;
                 if (online) UseLeft(w, d, interact, leftGrip);
                 else Editor.Result = "not connected";
                 _planAt = -1;
             }
-            if (OVRInput.GetDown(OVRInput.Button.Two, OVRInput.Controller.RTouch))
+            // B: a tap picks (on release), a hold undoes ([power] World/PowerTools.cs TapHoldButton)
+            var bEvent = BButton.Update(OVRInput.Get(OVRInput.Button.Two, OVRInput.Controller.RTouch), Time.unscaledTimeAsDouble);
+            if (bEvent == ButtonEvent.Hold) { Undo?.Invoke(); Haptic(OVRInput.Controller.RTouch, 0.5f); }
+            else if (bEvent == ButtonEvent.Tap)
             {
                 if (onMob) PickEgg(Aimed.Target);
+                else if (Target.Hit && PickFilter != null && PickFilter(block)) Haptic(OVRInput.Controller.RTouch, 0.15f);   // [power] Replace's filter
                 else if (Editor.Pick(w, Target)) { Haptic(OVRInput.Controller.RTouch, 0.15f); Picked?.Invoke(Editor.Selected); _planAt = -1; }   // [menu] hotbar
             }
             Carry(w, onMob, leftGrip, now, online);

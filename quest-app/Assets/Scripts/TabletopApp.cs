@@ -8,6 +8,7 @@
 //   "batch_columns": 4 (sections per mesh batch side, TabletopRenderer)
 // [nav] optional: "mesh_sections_per_job": 4 (sections a meshing job takes in a row; lower it if gliding costs frames)
 // [talk] optional: "operator_name": "Nick" (the name in chat, else skin_player), "quick_commands": ["time set day"]
+// [power] B held = undo; the block menu's Tools tab: box wand, clone, brushes, undo/redo (World/PowerTools.cs)
 // [hands] optional: "left_trigger": "use" (default: vanilla right-click order, left grip + trigger places) or "place"
 //   (the trigger always places or uses the selected item; left grip + trigger does the right-click order)
 // [comfort] prefs.json next to it (World/AppPrefs.cs) remembers block size, table placement, hotbar, selected block,
@@ -104,6 +105,10 @@ namespace TabletopCraft
         ItemRegistry _items;
         EntityCard _card;
         TriggerMode _leftTrigger = TriggerMode.Use;
+        // [power] undo/redo, the box wand and brushes (World/PowerTools.cs, XR/PowerToolMode.cs)
+        PowerTools _tools;
+        PowerToolMode _power;
+        string _lastToolResult = "";
 
         void Start()
         {
@@ -249,6 +254,18 @@ namespace TabletopCraft
             _card.Top = _edit.TryEntityTop;
             _card.Result = r => _edit.Editor.Result = r;
             _edit.Blocked = () => _area.Active || _menu.CapturesRight || _ops.CapturesRight || _card.CapturesRight;
+            // [power] B held = undo, every trigger press one edit group, and the Tools tab: the box wand (left trigger =
+            // corners), clone/paste, brushes, undo and redo (XR/PowerToolMode.cs, World/PowerTools.cs).
+            _tools = new PowerTools(_edit.Groups);
+            _power = gameObject.AddComponent<PowerToolMode>();
+            _power.Tools = _tools; _power.Edit = _edit; _power.Blocks = _blocks; _power.World = () => _world; _power.Nav = _nav.State;
+            _power.SendTracked = b => _link.SendTracked(b); _power.Online = () => _link.Connected; _power.Material = () => _edit.Editor.Selected;
+            _power.Blocked = () => _area.Active || _menu.CapturesRight || _ops.CapturesRight || _card.CapturesRight;
+            _edit.LeftTaken = () => _tools.Mode != ToolMode.None;
+            _edit.PickFilter = st => _tools.PickFilter(st);
+            _edit.Undo = () => _power.Press(ToolButton.Undo);
+            _menu.Model.SetTools(_tools);
+            _menu.ToolPressed = id => _power.Press((ToolButton)id);
             _chatView = gameObject.AddComponent<ChatView>();
             _chatView.Head = Head; _chatView.LeftHand = LeftHand; _chatView.Log = _ops.Model.Log; _chatView.Bubbles = _ops.Bubbles;
             _chatView.Hidden = () => _ops.Open || _menu.Open || _area.Active;
@@ -553,7 +570,8 @@ namespace TabletopCraft
             (_area.Active ? _area.Status : (_area.Status.Length > 0 ? _area.Status : "Y (left) = set up area   left stick = move") + "\n" + _edit.Status) +
             $"\nBLOCKS {(_registry != null ? _registry.Count + " placeable" : "-")}  {_icons.Status}" +
             $"\nTALK {TalkStatus()}" +   // [talk]
-            $"\nHANDS {HandsStatus()}";   // [hands]
+            $"\nHANDS {HandsStatus()}" +   // [hands]
+            $"\nPOWER {_tools.Status}";   // [power]
 
         /// <summary>[hands] Using blocks, items and mobs as the server granted it, and what the left trigger does first.</summary>
         string HandsStatus() =>
@@ -587,6 +605,18 @@ namespace TabletopCraft
                 if (r.StartsWith("can't") || r.StartsWith("not connected") || r.StartsWith("editing is off") || r.StartsWith("the server has no"))
                     _hud.Toast(char.ToUpperInvariant(r[0]) + r.Substring(1), ToastKind.Warn);
             }
+            // [power] finished jobs ("Filled 500 blocks", "Undone 12 blocks; 2 changed since...") and local refusals
+            foreach (var (text, warn) in _tools.TakeToasts()) _hud.Toast(text, warn ? ToastKind.Warn : ToastKind.Info);
+            string tr = _tools.Result;
+            if (tr != _lastToolResult)
+            {
+                _lastToolResult = tr;
+                if (tr.StartsWith("can't") || tr.StartsWith("nothing to") || tr.StartsWith("wait") || tr.StartsWith("undo needs") || tr.Contains(" are off on this server")
+                    || tr.StartsWith("not connected"))
+                    _hud.Toast(char.ToUpperInvariant(tr[0]) + tr.Substring(1), ToastKind.Warn);
+                else if (tr.StartsWith("corner") || tr.StartsWith("replace:") || tr.StartsWith("paste") || tr.StartsWith("wand") || tr.StartsWith("brush"))
+                    _hud.Toast(char.ToUpperInvariant(tr[0]) + tr.Substring(1), ToastKind.Info, 2, "tools");
+            }
         }
 
         /// <summary>Status text: server light (smooth/flat/off), biome count and whether the pack has colour maps.</summary>
@@ -607,6 +637,7 @@ namespace TabletopCraft
                     AreaSize.OnLimits(m.O("limits"));   // [area] max_view_width
                     _ops.OnWelcome(m, _quickCommands);   // [talk] chat, commands, status granted
                     _interact = InteractWelcome.From(m);   // [hands] item_registry follows for interact_v1 sessions
+                    _tools.OnWelcome(m); _menu.Model.SetTools(_tools);   // [power] power_v1 and its limits: the Tools tab
                     if (!_interact.Allowed && _items != null) { _items = null; _menu.SetItems(null); }
                     _card.Model.Close();
                     // Light from the server makes faces merge less: scale the area-setup face estimate (soft cap).
@@ -674,6 +705,8 @@ namespace TabletopCraft
                 case "entity_info":   // [hands] the info card above the mob
                     _card.Show(EntityInfoMessage.From(m));
                     break;
+                case "history": _tools.OnHistory(m); break;        // [power] undo/redo counts
+                case "box_progress": _tools.OnProgress(m); break;  // [power] a box edit, undo or redo running or done
                 case BlockRegistry.Type:   // [menu] every placeable block (PROTOCOL.md 4.24)
                     try
                     {
@@ -686,6 +719,7 @@ namespace TabletopCraft
                     break;
                 case "error":
                     if (_ops.OnError(m)) { Debug.Log($"[Tabletop] panel error {m.S("code")}: {m.S("message")}"); break; }   // [talk] the panel shows it
+                    _tools.OnError(m);   // [power] a refused box edit, undo, redo or stroke: its job is no longer pending
                     _lastError = $"{m.S("code")}: {m.S("message")}";
                     string areaBefore = _area.Status;   // [menu]
                     _area.OnError(m);
