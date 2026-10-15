@@ -886,3 +886,48 @@ The panel's look and reach beside the left hand, X tap/hold and the ≡/X switch
 - Late `command_output` (async plugin commands) and plugin `BroadcastMessageEvent`s are covered by code review only: no command on the test server answers late, and nothing there broadcasts.
 - `ok` is "ran without red feedback": a vanilla command that succeeds without feedback shows "(done)"; a plugin that reports failure in another colour counts as ok.
 - The pointer for commands is block editing's target, so it needs `edit_v1` on the server.
+
+## Block entities (`block_entities_v1`, PROTOCOL §4.29; Paper 26.3, 2026-10-15, no headset)
+
+Chests, shulker boxes, heads, banners, bells, decorated pots, conduits, copper golem statues, lectern and enchanting books, end portals and gateways, sign text, beacon beams, spawner mobs and campfire/shelf/vault items, drawn like vanilla 26.3's block entity renderers (ARCHITECTURE.md §3.10 and "Block entities" under §4).
+
+### Tests
+
+| Suite | Result |
+|---|---|
+| Plugin JUnit (`./gradlew build`) | 123 tests after merging the chat work, 0 failures. `BlockEntityJsonTest` 6 (both fixtures from the builders, defaults left out, `BlockPos`-style position keys for negative coordinates, per-chunk deltas add, change and remove, pruning on a region change) and `FixtureTest` (both fixtures). |
+| Python (`pytest -q`, `ruff check .`) | 131 passed, ruff clean: both fixtures validate, `BlockEntityMirror` applies, prunes and resets, 7 malformed entries are refused. |
+| Tests~ (`dotnet run -- --jar 26.3.jar --entity-models entity_models.json`) | ALL PASS, 943 checks; 67 in `BlockEntityTests.cs`: kind by block id, which blocks are code-drawn, the vanilla transforms (chest, shulker box, floor and wall skulls, banner, pot, statue, sign text on wall, standing and hanging signs, campfire and shelf item slots, spawner mob; `--be-probe` prints them, and they were compared once with the matrices the 26.3 client's renderer code computes), parts and textures per state (double chest halves, ender, trapped and copper chests, dyed shulker boxes, player head skins, mob heads with the dragon jaw, banner flags, pot sherds, statue poses, lectern book, conduit), both fixtures through `BlockEntityStore`, banner compositing, beacon beam sections (stained glass averaging, blocked beams), the section scan, model bounds baked from the generated layers (chest, double chest, shulker, skulls, dragon head, banners, bell body, pot, statue, lectern book), the pack's sign font (2,412 glyphs, widths, wrapping, colours, glowing outline) and the terrain baker leaving code-drawn blocks out while previews keep a box. The model tests SKIP with an `entity_models.json` from before this work. |
+| Unity 6000.0.84f1 headless compile, `ShaderCheck` | clean; 120 shader variants (with `BlockEntityFx` and `EndPortal`), 0 errors. `BatchMeshCheck.RunRenderer`: all PASS. |
+| `TABLETOP_PACK=26.3.jar TABLETOP_ENTITY_MODELS=entity_models.json Unity … -executeMethod TabletopCraft.EditorTools.BlockEntityCheck.Run` | 11/11 PASS: the real `BlockEntityRenderer` on a scene of 35 block entities finds them all (75 ms), 39 instances in 37 groups (42 draw calls, 978 triangles), 80 sign text quads, 9 end portal and gateway faces, a 16-quad beacon beam, the spawner's mob figure, a chest kept in place by a 16-block re-key, and a broken chest removed. |
+
+### Live server (own Paper 26.3, seed 12345, ports 25612/8812)
+
+`SERVER_FIFO=run/blocks/stdin.fifo TABLETOP_URL=ws://127.0.0.1:8812/tabletop python tools/block_entities_check.py 200 150 200`: **17/17 PASS**, again after merging the chat work. A sign (both sides, colour, glowing), a hanging sign, a banner with two patterns, a player head with a profile, a pot with sherds, a spawner (zombie, size 0.6×1.95), a beacon on an iron base (tier 1 after 1.0–1.6 s), a campfire and a shelf with items all arrive within 0.15–1.0 s of placing them; a chest sends nothing; a sign changed with `/data` (no event) arrives with the round robin in 0.15–0.45 s; a removed banner is removed in 0.2–0.45 s; the first message carries `reset`, and so does the one after subscribing the same box in `world_nether` (0.35 s, nothing left). A head placed with only a name (`jeb_`) gets its skin 3.0 s after placing on a freshly started server (offline mode: Paper's lookup gives no textures, so the name goes through the public profile API first, as for the giant's `skin_player`), 0.1 s once cached; the check prints this as INFO since it needs internet. About 10 messages, 3.4 KB for the whole run.
+
+Server main thread (`BLOCK_ENTITIES` log line, a 288×64×288 region that includes a stress box of 2,752 block entities, 840 of them with data): steady average 0.083 ms per tick, max 1.96 ms (the slowest single chunk read 1.9 ms: a chunk with 256 player heads). The first 30 s after start peaked once at about 18 ms (the first `createEntity` for a spawner's mob size and cold chunks). The initial burst for the 840 entries is 115 KB.
+
+### Faces and draw calls (`Tests~ --jar 26.3.jar --entity-models entity_models.json --measure-blocks DIR`, saved snapshots)
+
+| Snapshot | Block entities | Terrain faces with boxes → without | Instanced groups / draw calls | Block entity triangles |
+|---|---|---|---|---|
+| Stress box 32×16×32 (1,088 chests, 512 banners, 512 skulls, 256 signs, 256 shulker boxes, 64 bells, 64 pots) | 2,752 | 22,686 → 3,840 | 15 / 18 | 75,008 |
+| Village 128×48×128 | 2 bells | 106,917 → 106,893 | 1 / 1 | 48 |
+| 256×64×256 | 2 bells, 1 spawner | 519,150 → 519,126 | 1 / 1 | 48 |
+
+Draw calls count chunks of 256 instances; with single-pass stereo each instance is drawn twice in the same call.
+
+### Offline look check
+
+`Tests~ dotnet run -- --jar 26.3.jar --entity-models entity_models.json --be-scene scene.json` places one of each kind as `BlockEntityRenderer` does, and `tools/render_mesh.py scene.json 26.3.jar out.png --view se|nw` renders it. Checked by eye: every kind shows its model with the jar's textures, in place and facing the right way (chests, double chest halves, ender and copper chests, dyed shulker boxes, skulls and the dragon, piglin and player heads, banners on the pole and on the wall bar, the bell body, pots with sherds, the conduit, copper golem statues in their poses, the open book, campfire items). The scene uses untinted banner flags and base skins. The images contain Mojang textures and aren't committed. (A Unity offscreen render in batch mode didn't draw the custom shaders, so it isn't used.)
+
+### Not verified (needs the headset)
+
+The look of every kind at table scale, lighting at night and in caves, the end portal starfield, sign text legibility, beacon beam colours, the spawner mob spin, the enchanting book bob, clipping at the window edges while gliding, re-keying on a glide or resize, edits adding and removing block entities, the hand preview and placement ghost boxes, and FPS and draw calls in a village (`RenderMeshInstanced` under single-pass instanced stereo).
+
+### Known gaps
+
+- Maps in item frames (`map_data`) and the item in a brushable block aren't drawn.
+- The enchanting book stays closed and idle (vanilla opens it toward a nearby player); banner flags don't sway; the conduit's wind isn't animated.
+- Sign text is plain: styles and per-line colours from commands are dropped.
+- A player head placed with only a name gets its skin after a lookup (about 3 s the first time); a server without internet access sends no skin, and the head shows the default one.

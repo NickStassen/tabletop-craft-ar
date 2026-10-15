@@ -64,7 +64,8 @@ Ordered by how much each adds to the feeling of a living world on the table that
 - Day/night and weather from the server: sky light scaled by time, rain and snow particles, lightning flashes.
 - Clouds at cloud height above the table.
 - Particles: torches, lava, splashes, explosions.
-- Block entities: sign text, banner patterns, item frames, chests opening.
+- (Done, not yet tried on the headset) Block entities like vanilla (PROTOCOL.md 4.29): chests, shulker boxes, heads, banners with patterns, bells, pots with sherds, conduits, statues, lectern and enchanting books, end portals and gateways, sign text, beacon beams, spawner mobs, campfire, shelf and vault items.
+- Block entities still open: chests and shulker boxes opening (block events), the enchanting book opening toward players, banners swaying, maps in item frames.
 
 **3. Presence in AR.**
 - Hand tracking: pinch to break or place, fist to grab.
