@@ -84,6 +84,8 @@ public final class Session {
     // and entity_op share one bucket; holds have their own; spawn eggs are counted per minute).
     public volatile boolean canInteract;
     public volatile EditLimiter interactLimiter, holdLimiter, spawnLimiter;
+    // [operator] Shared bookmarks (marks_v1, OperatorService), granted at hello.
+    public volatile boolean wantsMarks;
 
     /** RegionReader extras this session needs in its snapshots and diffs. */
     public int readExtras() { return (wantsLight ? RegionReader.LIGHT : 0) | (wantsBiomes ? RegionReader.BIOMES : 0); }
