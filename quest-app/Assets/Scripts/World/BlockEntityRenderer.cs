@@ -107,20 +107,6 @@ namespace TabletopCraft.World
         public int PortalFaces => (_portalMesh != null ? _portalMesh.vertexCount / 4 : 0) + (_gatewayMesh != null ? _gatewayMesh.vertexCount / 4 : 0);
         public int BeamQuads => _bv.Count / 4;
 
-        /// <summary>Editor checks: the frame's draws as a command buffer (cameras rendered outside the player loop don't
-        /// see Graphics.RenderMesh* calls). Call after Update.</summary>
-        public void Fill(CommandBuffer cb)
-        {
-            foreach (var g in _groups.Values)
-                for (int start = 0, c = 0; start < g.Members.Count; start += Chunk, c++)
-                    cb.DrawMeshInstanced(g.Mesh, 0, g.Mat, 0, g.World[c], Math.Min(Chunk, g.Members.Count - start), g.Props[c]);
-            var l2w = transform.localToWorldMatrix;
-            if (TextQuads > 0) cb.DrawMesh(_textMesh, l2w, _textMat, 0, 0);
-            if (_portalMesh != null && _portalMesh.vertexCount > 0) cb.DrawMesh(_portalMesh, l2w, _portalMat, 0, 0);
-            if (_gatewayMesh != null && _gatewayMesh.vertexCount > 0) cb.DrawMesh(_gatewayMesh, l2w, _gatewayMat, 0, 0);
-            if (_beamMesh != null && _beamMesh.vertexCount > 0) { cb.DrawMesh(_beamMesh, l2w, _beamCoreMat, 0, 0); cb.DrawMesh(_beamMesh, l2w, _beamGlowMat, 1, 0); }
-        }
-
         /// <summary>The region-local matrix of the first model at a world position (Editor checks).</summary>
         public bool TryInstanceMatrix(Vector3Int world, out Matrix4x4 local)
         {

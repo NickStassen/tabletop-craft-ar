@@ -4,7 +4,7 @@
 //   TABLETOP_PACK=~/.minecraft/versions/26.3/26.3.jar TABLETOP_ENTITY_MODELS=entity_models.json \
 //   Unity -batchmode -nographics -quit -projectPath quest-app -buildTarget Android \
 //     -executeMethod TabletopCraft.EditorTools.BlockEntityCheck.Run -logFile be.log    (grep BLOCKENTITYCHECK)
-// With graphics (no -nographics) and TABLETOP_SHOT=out.png it also renders the scene to a PNG.
+// For pictures, Tests~ --be-scene dumps the same kinds of models for tools/render_mesh.py.
 #if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
@@ -149,40 +149,8 @@ namespace TabletopCraft.EditorTools
             be.Model.SetLocal(l.x, l.y, l.z, 0);
             Pump(2);
             Check(be.Count == before - 1 && !be.TryInstanceMatrix(chest, out _), $"a broken chest disappears ({before} -> {be.Count})");
-            string shot = Environment.GetEnvironmentVariable("TABLETOP_SHOT");
-            if (!string.IsNullOrEmpty(shot) && SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Null) Shot(be, blocks, shot);
             Debug.Log($"BLOCKENTITYCHECK done: {errors} errors");
             Exit(errors == 0 ? 0 : 1);
-        }
-
-        static void Shot(BlockEntityRenderer be, Transform blocks, string path)
-        {
-            var camGo = new GameObject("shot camera");
-            var cam = camGo.AddComponent<Camera>();
-            cam.clearFlags = CameraClearFlags.SolidColor; cam.backgroundColor = new Color(0.5f, 0.6f, 0.75f);
-            var o = be.Model.Origin;
-            var centre = new Vector3(16 + 7 - o.x, 64 + 1 - o.y, -(16 + 6 - o.z));
-            camGo.transform.position = centre + new Vector3(0, 9, -13);
-            camGo.transform.LookAt(centre);
-            var probe = GameObject.CreatePrimitive(PrimitiveType.Cube); probe.transform.position = centre + new Vector3(-8, 0, 0);
-            probe.GetComponent<MeshRenderer>().sharedMaterial = new Material(Shader.Find("Unlit/Color")) { color = Color.red };
-            cam.fieldOfView = 50; cam.nearClipPlane = 0.05f; cam.farClipPlane = 200;
-            var rt = new RenderTexture(1600, 1000, 24);
-            cam.targetTexture = rt;
-            // Update computes the frame; outside the player loop the draws reach the camera through a command buffer.
-            typeof(BlockEntityRenderer).GetMethod("Update", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).Invoke(be, null);
-            var cb = new UnityEngine.Rendering.CommandBuffer { name = "block entities" };
-            be.Fill(cb);
-            cam.AddCommandBuffer(UnityEngine.Rendering.CameraEvent.AfterForwardOpaque, cb);
-            ShaderUtil.allowAsyncCompilation = false;   // the editor otherwise skips draws whose shader is still compiling
-            cam.Render(); cam.Render();
-            RenderTexture.active = rt;
-            var t = new Texture2D(rt.width, rt.height, TextureFormat.RGB24, false);
-            t.ReadPixels(new Rect(0, 0, rt.width, rt.height), 0, 0);
-            t.Apply();
-            System.IO.File.WriteAllBytes(path, t.EncodeToPNG());
-            RenderTexture.active = null;
-            Debug.Log("BLOCKENTITYCHECK shot " + path);
         }
 
         static void Exit(int code) { if (Application.isBatchMode) EditorApplication.Exit(code); }

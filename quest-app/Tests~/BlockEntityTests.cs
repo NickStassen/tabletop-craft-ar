@@ -352,6 +352,91 @@ static class BlockEntityTests
 
     const int BlockEntityRenderer_Chunk = 256;   // BlockEntityRenderer.Chunk (instances per draw call)
 
+    /// <summary>--be-scene OUT.json: every kind of block entity as BlockEntityRenderer places its models and items, in
+    /// tools/render_mesh.py's format (Minecraft block coordinates; textures named, read from the jar by the renderer;
+    /// banner flags and player heads use their untinted base textures). Needs --jar and --entity-models.</summary>
+    public static void Scene(string jar, string outPath)
+    {
+        var verts = new List<float>(); var uvs = new List<float>(); var colors = new List<int>(); var tris = new List<int>(); var layers = new List<string>();
+        int Layer(string t) { t = t.Contains(':') ? t : "minecraft:" + t; int i = layers.IndexOf(t); if (i < 0) { i = layers.Count; layers.Add(t); } return i; }
+        void Emit(FigureMesh fm, M4 toBlock, Vector3 cell, string texture, Color32 tint)
+        {
+            int b = verts.Count / 3, layer = Layer(texture);
+            for (int i = 0; i < fm.VertexCount; i++)
+            {
+                var p = toBlock.Point(new Vector3(fm.Pos[3 * i], fm.Pos[3 * i + 1], fm.Pos[3 * i + 2]));
+                verts.Add(cell.x + p.x); verts.Add(cell.y + p.y); verts.Add(cell.z + p.z);
+                uvs.Add(fm.Uv[2 * i]); uvs.Add(fm.Uv[2 * i + 1]); uvs.Add(layer);
+                colors.Add(tint.r); colors.Add(tint.g); colors.Add(tint.b); colors.Add(255);
+            }
+            // Figure meshes are wound for proper transforms; block transforms of them are reflections, so flip.
+            bool flip = toBlock.Det < 0;
+            for (int t = 0; t < fm.Tris.Count; t += 3) { tris.Add(b + fm.Tris[t]); tris.Add(b + fm.Tris[flip ? t + 2 : t + 1]); tris.Add(b + fm.Tris[flip ? t + 1 : t + 2]); }
+        }
+        using var z = ZipFile.OpenRead(jar);
+        Dictionary<string, object> Read(string p) { var e = z.GetEntry(p); if (e == null) return null; using var r = new StreamReader(e.Open()); return Json.Parse(r.ReadToEnd()) as Dictionary<string, object>; }
+        var white = new Color32(255, 255, 255, 255);
+        var sprite = new FigureMesh();
+        float[] cu = { 0, 1, 1, 0 }, cv = { 0, 0, 1, 1 };
+        for (int k = 0; k < 4; k++) { sprite.Pos.Add(-16 * (cu[k] - 0.5f)); sprite.Pos.Add(-16 * (cv[k] - 0.5f)); sprite.Pos.Add(0); sprite.Normal.Add(0); sprite.Normal.Add(0); sprite.Normal.Add(-1); sprite.Uv.Add(cu[k]); sprite.Uv.Add(cv[k]); }
+        sprite.Tris.AddRange(new[] { 0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2 });   // both sides, like the item shader
+        void Item(string id, M4 slot, int display, Vector3 cell)
+        {
+            var v = ItemModels.Resolve(id, Read);
+            if (v.Kind != ItemVisualKind.Sprite) return;
+            var d = display == 0 ? v.Fixed : display == 1 ? v.OnShelf : v.Ground;
+            Emit(sprite, slot * BlockEntityCatalog.ItemDisplayTransform(d), cell, v.Sprite, white);
+        }
+        var data = new Dictionary<string, BlockEntityData>
+        {
+            ["decorated_pot"] = new BlockEntityData { Kind = "decorated_pot", Sherds = new[] { "minecraft:brick", "minecraft:arms_up_pottery_sherd", "minecraft:brick", "minecraft:skull_pottery_sherd" } },
+            ["campfire"] = new BlockEntityData { Kind = "campfire", Items = new[] { "minecraft:beef", null, "minecraft:cod", null } },
+            ["oak_shelf"] = new BlockEntityData { Kind = "shelf", Items = new[] { "minecraft:apple", "minecraft:diamond_sword", "minecraft:stick" } },
+        };
+        int col = 0, row = 0;
+        foreach (var st in new[]
+        {
+            "minecraft:chest[facing=south,type=single,waterlogged=false]", "minecraft:chest[facing=south,type=left,waterlogged=false]", "minecraft:chest[facing=south,type=right,waterlogged=false]",
+            "minecraft:ender_chest[facing=east,waterlogged=false]", "minecraft:oxidized_copper_chest[facing=south,type=single,waterlogged=false]",
+            "minecraft:magenta_shulker_box[facing=up]", "minecraft:shulker_box[facing=south]",
+            "minecraft:skeleton_skull[powered=false,rotation=0]", "minecraft:wither_skeleton_skull[powered=false,rotation=2]", "minecraft:zombie_head[powered=false,rotation=0]",
+            "minecraft:creeper_wall_head[facing=south,powered=false]", "minecraft:dragon_head[powered=false,rotation=0]", "minecraft:piglin_head[powered=false,rotation=0]",
+            "minecraft:player_head[powered=false,rotation=0]",
+            "minecraft:white_banner[rotation=0]", "minecraft:blue_wall_banner[facing=south]", "minecraft:bell[attachment=floor,facing=south,powered=false]",
+            "minecraft:decorated_pot[cracked=false,facing=south,waterlogged=false]", "minecraft:conduit[waterlogged=true]",
+            "minecraft:copper_golem_statue[copper_golem_pose=standing,facing=south,waterlogged=false]", "minecraft:exposed_copper_golem_statue[copper_golem_pose=sitting,facing=south,waterlogged=false]",
+            "minecraft:weathered_copper_golem_statue[copper_golem_pose=running,facing=south,waterlogged=false]", "minecraft:oxidized_copper_golem_statue[copper_golem_pose=star,facing=south,waterlogged=false]",
+            "minecraft:lectern[facing=south,has_book=true,powered=false]",
+            "minecraft:campfire[facing=south,lit=true,signal_fire=false,waterlogged=false]", "minecraft:oak_shelf[facing=south,powered=false,side_chain=unconnected,waterlogged=false]",
+        })
+        {
+            var cell = new Vector3(col * 2, 0, row * 3);
+            if (++col == 7) { col = 0; row++; }
+            data.TryGetValue(BlockRules.Path(st), out var d);
+            foreach (var p in PartsOf(st, d))
+            {
+                var fm = Bake(p);
+                if (fm == null) continue;
+                string tex = p.Texture.StartsWith(BlockEntityCatalog.SkinPrefix) ? "entity/player/wide/steve" : p.Texture.StartsWith(BlockEntityCatalog.BannerPrefix) ? "entity/banner/base" : p.Texture;
+                Emit(fm, BlockEntityModels.ToBlock(p.M), cell, tex, white);
+            }
+            var props = BlockModelBaker.Props(st);
+            props.TryGetValue("facing", out var f);
+            if (d?.Items != null)
+                for (int i = 0; i < d.Items.Length; i++)
+                    if (d.Items[i] != null)
+                        Item(d.Items[i], d.Kind == "campfire" ? BlockEntityCatalog.CampfireItemTransform(f, i) : BlockEntityCatalog.ShelfItemTransform(f, i), d.Kind == "campfire" ? 0 : 1, cell);
+        }
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var sb = new System.Text.StringBuilder();
+        sb.Append("{\"layers\":[").Append(string.Join(",", layers.Select(x => "\"" + x + "\""))).Append("],\"verts\":[");
+        sb.Append(string.Join(",", verts.Select(v => v.ToString("G6", inv)))).Append("],\"uvs\":[");
+        sb.Append(string.Join(",", uvs.Select(v => v.ToString("G6", inv)))).Append("],\"colors\":[");
+        sb.Append(string.Join(",", colors)).Append("],\"opaque\":[").Append(string.Join(",", tris)).Append("],\"transparent\":[]}");
+        File.WriteAllText(outPath, sb.ToString());
+        Console.WriteLine($"block entity scene: {tris.Count / 3} triangles, {layers.Count} textures -> {outPath}");
+    }
+
     static (Color32[] px, int w, int h)? Png(ZipArchive z, string path)
     {
         var e = z.GetEntry(path + (path.EndsWith(".png") ? "" : ".png"));

@@ -139,6 +139,14 @@ static class Program
         fails += NavTests.Run(Fixture);   // navigation, streaming, clip caps (Tests~/NavTests.cs)
         AreaTests.Run(Check, Fixture);    // [area] width presets, resize re-keying, mesh batching (Tests~/AreaTests.cs)
         if (args.Contains("--be-probe")) { BlockEntityTests.PrintProbes(); return 0; }   // [blocks] the transforms, to compare with the client's own
+        int beSceneIdx = Array.IndexOf(args, "--be-scene");
+        if (beSceneIdx >= 0 && JarPath(args) != null)
+        {
+            int mi = Array.IndexOf(args, "--entity-models");
+            if (mi >= 0) EntityModels.LoadFile(args[mi + 1]);
+            BlockEntityTests.Scene(JarPath(args), args[beSceneIdx + 1]);   // [blocks] for tools/render_mesh.py
+            return 0;
+        }
         int beMeasIdx = Array.IndexOf(args, "--measure-blocks");
         if (beMeasIdx >= 0 && JarPath(args) != null)
         {
