@@ -2,7 +2,8 @@
 // Built-in render pipeline, single-pass instanced stereo friendly.
 Shader "TabletopCraft/BlocksTransparent"
 {
-    Properties { _Blocks ("Blocks", 2DArray) = "" {} _HasTex ("Has Texture", Float) = 0 _Cutoff ("Alpha cutoff", Range(0,1)) = 0.3 }
+    Properties { _Blocks ("Blocks", 2DArray) = "" {} _HasTex ("Has Texture", Float) = 0 _Cutoff ("Alpha cutoff", Range(0,1)) = 0.3
+                 _LightRatio ("World light ratio (1 terrain, 0 lit on the CPU)", Float) = 1 _Tint ("Tint", Color) = (1,1,1,1) }
     SubShader
     {
         Tags { "RenderType"="Transparent" "Queue"="Transparent" }
@@ -17,8 +18,9 @@ Shader "TabletopCraft/BlocksTransparent"
             #include "TabletopFog.cginc"   // eye-in-fluid fog (EyeEffects.cs)
             #include "TabletopClip.cginc"   // [nav] clip volume (XR/NavController)
             #include "TabletopBlocks.cginc"   // _Blocks sampling: [random] per-block rotation, crisp texels up close, mips far away
+            #include "TabletopDayLight.cginc"   // [living] time of day and weather: the light code in normal.w
             float _HasTex, _Cutoff;
-            struct appdata { float4 vertex : POSITION; float3 normal : NORMAL; float3 uv : TEXCOORD0; fixed4 color : COLOR; UNITY_VERTEX_INPUT_INSTANCE_ID };
+            struct appdata { float4 vertex : POSITION; float4 normal : NORMAL; float3 uv : TEXCOORD0; fixed4 color : COLOR; UNITY_VERTEX_INPUT_INSTANCE_ID };
             struct v2f { float4 pos : SV_POSITION; float3 uv : TEXCOORD0; half4 color : COLOR; float3 fogPos : TEXCOORD5; TABLETOP_CLIP_COORDS(7) TABLETOP_RANDOM_COORDS(1, 2) UNITY_VERTEX_OUTPUT_STEREO };
             v2f vert (appdata v)
             {
@@ -30,9 +32,9 @@ Shader "TabletopCraft/BlocksTransparent"
                 // Vanilla face shading (CardinalLighting.DEFAULT): up 1.0, down 0.5, north/south 0.8, east/west 0.6.
                 // Faces not aligned to an axis (cross plants, 45 degree elements; zero normals on double-sided quads)
                 // stay unshaded, as vanilla draws them. Z is mirrored in Unity, which doesn't change |n.z|.
-                float3 n = abs(v.normal);
+                float3 n = abs(v.normal.xyz);
                 float shade = n.y > 0.9 ? (v.normal.y > 0 ? 1.0 : 0.5) : (n.z > 0.9 ? 0.8 : (n.x > 0.9 ? 0.6 : 1.0));
-                o.color = v.color; o.color.rgb *= shade;
+                o.color = v.color; o.color.rgb *= shade * TabletopDayLight(v.normal.w);   // [living] night, weather, flashes
                 // Tints, flat colours and shading are sRGB values; vertex colours aren't converted in linear colour space.
                 #ifndef UNITY_COLORSPACE_GAMMA
                 o.color.rgb = GammaToLinearSpace(o.color.rgb);

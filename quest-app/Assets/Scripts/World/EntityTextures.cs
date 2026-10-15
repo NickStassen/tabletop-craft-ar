@@ -66,9 +66,40 @@ namespace TabletopCraft.World
                 m.renderQueue = 3000;
             }
             if ((flags & 2) != 0) m.SetFloat("_Shade", 0);
+            if ((flags & 4) != 0 && (flags & 1) == 0) m.renderQueue = 2451;   // [living] over the body at equal depth (wolf collar)
             _mats[(tex, flags)] = m;
             return m;
         }
+
+        // [living] Blocks on entities and block displays use the terrain's block materials (texture array, light through
+        // _Tint); leads, fishing lines, bolts and text backgrounds the Lines shader (Resources/TabletopLines.mat).
+        public Material BlockOpaque, BlockTransparent;
+        Material _lines, _linesOpaque, _linesTranslucent, _lightning;
+
+        Material LinesBase
+        {
+            get
+            {
+                if (_lines != null) return _lines;
+                _lines = Resources.Load<Material>("TabletopLines");
+                if (_lines == null) { Debug.LogWarning("[Tabletop] Resources/TabletopLines material missing; leads fall back to Sprites/Default"); _lines = new Material(Shader.Find("Sprites/Default")); }
+                return _lines;
+            }
+        }
+
+        Material LinesVariant(string name, UnityEngine.Rendering.BlendMode src, UnityEngine.Rendering.BlendMode dst, bool zwrite, int queue)
+        {
+            var m = new Material(LinesBase) { name = name, enableInstancing = true, renderQueue = queue };
+            m.SetFloat("_SrcBlend", (float)src); m.SetFloat("_DstBlend", (float)dst); m.SetFloat("_ZWrite", zwrite ? 1 : 0);
+            return m;
+        }
+
+        /// <summary>Opaque vertex-coloured geometry (leads, fishing lines), lit through _Color.</summary>
+        public Material LinesOpaque => _linesOpaque != null ? _linesOpaque : (_linesOpaque = LinesVariant("lines opaque", UnityEngine.Rendering.BlendMode.One, UnityEngine.Rendering.BlendMode.Zero, true, 2000));
+        /// <summary>Alpha-blended (text display backgrounds).</summary>
+        public Material LinesTranslucent => _linesTranslucent != null ? _linesTranslucent : (_linesTranslucent = LinesVariant("lines translucent", UnityEngine.Rendering.BlendMode.SrcAlpha, UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha, false, 3000));
+        /// <summary>Additive like vanilla's lightning render type (SRC_ALPHA, ONE).</summary>
+        public Material Lightning => _lightning != null ? _lightning : (_lightning = LinesVariant("lightning", UnityEngine.Rendering.BlendMode.SrcAlpha, UnityEngine.Rendering.BlendMode.One, false, 3001));
 
         /// <summary>The pack texture "entity/cow/cow_temperate" (or "minecraft:item/x") with overlays drawn over it; null if missing.</summary>
         public Texture2D Get(string texture, List<string> overlays = null, Color32? tint = null)
@@ -226,6 +257,7 @@ namespace TabletopCraft.World
         {
             foreach (var t in _tex.Values) if (t != null) UnityEngine.Object.Destroy(t);
             foreach (var m in _mats.Values) if (m != null) UnityEngine.Object.Destroy(m);
+            foreach (var m in new[] { _linesOpaque, _linesTranslucent, _lightning }) if (m != null) UnityEngine.Object.Destroy(m);   // [living]
             if (_white != null) UnityEngine.Object.Destroy(_white);
             _tex.Clear(); _mats.Clear();
         }

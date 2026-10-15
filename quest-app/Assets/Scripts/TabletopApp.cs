@@ -104,6 +104,23 @@ namespace TabletopCraft
         ItemRegistry _items;
         EntityCard _card;
         TriggerMode _leftTrigger = TriggerMode.Use;
+        // [living] time of day and weather (WorldLight), rain, snow and lightning (WeatherRenderer), leads (LeashRenderer)
+        WorldLight _light;
+        WeatherRenderer _weather;
+
+        /// <summary>[living] The living-world parts: the light follows world_state, weather and leads are drawn on the table.</summary>
+        void SetupLiving()
+        {
+            _light = gameObject.AddComponent<WorldLight>();
+            _entities.Light = _light;
+            _entityTex.BlockOpaque = OpaqueMaterial; _entityTex.BlockTransparent = TransparentMaterial;   // blocks on entities, block displays
+            var weatherT = new GameObject("Weather").transform; weatherT.SetParent(_regionRoot, false);
+            _weather = weatherT.gameObject.AddComponent<WeatherRenderer>();
+            _weather.Model = _world; _weather.Light = _light; _weather.Textures = _entityTex; _weather.Nav = _nav.State; _weather.Head = Head;
+            _entities.Weather = _weather;
+            var leash = _entitiesRoot.gameObject.AddComponent<LeashRenderer>();
+            leash.Entities = _entities; leash.Players = _players; leash.Textures = _entityTex;
+        }
 
         void Start()
         {
@@ -178,6 +195,7 @@ namespace TabletopCraft
             _nav.BlockSize = () => BlockSizeM; _nav.Suspended = () => _area.Active; _nav.Send = b => _link.Send(b);
             _area.Nav = _nav.State;
             eye.Caps = _caps;   // water cuts of the visible window get inside faces too (EyeEffects.cs)
+            SetupLiving();   // [living] needs the entities and the nav window
             // [area] width presets: left stick click, or a menu through Presets/Current/Request (XR/AreaSizeControl.cs)
             AreaSize = gameObject.AddComponent<AreaSizeControl>();
             AreaSize.Nav = _nav.State; AreaSize.Renderer = _renderer; AreaSize.Blocked = () => _area.Active; AreaSize.Send = b => _link.Send(b);
@@ -299,6 +317,7 @@ namespace TabletopCraft
                 BlockShading.MinLight = (float)c.D("min_light", BlockShading.MinLight);         // brightness of light level 0
                 GreedyMesher.LeavesInner = c.B("leaves_inner", true);                           // faces between leaves, like vanilla
                 ResourcePackAtlas.Mipmaps = c.B("mipmaps", true);                               // mip-mapped block textures
+                WorldLight.WeatherFx = c.B("weather_fx", true);                                 // [living] rain, snow, lightning
                 // [menu] show_hud, [area] area_width and block_size_m are shared with prefs.json: see LoadPrefs
                 _operatorName = c.S("operator_name");                                           // [talk] the name in chat
                 foreach (var q in c.A("quick_commands") ?? new List<object>()) if (q is string qs) _quickCommands.Add(qs);   // [talk] Console quick buttons
@@ -485,6 +504,7 @@ namespace TabletopCraft
             _blocks.localScale = Vector3.one * bs;
             _players.BlockSizeM = bs;
             _entities.BlockSizeM = bs;   // [entities]
+            if (_weather != null) _weather.BlockSizeM = bs;   // [living]
             RecenterRegion();
             _avatarConfigAt = Time.unscaledTime + 0.3f;
         }
@@ -553,13 +573,23 @@ namespace TabletopCraft
             (_area.Active ? _area.Status : (_area.Status.Length > 0 ? _area.Status : "Y (left) = set up area   left stick = move") + "\n" + _edit.Status) +
             $"\nBLOCKS {(_registry != null ? _registry.Count + " placeable" : "-")}  {_icons.Status}" +
             $"\nTALK {TalkStatus()}" +   // [talk]
-            $"\nHANDS {HandsStatus()}";   // [hands]
+            $"\nHANDS {HandsStatus()}" +   // [hands]
+            $"\nTIME {LivingStatus()}";   // [living]
 
         /// <summary>[hands] Using blocks, items and mobs as the server granted it, and what the left trigger does first.</summary>
         string HandsStatus() =>
             !_interact.Allowed ? "off (the server has no interact_v1, or interact.enabled is off)"
             : $"on, {_items?.Count ?? 0} items, left trigger {(_leftTrigger == TriggerMode.Use ? "uses first (grip = place)" : "places (grip = use)")}" +
               $"{(_interact.Entities ? "" : ", no mobs")}{(_interact.HarmPlayers ? ", players can be hurt" : "")}";
+
+        /// <summary>[living] The world's time and weather as the table shows them (WorldLight, WeatherRenderer).</summary>
+        string LivingStatus()
+        {
+            var c = _light != null ? _light.Clock : null;
+            if (c == null || !c.Known) return "- (no world_state: noon)";
+            return $"{(int)c.DayTime} {c.Dimension}  rain {c.Rain:F2} thunder {c.Thunder:F2}  sky {_light.Current.SkyFactor:F2}" +
+                   $"  drops {(_weather != null ? _weather.Drops : 0)}{(WorldLight.WeatherFx ? "" : " (weather_fx off)")}";
+        }
 
         /// <summary>[talk] Chat, commands and status as the server granted them (X opens the operator panel).</summary>
         string TalkStatus()
@@ -615,6 +645,7 @@ namespace TabletopCraft
                     // [comfort] a new session lists its players and entities afresh (stale ones were hidden while offline)
                     _players.Apply(new List<PlayerInfo>());
                     _entities.Clear();
+                    _light.Reset();   // [living] noon until this server's world_state
                     if (_announce) { _announce = false; _hud.Toast("Connected to " + ServerAddress.HostOf(_link.Url), ToastKind.Info); }
                     break;
                 case "region_info":
@@ -646,6 +677,7 @@ namespace TabletopCraft
                     break;
                 case "entities": _entities.Apply(m); break;   // [entities] PROTOCOL.md 4.21
                 case "block_entities": _blockEntities.Apply(m); break;   // [blocks] PROTOCOL.md 4.29
+                case "world_state": _light.Apply(m); break;   // [living] time of day and weather
                 case "actions":                                  // [entities] PROTOCOL.md 4.22
                     _actions.Clear();
                     GameAction.Parse(m, _actions);

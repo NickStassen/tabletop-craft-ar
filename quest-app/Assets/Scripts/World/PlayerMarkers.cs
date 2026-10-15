@@ -36,6 +36,22 @@ namespace TabletopCraft.World
             public string SkinUrl;                 // URL the figure wears (or is downloading)
             public readonly PlayerExtras Extras = new PlayerExtras();   // [entities]
             public string Name;                    // [hands] for the aim label
+            public float BodyYaw;                                         // [living] as shown (leads and fishing lines)
+        }
+
+        /// <summary>[living] Where a player (by entity id) holds a lead (Player.getRopeHoldPosition) or, with rod, the
+        /// fishing rod's line (FishingHookRenderer.getPlayerHandPos), in world coordinates; false if not on the table.</summary>
+        public bool Hold(int id, bool rod, out Vector3 world)
+        {
+            world = default;
+            if (id < 0) return false;
+            foreach (var m in _markers.Values)
+            {
+                if (m.Extras.Id != id) continue;
+                world = rod ? Leash.RodHand(m.Shown, m.BodyYaw, m.Sneaking) : Leash.PlayerHold(m.Shown, m.BodyYaw, m.Sneaking);
+                return true;
+            }
+            return false;
         }
 
         readonly Dictionary<string, Marker> _markers = new Dictionary<string, Marker>();
@@ -131,6 +147,7 @@ namespace TabletopCraft.World
                 if ((m.Target - m.Shown).sqrMagnitude > 16f * 16f) { m.Shown = m.Target; d = Vector3.zero; }
                 var pose = m.Anim.Step(dt, d.x, d.z, m.Yaw, m.Pitch, m.Sneaking);
                 m.Extras.AdjustPose(ref pose, dt, m.Pitch);   // [entities] riding/holding arms, swing
+                m.BodyYaw = pose.BodyYaw;   // [living]
                 var root = m.Fig.Root.transform;
                 root.localPosition = ToLocal(m.Shown);
                 // Minecraft yaw 0 faces +Z (south) = Unity -Z after the mirror (Euler Y 180); yaw 90 faces west = Unity -X.

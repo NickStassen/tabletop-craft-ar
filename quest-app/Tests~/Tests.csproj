@@ -17,6 +17,8 @@
     <!-- [nav] which sections are meshed: near the visible window only -->
     <Compile Include="../Assets/Scripts/World/MeshScope.cs" />
     <Compile Include="../Assets/Scripts/World/BlockShading.cs;../Assets/Scripts/World/BiomeColors.cs" />
+    <!-- [living] time of day, weather, leads, gear, displays (PROTOCOL.md "World state", "Living entities") -->
+    <Compile Include="../Assets/Scripts/World/DayLight.cs;../Assets/Scripts/World/Precipitation.cs;../Assets/Scripts/World/LightningBolt.cs;../Assets/Scripts/World/Leash.cs;../Assets/Scripts/World/LivingLooks.cs" />
     <Compile Include="../Assets/Scripts/World/BlockModelBaker.cs;../Assets/Scripts/World/BlockModels.cs;../Assets/Scripts/World/PistonGhosts.cs;../Assets/Scripts/World/TextureMips.cs" />
     <Compile Include="../Assets/Scripts/World/PlayerModel.cs;../Assets/Scripts/World/PlayerAnimation.cs;../Assets/Scripts/World/SkinImage.cs" />
     <Compile Include="../Assets/Scripts/World/FluidMesher.cs;../Assets/Scripts/World/TextureAnimation.cs;../Assets/Scripts/World/EyeMedium.cs" />

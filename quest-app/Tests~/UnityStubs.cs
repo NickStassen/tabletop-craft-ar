@@ -13,6 +13,20 @@ namespace UnityEngine
         public static Vector3 operator *(Vector3 a, float k) => new Vector3(a.x * k, a.y * k, a.z * k);
         public static implicit operator Vector3(Vector3Int v) => new Vector3(v.x, v.y, v.z);
         public override string ToString() => $"({x}, {y}, {z})";
+        // [living] what DayLight, Leash, Precipitation and DisplayTransform use
+        public static Vector3 operator *(float k, Vector3 a) => a * k;
+        public static Vector3 operator /(Vector3 a, float k) => new Vector3(a.x / k, a.y / k, a.z / k);
+        public static Vector3 operator -(Vector3 a) => new Vector3(-a.x, -a.y, -a.z);
+        public float sqrMagnitude => x * x + y * y + z * z;
+        public float magnitude => (float)Math.Sqrt(sqrMagnitude);
+        public Vector3 normalized { get { float m = magnitude; return m > 1e-5f ? this / m : new Vector3(0, 0, 0); } }
+        public static Vector3 zero => new Vector3(0, 0, 0);
+        public static Vector3 one => new Vector3(1, 1, 1);
+        public static Vector3 up => new Vector3(0, 1, 0);
+        public static float Dot(Vector3 a, Vector3 b) => a.x * b.x + a.y * b.y + a.z * b.z;
+        public static Vector3 Cross(Vector3 a, Vector3 b) => new Vector3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
+        public static Vector3 Lerp(Vector3 a, Vector3 b, float t) => a + (b - a) * Mathf.Clamp01(t);
+        public static float Distance(Vector3 a, Vector3 b) => (a - b).magnitude;
     }
     public struct Vector3Int
     {
@@ -48,6 +62,19 @@ namespace UnityEngine
         public static float Clamp(float v, float lo, float hi) => v < lo ? lo : v > hi ? hi : v;
         public static float Clamp01(float v) => v < 0 ? 0 : v > 1 ? 1 : v;
         public static float Lerp(float a, float b, float t) => a + (b - a) * Clamp01(t);
+        // [living]
+        public const float PI = (float)Math.PI, Deg2Rad = (float)(Math.PI / 180), Rad2Deg = (float)(180 / Math.PI);
+        public static float Abs(float v) => Math.Abs(v);
+        public static float Sin(float v) => (float)Math.Sin(v);
+        public static float Cos(float v) => (float)Math.Cos(v);
+        public static float Sqrt(float v) => (float)Math.Sqrt(v);
+        public static float Atan2(float y, float x) => (float)Math.Atan2(y, x);
+        public static int FloorToInt(float v) => (int)Math.Floor(v);
+        public static float Floor(float v) => (float)Math.Floor(v);
+        public static float Round(float v) => (float)Math.Round(v);
+        public static float Repeat(float t, float length) => Clamp(t - Floor(t / length) * length, 0f, length);
+        public static float MoveTowards(float current, float target, float maxDelta) =>
+            Math.Abs(target - current) <= maxDelta ? target : current + Math.Sign(target - current) * maxDelta;
     }
     public static class Debug { public static void Log(object o) => Console.WriteLine(o); public static void LogWarning(object o) => Console.WriteLine("WARN " + o); }
 }

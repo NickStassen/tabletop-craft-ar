@@ -23,7 +23,7 @@ float _TabletopBlocksSize;      // global: texels per block (the atlas tile size
 
 #define TABLETOP_RANDOM_COORDS(a, b) float3 cellPos : TEXCOORD##a; nointerpolation float randomTable : TEXCOORD##b;
 #define TABLETOP_BLOCKS_GRADIENTS(i) float2 tbDx = ddx((i).uv.xy), tbDy = ddy((i).uv.xy);
-#define TABLETOP_TRANSFER_RANDOM(o, v) { float t_ = (v).uv.z >= 0 ? floor(((v).uv.z + 0.5) / 4096.0) : 0; o.uv.z = (v).uv.z - t_ * 4096.0; o.randomTable = t_; o.cellPos = (v).vertex.xyz - (v).normal * 0.5; }
+#define TABLETOP_TRANSFER_RANDOM(o, v) { float t_ = (v).uv.z >= 0 ? floor(((v).uv.z + 0.5) / 4096.0) : 0; o.uv.z = (v).uv.z - t_ * 4096.0; o.randomTable = t_; o.cellPos = (v).vertex.xyz - (v).normal.xyz * 0.5; }
 
 inline uint TabletopHash(int3 c)
 {

@@ -80,8 +80,68 @@ public final class EntityDelta {
         if (e.count > 1) o.addProperty("count", e.count);
         if (e.rotation != 0) o.addProperty("rotation", e.rotation);
         if (e.equipment != null && !e.equipment.isEmpty()) o.add("equipment", equipment(e.equipment));
+        living(o, e);
         return o;
     }
+
+    /** [living] The leash, gear and look fields of a full entry (left out when not set). */
+    private static void living(JsonObject o, EntityState e) {
+        if (e.leash != null) o.addProperty("leash", e.leash);
+        if (e.eye > 0) o.addProperty("eye", round2(e.eye));
+        flag(o, "chested", e.chested); flag(o, "name_visible", e.nameVisible);
+        if (e.xp > 0) o.addProperty("xp", e.xp);
+        if (e.owner != null) o.addProperty("owner", e.owner);
+        str(o, "carried", e.carried);
+        if (e.peek > 0) o.addProperty("peek", round2(e.peek));
+        str(o, "attach", e.attach);
+        if (e.display != null) o.add("display", display(e.display));
+    }
+
+    private static double round2(double v) { return Math.round(v * 100) / 100.0; }
+
+    /** A display entity's state (PROTOCOL.md "Display entities"): always the whole object. */
+    static JsonObject display(EntityState.DisplayState d) {
+        JsonObject o = new JsonObject();
+        o.add("translation", floats(d.translation)); o.add("left_rotation", floats(d.leftRotation));
+        o.add("scale", floats(d.scale)); o.add("right_rotation", floats(d.rightRotation));
+        o.addProperty("billboard", d.billboard);
+        if (d.brightness != null) o.add("brightness", Protocol.ints(d.brightness));
+        if (d.itemTransform != null) o.addProperty("item_transform", d.itemTransform);
+        if (d.text != null) {
+            o.addProperty("text", d.text);
+            o.addProperty("line_width", d.lineWidth);
+            o.addProperty("background", d.background);
+            o.addProperty("text_opacity", d.textOpacity);
+            if (d.shadow) o.addProperty("shadow", true);
+            if (d.seeThrough) o.addProperty("see_through", true);
+            if (d.defaultBackground) o.addProperty("default_background", true);
+            o.addProperty("align", d.align);
+        }
+        return o;
+    }
+
+    private static JsonArray floats(float[] v) {
+        JsonArray a = new JsonArray();
+        for (float f : v) a.add(Double.parseDouble(Float.toString(f)));   // the float's shortest decimal, not its double expansion
+        return a;
+    }
+
+    /** [living] Changed leash, gear and look fields of a known entity (cleared ones as null/false/0); updates was. */
+    private static void livingDelta(JsonObject o, EntityState e, EntityState was) {
+        if (!Objects.equals(e.leash, was.leash)) { o.add("leash", e.leash == null ? JsonNull.INSTANCE : new JsonPrimitive(e.leash)); was.leash = e.leash; }
+        if (Math.abs(e.eye - was.eye) >= POS_EPS) { o.addProperty("eye", round2(e.eye)); was.eye = e.eye; }
+        if (e.chested != was.chested) { o.addProperty("chested", e.chested); was.chested = e.chested; }
+        if (e.nameVisible != was.nameVisible) { o.addProperty("name_visible", e.nameVisible); was.nameVisible = e.nameVisible; }
+        if (e.xp != was.xp) { o.addProperty("xp", e.xp); was.xp = e.xp; }
+        if (!Objects.equals(e.owner, was.owner)) { o.add("owner", e.owner == null ? JsonNull.INSTANCE : new JsonPrimitive(e.owner)); was.owner = e.owner; }
+        if (!Objects.equals(e.carried, was.carried)) { o.addProperty("carried", e.carried); was.carried = e.carried; }
+        if (Math.abs(e.peek - was.peek) >= PEEK_EPS || (e.peek == 0) != (was.peek == 0)) { o.addProperty("peek", round2(e.peek)); was.peek = e.peek; }
+        if (!Objects.equals(e.attach, was.attach)) { o.addProperty("attach", e.attach); was.attach = e.attach; }
+        if (!Objects.equals(e.display, was.display)) { o.add("display", e.display == null ? JsonNull.INSTANCE : display(e.display)); was.display = e.display; }
+    }
+
+    /** A shulker's lid moves in small steps: resend its peek when it changed by this much (or opened/closed fully). */
+    public static final double PEEK_EPS = 0.05;
 
     /** Changed fields of a known entity (cleared ones as false/null/[]), or null; updates {@code was} to match. */
     static JsonObject deltaEntry(EntityState e, EntityState was) {
@@ -119,6 +179,7 @@ public final class EntityDelta {
         if (e.count != was.count) { o.addProperty("count", e.count); was.count = e.count; }
         if (e.rotation != was.rotation) { o.addProperty("rotation", e.rotation); was.rotation = e.rotation; }
         if (!Objects.equals(empty(e.equipment), empty(was.equipment))) { o.add("equipment", equipment(e.equipment)); was.equipment = e.equipment; }
+        livingDelta(o, e, was);
         if (o.size() == 0) return null;
         JsonObject withId = new JsonObject();
         withId.addProperty("id", e.id);
@@ -133,6 +194,8 @@ public final class EntityDelta {
         c.tamed = e.tamed; c.angry = e.angry; c.arms = e.arms; c.basePlate = e.basePlate; c.standPose = e.standPose;
         c.variant = e.variant; c.color = e.color; c.markings = e.markings; c.profession = e.profession; c.pose = e.pose; c.name = e.name;
         c.item = e.item; c.block = e.block; c.facing = e.facing; c.count = e.count; c.rotation = e.rotation; c.equipment = e.equipment;
+        c.leash = e.leash; c.eye = e.eye; c.chested = e.chested; c.nameVisible = e.nameVisible; c.xp = e.xp; c.owner = e.owner;
+        c.carried = e.carried; c.peek = e.peek; c.attach = e.attach; c.display = e.display;
         return c;
     }
 
