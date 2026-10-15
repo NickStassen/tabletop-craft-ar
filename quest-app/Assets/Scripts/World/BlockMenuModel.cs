@@ -2,8 +2,10 @@
 // the left hand and feeds it what the right controller's ray hits; this file decides what a hover, a trigger pull, a
 // stick push, the right stick click or a B pick does.
 //
-//   Tabs: the server's categories (block_registry), Search (on-panel keyboard, World/KeyboardModel.cs), Info (status,
-//         "Show HUD", "Reset view", and the Server field: type an address or pick a server found on the LAN).
+//   Tabs: the server's categories (block_registry), [hands] Use and Eggs (item_registry: usable items and spawn eggs,
+//         when the server grants interact_v1; with the name tag selected the Use tab shows its text field and keyboard,
+//         like naming one at an anvil), Search (on-panel keyboard, World/KeyboardModel.cs; blocks and items), Info
+//         (status, "Show HUD", "Reset view", and the Server field: type an address or pick a server found on the LAN).
 //   Grid: 9 columns, scrolled by rows (right stick or the arrows while the ray is on the panel).
 //   Hotbar: 9 recent picks, most recent first, one per block (picking oak stairs again moves them to the front).
 //   Area row (optional): 5 area sizes, shown only when the app wires the area hooks.
@@ -119,6 +121,11 @@ namespace TabletopCraft.World
                          KeyEnter = KeyboardModel.KeyEnter;
 
         public BlockRegistry Registry { get; private set; }
+        /// <summary>[hands] The server's item_registry (null without interact_v1): the Use and Eggs tabs.</summary>
+        public ItemRegistry UseItems { get; private set; }
+        /// <summary>[hands] The name tag's text (typed on the Use tab while the name tag is selected).</summary>
+        public readonly KeyboardModel NameTagKeys = new KeyboardModel { MaxLength = 64, CollapseSpaces = true, EnterLabel = "done" };
+        public string NameTag => NameTagKeys.Text.Trim();
         public bool Open { get; private set; }
         public int Tab { get; private set; }
         /// <summary>The Search tab's keyboard; its text is the query. Enter picks the first result.</summary>
@@ -157,37 +164,58 @@ namespace TabletopCraft.World
         public BlockMenuModel() { Hotbar.Push(Selected); }
 
         public int CategoryCount => Registry?.CategoryIds.Count ?? 0;
-        public int SearchTab => CategoryCount;
-        public int InfoTab => CategoryCount + 1;
+        /// <summary>[hands] The Use and Eggs tabs follow the categories when the server sent an item_registry (else -1).</summary>
+        public int ItemTabCount => UseItems != null ? 2 : 0;
+        public int UseTab => UseItems != null ? CategoryCount : -1;
+        public int EggsTab => UseItems != null ? CategoryCount + 1 : -1;
+        public int SearchTab => CategoryCount + ItemTabCount;
+        public int InfoTab => SearchTab + 1;
         public bool CapturesRight => Open && PointerOnPanel;
         public IReadOnlyList<BlockEntry> Items => _items;
-        public int GridRows => Tab == InfoTab ? 0 : Tab == SearchTab ? SearchRows : Rows;
+        /// <summary>[hands] The Use tab with the name tag selected: its text field and keyboard under a shorter grid.</summary>
+        public bool NameTagField => Tab == UseTab && InteractProtocol.ItemId(Selected) == InteractProtocol.NameTag;
+        public int GridRows => Tab == InfoTab ? 0 : Tab == SearchTab || NameTagField ? SearchRows : Rows;
         public int RowCount => (_items.Count + Columns - 1) / Columns;
         public int MaxScroll => Math.Max(0, RowCount - GridRows);
 
         public void SetRegistry(BlockRegistry r)
         {
-            bool search = Tab == SearchTab, info = Tab == InfoTab;   // Search and Info move when the category count changes
+            string cur = TabId(Tab);   // Search, Info, Use and Eggs move when the category count changes
             Registry = r;
-            Tab = search ? SearchTab : info ? InfoTab : Tab > InfoTab ? 0 : Tab;
-            if (_wantTab != null) { int want = TabOfId(_wantTab); if (want >= 0) Tab = want; _wantTab = null; }
+            int t = cur != null ? TabOfId(cur) : -1;
+            Tab = t >= 0 ? t : Tab > InfoTab ? 0 : Tab;
+            if (_wantTab != null) { int want = TabOfId(_wantTab); if (want >= 0) { Tab = want; _wantTab = null; } else if (UseItems != null) _wantTab = null; }
             _scrollByTab.Clear();
             Refresh(true);
         }
 
-        /// <summary>A stable name for a tab (prefs.json): the category id, "search" or "info".</summary>
-        public string TabId(int tab) => tab == SearchTab ? "search" : tab == InfoTab ? "info"
+        /// <summary>[hands] item_registry arrived (or null: the next server has none): the Use and Eggs tabs come or go.</summary>
+        public void SetItems(ItemRegistry items)
+        {
+            string cur = TabId(Tab);
+            UseItems = items;
+            int t = cur != null ? TabOfId(cur) : -1;
+            Tab = t >= 0 ? t : Math.Min(Tab, InfoTab);
+            if (_wantTab != null) { int want = TabOfId(_wantTab); if (want >= 0) { Tab = want; _wantTab = null; } }
+            _scrollByTab.Clear();
+            Refresh(true);
+        }
+
+        /// <summary>A stable name for a tab (prefs.json): the category id, "use", "eggs", "search" or "info".</summary>
+        public string TabId(int tab) => tab == SearchTab ? "search" : tab == InfoTab ? "info" : tab == UseTab ? "use" : tab == EggsTab ? "eggs"
             : Registry != null && tab >= 0 && tab < CategoryCount ? Registry.CategoryIds[tab] : null;
 
-        int TabOfId(string id) => id == "search" ? SearchTab : id == "info" ? InfoTab : Registry != null ? Registry.CategoryIds.IndexOf(id) : -1;
+        int TabOfId(string id) => id == "search" ? SearchTab : id == "info" ? InfoTab : id == "use" ? UseTab : id == "eggs" ? EggsTab
+            : Registry != null ? Registry.CategoryIds.IndexOf(id) : -1;
 
-        /// <summary>Restores the tab from prefs.json. A category tab waits for the server's block list (SetRegistry).</summary>
+        /// <summary>Restores the tab from prefs.json. A category tab waits for the server's block list (SetRegistry), Use
+        /// and Eggs for its item list (SetItems).</summary>
         public void RestoreTab(string id)
         {
             if (string.IsNullOrEmpty(id)) return;
             int t = TabOfId(id);
             if (t >= 0) SetTab(t);
-            else if (Registry == null) _wantTab = id;
+            else if (Registry == null || (UseItems == null && (id == "use" || id == "eggs"))) _wantTab = id;
         }
 
         /// <summary>Restores the hotbar and the selected block from prefs.json.</summary>
@@ -275,8 +303,9 @@ namespace TabletopCraft.World
             return none;
         }
 
-        /// <summary>The keyboard on the current tab: Search's, the Server field's while it's open, else null.</summary>
-        public KeyboardModel ActiveKeys => Tab == SearchTab ? SearchKeys : Tab == InfoTab && ServerEditing ? ServerKeys : null;
+        /// <summary>The keyboard on the current tab: Search's, the Server field's while it's open, [hands] the name tag's
+        /// on the Use tab while the name tag is selected, else null.</summary>
+        public KeyboardModel ActiveKeys => Tab == SearchTab ? SearchKeys : Tab == InfoTab && ServerEditing ? ServerKeys : NameTagField ? NameTagKeys : null;
 
         /// <summary>Connect to a typed or found address: normalised (ws://host:8765/tabletop by default) or refused.</summary>
         MenuAction Connect(string text)
@@ -336,7 +365,11 @@ namespace TabletopCraft.World
         public bool Picked(string state)
         {
             if (string.IsNullOrEmpty(state)) return false;
-            if (Registry != null && !Registry.IsPlaceable(state)) { Note = "can't place " + LabelOf(state); Version++; return false; }
+            if (InteractProtocol.IsItem(state))   // [hands] a mob's spawn egg (B on a mob)
+            {
+                if (UseItems?.Find(state) == null) { Note = "no " + LabelOf(state) + " on this server"; Version++; return false; }
+            }
+            else if (Registry != null && !Registry.IsPlaceable(state)) { Note = "can't place " + LabelOf(state); Version++; return false; }
             Choose(state);
             return true;
         }
@@ -362,6 +395,7 @@ namespace TabletopCraft.World
             if (r == KeyResult.Enter)
             {
                 if (kb == ServerKeys) return Connect(kb.Text);
+                if (kb == NameTagKeys) { Note = NameTag.Length > 0 ? "Name tag: " + NameTag + " (left trigger on a mob)" : "Name tag: empty"; Version++; return new MenuAction { Kind = MenuActionKind.Typed, Value = key }; }
                 if (_items.Count == 0) return none;
                 Choose(_items[0].State);
                 return new MenuAction { Kind = MenuActionKind.Select, State = _items[0].State };
@@ -385,22 +419,27 @@ namespace TabletopCraft.World
             return "Selected: " + LabelOf(Selected);
         }
 
-        public string LabelOf(string state) => Registry?.Find(state) is BlockEntry e && BlockRegistry.IdOf(state) == e.Id ? e.Label : BlockRegistry.DefaultLabel(BlockRegistry.PathOf(BlockRegistry.IdOf(state)));
+        public string LabelOf(string state) =>
+            InteractProtocol.IsItem(state) ? UseItems?.Find(state)?.Label ?? BlockRegistry.DefaultLabel(BlockRegistry.PathOf(InteractProtocol.ItemId(state)))   // [hands]
+            : Registry?.Find(state) is BlockEntry e && BlockRegistry.IdOf(state) == e.Id ? e.Label : BlockRegistry.DefaultLabel(BlockRegistry.PathOf(BlockRegistry.IdOf(state)));
 
-        public string TabLabel(int tab) => tab == SearchTab ? "Search" : tab == InfoTab ? "Info" : Registry != null && tab < CategoryCount ? Registry.CategoryLabels[tab] : "";
+        public string TabLabel(int tab) => tab == SearchTab ? "Search" : tab == InfoTab ? "Info" : tab == UseTab ? "Use items" : tab == EggsTab ? "Spawn eggs"
+            : Registry != null && tab < CategoryCount ? Registry.CategoryLabels[tab] : "";
 
-        /// <summary>Short tab captions that fit 8 tabs on the panel.</summary>
+        /// <summary>Short tab captions that fit 10 tabs on the panel.</summary>
         public string TabCaption(int tab)
         {
             if (tab == SearchTab) return "Search";
             if (tab == InfoTab) return "Info";
+            if (tab == UseTab) return "Use";     // [hands]
+            if (tab == EggsTab) return "Eggs";
             string id = Registry != null && tab < CategoryCount ? Registry.CategoryIds[tab] : "";
             switch (id)
             {
                 case "building": return "Build";
                 case "colored": return "Color";
                 case "natural": return "Nature";
-                case "functional": return "Use";
+                case "functional": return "Func.";   // [hands] "Use" is the items tab now
                 case "redstone": return "Redst.";
                 case "other": return "Other";
                 default: return BlockRegistry.DefaultLabel(id.Length > 6 ? id.Substring(0, 6) : id);
@@ -409,8 +448,10 @@ namespace TabletopCraft.World
 
         void Refresh(bool keepScroll)
         {
-            if (Registry == null) _items = new List<BlockEntry>();
-            else if (Tab == SearchTab) _items = Search(Registry, Query);
+            if (Tab == UseTab) _items = UseItems.Use;          // [hands]
+            else if (Tab == EggsTab) _items = UseItems.Eggs;
+            else if (Registry == null) _items = new List<BlockEntry>();
+            else if (Tab == SearchTab) { _items = Search(Registry, Query); if (UseItems != null) _items.AddRange(Search(UseItems, Query)); }
             else if (Tab == InfoTab) _items = new List<BlockEntry>();
             else _items = Registry.ByCategory[Tab];
             int s = _scrollByTab.TryGetValue(Tab, out var v) ? v : 0;
@@ -423,13 +464,23 @@ namespace TabletopCraft.World
         /// query first, then entries with a word starting with the first query word, then the rest, each in menu order.
         /// An empty query lists everything.
         /// </summary>
-        public static List<BlockEntry> Search(BlockRegistry r, string query)
+        public static List<BlockEntry> Search(BlockRegistry r, string query) => Search(r.Entries, query);
+
+        /// <summary>[hands] The same over the usable items and spawn eggs (listed after the blocks).</summary>
+        public static List<BlockEntry> Search(ItemRegistry r, string query)
+        {
+            var all = new List<BlockEntry>(r.Use);
+            all.AddRange(r.Eggs);
+            return Search(all, query);
+        }
+
+        static List<BlockEntry> Search(List<BlockEntry> entries, string query)
         {
             string q = (query ?? "").Trim().ToLowerInvariant();
-            if (q.Length == 0) return new List<BlockEntry>(r.Entries);
+            if (q.Length == 0) return new List<BlockEntry>(entries);
             var words = q.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
             var hits = new List<(int score, BlockEntry e)>();
-            foreach (var e in r.Entries)
+            foreach (var e in entries)
             {
                 bool all = true;
                 foreach (var w in words) if (e.SearchText.IndexOf(w, StringComparison.Ordinal) < 0) { all = false; break; }
@@ -485,6 +536,11 @@ namespace TabletopCraft.World
                 }
                 y += rows * Cell + Gap;
                 if (Tab == SearchTab) { L.Items.AddRange(SearchKeys.Layout(Margin, y, inner, KeyH)); y += KeyboardModel.Rows * KeyH + Gap; }
+                else if (NameTagField)   // [hands] the name tag's text under the grid, then its keyboard
+                {
+                    L.NameTagField = new MenuRect(Margin, y, inner, SearchH); y += SearchH + Gap;
+                    L.Items.AddRange(NameTagKeys.Layout(Margin, y, inner, KeyH)); y += KeyboardModel.Rows * KeyH + Gap;
+                }
             }
             L.Name = new MenuRect(Margin, y, inner, NameH);
             y += NameH;
@@ -538,5 +594,6 @@ namespace TabletopCraft.World
         public float Width, Height;
         public readonly List<MenuItem> Items = new List<MenuItem>();
         public MenuRect Grid, Name, SearchField, Info, ScrollTrack, AreaLabel, ServerText, FoundNote;
+        public MenuRect NameTagField;   // [hands] the name tag's text (Use tab)
     }
 }

@@ -120,6 +120,36 @@ edit:
     - minecraft:jigsaw
     - minecraft:test_block
     - minecraft:test_instance_block
+# [hands] Using blocks, items and mobs from the headset (interact_v1, PROTOCOL.md "Using blocks and items" and "Acting
+# on mobs"): the left trigger opens doors, flips levers, presses buttons, uses bone meal, buckets, flint and steel,
+# axes, hoes, shovels, shears, spawn eggs and a lightning wand; the right trigger hits mobs, the right grip carries
+# them, and the info card kills, removes, freezes and names them. Only inside the table's region (mobs: plus
+# entities.margin), like block editing; protection plugins are not consulted. Fire and lava can spread beyond the region.
+interact:
+  enabled: true
+  # true: only when auth.token above is set (every connected headset presented the token).
+  require-token: false
+  # Uses and mob actions per second per headset (a token bucket); more get error rate_limited. Carrying a mob sends up
+  # to 10 moves a second on a bucket of its own.
+  max-per-second: 10
+  # Hit, kill, remove, name, carry, freeze and info for mobs (entity_op), and leads, names and breeding foods in the menu.
+  entities: true
+  # Players can always be carried to another spot; hitting, killing and striking them needs this.
+  harm-players: false
+  # Iron doors and iron trapdoors open by hand from the headset (in vanilla only redstone opens them).
+  iron-doors: true
+  # Per-family switches: fire (flint and steel, fire charges), TNT, buckets (water, lava, powder snow) and the
+  # lightning wand: true (real lightning), effect (only the flash and the sound) or false.
+  fire: true
+  tnt: true
+  fluids: true
+  lightning: true
+  # Damage of one hit (a player's bare fist is 1, a diamond sword 7).
+  attack-damage: 5
+  # Mobs that spawn eggs never make from the headset (their eggs aren't offered either).
+  deny-spawn: [minecraft:wither, minecraft:ender_dragon]
+  # Spawn-egg mobs per minute per headset.
+  max-spawns-per-minute: 60
 # [talk] Chat between Java players and the headset (chat_v1, PROTOCOL.md 4.26). Headsets that ask for chat_v1 get
 # game chat, joins, quits, deaths, advancements, plugin broadcasts and /say, /me; with "send" they can talk too.
 chat:

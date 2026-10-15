@@ -1,5 +1,6 @@
 // The creative-style block menu (docs/QUEST_SETUP.md "Block menu"): a panel beside the left hand with the server's
-// block categories, search and an Info tab, a 9-slot hotbar, and (when the app wires it) an area-size row. The logic
+// block categories, [hands] Use and Eggs tabs (item_registry), search and an Info tab, a 9-slot hotbar of blocks and
+// items, and (when the app wires it) an area-size row. The logic
 // is engine-free in World/BlockMenuModel.cs; this draws it (meshes with Sprites/Default, TextMesh, no uGUI) and maps
 // the controllers onto it:
 //
@@ -66,6 +67,7 @@ namespace TabletopCraft.XR
         float _hapticOff = -1, _infoAt;
         string _info = "";
         BlockRegistry _registry;
+        ItemRegistry _items;   // [hands]
 
         void Start()
         {
@@ -118,6 +120,15 @@ namespace TabletopCraft.XR
             if (_prefetched && Icons != null) Icons.Prefetch(r.Entries, 10);
         }
 
+        /// <summary>[hands] item_registry arrived (null: none on this server): the Use and Eggs tabs, their icons.</summary>
+        public void SetItems(ItemRegistry items)
+        {
+            _items = items;
+            _namesApplied = false;
+            Model.SetItems(items);
+            if (items != null && _prefetched && Icons != null) { Icons.Prefetch(items.Use, 10); Icons.Prefetch(items.Eggs, 11); }
+        }
+
         /// <summary>B pick from the world (BlockEditMode): selection + hotbar.</summary>
         public void OnPicked(string state)
         {
@@ -135,7 +146,11 @@ namespace TabletopCraft.XR
             {
                 Model.Toggle();
                 _placed = false;
-                if (Model.Open && !_prefetched && Icons != null && _registry != null) { _prefetched = true; Icons.Prefetch(_registry.Entries, 10); }
+                if (Model.Open && !_prefetched && Icons != null && _registry != null)
+                {
+                    _prefetched = true; Icons.Prefetch(_registry.Entries, 10);
+                    if (_items != null) { Icons.Prefetch(_items.Use, 10); Icons.Prefetch(_items.Eggs, 11); }   // [hands]
+                }
             }
             if (AreaPresets != null) { Model.AreaPresets = AreaPresets(); Model.AreaCurrent = AreaCurrent?.Invoke() ?? int.MinValue; }
             else Model.AreaPresets = null;
@@ -175,6 +190,7 @@ namespace TabletopCraft.XR
             _namesApplied = true;
             var names = Icons.Store.Names;
             if (names != null) _registry.ApplyNames(k => names.TryGetValue(k, out var v) ? v : null);
+            if (names != null) _items?.ApplyNames(k => names.TryGetValue(k, out var v) ? v : null);   // [hands]
         }
 
         void Act(MenuAction a)
@@ -265,7 +281,9 @@ namespace TabletopCraft.XR
             Box(bg, r, c, -0.0003f, inset * 1.6f);
         }
 
-        string ItemOf(string state) => _registry?.Find(state) is BlockEntry e && e.Id == BlockRegistry.IdOf(state) ? e.Item : BlockRegistry.IdOf(state);
+        string ItemOf(string state) =>
+            InteractProtocol.IsItem(state) ? InteractProtocol.IconItem(InteractProtocol.ItemId(state))   // [hands] an item is its own icon
+            : _registry?.Find(state) is BlockEntry e && e.Id == BlockRegistry.IdOf(state) ? e.Item : BlockRegistry.IdOf(state);
 
         void Draw()
         {
@@ -363,6 +381,12 @@ namespace TabletopCraft.XR
                 string q = Model.Query.Length == 0 ? "type to search" : Model.Query + "_";
                 Label("search", "Search: " + q, Lo.SearchField.X + 0.004f, Lo.SearchField.CY, 0.0019f, TextAnchor.MiddleLeft, Model.Query.Length == 0 ? TextDim : TextMain);
                 Label("count", Model.Items.Count + " blocks", Lo.SearchField.X + Lo.SearchField.W - 0.004f, Lo.SearchField.CY, 0.0015f, TextAnchor.MiddleRight, TextDim);
+            }
+            if (Lo.NameTagField.W > 0)   // [hands] the name tag's text (Use tab, name tag selected)
+            {
+                Box(_b, Lo.NameTagField, Slot, 0, 0.0008f);
+                string nt = Model.NameTagKeys.Text.Length == 0 ? "type the name, then use the tag on a mob" : Model.NameTagKeys.Display(40);
+                Label("nametag", "Name tag: " + nt, Lo.NameTagField.X + 0.004f, Lo.NameTagField.CY, 0.0017f, TextAnchor.MiddleLeft, Model.NameTagKeys.Text.Length == 0 ? TextDim : TextMain);
             }
             if (Model.Tab == Model.InfoTab) Label("info", _info, Lo.Info.X + 0.002f, Lo.Info.Y + 0.002f, 0.00135f, TextAnchor.UpperLeft, TextMain);
             else if (_registry == null) Label("wait", "waiting for the server's block list...", Lo.Grid.CX, Lo.Grid.CY, 0.0018f, TextAnchor.MiddleCenter, TextDim);

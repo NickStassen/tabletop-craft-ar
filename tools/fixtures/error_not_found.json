@@ -1,0 +1,13 @@
+{
+ "v": 1,
+ "type": "error",
+ "seq": 122,
+ "t": 1760370005320,
+ "code": "not_found",
+ "message": "no such entity (it may have died or left)",
+ "ref_seq": 97,
+ "fatal": false,
+ "op": "entity_op",
+ "entity_op": "use",
+ "uuid": "3c1e5f7a-2b4d-4e6f-8a9b-0c1d2e3f4a5b"
+}

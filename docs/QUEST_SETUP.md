@@ -178,7 +178,7 @@ Break and place blocks in the miniature like a creative-mode player. The plugin 
 
 1. Point the **right controller** at the terrain. A thin dark outline marks the block you're aiming at (like the game's selection box), and a faint laser runs from the controller to it; when the ray hits nothing, a short faded stub still shows where you point. Under the selected block by the controller, a small line names what you aim at and where it is in the world (`oak stairs @ 105,64,-35`). The ray goes through air and water, so you can aim at the sea floor. Plants, slabs, torches and other non-full blocks are targeted by their whole cell. Only blocks inside the visible box count: the hidden margin around it (Part H) can't be hit or built on, and blocks cut by the box's sides can be hit on their visible part.
 2. **Right trigger**: break the outlined block. Hold it to keep breaking every quarter second while you sweep. A door, bed or tall plant goes as a whole.
-3. **Left trigger**: place the selected block. A faint see-through copy of it, turned the way it will be placed, shows the cell it fills, inside a second outline. Both turn red when the placement would be refused (the cell is taken, a torch has nothing to hang on, a door has no room above). As in the game, aiming at short grass, a single snow layer, vines, a fern or similar places into that cell, and placing next to one replaces it; two or more snow layers stay. Hold to keep placing. Placing into water works and waterlogs slabs, stairs and the like; on land they're dry. You can't place outside the area, into a solid block, or a solid block into a player or a mob.
+3. **Left trigger**: place the selected block (unless the block you point at is one a hand uses, such as a door or a lever, or a mob is in the way: then it uses that, as a right click does; hold the **left grip** to always place. Part M). A faint see-through copy of it, turned the way it will be placed, shows the cell it fills, inside a second outline. Both turn red when the placement would be refused (the cell is taken, a torch has nothing to hang on, a door has no room above). As in the game, aiming at short grass, a single snow layer, vines, a fern or similar places into that cell, and placing next to one replaces it; two or more snow layers stay. Hold to keep placing. Placing into water works and waterlogs slabs, stairs and the like; on land they're dry. You can't place outside the area, into a solid block, or a solid block into a player or a mob.
 4. **B** (right): pick the outlined block as the selected block, like middle-click; it also goes to the front of the hotbar (Part J). You get the block as its item would place it: a wall torch picks a torch, a door's top half the door, grown wheat young wheat. The selection starts as stone. It floats above the right controller as a small textured cube with its name. Any other block comes from the block menu (Part J). A block the server won't place (fire, a potted plant) isn't picked: "Can't place fire" appears briefly instead.
 5. Orientation follows the game's own rules, from the face you click, where on it, and where the controller points:
    - logs, pillars and chains line up with the face you click;
@@ -210,12 +210,12 @@ Build with any block, like the creative inventory. The server sends its list of 
 | **Right thumbstick up/down** on the menu | Scroll the grid a row at a time (hold to keep scrolling). |
 | **Right thumbstick click** (menu closed) | Select the next hotbar slot. |
 | **B** (right) | Pick a block from the miniature (Part I); it goes to the front of the hotbar. |
-| **Left trigger** | Place the selected block, as before (Part I). |
+| **Left trigger** | Place the selected block (Part I), or use the selected item, a door or lever, or a mob (Part M). |
 
 While the ray is on the menu, the right trigger doesn't break blocks, the right stick scrolls the menu instead of scaling or turning the table, and gliding, turning and editing pause. Everything works normally again the moment the ray leaves the menu or the menu closes. Area setup (Y) closes the menu.
 
 The menu, top to bottom:
-- **Tabs:** Build, Color, Nature, Use (functional), Redst. (redstone), Other: the server's categories, close to the game's creative tabs. Then **Search** and **Info**.
+- **Tabs:** Build, Color, Nature, Func. (functional), Redst. (redstone), Other: the server's categories, close to the game's creative tabs. Then **Use** and **Eggs** (items and spawn eggs, when the server allows using them, Part M), **Search** and **Info**.
 - **Grid:** 9 blocks per row, 5 rows; arrows and a scroll bar on the right. Blocks of a family sit together (oak log, wood, planks, stairs, slab, fence...; colored blocks by kind, in the game's dye order). The selected block is framed.
 - **Search:** a keyboard on the panel and 3 rows of results. Letters (lower case; **shift** for one capital, twice for caps lock), `?123` for digits and symbols (`/ : . , - _ @ # ~ ^ [ ] { } = + * ! ? " '`), `ABC` back, **space**, **del**, **clear**, and **pick**, which selects the first result. Every word you type must appear in the name or id (`oak st` finds oak stairs); names that start with what you typed come first. An empty search lists every block. The menu uses its own keyboard rather than the Quest system keyboard: the system keyboard needs an extra Android manifest flag, takes focus from the app (passthrough and tracking pause behind it) and can't be tested in a headless build, while the panel keyboard is the same code path as every other button (and the same keyboard will serve chat and commands later).
 - **Info:** the full status (link, RTT, world, pack, light, table, poses, mesh, entities, view, area, edit, block list, icons), refreshed 4 times a second, then the **Show HUD** toggle (below), **Reset view** (Part H "Finding your way") and **Server: ... (change)**, which opens the Server field with the keyboard and the servers found on the LAN (Part D).
@@ -234,7 +234,8 @@ The old status text in the middle of the view is gone:
 - **Offline badge** (on the table's edge): the link dropped; the app is reconnecting (Part D "Headset off, Wi-Fi gone").
 - **N and coordinates**: Part H "Finding your way".
 - **Area setup panel**: above your left hand while setup (Y) runs (Part G).
-- **Selected block**: floats above the right controller (Part I), with the small hotbar.
+- **Selected block**: floats above the right controller (Part I), with the small hotbar; an item shows as its icon (Part M).
+- **Mob info card**: above the mob or player you used it on (Part M).
 - **Chat**: the last lines above the left wrist, bubbles over players, and the operator panel on **X** (Part L).
 - **Small HUD** (for debugging): turn on **Show HUD** in the Info tab, or add `"show_hud": true` to `tabletop.json`. It's the same status as the Info tab, about a third of the old size, low and to the left.
 
@@ -301,6 +302,41 @@ Without the token the command buttons are greyed and the note line says **needs 
 - `commands.deny` refuses the dangerous roots by default (`stop`, `restart`, `reload`, `op`, `deop`, `ban`, `ban-ip`, `pardon`, `pardon-ip`, `whitelist`, `save-off`, `debug`, `jfr`, `perf`, `transfer`), also behind aliases, `minecraft:` prefixes and `execute ... run`. A non-empty `commands.allow` lets only its commands run. Plugin commands that run other commands (and datapack functions) can't be looked into.
 - Every command is logged (`CMD session=... /line ok (ms)`), and ops see `[Tabletop: /line]` in game (`commands.notify-ops`).
 - Limits: 2 commands and 2 chat lines per second per headset (bursts of 5), 256 characters.
+
+## Part M: using blocks, items and mobs
+
+Act on the world like a creative player's right click: open doors, flip levers, press buttons, use bone meal, buckets, flint and steel, axes, hoes, shovels, shears and spawn eggs, strike lightning, and hit, carry, name, freeze or remove mobs. The plugin allows it by default (config.yml `interact.enabled: true`); the block menu's Info tab has a `HANDS` line saying whether the server granted it.
+
+The **left trigger** does what vanilla's right click does, in the same order:
+1. the ray hits a **mob or player** first: the selected item is used on it (shears, a food it breeds with, a spawn egg, a lead, the name tag, the lightning wand); with a block selected, its **info card** opens;
+2. the block is one a **hand uses**: doors, trapdoors and fence gates open and close (iron ones too, `interact.iron-doors`), levers flip, buttons press (and pop back up after 1 or 1.5 s), note blocks go up a note, repeaters change delay, comparators mode, daylight detectors invert, bells ring, cakes lose a bite, a full composter empties, a jukebox ejects its disc, lit candles and campfires go out;
+3. an **item** is selected: it is used on the face you point at;
+4. otherwise the selected **block is placed** (Part I).
+
+So with stone selected, pointing at a door opens it; to place stone against the door (or a chest), hold the **left grip** while you pull the trigger: that's sneaking, which skips 1 and 2. In `tabletop.json`, `"left_trigger": "place"` swaps them: the trigger always places (or uses the selected item) and the grip + trigger does the right-click order.
+
+| Control | Action |
+|---|---|
+| **Left trigger** | The right-click order above. Placing and item uses repeat while you hold it; doors, levers and mobs act once per pull. |
+| **Left grip + left trigger** | Sneak: place the block or use the item, never the block's own use or a mob. |
+| **Right trigger** on a mob or player | Hit it (5 damage, a knockback away from you; 4 hits a second while held). Players only when the server has `interact.harm-players: true`. |
+| **Right grip** on a mob or player (hold) | Pick it up: after a quarter second a mob is lifted and hangs a block above where you point; a yellow see-through box shows where it will land. Let go to put it down there. Players aren't lifted; they are moved when you let go. Pressing the **left grip** too lets go (both grips drag the table, as before). |
+| **B** on a mob | Pick its spawn egg into the selection and the hotbar. |
+| **Right trigger** on the info card | Kill, Remove, Freeze / Unfreeze, Glow, Close. |
+
+**What the outline says** (it tells you what the left trigger will do): **dark** with the white ghost block = place, **cyan** = use the block, **orange** = use the item, **yellow box** around a mob or player = act on it (its name shows under the controller). The ray hits mobs by their box (small ones at least half a block), and whatever is nearer, mob or block, wins.
+
+**Items.** The block menu (Part J) has two more tabs: **Use** (flint and steel, fire charge, bone meal, bucket, water / lava / powder snow bucket, axe, honeycomb, hoe, shovel, shears, name tag, lead, wheat, carrot, seeds, and **Lightning**, the wand) and **Eggs** (a spawn egg for every mob the server lets you spawn). Items go into the hotbar like blocks; the selected item floats above the right controller as its icon. Search finds items too. What each does:
+- **Bone meal** grows crops, saplings, grass and flowers. **Flint and steel / fire charge** light TNT (it's primed, 4 s), candles, candle cakes and campfires, else light a fire where you point. **Buckets** pour water (it waterlogs a slab or stairs you point at), lava or powder snow into the cell in front of the face; the empty **bucket** aims at water and lava sources (its ray stops at a still source) and picks them up, or the water out of a waterlogged block.
+- **Axe**: strip logs and wood, scrape copper back one stage, remove wax. **Honeycomb**: wax copper. **Hoe**: dirt and grass to farmland. **Shovel**: grass to a path, put out a campfire. **Shears**: carve a pumpkin (on a sheep: shear it), stop a vine growing.
+- **Spawn eggs**: the mob appears on the face you point at (on a spawner: it spawns that mob); on a mob of the same kind: a baby. **Lightning**: a bolt where you point (or only its flash, `interact.lightning: effect`).
+- **Name tag**: select it on the Use tab and type the name on the keyboard that appears under the grid, then use it on a mob. **Lead**: ties the mob to the nearest fence (within 7 blocks), or unties it. **Wheat, carrot, seeds**: the animals that eat them fall in love (a baby grows up faster).
+
+**The info card** floats above the mob (or player) with its type and name, health, owner, how long until a baby grows up, and whether it is frozen, glowing, on a lead or riding. Point the right ray at a button: **Kill**, **Remove** (gone without dying), **Freeze / Unfreeze** (it stands still and ignores everything; it stays frozen across restarts until unfrozen, and `/tabletop unfreeze-all` on the server wakes every mob a headset froze), **Glow**, **Close**. It closes by itself when the mob is gone or after 30 s, and with **B**.
+
+Nothing changes on the table until the server answers (0.1–0.2 s). When it refuses, a short message says why (`Can't: the axe does nothing to stone`, `Can't: fire is off on this server (interact.fire)`). Chests, barrels, shulker boxes and signs don't open yet (a later version adds the container view and the sign editor; for now a message says so): hold the left grip to place against them.
+
+Server options (config.yml `interact`): `enabled`, `require-token`, `max-per-second` (10), `entities` (mobs at all), `harm-players` (false), `iron-doors`, `fire`, `tnt`, `fluids`, `lightning` (true, effect, false), `attack-damage` (5), `deny-spawn` (wither and ender dragon) and `max-spawns-per-minute` (60). Everything stays inside the area like block editing, and protection plugins aren't consulted; fire and lava can spread beyond the area. Each use is logged as `INTERACT session=... item block x,y,z face=... -> new state`, each mob action as `ENTITY session=... op type uuid`.
 
 ## Logs
 

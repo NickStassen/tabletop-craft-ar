@@ -35,6 +35,7 @@ namespace TabletopCraft.World
             public bool Sneaking;
             public string SkinUrl;                 // URL the figure wears (or is downloading)
             public readonly PlayerExtras Extras = new PlayerExtras();   // [entities]
+            public string Name;                    // [hands] for the aim label
         }
 
         readonly Dictionary<string, Marker> _markers = new Dictionary<string, Marker>();
@@ -68,7 +69,7 @@ namespace TabletopCraft.World
                     m.Fig = new PlayerFigure(transform, p.Name, SkinMaterial, tex, slim);
                     _markers[p.Uuid] = m;
                 }
-                m.Target = p.Pos; m.TargetYaw = p.Yaw; m.TargetPitch = p.Pitch; m.Sneaking = p.Sneaking;
+                m.Target = p.Pos; m.TargetYaw = p.Yaw; m.TargetPitch = p.Pitch; m.Sneaking = p.Sneaking; m.Name = p.Name;
                 m.Extras.Update(p, m.Fig, Textures);   // [entities] vehicle, pose, held items, armour
                 if (_skinInfo.TryGetValue(p.Uuid, out var s) && s.url != m.SkinUrl && !string.IsNullOrEmpty(s.url))
                 {
@@ -88,6 +89,17 @@ namespace TabletopCraft.World
         {
             foreach (var m in _markers.Values) if (m.Extras.Id == a.Id && a.Id >= 0) { m.Extras.Act(a); return true; }
             return false;
+        }
+
+        /// <summary>[hands] The players as drawn (eased feet positions; 0.6 x 1.8 blocks, 1.5 sneaking), for aiming at them.</summary>
+        public void Targets(List<EntityTarget> into)
+        {
+            foreach (var kv in _markers)
+            {
+                var m = kv.Value;
+                into.Add(new EntityTarget { Uuid = kv.Key, Id = m.Extras.Id, Player = true, Name = m.Name, Type = "minecraft:player", Pos = m.Shown,
+                                            Width = EntityRaycast.PlayerWidth, Height = m.Sneaking ? EntityRaycast.SneakHeight : EntityRaycast.PlayerHeight });
+            }
         }
 
         /// <summary>[talk] A player's name label (chat bubbles sit above it), or null when the figure isn't on the table.</summary>

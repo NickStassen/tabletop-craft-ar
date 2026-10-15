@@ -27,6 +27,8 @@
     <Compile Include="../Assets/Scripts/Net/BlockRegistry.cs;../Assets/Scripts/World/BlockMenuModel.cs;../Assets/Scripts/World/HudState.cs;../Assets/Scripts/World/PngDecoder.cs;../Assets/Scripts/World/BlockIcons.cs" />
     <!-- [talk] chat, commands, server status, operator panel (PROTOCOL.md 4.26-4.28) -->
     <Compile Include="../Assets/Scripts/Net/ControlProtocol.cs;../Assets/Scripts/World/ChatLog.cs;../Assets/Scripts/World/ConsoleModel.cs;../Assets/Scripts/World/OperatorPanelModel.cs" />
+    <!-- [hands] using blocks, items and mobs (interact_v1) -->
+    <Compile Include="../Assets/Scripts/Net/InteractProtocol.cs;../Assets/Scripts/World/UseRules.cs;../Assets/Scripts/World/EntityRaycast.cs;../Assets/Scripts/World/EntityCardModel.cs" />
     <!-- [comfort] keyboard, prefs.json, LAN discovery, session helpers -->
     <Compile Include="../Assets/Scripts/World/KeyboardModel.cs;../Assets/Scripts/World/AppPrefs.cs;../Assets/Scripts/World/SessionState.cs;../Assets/Scripts/Net/LanDiscovery.cs" />
     <!-- [blocks] block entities: catalog, baked models, block_entities data (PROTOCOL.md 4.29) -->

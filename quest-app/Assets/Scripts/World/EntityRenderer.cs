@@ -92,6 +92,17 @@ namespace TabletopCraft.World
             return true;
         }
 
+        /// <summary>[hands] The entities as drawn (eased world positions, sizes), for aiming at them (World/EntityRaycast.cs).</summary>
+        public void Targets(List<EntityTarget> into)
+        {
+            foreach (var s in _shown.Values)
+            {
+                var e = s.Info;
+                if (s.Fig == null || string.IsNullOrEmpty(e.Uuid)) continue;
+                into.Add(new EntityTarget { Uuid = e.Uuid, Id = e.Id, Type = e.Type, Name = e.Name, Pos = s.Pos, Width = e.Width, Height = e.Height });
+            }
+        }
+
         /// <summary>Where a rider sits: the vehicle's shown position plus the rider's offset in the latest samples.
         /// riderTarget is the rider's latest world position; returns false when the vehicle isn't shown.</summary>
         public bool Seat(int vehicle, Vector3 riderTarget, out Vector3 shown, out float vehicleYaw)

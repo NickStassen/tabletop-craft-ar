@@ -80,6 +80,10 @@ public final class Session {
     public volatile boolean wantsChat, canCommand, wantsStatus;
     public volatile String operatorName = "Tabletop";
     public volatile EditLimiter chatLimiter, commandLimiter, completeLimiter;
+    // [hands] Using blocks, items and mobs (interact_v1, InteractService): granted at hello with its rate limits (interact
+    // and entity_op share one bucket; holds have their own; spawn eggs are counted per minute).
+    public volatile boolean canInteract;
+    public volatile EditLimiter interactLimiter, holdLimiter, spawnLimiter;
 
     /** RegionReader extras this session needs in its snapshots and diffs. */
     public int readExtras() { return (wantsLight ? RegionReader.LIGHT : 0) | (wantsBiomes ? RegionReader.BIOMES : 0); }
