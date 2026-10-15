@@ -65,6 +65,11 @@ static class MotionTests
             "creeper: (1 + g 0.4) h wide, (1 + g 0.1) / h high, white every other tenth of the swell");
         check(MotionCurves.BedFacing("minecraft:red_bed[facing=east,occupied=true,part=head]", out int fx, out int fz) && fx == 1 && fz == 0 && !MotionCurves.BedFacing("minecraft:stone", out _, out _),
             "sleeping: the bed's facing");
+        // Sitting: wolves and cats only, and every part named exists in the user's entity_models.json (when given).
+        bool sitOk = MotionCurves.SitPose("wolf").Length == 7 && MotionCurves.SitPose("cat").Length == 8 && MotionCurves.SitPose("zombie") == null;
+        foreach (var m in new[] { "wolf", "cat" })
+            if (EntityModels.Get(m) is EModel em) foreach (var sp in MotionCurves.SitPose(m)) sitOk &= em.Find(sp.Part) != null;
+        check(sitOk, $"sitting: wolf and cat poses name real parts (models {(EntityModels.Get("wolf") != null ? "checked" : "not loaded")})");
         // Quantised pose keys and the poses they bake (BlockEntityCatalog.Pose).
         var lid = BlockEntityCatalog.Pose(MotionCurves.ChestPoseKey(1));
         var bell = BlockEntityCatalog.Pose(MotionCurves.BellPoseKey("east", 5));

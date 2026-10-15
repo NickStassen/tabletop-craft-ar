@@ -227,6 +227,7 @@ namespace TabletopCraft.World
                 root.localRotation *= Quaternion.AngleAxis(tilt, Vector3.forward);
             }
             else s.DyingSince = -1;
+            s.Fig.Sit(e.Pose == "sitting" && !e.Baby ? MotionCurves.SitPose(e.Path) : null);   // tamed wolves and cats
             if (e.Pose == "sleeping" && Model != null && Model.Loaded)
             {
                 // In a bed: lying on the back, head toward the headboard, shifted toward the foot by the standing eye

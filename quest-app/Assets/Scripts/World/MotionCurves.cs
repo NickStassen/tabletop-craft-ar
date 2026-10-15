@@ -96,6 +96,37 @@ namespace TabletopCraft.World
             return true;
         }
 
+        /// <summary>A part's sitting pose: pivot moved by (Dx, Dy, Dz) pixels (game axes, y down as the models) and turned
+        /// to XRot (and YRot) radians when set, on top of the standing pose.</summary>
+        public struct SitPart
+        {
+            public string Part;
+            public float Dx, Dy, Dz, XRot, YRot;
+            public bool TurnX, TurnY;
+        }
+
+        static SitPart Sit(string part, float dx, float dy, float dz) => new SitPart { Part = part, Dx = dx, Dy = dy, Dz = dz };
+        static SitPart Sit(string part, float dx, float dy, float dz, float xRot) => new SitPart { Part = part, Dx = dx, Dy = dy, Dz = dz, XRot = xRot, TurnX = true };
+
+        // WolfModel.setSittingPose + AdultWolfModel (upper body) and AdultFelineModel.setupAnim's sitting branch (26.3).
+        static readonly SitPart[] WolfSit =
+        {
+            Sit("body", 0, 4, -2, 0.7853982f), Sit("tail", 0, 9, -2),
+            Sit("right_hind_leg", 0, 6.7f, -5, 4.712389f), Sit("left_hind_leg", 0, 6.7f, -5, 4.712389f),
+            Sit("right_front_leg", 0.01f, 1, 0, 5.811947f), Sit("left_front_leg", -0.01f, 1, 0, 5.811947f),
+            new SitPart { Part = "upper_body", Dy = 2, XRot = 1.2566371f, TurnX = true, YRot = 0, TurnY = true },
+        };
+        static readonly SitPart[] CatSit =
+        {
+            Sit("body", 0, -4, 5, 0.7853982f), Sit("head", 0, -3.3f, 1),
+            Sit("tail1", 0, 8, -2, 1.7278761f), Sit("tail2", 0, 2, -0.8f, 2.670354f),
+            Sit("left_front_leg", 0, 2, -2, -0.15707964f), Sit("right_front_leg", 0, 2, -2, -0.15707964f),
+            Sit("left_hind_leg", 0, 3, -4, -1.5707964f), Sit("right_hind_leg", 0, 3, -4, -1.5707964f),
+        };
+
+        /// <summary>The sitting pose of a tamed pet's model (adult wolves and cats), or null.</summary>
+        public static SitPart[] SitPose(string path) => path == "wolf" ? WolfSit : path == "cat" ? CatSit : null;
+
         /// <summary>Pose keys for the quantised lid and bell meshes (BlockEntityCatalog.Pose): steps of 1/16 open and
         /// 1/100 radian of swing, so a handful of baked meshes covers every frame.</summary>
         public static string ChestPoseKey(float openness) { int q = Mathf.RoundToInt(Mathf.Clamp01(openness) * 16f); return q == 0 ? null : "lid:" + q; }

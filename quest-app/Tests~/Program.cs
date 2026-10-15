@@ -190,12 +190,12 @@ static class Program
         if (navMeasIdx >= 0) { NavTests.MeasureNav(args[navMeasIdx + 1]); return 0; }
         PlayerTests.Run(Check, Fixture);
         WaterTests.Run(Check, args);   // fluids, waterlogging, texture animation (WaterTests.cs)
-        MotionTests.Run(Check, Fixture);   // [motion] ambient particles, animations (MotionTests.cs)
         // entities, items, actions (EntityTests.cs); models from the user's generated entity_models.json, never committed
         int modelsIdx = Array.IndexOf(args, "--entity-models");
         string modelsPath = modelsIdx >= 0 && modelsIdx + 1 < args.Length ? args[modelsIdx + 1] : Environment.GetEnvironmentVariable("TABLETOP_ENTITY_MODELS");
         EntityTests.Run(Check, Fixture, JarPath(args), string.IsNullOrEmpty(modelsPath) ? null : modelsPath);
         BlockEntityTests.Run(Check, Fixture, JarPath(args));   // [blocks] block entities (BlockEntityTests.cs)
+        MotionTests.Run(Check, Fixture);   // [motion] ambient particles, animations (MotionTests.cs; after the entity models load)
         int entSceneIdx = Array.IndexOf(args, "--entity-scene");
         if (entSceneIdx >= 0 && JarPath(args) != null && EntityModels.Loaded) EntityScene.Run(JarPath(args), args[entSceneIdx + 1]);
         else if (entSceneIdx >= 0) Console.WriteLine("SKIP --entity-scene: needs --jar and --entity-models");
