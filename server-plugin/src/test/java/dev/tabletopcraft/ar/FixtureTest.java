@@ -146,6 +146,18 @@ class FixtureTest {
         assertEquals(f.getAsJsonArray("entities"), m.getAsJsonArray("entities"));
         assertEquals(f.getAsJsonArray("removed"), m.getAsJsonArray("removed"));
         assertEquals(Protocol.CAP_BLOCK_ENTITIES, "block_entities_v1");
+        JsonObject r = fixture("block_entities_reset");
+        assertTrue(r.get("reset").getAsBoolean() && !f.has("reset"), "reset only in the reset fixture");
+        assertEquals(r, withEnvelope(BlockEntityJson.message(java.util.List.of(BlockEntityJson.sign(-12, 70, 40,
+            new BlockEntityJson.Side(java.util.List.of("Nether", "portal", "", ""), "black", false),
+            new BlockEntityJson.Side(java.util.List.of("", "", "", ""), "black", false))), java.util.List.of(), true), r));
+    }
+
+    /** m with the fixture's envelope (seq, t) so the whole message compares. */
+    private static JsonObject withEnvelope(JsonObject m, JsonObject f) {
+        m.add("seq", f.get("seq"));
+        m.add("t", f.get("t"));
+        return m;
     }
 
     @Test void avatarConfigFixtureParses() throws Exception {

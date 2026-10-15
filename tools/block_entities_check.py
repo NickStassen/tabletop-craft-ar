@@ -179,6 +179,12 @@ def main() -> int:
         took = await wait_for(lambda: (x + 4, y, z) not in link.mirror.entries, 5)
         check(took is not None, f"removed banner is removed ({took})")
         results.append(f"banner removal after: {took}")
+        # A head placed with only a name: the server looks the skin up (needs internet), then reads the chunk again.
+        cmd(f"setblock {x + 12} {y} {z} player_head[rotation=0]{{profile:{{name:{q}jeb_{q}}}}}")
+        took = await wait_for(lambda: bool((link.mirror.entries.get((x + 12, y, z)) or {}).get("skin")), 15)
+        print(f"INFO name-only player head gets its skin after {took} s" if took is not None
+              else "INFO name-only player head: no skin within 15 s (no internet from the server?)")
+        results.append(f"name-only head skin after: {took}")
         await asyncio.sleep(1)
         # Another world at the same coordinates (above the nether roof: nothing there): the client must forget it all.
         await link.send("subscribe", world="world_nether", origin=[ox, oy, oz], dims=list(DIMS))
@@ -189,7 +195,8 @@ def main() -> int:
     link = Link()
     asyncio.run(link.run((a.origin[0], a.origin[1], a.origin[2]), script))
     check(link.welcome_caps is not None and CAP_BLOCK_ENTITIES in link.welcome_caps, f"welcome grants {CAP_BLOCK_ENTITIES}")
-    check(link.first_reset is True and link.mirror.resets == 2, f"the first message resets, then only the world change (resets={link.mirror.resets})")
+    check(link.first_reset is True and link.mirror.resets == 2,
+          f"the first message resets, then only the world change (resets={link.mirror.resets})")
     check(not link.errors, f"every message validates ({link.errors[:3]})")
     print(f"REPORT block_entities messages={link.msgs} bytes={link.bytes} entries={len(link.mirror.entries)} " + "; ".join(results))
     print("ALL PASS" if not fails else f"{len(fails)} FAILED")

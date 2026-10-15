@@ -302,7 +302,7 @@ final class BlockEntityStreamer implements Listener {
             for (Pattern p : b.getPatterns()) ps.add(new String[] { org.bukkit.Registry.BANNER_PATTERN.getKeyOrThrow(p.getPattern()).toString(), dye(p.getColor()) });
             return BlockEntityJson.banner(x, y, z, ps);
         }
-        if (st instanceof Skull k) return skull(x, y, z, k);
+        if (st instanceof Skull k) return skull(w, x, y, z, k);
         if (st instanceof DecoratedPot p) {
             var sh = p.getSherds();
             List<String> l = new ArrayList<>();
@@ -338,19 +338,22 @@ final class BlockEntityStreamer implements Listener {
         return null;
     }
 
-    private JsonObject skull(int x, int y, int z, Skull k) {
+    private JsonObject skull(World w, int x, int y, int z, Skull k) {
         Material t = k.getType();
         if (t != Material.PLAYER_HEAD && t != Material.PLAYER_WALL_HEAD) return null;
         PlayerProfile p = k.getPlayerProfile();
         if (p == null) return null;
         String name = p.getName(), uuid = p.getId() != null ? p.getId().toString() : null, skin = null;
         try { if (p.getTextures().getSkin() != null) skin = p.getTextures().getSkin().toString(); } catch (RuntimeException ignored) { }
-        if (skin == null) skin = lookedUp(name, uuid);
+        if (skin == null) skin = lookedUp(name, uuid, w.getName(), x, z);
         return BlockEntityJson.skull(x, y, z, skin, name, uuid);
     }
 
-    /** A name- or UUID-only head: its skin from an earlier lookup, else null after starting one (off the main thread). */
-    private String lookedUp(String name, String uuid) {
+    /**
+     * A name- or UUID-only head: its skin from an earlier lookup, else null after starting one (off the main thread);
+     * when it finishes, the head's chunk is read again on the next tick.
+     */
+    private String lookedUp(String name, String uuid, String world, int x, int z) {
         String key = uuid != null ? uuid : name != null && SkinLookup.VALID_NAME.matcher(name).matches() ? name.toLowerCase(Locale.ROOT) : null;
         if (key == null) return null;
         String done = headSkins.get(key);
@@ -359,11 +362,20 @@ final class BlockEntityStreamer implements Listener {
         PlayerProfile profile = uuid != null ? Bukkit.createProfile(UUID.fromString(uuid), name) : Bukkit.createProfile(name);
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
             String url = "";
-            try { if (profile.complete(true, true) && profile.getTextures().getSkin() != null) url = profile.getTextures().getSkin().toString(); }
-            catch (Exception e) { plugin.getLogger().fine("head skin " + key + ": " + e); }
+            try {
+                if (profile.complete(true, true) && profile.getTextures().getSkin() != null) url = profile.getTextures().getSkin().toString();
+                else if (uuid == null) {
+                    // An offline-mode server maps a name to an offline UUID without textures: ask the public API for
+                    // the account's UUID, then Paper for its textures (as the giant's skin_player does).
+                    UUID id = SkinLookup.uuidForName(name);
+                    PlayerProfile byId = id == null ? null : Bukkit.createProfile(id, name);
+                    if (byId != null && byId.complete(true, true) && byId.getTextures().getSkin() != null) url = byId.getTextures().getSkin().toString();
+                }
+            } catch (Exception e) { plugin.getLogger().fine("head skin " + key + ": " + e); }
             headSkins.put(key, url);
             lookups.remove(key);
-            // Read every interesting chunk again soon: the round robin picks the head up within rescan-ticks.
+            // Read the chunk again: this head gets its skin, and heads that waited for a free lookup start theirs.
+            if (plugin.isEnabled()) Bukkit.getScheduler().runTask(plugin, () -> touch(world, x, z));
         });
         return null;
     }
