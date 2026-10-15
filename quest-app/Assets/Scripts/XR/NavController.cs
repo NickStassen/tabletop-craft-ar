@@ -86,13 +86,14 @@ namespace TabletopCraft.XR
                     if (dir.sqrMagnitude > 1e-6f) dir.Normalize();
                     float rescaled = (mag - DeadZone) / (1f - DeadZone);
                     int m = vertical && Mathf.Abs(ls.y) > Mathf.Abs(ls.x) ? State.Margin.y : Mathf.Min(State.Margin.x, State.Margin.z);
+                    // [nav] No faster than meshing can fill the window in this direction (world axes: Z mirrored).
+                    State.MeshCap = Renderer ? MeshScope.MeshSpeedCap(Renderer.MeshRate, Renderer.Scope, new Vector3(dir.x, dir.y, -dir.z)) : float.MaxValue;
                     float speed = State.Speed(bs, rescaled, _held, m);
                     Vector3 u = dir * speed * dt;                    // anchor-local Unity axes, in blocks
                     delta = new Vector3(u.x, u.y, -u.z);              // -> world blocks (Z mirrored)
                 }
                 else _held = 0;
             }
-            if (Renderer && Renderer.Pending == 0) State.OnSettled(Time.unscaledTime);
             var move = State.Move(delta, dt, Time.unscaledTime);
             if (move.HasValue)
             {
@@ -109,7 +110,16 @@ namespace TabletopCraft.XR
             if (!State.Loaded || RegionRoot == null) return;
             float bs = Mathf.Max(1e-4f, BlockSize());
             RegionRoot.localPosition = State.RegionRootLocal(bs);
-            if (Renderer) Renderer.Focus = State.View - (Vector3)State.Origin;
+            if (Renderer)
+            {
+                Renderer.Focus = State.View - (Vector3)State.Origin;
+                // [nav] Mesh only near the window (and further ahead of the motion); the rest of the margin waits.
+                var n = Renderer.Model != null && Renderer.Model.Loaded ? Renderer.Model.SectionCount : SectionPlan.Sections(State.Dims);
+                Renderer.Scope = MeshScope.Active(State, n);
+                Renderer.KeepScope = MeshScope.Keep(State, n);
+                Renderer.VisibleScope = MeshScope.Visible(State, n);
+                Renderer.Motion = State.Velocity;
+            }
         }
 
         // After TablePlacement moved the anchor this frame.

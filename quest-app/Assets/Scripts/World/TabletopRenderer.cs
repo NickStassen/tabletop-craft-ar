@@ -5,6 +5,8 @@
 // New snapshots never empty the table (OnSnapshot): when the origin moved by whole sections (navigation, or a resize
 // that keeps the section grid) the meshes are re-keyed and only new or changed sections are meshed; otherwise the old
 // meshes stay on screen until the new region is fully meshed.
+// [nav] Only sections near the visible window are meshed (Scope, from World/MeshScope via NavController); the rest of
+// the view margin stays dirty until the window comes close, and meshes that fall outside KeepScope are dropped.
 //
 // [area] Batching (SectionBatches.cs, ARCHITECTURE.md "Batching"): sections are not drawn one by one. Each meshed
 // section is kept as a CPU SectionMesh, and sections are merged into world-aligned batches of BatchRules.Columns^2
@@ -25,6 +27,7 @@ namespace TabletopCraft.World
     public sealed class TabletopRenderer : MonoBehaviour
     {
         public int MaxJobsInFlight = 3;          // worker threads meshing at once
+        public int SectionsPerJob = 4;           // [nav] sections one job meshes in a row (tabletop.json "mesh_sections_per_job")
         public float UploadBudgetMs = 3f;        // main-thread mesh upload budget per frame
         public Material OpaqueMaterial, TransparentMaterial;
         public WorldModel Model;
@@ -33,11 +36,50 @@ namespace TabletopCraft.World
         public float BatchMaxWait = 0.4f;        // s a dirty batch waits for its sections still being meshed
         public int MaxAssembliesInFlight = 2;    // batches being assembled on workers at once
 
-        /// <summary>Sections still waiting to be meshed or uploaded, plus batches waiting to be rebuilt (status line, nav latency).</summary>
-        public int Pending => (Model?.DirtySections.Count ?? 0) + _inFlight + _dirty.Count + _assembling;
+        /// <summary>Sections still waiting to be meshed or uploaded, plus batches waiting to be rebuilt (status line, nav latency).
+        /// [nav] Only sections in Scope count: the rest of the view margin is meshed when the window comes close.</summary>
+        public int Pending => DirtyIn(Scope) + _inFlight + _dirty.Count + _assembling;
+        /// <summary>[nav] Sections on screen (VisibleScope) not meshed yet: holes in the window. NavState's latency ends at 0.</summary>
+        public int PendingVisible
+        {
+            get { int c = DirtyIn(VisibleScope); foreach (var s in _busy) if (VisibleScope.Contains(s)) c++; return c; }
+        }
         public int Quads { get; private set; }
         /// <summary>View centre in region-local blocks: dirty sections closest to it are meshed first.</summary>
         public Vector3 Focus;
+        // [nav] Lazy margin (World/MeshScope.cs, set by NavController every frame): which sections to mesh, which meshes
+        // to keep, which are on screen, and the view's velocity (sections ahead of the motion are meshed first).
+        public SectionBox Scope = SectionBox.All, KeepScope = SectionBox.All, VisibleScope = SectionBox.All;
+        public Vector3 Motion;
+        /// <summary>[nav] Measured meshing throughput (sections/s with every worker busy), for NavState.MeshCap.</summary>
+        public float MeshRate => _meter.Rate;
+        readonly MeshRateMeter _meter = new MeshRateMeter();
+        int _meshedNow; bool _saturated;
+        bool _keepChecked;
+        SectionBox _keptFor;
+        readonly List<Vector3Int> _drop = new List<Vector3Int>();
+        // Meshes dropped since the last snapshot: a SectionPlan made before the drop doesn't list them (it got Unsettled()
+        // earlier), so OnSnapshot marks them dirty again under their new keys.
+        readonly HashSet<Vector3Int> _dropped = new HashSet<Vector3Int>();
+
+        int DirtyIn(SectionBox b)
+        {
+            if (Model == null) return 0;
+            if (b.Equals(SectionBox.All)) return Model.DirtySections.Count;
+            int c = 0;
+            foreach (var s in Model.DirtySections) if (b.Contains(s)) c++;
+            return c;
+        }
+
+        /// <summary>[nav] Drops the meshes of sections that left KeepScope (they stay dirty and are meshed again on return).</summary>
+        void DropOutsideKeep()
+        {
+            if (_keepChecked && KeepScope.Equals(_keptFor)) return;
+            _keepChecked = true; _keptFor = KeepScope;
+            _drop.Clear();
+            foreach (var k in _secs.Keys) if (!KeepScope.Contains(k)) _drop.Add(k);
+            foreach (var k in _drop) { Apply(k, null); Model.DirtySections.Add(k); _dropped.Add(k); }
+        }
         /// <summary>True while a new region is meshed behind the old meshes (they swap when it is complete).</summary>
         public bool Staging => _staging;
         public int Refreshing => _lazy.Count;
@@ -66,7 +108,7 @@ namespace TabletopCraft.World
         readonly HashSet<Vector3Int> _busy = new HashSet<Vector3Int>();
         readonly List<Vector3Int> _pick = new List<Vector3Int>();
         readonly Stopwatch _sw = new Stopwatch();
-        int _inFlight, _prewarmedSnapshot = -1, _prewarmedCount;
+        int _inFlight, _jobs, _prewarmedSnapshot = -1, _prewarmedCount;   // _inFlight: sections being meshed; _jobs: worker jobs
         // [nav] snapshot transitions
         readonly HashSet<Vector3Int> _lazy = new HashSet<Vector3Int>();   // kept sections to refresh when idle
         readonly List<Batch> _retired = new List<Batch>();
@@ -104,6 +146,7 @@ namespace TabletopCraft.World
             Quads = 0;
             DropRetired();
             _lazy.Clear();
+            _dropped.Clear(); _keepChecked = false;   // [nav]
             _staging = false;
         }
 
@@ -124,6 +167,7 @@ namespace TabletopCraft.World
         /// </summary>
         public void OnSnapshot(SectionPlan plan, Vector3Int oldOrigin, Vector3Int newOrigin)
         {
+            _keepChecked = false;   // [nav] section keys changed: check the kept meshes against the next KeepScope
             var n = Model.SectionCount;
             var layout = new BatchLayout(Model.Origin, Model.Dims, BatchRules.Columns);
             if (plan != null && plan.Rekey)
@@ -158,6 +202,11 @@ namespace TabletopCraft.World
                 _lazy.ExceptWith(plan.Mesh);
                 Model.DirtySections.Clear();
                 Model.DirtySections.UnionWith(plan.Mesh);
+                foreach (var k in _dropped)   // [nav] dropped after the plan was made: still without a mesh
+                {
+                    var nk = new Vector3Int(k.x - sh.x, k.y - sh.y, k.z - sh.z);
+                    if (nk.x >= 0 && nk.y >= 0 && nk.z >= 0 && nk.x < n.x && nk.y < n.y && nk.z < n.z) Model.DirtySections.Add(nk);
+                }
             }
             else
             {
@@ -175,6 +224,7 @@ namespace TabletopCraft.World
                 Quads = 0;
                 _lazy.Clear();
             }
+            _dropped.Clear();   // [nav]
             // Retired meshes were built for an older origin: keep them where they are in the world.
             if (_retiring != null)
             {
@@ -202,12 +252,10 @@ namespace TabletopCraft.World
         {
             _pick.Clear(); _pickDist.Clear();
             if (slots <= 0) return;
-            float S = WorldModel.Section;
             foreach (var s in from)
             {
-                if (_busy.Contains(s)) continue;
-                float dx = (s.x + 0.5f) * S - Focus.x, dy = (s.y + 0.5f) * S - Focus.y, dz = (s.z + 0.5f) * S - Focus.z;
-                float d = dx * dx + dy * dy * 0.25f + dz * dz;   // horizontal distance matters most
+                if (_busy.Contains(s) || !Scope.Contains(s)) continue;   // [nav] the rest of the margin waits for the window
+                float d = MeshScope.Score(s, VisibleScope, Focus, Motion);   // on screen first, then ahead of the motion
                 int at = _pickDist.Count;
                 while (at > 0 && _pickDist[at - 1] > d) at--;
                 if (at >= slots) continue;
@@ -239,40 +287,66 @@ namespace TabletopCraft.World
             if (Model == null || !Model.Loaded) return;
             _sw.Restart();
             Upload();
+            _meter.Frame(Time.unscaledDeltaTime, _saturated, _meshedNow);   // [nav] what meshing sustains, for the glide's MeshCap
+            _meshedNow = 0;
+            DropOutsideKeep();   // [nav]
             UpdateBatches();   // [area]
-            if (_staging && ((Model.DirtySections.Count == 0 && _inFlight == 0 && _dirty.Count == 0 && _assembling == 0) || Time.unscaledTime - _stagingSince > StagingTimeout)) FinishStaging();
-            if (_inFlight >= MaxJobsInFlight) return;
+            int urgent = DirtyIn(Scope);   // [nav] dirty sections near the window; the rest of the margin waits
+            if (_staging && ((urgent == 0 && _inFlight == 0 && _dirty.Count == 0 && _assembling == 0) || Time.unscaledTime - _stagingSince > StagingTimeout)) FinishStaging();
+            Dispatch(urgent);
+            _saturated = _jobs >= MaxJobsInFlight;
+        }
+
+        /// <summary>Hands dirty sections in Scope to the worker jobs (urgent first; kept ones refreshed when idle).</summary>
+        void Dispatch(int urgent)
+        {
+            int slots = MaxJobsInFlight - _jobs;
+            if (slots <= 0) return;
             // Urgent sections first (new terrain, nearest the view); kept ones are only refreshed when idle.
-            bool lazy = Model.DirtySections.Count == 0;
+            bool lazy = urgent == 0;
             if (lazy && (_lazy.Count == 0 || _staging)) return;
             Prewarm();
-            PickNearest(lazy ? _lazy : Model.DirtySections, MaxJobsInFlight - _inFlight);
+            // [nav] Each job meshes up to SectionsPerJob sections in a row: with one section per job a worker sat idle
+            // until the next frame handed it another, which capped meshing at 3 sections per frame (216/s at 72 Hz),
+            // too few for a 256-wide window entering at glide speed. Dealt round-robin so every job starts with an urgent one.
+            PickNearest(lazy ? _lazy : Model.DirtySections, slots * Mathf.Max(1, SectionsPerJob));
             var w = Model; int snap = Model.SnapshotId;
-            foreach (var s in _pick)
+            int jobs = Mathf.Min(slots, _pick.Count);
+            for (int j = 0; j < jobs; j++)
             {
-                Model.DirtySections.Remove(s);
-                _lazy.Remove(s);
-                _busy.Add(s);
-                Interlocked.Increment(ref _inFlight);
+                var list = new List<Vector3Int>();
+                for (int i = j; i < _pick.Count; i += jobs) list.Add(_pick[i]);
+                foreach (var s in list)
+                {
+                    Model.DirtySections.Remove(s);
+                    _lazy.Remove(s);
+                    _busy.Add(s);
+                    Interlocked.Increment(ref _inFlight);
+                }
+                Interlocked.Increment(ref _jobs);
                 IFaceSource faces = Atlas;
                 Task.Run(() =>
                 {
                     var data = _pool.TryTake(out var d) ? d : new MeshData();
-                    SectionMesh mesh = null;
-                    try
+                    foreach (var s in list)
                     {
-                        var n = w.SectionCount;
-                        if (s.x < n.x && s.y < n.y && s.z < n.z && w.SnapshotId == snap)
+                        SectionMesh mesh = null;
+                        try
                         {
-                            GreedyMesher.Build(w, s, faces, data);
-                            GreedyMesher.BuildSpecials(w, s, faces, data);
-                            mesh = SectionMesh.From(data, s);   // [area] batch form (Unity space, normals) on the worker
+                            var n = w.SectionCount;
+                            if (s.x < n.x && s.y < n.y && s.z < n.z && w.SnapshotId == snap)
+                            {
+                                GreedyMesher.Build(w, s, faces, data);
+                                GreedyMesher.BuildSpecials(w, s, faces, data);
+                                mesh = SectionMesh.From(data, s);   // [area] batch form (Unity space, normals) on the worker
+                            }
                         }
+                        catch (System.Exception e) { mesh = null; UnityEngine.Debug.LogWarning($"[Tabletop] mesh {s}: {e.Message}"); }
+                        data.Clear();
+                        _done.Enqueue(new Job { Section = s, SnapshotId = snap, Mesh = mesh });
                     }
-                    catch (System.Exception e) { mesh = null; UnityEngine.Debug.LogWarning($"[Tabletop] mesh {s}: {e.Message}"); }
-                    data.Clear();
                     _pool.Add(data);
-                    _done.Enqueue(new Job { Section = s, SnapshotId = snap, Mesh = mesh });
+                    Interlocked.Decrement(ref _jobs);
                 });
             }
         }
@@ -283,9 +357,12 @@ namespace TabletopCraft.World
             while (_sw.Elapsed.TotalMilliseconds < UploadBudgetMs && _done.TryDequeue(out var j))
             {
                 Interlocked.Decrement(ref _inFlight);
+                _meshedNow++;
                 _busy.Remove(j.Section);
                 // Stale (a new snapshot arrived while meshing): its sections are already queued again.
-                if (j.SnapshotId == Model.SnapshotId) Apply(j.Section, j.Mesh);
+                if (j.SnapshotId != Model.SnapshotId) continue;
+                if (KeepScope.Contains(j.Section)) Apply(j.Section, j.Mesh);
+                else { Apply(j.Section, null); Model.DirtySections.Add(j.Section); _dropped.Add(j.Section); }   // [nav] left the kept box while meshing
             }
         }
 
@@ -349,7 +426,8 @@ namespace TabletopCraft.World
 
         bool SectionsPending(Vector3Int key)
         {
-            foreach (var s in _layout.SectionsOf(key)) if (_busy.Contains(s) || Model.DirtySections.Contains(s)) return true;
+            // [nav] Dirty sections outside Scope wait for the window: a batch doesn't wait for them.
+            foreach (var s in _layout.SectionsOf(key)) if (_busy.Contains(s) || (Model.DirtySections.Contains(s) && Scope.Contains(s))) return true;
             return false;
         }
 
