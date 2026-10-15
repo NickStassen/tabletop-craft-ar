@@ -965,8 +965,8 @@ Shared bookmarks: named world positions every headset sees, kept in `plugins/Tab
 
 ```json
 {"v":1,"type":"bookmarks","seq":3,"t":1760370007010,"max":200,"marks":[
- {"name":"Nether hub","world":"world_nether","pos":[8,70,-4],"by":"Nick"},
- {"name":"Village","world":"world","pos":[120,64,-300],"by":"Nick"}]}
+ {"name":"Nether hub","world":"world_nether","pos":[8,70,-4],"by":"Operator"},
+ {"name":"Village","world":"world","pos":[120,64,-300],"by":"Operator"}]}
 ```
 
 Sorted by name (ignoring case); `by`: the operator name of the headset that added it.

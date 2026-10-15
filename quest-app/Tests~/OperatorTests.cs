@@ -42,7 +42,7 @@ static class OperatorTests
         check(Fx(fixture, "hello_operator").A("caps").Contains(OperatorProtocol.CapMarks) && Protocol.Hello("").A("caps").Contains(OperatorProtocol.CapMarks), "hello asks for marks_v1");
 
         var b = BookmarkList.From(Fx(fixture, "bookmarks"));
-        check(b.Max == 200 && b.Marks.Count == 2 && b.Marks[0].Name == "Nether hub" && b.Marks[1].Pos == new Vector3Int(120, 64, -300) && b.Marks[1].By == "Nick", "bookmarks parse");
+        check(b.Max == 200 && b.Marks.Count == 2 && b.Marks[0].Name == "Nether hub" && b.Marks[1].Pos == new Vector3Int(120, 64, -300) && b.Marks[1].By == "Operator", "bookmarks parse");
         var add = Fx(fixture, "bookmark");
         var bAdd = OperatorProtocol.BookmarkAdd("Village", "world", new Vector3Int(120, 64, -300));
         check(J(bAdd["pos"]) == J(add["pos"]) && (string)bAdd["op"] == "add" && (string)bAdd["name"] == "Village" && (string)bAdd["world"] == "world", "bookmark add builder = fixture");

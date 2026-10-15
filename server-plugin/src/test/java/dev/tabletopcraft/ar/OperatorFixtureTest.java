@@ -37,8 +37,8 @@ class OperatorFixtureTest {
 
     @Test void bookmarksMessageMatchesTheFixture() throws Exception {
         Bookmarks b = new Bookmarks(200);
-        assertNull(b.add(new OperatorMessages.Mark("Village", "world", 120, 64, -300, "Nick")));
-        assertNull(b.add(new OperatorMessages.Mark("Nether hub", "world_nether", 8, 70, -4, "Nick")));
+        assertNull(b.add(new OperatorMessages.Mark("Village", "world", 120, 64, -300, "Operator")));
+        assertNull(b.add(new OperatorMessages.Mark("Nether hub", "world_nether", 8, 70, -4, "Operator")));
         same(fixture("bookmarks"), OperatorMessages.bookmarks(b.list(), b.max), "type", "max", "marks");
     }
 
