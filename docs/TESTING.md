@@ -1220,3 +1220,36 @@ What a section costs on the Quest (`GLIDE ... mesh_ms=` is the worker time per s
 - Sounds other plugins play with `World#playSound` (no Bukkit event) and the game's own server sounds without a block or entity change (eating, drinking, shearing by Java players, a goat horn) aren't heard; biome and underwater ambience loops and music aren't played.
 - Unity's built-in panning only (no HRTF; the Meta XR Audio SDK would be a new package).
 - `sound_groups` is about 64 KB per connection (full block ids); fine on a LAN.
+
+## Motion: flowing fluids, ambient particles, block and entity animations (PROTOCOL "Block animations"; Paper 26.3, 2026-10-15, no headset)
+
+### Tests
+- Java (`./gradlew build`, 205 tests): `MotionTest`: the `lid`, `bell` and `explode` actions against `actions_motion.json` (a lid opened and closed in one tick keeps the last; an explosion 4.5 blocks outside the region still counts, a lid there doesn't), `ActionBatch.lidded` and `explosionPower`, the `fuse`/`swell`/pose entries against `entities_motion.json`, and the resend rules (a fuse every 10 ticks, a swell by 0.05, a calmed creeper at once).
+- Python (`pytest`, 252 passed; `ruff` clean): `test_motion_messages` (validators for the three kinds, `fuse` and `swell`).
+- C# (`Tests~` with `--jar` and `--entity-models`, 1,460/1,460 PASS). `WaterTests.Flow` (6): vanilla's top UVs turned to the flow over 16 directions (half the sprite per block, centred), a still ocean (still tops and bottoms, flowing sides), a stream (`getFlow` east on every top), a waterfall edge (the pull toward the water below an open neighbour), the overlay against glass, lava's own flowing sprite. `MotionTests`: torch, wall torch, candle (vanilla's offsets), candle cake, campfire, fire, portal and leaves templates; the neighbour rules in small grids (lava pops only under air, leaves over open space with the fall depth, drips through stone but not glass, bubble column height, the portal's axis); slots keep the rate, density by width, the 3,000 cap; the lid, bell, death, TNT, creeper, sitting and sleeping curves against the 26.3 numbers (`ChestModel`, `ShulkerBoxModel`, `BellModel`, `LivingEntityRenderer`, `TntRenderer`, `CreeperRenderer`, `WolfModel`/`AdultWolfModel`, `AdultFelineModel`); the sitting parts exist in the user's `entity_models.json`; the pose keys; parsing both fixtures.
+- Unity 6000.0.84f1 batch compile: no new warnings in Assets; `ShaderCheck` 180 variants (with `TabletopCraft/Particles`), 0 errors; `BatchMeshCheck.RunRenderer` 0 errors.
+
+### Mesher cost (`Tests~ -c Release --profile-mesh` on the four saved snapshots with the 26.3 jar, one thread)
+
+| snapshot | before: total / fluid ms per section | after |
+|---|---|---|
+| forest | 0.179 / 0.023 | 0.179 / 0.023 |
+| meadow | 0.136 / 0.011 | 0.134 / 0.011 |
+| 0,0 (288 wide) | 0.157 / 0.038 | 0.157 / 0.039 |
+| taiga | 0.125 / 0.011 | 0.125 / 0.011 |
+
+Same quads and vertices in every snapshot; 81 sections with fluids hash differently (their side UVs now name the flowing sprite).
+
+### Live server (own Paper 26.3, flat world, ports 25626/8826)
+- A headset-like client (`actions_v1`, `entities_v1`) with console commands: a bell over a redstone block gives `bell` with `dir` north; an ignited creeper streams `swell` 0.04 to 0.54 in about 0.07 steps, then `explode` power 3; primed TNT on a block streams `fuse` 29, 19, 9 (every 10 ticks), then `explode` power 4; a zombie damaged to death streams the `dying` pose. TNT falling out of the region sends no `explode`.
+- Not live: `lid` needs a Java player opening a chest (covered by the Java test; `tools/e2e.sh`'s mineflayer bot could do it).
+
+### Not verified (needs the headset)
+- How flowing water and lava look (the four-layer split, the turned tops, the overlay through glass) and that the animation reads as flowing down the sides.
+- The particles: sizes at table scale, density at 64 / 128 / 256 wide, the GPU cost of up to 3,000 alpha-blended quads, the worker scan time on the Quest, fireflies fading in at dusk, leaves landing.
+- Lids, bells, the explosion cloud and flash, the death tilt, villagers in beds (lying toward the bed's facing), sitting wolves and cats, TNT and creeper flashes.
+
+### Known gaps
+- Pistons still jump instead of sliding over 2 ticks (the moving cells keep drawing the moved block, `PistonGhosts`): a slide needs the moving blocks drawn outside the section meshes.
+- Particles not done: furnaces, smokers, blast furnaces, brewing stands, end rods, spore blossoms, crying obsidian, dripstone tips, enchanting glyphs, signal fire smoke; redstone torch dust uses the smoke sprites tinted red; particles don't collide (leaves and drips stop at the floor found by the scan).
+- Parrots and camels don't sit; sleeping mobs lie down only in a bed.
