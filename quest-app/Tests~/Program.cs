@@ -173,6 +173,14 @@ static class Program
             Console.WriteLine(fails == 0 ? "ALL PASS" : $"{fails} FAILED");
             return fails == 0 ? 0 : 1;
         }
+        int profIdx = Array.IndexOf(args, "--profile-mesh");   // [mesh] mesher time per stage + output hashes (MeshTests.cs)
+        if (profIdx >= 0)
+        {
+            int hi = Array.IndexOf(args, "--hash"), ri = Array.IndexOf(args, "--reps");
+            BlockShading.SmoothLighting = !args.Contains("--flat-light");
+            MeshTests.Profile(args[profIdx + 1], JarPath(args), hi >= 0 ? args[hi + 1] : null, ri >= 0 ? int.Parse(args[ri + 1]) : 1, args.Contains("--no-light"));
+            return 0;
+        }
         int navMeasIdx = Array.IndexOf(args, "--measure-nav");
         if (navMeasIdx >= 0) { NavTests.MeasureNav(args[navMeasIdx + 1]); return 0; }
         PlayerTests.Run(Check, Fixture);

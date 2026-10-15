@@ -249,21 +249,33 @@ namespace TabletopCraft.World
                 if (_pal.Length < pc) _pal = new int[pc * 2];
                 else Array.Clear(_pal, 0, pc);
                 int kinds = 0;
+                // [mesh] The section itself first: without a visible fluid in it nothing is drawn and the border isn't read.
+                for (int y = 0; y < S; y++)
+                    for (int z = 0; z < S; z++)
+                        for (int x = 0; x < S; x++)
+                        {
+                            int info = Load(w, b0, x, y, z, pc);
+                            if ((info & 3) != 0 && (byte)(info >> 8) != 0x3F) kinds |= 1 << (info & 3);
+                        }
+                if (kinds == 0) return 0;
                 for (int y = -1; y <= S; y++)
                     for (int z = -1; z <= S; z++)
                         for (int x = -1; x <= S; x++)
-                        {
-                            ushort id = w.Get(b0.x + x, b0.y + y, b0.z + z);
-                            int info;
-                            if (id == 0xFFFF) info = 0;                 // outside the region
-                            else if (id < pc) { info = _pal[id] - 1; if (info < 0) { info = Lookup(w.State(id)); _pal[id] = info + 1; } }
-                            else info = Lookup(w.State(id));            // palette grew while meshing
-                            int i = Pad(x, y, z);
-                            byte full = (byte)(info >> 8);
-                            _fluid[i] = (byte)info; _full[i] = full; _flags[i] = (byte)(info >> 16);
-                            if ((info & 3) != 0 && full != 0x3F && x >= 0 && y >= 0 && z >= 0 && x < S && y < S && z < S) kinds |= 1 << (info & 3);
-                        }
+                            if (x < 0 || y < 0 || z < 0 || x == S || y == S || z == S) Load(w, b0, x, y, z, pc);
                 return kinds;
+            }
+
+            /// <summary>Loads one cell of the neighbourhood (section-local -1..S) and returns its packed info.</summary>
+            int Load(WorldModel w, Vector3Int b0, int x, int y, int z, int pc)
+            {
+                ushort id = w.Get(b0.x + x, b0.y + y, b0.z + z);
+                int info;
+                if (id == 0xFFFF) info = 0;                 // outside the region
+                else if (id < pc) { info = _pal[id] - 1; if (info < 0) { info = Lookup(w.State(id)); _pal[id] = info + 1; } }
+                else info = Lookup(w.State(id));            // palette grew while meshing
+                int i = Pad(x, y, z);
+                _fluid[i] = (byte)info; _full[i] = (byte)(info >> 8); _flags[i] = (byte)(info >> 16);
+                return info;
             }
 
             /// <summary>Top-corner heights of every fluid cell (vanilla LiquidBlockRenderer.tesselate).</summary>
