@@ -137,6 +137,7 @@ async def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--window", type=three, default=[128, 96, 128])
     ap.add_argument("--margin", type=int, default=16)
+    ap.add_argument("--margin-y", type=int, default=None, help="y margin (default: --margin)")
     ap.add_argument("--steps", type=int, default=6)
     ap.add_argument("--center", type=three, default=[0, 64, 0])
     ap.add_argument("--y0", type=int, default=32, help="bottom of the window")
@@ -161,15 +162,17 @@ async def main() -> int:
         await v1.wait("snapshot_done", "error", timeout=180)
     caps = hs.welcome.get("caps", [])
     m = a.margin
-    dims = [a.window[0] + 2 * m, a.window[1] + 2 * m, a.window[2] + 2 * m]
-    origin = [a.center[0] - dims[0] // 2, a.y0 - m, a.center[2] - dims[2] // 2]
+    my = m if a.margin_y is None else a.margin_y   # the headset keeps 16 on y while x/z grow with the width
+    vm = [m, my, m]
+    dims = [a.window[0] + 2 * m, a.window[1] + 2 * my, a.window[2] + 2 * m]
+    origin = [a.center[0] - dims[0] // 2, a.y0 - my, a.center[2] - dims[2] // 2]
     rows, fails = [], 0
     churning = asyncio.Event()   # set while --churn may change blocks
 
     async def request(o: list[int], d: list[int], label: str) -> None:
         nonlocal fails
         t0 = time.perf_counter()
-        await hs.send("region_request", world="world", origin=o, dims=d, view_margin=[m, m, m])
+        await hs.send("region_request", world="world", origin=o, dims=d, view_margin=vm)
         ch = await hs.wait("region_changed", "error", timeout=180)
         if ch["type"] == "error":
             rows.append({"step": label, "error": ch.get("code"), "message": ch.get("message")})
@@ -183,7 +186,7 @@ async def main() -> int:
             await v1.send("subscribe", world="world", origin=list(hs.mirror.origin), dims=list(hs.mirror.dims))
         sb = await v1.wait("snapshot_done", "error", timeout=120) if v1 else {"type": "skipped", "code": "skipped", "message": "--no-v1"}
         v1_ok = sb["type"] == "snapshot_done"   # a v1 client can't take a frame over 4 MiB: it gets region_too_large instead
-        margins = tuple(ch.get("view_margin", [])) == (m, m, m) and tuple(hs.mirror.view_margin) == (m, m, m)
+        margins = list(ch.get("view_margin", [])) == vm and list(hs.mirror.view_margin) == vm
         if churning.is_set() and v1_ok:
             churning.clear()            # hold the churn and let both clients' block_updates settle before comparing
             await asyncio.sleep(1.5)
@@ -237,7 +240,7 @@ async def main() -> int:
         await request(origin, dims, f"shift {'xz'[axis // 2]}+16")
     big = None
     if a.big:
-        bo = [a.center[0] - a.big[0] // 2, a.y0 - m, a.center[2] - a.big[2] // 2]
+        bo = [a.center[0] - a.big[0] // 2, a.y0 - my, a.center[2] - a.big[2] // 2]
         await request(bo, list(a.big), "big")
         big = rows[-1]
     if churn:

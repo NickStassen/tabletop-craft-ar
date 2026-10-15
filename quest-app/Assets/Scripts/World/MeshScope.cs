@@ -97,7 +97,7 @@ namespace TabletopCraft.World
         }
 
         /// <summary>Share of the measured meshing rate a glide may use (the rest is for edits, refreshes and slack).</summary>
-        public static float Utilisation = 0.8f;
+        public static float Utilisation = 0.65f;
 
         /// <summary>
         /// Fastest pan (blocks per second) along dir at which meshing keeps up: every 16 blocks of travel along an axis
