@@ -457,3 +457,43 @@ def test_region_changed_carries_the_new_worlds_build_height():
     msg["limits"]["build_height"] = [320, -64]
     with pytest.raises(ValueError):
         validate(msg)
+
+
+def test_world_state_fixture_and_rules():
+    """[living] world_state (PROTOCOL.md "World state: time and weather"): a stormy midnight in the overworld."""
+    msg = json.loads((FIX / "world_state.json").read_text())
+    validate(msg)
+    assert msg["day_time"] == 18000 and msg["rain"] == 1 and msg["thunder"] == 1 and msg["dimension"] == "overworld"
+    for patch in ({"dimension": "nether"}, {"day_time": 24000}, {"rain": 0}, {"rain": 0.5}):
+        bad = dict(msg, **patch)
+        with pytest.raises(ValueError):
+            validate(bad)
+
+
+def test_entities_living_fields():
+    """[living] leads, chests, orbs, bobbers, carried blocks, shulker lids, display entities and visible names."""
+    msg = json.loads((FIX / "entities_living.json").read_text())
+    validate(msg)
+    m = EntityMirror()
+    m.apply(msg)
+    e = m.entities
+    assert e[301]["leash"] == 7 and e[303]["leash"] == 302 and e[302]["type"] == "minecraft:leash_knot"
+    assert e[304]["chested"] and e[304]["equipment"]["body"] == "minecraft:red_carpet"
+    assert e[305]["xp"] == 17 and e[306]["owner"] == 7 and e[307]["carried"].startswith("minecraft:grass_block")
+    assert e[308]["peek"] == 0.5 and e[308]["attach"] == "north" and e[313]["sheared"] and e[314]["name_visible"]
+    text, item, block = e[309]["display"], e[310]["display"], e[311]["display"]
+    assert text["billboard"] == "center" and text["text"].split("\n") == ["Welcome", "to the farm"] and text["background"] == 0x40000000
+    assert item["item_transform"] == "fixed" and item["brightness"] == [15, 15]
+    assert math.isclose(sum(q * q for q in item["left_rotation"]), 1, abs_tol=1e-3)
+    assert block["scale"] == [0.5, 0.5, 0.5] and "text" not in block
+    m.apply({"full": False, "entities": [{"id": 301, "leash": None}, {"id": 309, "display": None}]})
+    assert e[301]["leash"] is None and e[309]["display"] is None
+    for patch in ({"billboard": "sideways"}, {"left_rotation": [0, 0, 1]}, {"brightness": [16, 0]}):
+        bad = json.loads((FIX / "entities_living.json").read_text())
+        bad["entities"][9]["display"].update(patch)
+        with pytest.raises(ValueError):
+            validate(bad)
+    bad = json.loads((FIX / "entities_living.json").read_text())
+    bad["entities"][7]["attach"] = "sideways"
+    with pytest.raises(ValueError):
+        validate(bad)

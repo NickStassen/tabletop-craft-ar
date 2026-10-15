@@ -10,6 +10,8 @@ import java.util.List;
 /** Message helpers for PROTOCOL.md v1. Envelope fields (v, type, seq, t) are added by {@link Session#send}. */
 public final class Protocol {
     public static final int VERSION = 1;
+    /** [living] Time of day and weather (world_state, PROTOCOL.md "World state: time and weather"). */
+    public static final String CAP_WORLD = "world_v1";
     public static final Gson GSON = new GsonBuilder().disableHtmlEscaping().serializeNulls().create();
 
     public static final int CLOSE_VERSION = 4001, CLOSE_HELLO_TIMEOUT = 4002, CLOSE_AUTH = 4003, CLOSE_IDLE = 4004, CLOSE_SHUTDOWN = 4005;

@@ -55,6 +55,10 @@ entities:
 # place particles, red damage flashes. One message per tick with what happened inside the client's region.
 actions:
   enabled: true
+# Time of day and weather for clients that ask for them (world_v1, PROTOCOL.md "World state"): the headset darkens the
+# miniature at night and in storms like vanilla's lightmap and draws rain, snow and lightning. About 150 bytes a second.
+world-state:
+  enabled: true
 avatar:
   # Real metres per block on the table; the Quest overrides it with avatar_config.
   block-size-m: 0.01

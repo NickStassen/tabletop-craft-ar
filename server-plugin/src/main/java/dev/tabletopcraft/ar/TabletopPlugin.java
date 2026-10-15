@@ -63,6 +63,7 @@ public final class TabletopPlugin extends JavaPlugin {
     static final int LIGHT_RECHECK_TICKS = 4, MAX_LIGHT_CHANGES = 16384;
     private final EntityStreamer entities = new EntityStreamer(this);   // entities_v1 (PROTOCOL.md 4.21)
     private final ActionListener actions = new ActionListener(this);    // actions_v1 (PROTOCOL.md 4.22)
+    private final WorldStateStreamer worldState = new WorldStateStreamer(this);   // [living] world_v1: time and weather
     // Block editing from the headset (block_edit, PROTOCOL.md 4.20), config section "edit". Read on websocket threads.
     private volatile boolean editEnabled = true, editRequireToken, editTokenSet, editPhysics = true;
     private volatile int editRate = 20;
@@ -110,6 +111,7 @@ public final class TabletopPlugin extends JavaPlugin {
         biomesOn = c.getBoolean("stream.biomes", true);
         entities.configure(c.getBoolean("entities.enabled", true), c.getInt("entities.max", 256), c.getInt("entities.margin", 2));
         actions.enabled = c.getBoolean("actions.enabled", true);
+        worldState.enabled = c.getBoolean("world-state.enabled", true);   // [living]
         editEnabled = c.getBoolean("edit.enabled", true);
         editRequireToken = c.getBoolean("edit.require-token", false);
         editTokenSet = !c.getString("auth.token", "").isEmpty();
@@ -170,6 +172,9 @@ public final class TabletopPlugin extends JavaPlugin {
     boolean biomesEnabled() { return biomesOn; }
     boolean entitiesEnabled() { return entities.enabled; }
     boolean actionsEnabled() { return actions.enabled; }
+    boolean worldStateEnabled() { return worldState.enabled; }
+    /** [living] world_state goes out in order with the snapshots (the outbound thread). */
+    void sendWorldState(Session s, JsonObject body) { send(s, body); }
     void send(Session s, JsonObject body) { if (outbound != null && !outbound.isShutdown()) outbound.execute(() -> s.send(body)); }
     /** Like send, adding the UTF-8 size to a counter (entities bytes/s). */
     void sendCounting(Session s, JsonObject body, java.util.concurrent.atomic.AtomicLong bytes, java.util.concurrent.atomic.AtomicLong total) {
@@ -213,6 +218,7 @@ public final class TabletopPlugin extends JavaPlugin {
         }
         if (tickCount % Math.max(1, getConfig().getInt("stream.players-every-ticks", 2)) == 0) { sendPlayers(); entities.tick(ready()); }
         actions.flush(ready());   // swings, digging, breaks, damage of this tick (PROTOCOL.md 4.22)
+        worldState.tick(ready());   // [living] time of day and weather, on change and about once a second
         control.tick(tickCount);  // [talk] late command output, server_status
         avatar.tickBubble();      // [talk] the giant's speech bubble follows the head and expires
         if (tickCount % 20 == 0) { timeouts(); onlinePlayers = Bukkit.getOnlinePlayers().size(); }
@@ -260,6 +266,7 @@ public final class TabletopPlugin extends JavaPlugin {
         if (sectionsFor(s)) sc.add(SectionCodec.ENCODING);
         if (s.wantsEntities) sc.add(Protocol.CAP_ENTITIES);   // entities (PROTOCOL.md 4.21)
         if (s.wantsActions) sc.add(Protocol.CAP_ACTIONS);     // actions (PROTOCOL.md 4.22)
+        if (s.wantsWorld) sc.add(Protocol.CAP_WORLD);          // [living] world_state
         sc.add("view_margin");
         sc.add("pose_snapshot_id");
         if (s.canEdit) sc.add(Protocol.CAP_EDIT);   // block editing (PROTOCOL.md 4.20)

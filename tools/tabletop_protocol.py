@@ -79,6 +79,12 @@ REQUIRED.update(CONTROL_REQUIRED)
 ERROR_CODES |= {"chat_denied", "command_denied"}
 WEATHERS = ("clear", "rain", "thunder")
 
+# [living] Time of day and weather (PROTOCOL.md "World state: time and weather"), display entities.
+CAP_WORLD = "world_v1"
+REQUIRED["world_state"] = ["world", "dimension", "skylight", "time", "day_time", "rain", "thunder"]
+DIMENSIONS = ("overworld", "the_nether", "the_end", "custom")
+BILLBOARDS = ("fixed", "vertical", "horizontal", "center")
+
 
 def validate(msg: dict) -> None:
     t = msg.get("type")
@@ -130,6 +136,7 @@ def validate(msg: dict) -> None:
                 raise ValueError(f"entities entry {e['id']} pos must have 3 numbers")
             _check_equipment(e.get("equipment"))
             _check_stand_pose(e.get("stand_pose"))
+            _check_living(e)   # [living]
         if not all(isinstance(i, int) for i in msg.get("removed") or []):
             raise ValueError("entities removed must be a list of ids")
     if t == "actions":
@@ -153,6 +160,8 @@ def validate(msg: dict) -> None:
         validate_block_registry(msg)
     if t in CONTROL_REQUIRED:
         validate_control(msg)   # [talk]
+    if t == "world_state":
+        validate_world_state(msg)   # [living]
 
 
 def _ints(v, n: int) -> bool:
@@ -283,6 +292,48 @@ def _check_stand_pose(pose: dict | None) -> None:
 def _check_equipment(eq: dict | None) -> None:
     if eq is not None and not set(eq) <= EQUIPMENT_SLOTS:
         raise ValueError(f"unknown equipment slots {sorted(set(eq) - EQUIPMENT_SLOTS)}")
+
+
+def _numbers(v, n: int) -> bool:
+    return isinstance(v, list) and len(v) == n and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in v)
+
+
+def _check_living(e: dict) -> None:
+    """[living] Leads, gear and looks of an entities entry (PROTOCOL.md "Living entities")."""
+    for k in ("leash", "owner"):
+        if e.get(k) is not None and not (isinstance(e[k], int) and not isinstance(e[k], bool)):
+            raise ValueError(f"entities {k} must be an entity id, got {e[k]}")
+    if "peek" in e and not 0 <= e["peek"] <= 1:
+        raise ValueError(f"shulker peek must be 0..1, got {e['peek']}")
+    if e.get("attach") is not None and e["attach"] not in FACES:
+        raise ValueError(f"shulker attach must be one of {FACES}, got {e['attach']}")
+    if "xp" in e and not (isinstance(e["xp"], int) and e["xp"] >= 0):
+        raise ValueError(f"experience orb xp must be a non-negative int, got {e['xp']}")
+    d = e.get("display")
+    if d is None:
+        return
+    for k, n in (("translation", 3), ("left_rotation", 4), ("scale", 3), ("right_rotation", 4)):
+        if not _numbers(d.get(k), n):
+            raise ValueError(f"display {k} needs {n} numbers, got {d.get(k)}")
+    if d.get("billboard") not in BILLBOARDS:
+        raise ValueError(f"display billboard must be one of {BILLBOARDS}, got {d.get('billboard')}")
+    if "brightness" in d and not (_ints(d["brightness"], 2) and all(0 <= v <= 15 for v in d["brightness"])):
+        raise ValueError(f"display brightness must be [block, sky] 0..15, got {d['brightness']}")
+    if "text" in d:
+        if not isinstance(d["text"], str) or d.get("align") not in ("center", "left", "right"):
+            raise ValueError("text display needs text and align center|left|right")
+        if not (isinstance(d.get("line_width"), int) and isinstance(d.get("background"), int) and 0 <= d.get("text_opacity", -1) <= 255):
+            raise ValueError("text display needs line_width, background (ARGB) and text_opacity 0..255")
+
+
+def validate_world_state(msg: dict) -> None:
+    """[living] world_state (PROTOCOL.md "World state: time and weather")."""
+    if msg["dimension"] not in DIMENSIONS:
+        raise ValueError(f"world_state dimension must be one of {DIMENSIONS}, got {msg['dimension']}")
+    if not (isinstance(msg["day_time"], int) and 0 <= msg["day_time"] < 24000 and isinstance(msg["time"], int)):
+        raise ValueError("world_state time must be an int and day_time 0..23999")
+    if msg["rain"] not in (0, 1) or msg["thunder"] not in (0, 1) or (msg["thunder"] and not msg["rain"]):
+        raise ValueError("world_state rain and thunder are 0 or 1, and thunder only while it rains")
 
 
 def validate_block_edit(msg: dict) -> None:

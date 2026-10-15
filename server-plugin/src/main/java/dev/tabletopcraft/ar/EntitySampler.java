@@ -30,12 +30,14 @@ import java.util.Set;
  */
 public final class EntitySampler {
     static final int REFRESH = 5;
-    static final Set<EntityType> HIDDEN = Set.of(EntityType.MARKER, EntityType.INTERACTION, EntityType.TEXT_DISPLAY, EntityType.AREA_EFFECT_CLOUD);
+    static final Set<EntityType> HIDDEN = Set.of(EntityType.MARKER, EntityType.INTERACTION, EntityType.AREA_EFFECT_CLOUD);
     private static final EquipmentSlot[] SLOTS = { EquipmentSlot.HAND, EquipmentSlot.OFF_HAND, EquipmentSlot.HEAD, EquipmentSlot.CHEST,
         EquipmentSlot.LEGS, EquipmentSlot.FEET, EquipmentSlot.BODY, EquipmentSlot.SADDLE };
     private static final String[] SLOT_NAMES = { "main_hand", "off_hand", "head", "chest", "legs", "feet", "body", "saddle" };
 
-    private record Cached(Map<String, String> equipment, String item, int count) {}
+    private record Cached(Map<String, String> equipment, String item, int count, String text) {
+        Cached(Map<String, String> equipment, String item, int count) { this(equipment, item, count, null); }
+    }
     private final Map<Integer, Cached> cache = new HashMap<>();
     private long sampleNo;
 
@@ -104,13 +106,68 @@ public final class EntitySampler {
         } else if (e instanceof ItemDisplay d) {
             if (refresh) c = new Cached(null, itemKey(d.getItemStack()), 1);
             s.item = c.item();
+        } else if (e instanceof OminousItemSpawner os) {
+            if (refresh) c = new Cached(null, itemKey(os.getItem()), 1);
+            s.item = c.item();
+        } else if (e instanceof TextDisplay td) {
+            if (refresh) c = new Cached(null, null, 0, PlainTextComponentSerializer.plainText().serialize(td.text()));
         } else if (refresh) c = new Cached(null, null, 0);
         cache.put(s.id, c);
         if (e instanceof Hanging h) s.facing = h.getFacing().name().toLowerCase(Locale.ROOT);
         if (e instanceof FallingBlock fb) s.block = fb.getBlockData().getAsString();
         else if (e instanceof BlockDisplay bd) s.block = bd.getBlock().getAsString();
+        if (e instanceof Display d) s.display = display(d, c.text());
+        living(e, s);
         variants(e, s);
         return s;
+    }
+
+    /** [living] Lead, eye height, name visibility, chests, orb value, bobber owner, carried block, shulker lid. */
+    static void living(Entity e, EntityState s) {
+        if (e instanceof io.papermc.paper.entity.Leashable l && l.isLeashed()) {
+            try { s.leash = l.getLeashHolder().getEntityId(); } catch (IllegalStateException ex) { /* let go mid-read */ }
+        }
+        if (e instanceof LivingEntity le) s.eye = le.getEyeHeight();
+        s.nameVisible = e.isCustomNameVisible() && e.customName() != null;
+        if (e instanceof ChestedHorse ch) s.chested = ch.isCarryingChest();
+        if (e instanceof ExperienceOrb xo) s.xp = Math.max(1, xo.getExperience());
+        if (e instanceof FishHook fh && fh.getShooter() instanceof Entity owner) s.owner = owner.getEntityId();
+        if (e instanceof Enderman en && en.getCarriedBlock() != null) s.carried = en.getCarriedBlock().getAsString();
+        if (e instanceof Shulker sk) {
+            s.peek = Math.max(0, Math.min(1, sk.getPeek()));
+            var face = sk.getAttachedFace();
+            if (face != null && face != org.bukkit.block.BlockFace.DOWN) s.attach = face.name().toLowerCase(Locale.ROOT);
+        }
+        if (e instanceof Snowman sn && sn.isDerp()) s.sheared = true;   // a sheared snow golem has no pumpkin
+    }
+
+    /**
+     * A display entity's render state (vanilla Display.RenderState): the transformation as translation, left rotation,
+     * scale and right rotation, the billboard, the light override, the item display transform and, for text displays,
+     * the plain text and its look (text read with the cached stacks, every REFRESH samples).
+     */
+    static EntityState.DisplayState display(Display d, String text) {
+        var ds = new EntityState.DisplayState();
+        var t = d.getTransformation();
+        var tr = t.getTranslation(); var l = t.getLeftRotation(); var sc = t.getScale(); var r = t.getRightRotation();
+        ds.translation = EntityState.DisplayState.round(new float[] { tr.x, tr.y, tr.z }, 3);
+        ds.leftRotation = EntityState.DisplayState.round(new float[] { l.x, l.y, l.z, l.w }, 4);
+        ds.scale = EntityState.DisplayState.round(new float[] { sc.x, sc.y, sc.z }, 3);
+        ds.rightRotation = EntityState.DisplayState.round(new float[] { r.x, r.y, r.z, r.w }, 4);
+        ds.billboard = d.getBillboard().name().toLowerCase(Locale.ROOT);
+        var b = d.getBrightness();
+        if (b != null) ds.brightness = new int[] { b.getBlockLight(), b.getSkyLight() };
+        if (d instanceof ItemDisplay id) ds.itemTransform = id.getItemDisplayTransform().name().toLowerCase(Locale.ROOT);
+        if (d instanceof TextDisplay td) {
+            ds.text = text == null ? "" : text;
+            ds.lineWidth = td.getLineWidth();
+            var bg = td.getBackgroundColor();
+            ds.background = bg == null ? 0x40000000 : bg.asARGB();
+            ds.textOpacity = td.getTextOpacity() & 0xFF;
+            ds.shadow = td.isShadowed(); ds.seeThrough = td.isSeeThrough(); ds.defaultBackground = td.isDefaultBackground();
+            ds.align = td.getAlignment().name().toLowerCase(Locale.ROOT);
+        }
+        return ds;
     }
 
     /** Baby flag, variants, colours and similar per-type looks (PROTOCOL.md 4.21 lists the fields). */

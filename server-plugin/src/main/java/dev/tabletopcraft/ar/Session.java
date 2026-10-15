@@ -64,6 +64,10 @@ public final class Session {
     public volatile boolean wantsActions;
     public final java.util.concurrent.atomic.AtomicLong actionBytes = new java.util.concurrent.atomic.AtomicLong();
     public BiomeGrid lastBiomes;           // biomes of the last snapshot (for a resend after bad_snapshot), null without biomes_v1
+    // [living] world_state (world_v1): time of day and weather; what this client got last and when (main thread).
+    public volatile boolean wantsWorld;
+    public WorldState worldStateSent;
+    public long worldStateTick;
     /** Granted edit_v1 in welcome.caps (block_edit, PROTOCOL.md 4.20); its rate limit, set together with it. */
     public volatile boolean canEdit;
     public volatile EditLimiter editLimiter;

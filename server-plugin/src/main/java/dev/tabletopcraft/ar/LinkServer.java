@@ -188,6 +188,7 @@ public final class LinkServer extends WebSocketServer {
                 else if (c.equals(ControlMessages.CAP_CHAT) && plugin.control.chatAllowed()) s.wantsChat = true;
                 else if (c.equals(ControlMessages.CAP_COMMAND) && plugin.control.commandsAllowed()) s.canCommand = true;
                 else if (c.equals(ControlMessages.CAP_STATUS) && plugin.control.statusAllowed()) s.wantsStatus = true;
+                else if (c.equals(Protocol.CAP_WORLD)) s.wantsWorld = plugin.worldStateEnabled();   // [living] world_state
             }
         ControlService cs = plugin.control;   // [talk] rate limits (token buckets) and the chat name
         s.chatLimiter = new EditLimiter(cs.chatRate, cs.chatBurst);
