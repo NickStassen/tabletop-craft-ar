@@ -52,7 +52,8 @@ Phases 0-3 were built and checked on Paper 1.21.11 / Java 21. The server pin has
   - The eye-in-fluid effects: underwater fog and tint, the surface seen from below, lava and powder snow.
   - Entities (vehicles, mobs, dropped items, held items) and player actions (arm swing, digging cracks, break particles, hurt flash), seen on a Quest 3.
 - **Built, waiting for headset measurements (2026-10-14):** area width presets 64–256 without reconnecting (resize deltas, re-keyed meshes, footprint kept) and mesh batching (roadmap item 7).
-- **Built and tested off the headset, waiting for a headset session (2026-10-15):** releases 0.3.1 to 0.7.0 (fixes and polish, fast gliding, chat and commands, block entities, using blocks/items/mobs, the living world, operator and power tools, faster meshing, sound, motion). Each part's headset checklist is in TESTING.md.
+- **Verified on a Quest 3 (2026-10-14):** releases 0.2.0 to 0.3.1 (block menu, width presets, fixes and polish).
+- **Built and tested off the headset, waiting for a headset session (2026-10-15):** releases 0.4.0 to 0.7.0 (fast gliding, chat and commands, block entities, using blocks/items/mobs, the living world, operator and power tools, faster meshing, sound, motion). Each part's headset checklist is in TESTING.md.
 
 ## Roadmap: "playing Minecraft as a god"
 Ordered by how much each adds to the feeling of a living world on the table that you can act on.
@@ -74,7 +75,7 @@ Ordered by how much each adds to the feeling of a living world on the table that
 - Working MRUK table detection; the log shows OpenXR binding warnings.
 - A persistent spatial anchor. (0.3.1 remembers the placement relative to the MRUK table in `prefs.json`; without a table it still starts in front of you.)
 - A diorama plinth and a soft shadow on the real table.
-- (Done, not yet tried on the headset) Status text off the view: the full status is the block menu's Info tab, events are short toasts, area setup has a small panel on the left hand, and a small HUD is optional (`show_hud`).
+- (Done, verified on a Quest 3) Status text off the view: the full status is the block menu's Info tab, events are short toasts, area setup has a small panel on the left hand, and a small HUD is optional (`show_hud`).
 
 **4. Sound.**
 - (Done, not yet tried on the headset) Spatial sound from the miniature (0.6; QUEST_SETUP.md Part E step 4 and Part P, PROTOCOL.md "Sound"): the user's own sounds packaged by `tools/sounds/PackSounds.java` into `sounds.zip`; blocks breaking, placed and dug, footsteps, mobs (ambient, hurt, death), doors and redstone parts, tools, pickups, thunder, rain, water, lava and fire, note blocks, bells, containers, jukeboxes and explosions (the server's `sound` actions), a chat ping; fall-off scaled with the block size, 24 voices with priorities, volume on the Info tab.
@@ -82,7 +83,7 @@ Ordered by how much each adds to the feeling of a living world on the table that
 - Open: mob sound variants (26.x moody cows, big pigs, angry/cute wolves: the server doesn't say which), the underwater and biome ambience loops, music, sounds other plugins play (`World#playSound` has no event), HRTF spatialisation (Unity's panning only; the Meta XR Audio SDK would be a new package).
 
 **5. God powers.**
-- (Done, not yet tried on the headset) A block palette, hotbar and creative inventory: the server's `block_registry` (PROTOCOL.md 4.24), the block menu on the left hand with categories, search and icons from the user's pack, a 9-slot hotbar (QUEST_SETUP.md Part J).
+- (Done, verified on a Quest 3) A block palette, hotbar and creative inventory: the server's `block_registry` (PROTOCOL.md 4.24), the block menu on the left hand with categories, search and icons from the user's pack, a 9-slot hotbar (QUEST_SETUP.md Part J).
 - (Done, not yet tried on the headset) Using blocks, items and mobs (`interact_v1`, QUEST_SETUP.md Part M): the left trigger in vanilla's right-click order (doors, levers, buttons, note blocks...; bone meal, buckets, flint and steel and TNT, axes, hoes, shovels, shears, spawn eggs, a lightning wand), Use and Eggs tabs in the block menu, hitting, carrying (right grip), naming, freezing and removing mobs and players, an info card. Open: the container view and the sign editor (the hooks are there), more of vanilla's right clicks (anvils, beds, cauldrons, item frames, trading).
 - (Done, not yet tried on the headset) Undo/redo (0.5.0, `power_v1`; hold B), box tools (fill, replace, walls, hollow, clone) and brushes (QUEST_SETUP.md Part O).
 - Lightning, time and weather gestures. (Buttons done, not yet tried on the headset: the operator panel's World tab, with lightning at the pointer; QUEST_SETUP.md Part L.)
@@ -95,7 +96,7 @@ Ordered by how much each adds to the feeling of a living world on the table that
 - Edit permissions per user.
 
 **7. Scale.**
-- (Done, not yet measured on the headset) Batch section meshes for 192+ wide areas: world-aligned batches of 2×2 section columns, 100 renderers / 200 draw calls at a 256-wide window instead of 1,223 / about 2,000 (ARCHITECTURE.md "Batching"). The visible width steps through 64/96/128/192/256 with a left stick click (QUEST_SETUP.md Part J, PROTOCOL.md 4.25). Next: the headset FPS per preset; with draw calls gone, the faces (about 700k at 256 with the pack and light) are the likely limit.
+- (Done, verified on a Quest 3) Batch section meshes for 192+ wide areas: world-aligned batches of 2×2 section columns, 100 renderers / 200 draw calls at a 256-wide window instead of 1,223 / about 2,000 (ARCHITECTURE.md "Batching"). The visible width steps through 64/96/128/192/256 with a left stick click (QUEST_SETUP.md Part J, PROTOCOL.md 4.25). Next: the headset FPS per preset; with draw calls gone, the faces (about 700k at 256 with the pack and light) are the likely limit.
 - Spread the main-thread model prewarm over frames (45–53 ms on a new area).
 - (Done, not yet tried on the headset) Fast gliding at wide areas (0.4.0; TESTING.md "Faster gliding"): the plugin reads only the new sections of a moved region (one tick, about 50 ms instead of 300–350 ms at 288 wide), the glide margin grows with the width (48 at 256), the region is shifted ahead while you glide steadily, and only the part of the margin near the box is meshed. At 256 wide the pan went from 6–18 to 52 blocks/s on a PC (34 with meshing 4× slower); meshing is now the limit.
 - (Done, not yet tried on the headset) Faster meshing and a surface skirt ahead of the detail (TESTING.md "Faster meshing"): sections mesh 3.3-3.8× faster on a PC with identical output (padded per-section lookups instead of string-keyed ones, a light cache), meshing jobs are sized by the measured cost (fixed jobs had capped meshing at 864 sections/s), a glide re-uploads 15-30% less batch data per block of travel, and where the view isn't meshed yet a low-detail surface (the top block of every column, from the region snapshot the headset already has: no protocol change) shows within a frame or two and is replaced by detail as it arrives, which lets the glide go up to `skirt_speed` (2) times past the mesh cap. On a PC 256 wide went from 53-56 to 146 blocks/s (12 to 33 cm/s of table), and with meshing 4× slower from 48-50 to 118-119, 141-144 with the skirt. If the headset still lags: a streamed heightmap further ahead than the region (the original idea of this item), or more meshing workers if the Quest has cores to spare (`mesh_workers`).
@@ -110,4 +111,4 @@ Ordered by how much each adds to the feeling of a living world on the table that
   - gravity blocks
   - griefing limits and undo (undo in 0.5.0; per-user rights still open)
 - **Streaming:** into ungenerated chunks, at build-height limits and the world border, and big diffs (explosions, floods) falling back to a snapshot.
-- **Pause and reconnect** when the headset is taken off (handled in 0.3.1: the giant despawns and the link pauses; not yet tried on the headset).
+- **Pause and reconnect** when the headset is taken off (handled in 0.3.1: the giant despawns and the link pauses).
