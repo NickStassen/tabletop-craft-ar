@@ -101,6 +101,8 @@ Ambient particles (needs `pack.zip`: the sprites are its `textures/particle/*.pn
 
 Optional look keys: `"mipmaps": false` turns off the block textures' mipmaps (on by default: distant terrain stops shimmering, about 33% more texture memory), and `"leaves_inner": false` stops drawing the faces between two leaves blocks (vanilla draws them, so canopies look full; on by default, about 0.5-4% more faces in forests).
 
+Optional GPU keys (for comparing on the headset; all on by default, TESTING.md "GPU at 256 wide"): `"clip_planes": false` cuts the visible window with a discard in every pixel again instead of hardware clip planes (try it if terrain shows outside the window), `"solid_pass": false` draws every opaque face with the alpha test again (no early depth rejection), and `"packed_vertices": false` uploads the 32-byte vertices instead of the 20-byte ones.
+
 ## Part E: textures (resource pack)
 
 Without a pack the app uses flat colours. To use textures you already own:
