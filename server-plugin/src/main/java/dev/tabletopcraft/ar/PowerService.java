@@ -6,9 +6,15 @@ import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockState;
+import org.bukkit.Location;
 import org.bukkit.block.Chest;
+import org.bukkit.block.Container;
+import org.bukkit.block.Sign;
 import org.bukkit.block.TileState;
+import org.bukkit.block.sign.Side;
+import org.bukkit.block.sign.SignSide;
 import org.bukkit.inventory.BlockInventoryHolder;
+import org.bukkit.inventory.DoubleChestInventory;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.block.data.Levelled;
 import org.bukkit.block.data.MultipleFacing;
@@ -181,6 +187,55 @@ final class PowerService {
             n++;
         }
         if (n > 0) journalled++;
+    }
+
+    /**
+     * [operator] Runs a container_edit or sign_edit and journals the block entity it changed: the block at pos and,
+     * for a double chest, its other half (a slot index can be in either). A cell is recorded when its block or its
+     * block entity's contents (inventory, sign text) differ afterwards; undo puts the whole block entity back as it was.
+     */
+    void journalledTiles(Session s, Long group, String label, int[] pos, Runnable action) {
+        PS ps = sessions.get(s);
+        RegionSpec r = s.region;
+        World w = ps == null || !ps.journal.enabled() || r == null ? null : Bukkit.getWorld(r.world());
+        if (w == null || !w.isChunkLoaded(pos[0] >> 4, pos[2] >> 4) || pos[1] < w.getMinHeight() || pos[1] >= w.getMaxHeight()) { action.run(); return; }
+        List<Block> blocks = new ArrayList<>();
+        Block b = w.getBlockAt(pos[0], pos[1], pos[2]);
+        blocks.add(b);
+        if (b.getState(false) instanceof Chest c && c.getInventory() instanceof DoubleChestInventory d) {
+            for (var side : new Location[] { d.getLeftSide().getLocation(), d.getRightSide().getLocation() })
+                if (side != null && !(side.getBlockX() == pos[0] && side.getBlockY() == pos[1] && side.getBlockZ() == pos[2])) blocks.add(side.getBlock());
+        }
+        List<BlockData> before = new ArrayList<>();
+        List<BlockState> tilesBefore = new ArrayList<>();
+        for (Block x : blocks) { BlockData d = x.getBlockData(); before.add(d); tilesBefore.add(snapshot(x, d)); }
+        action.run();
+        long id = group != null ? group : ps.journal.anonymousGroup();
+        for (int i = 0; i < blocks.size(); i++) {
+            Block x = blocks.get(i);
+            BlockData after = x.getBlockData();
+            if (after.equals(before.get(i)) && tileSame(tilesBefore.get(i), snapshot(x, after))) continue;
+            ps.journal.record(id, label, w.getName(), x.getX(), x.getY(), x.getZ(), before.get(i), tilesBefore.get(i), after, BlockData::equals);
+            journalled++;
+        }
+    }
+
+    /** Two block entity snapshots hold the same inventory (a chest: its own half) or the same sign text, colour and ink. */
+    static boolean tileSame(BlockState a, BlockState b) {
+        if (a == null || b == null) return a == b;
+        if (a instanceof Sign sa && b instanceof Sign sb) {
+            if (sa.isWaxed() != sb.isWaxed()) return false;
+            for (Side side : Side.values()) {
+                SignSide x = sa.getSide(side), y = sb.getSide(side);
+                if (!x.lines().equals(y.lines()) || x.getColor() != y.getColor() || x.isGlowingText() != y.isGlowingText()) return false;
+            }
+            return true;
+        }
+        // A placed state's getInventory()/getBlockInventory() is the live one: compare the snapshots' own copies
+        // (a chest's: its own half).
+        if (a instanceof Container ca && b instanceof Container cb)
+            return java.util.Arrays.equals(ca.getSnapshotInventory().getContents(), cb.getSnapshotInventory().getContents());
+        return true;
     }
 
     /** The window a use of this item can change at once (bone meal grows plants and trees). */

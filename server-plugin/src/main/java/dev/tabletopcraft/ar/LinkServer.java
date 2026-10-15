@@ -178,6 +178,32 @@ public final class LinkServer extends WebSocketServer {
                     }
                     plugin.enqueue(() -> plugin.interact.onEntityOp(s, op, refSeq));
                 }
+                // [operator] bookmarks (marks_v1), container view and editing, sign editing (interact_v1): parsed and
+                // rate-limited here (bookmarks share the query bucket, containers and signs the interact bucket), run on the main thread
+                case "bookmark" -> {
+                    OperatorMessages.BookmarkOp b = OperatorMessages.bookmark(m);
+                    if (!limited(s, s.completeLimiter, "bookmark changes", refSeq)) plugin.enqueue(() -> plugin.operator.onBookmark(s, b, refSeq));
+                }
+                case "container_query" -> {
+                    int[] p = OperatorMessages.containerPos(m, "container_query");
+                    if (!limited(s, s.canInteract ? s.interactLimiter : null, "container views", refSeq)) plugin.enqueue(() -> plugin.operator.onContainerQuery(s, p, refSeq));
+                }
+                case "container_edit" -> {
+                    OperatorMessages.ContainerEdit e = OperatorMessages.containerEdit(m);
+                    Long group = PowerMessages.group(m);   // [power] journalled for undo (PowerService.journalledTiles)
+                    if (!limited(s, s.canInteract ? s.interactLimiter : null, "container edits", refSeq))
+                        plugin.enqueue(() -> plugin.power.journalledTiles(s, group, "container", e.pos(), () -> plugin.operator.onContainerEdit(s, e, refSeq)));
+                }
+                case "container_close" -> {
+                    int[] p = OperatorMessages.containerPos(m, "container_close");
+                    plugin.enqueue(() -> plugin.operator.onContainerClose(s, p));
+                }
+                case "sign_edit" -> {
+                    OperatorMessages.SignEdit e = OperatorMessages.signEdit(m);
+                    Long group = PowerMessages.group(m);   // [power] journalled for undo (PowerService.journalledTiles)
+                    if (!limited(s, s.canInteract ? s.interactLimiter : null, "sign edits", refSeq))
+                        plugin.enqueue(() -> plugin.power.journalledTiles(s, group, "sign", e.pos(), () -> plugin.operator.onSignEdit(s, e, refSeq)));
+                }
                 case "ping" -> {
                     JsonObject p = Protocol.body("pong");
                     if (m.has("id")) p.add("id", m.get("id"));
@@ -229,6 +255,8 @@ public final class LinkServer extends WebSocketServer {
                 else if (c.equals(ControlMessages.CAP_STATUS) && plugin.control.statusAllowed()) s.wantsStatus = true;
                 else if (c.equals(InteractMessages.CAP) && plugin.interact.allowed()) plugin.interact.grant(s);   // [hands]
                 else if (c.equals(PowerMessages.CAP)) wantsPower = true;
+                else if (c.equals(Protocol.CAP_WORLD)) s.wantsWorld = plugin.worldStateEnabled();   // [living] world_state
+                else if (c.equals(OperatorMessages.CAP_MARKS) && plugin.operator.marksAllowed()) s.wantsMarks = true;   // [operator]
             }
         if (wantsPower && s.canEdit && plugin.power.allowed()) plugin.power.grant(s);   // [power]
         ControlService cs = plugin.control;   // [talk] rate limits (token buckets) and the chat name

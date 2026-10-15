@@ -1,0 +1,22 @@
+{
+ "v": 1,
+ "type": "region_request",
+ "seq": 72,
+ "t": 1760370007200,
+ "world": "world_nether",
+ "origin": [
+  -40,
+  24,
+  -60
+ ],
+ "dims": [
+  160,
+  96,
+  160
+ ],
+ "view_margin": [
+  32,
+  16,
+  32
+ ]
+}

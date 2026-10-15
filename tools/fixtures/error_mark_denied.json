@@ -1,0 +1,12 @@
+{
+ "v": 1,
+ "type": "error",
+ "seq": 130,
+ "t": 1760370007020,
+ "code": "mark_denied",
+ "message": "at most 200 bookmarks (marks.max): remove one first",
+ "ref_seq": 70,
+ "fatal": false,
+ "op": "bookmark",
+ "name": "Village"
+}

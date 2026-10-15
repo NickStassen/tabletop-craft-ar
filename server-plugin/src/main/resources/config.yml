@@ -69,6 +69,10 @@ block-entities:
   # this often; the others (signs, banners, heads, pots: block events catch their changes) 8 times less often, which
   # still picks up /data edits.
   rescan-ticks: 40
+# Time of day and weather for clients that ask for them (world_v1, PROTOCOL.md "World state"): the headset darkens the
+# miniature at night and in storms like vanilla's lightmap and draws rain, snow and lightning. About 150 bytes a second.
+world-state:
+  enabled: true
 avatar:
   # Real metres per block on the table; the Quest overrides it with avatar_config.
   block-size-m: 0.01
@@ -171,6 +175,25 @@ interact:
   deny-spawn: [minecraft:wither, minecraft:ender_dragon]
   # Spawn-egg mobs per minute per headset.
   max-spawns-per-minute: 60
+  # [operator] The left trigger on a chest, barrel, shulker box, hopper, dispenser, dropper, furnace, smoker, blast
+  # furnace, brewing stand or crafter opens the headset's container view (PROTOCOL.md "Containers"): edit (take items out
+  # to nowhere, put any item in, clear, sort), view (look only) or false. The lid stays open while a headset looks.
+  containers: edit
+  # [operator] Signs: the left trigger opens the sign editor (front and back, four lines, dye colour, glowing ink).
+  signs: true
+  # Fire a SignChangeEvent before a headset changes a sign, so protection and logging plugins can see, change or cancel
+  # it. The event has no player (the headset isn't one): a plugin that needs one logs an error and doesn't block the edit.
+  sign-event: true
+# [operator] Shared bookmarks for the headsets' Marks tab (marks_v1, PROTOCOL.md "Marks: bookmarks, spawn and worlds"),
+# stored in plugins/TabletopCraftAR/bookmarks.yml and sent to every headset. Jumps to a bookmark, the spawn or typed
+# coordinates are ordinary region_requests, so they need nothing here.
+marks:
+  enabled: true
+  # true: only when auth.token above is set (every connected headset presented the token).
+  require-token: false
+  # false: headsets see and use the bookmarks but can't add or remove them.
+  edit: true
+  max: 200
 # [talk] Chat between Java players and the headset (chat_v1, PROTOCOL.md 4.26). Headsets that ask for chat_v1 get
 # game chat, joins, quits, deaths, advancements, plugin broadcasts and /say, /me; with "send" they can talk too.
 chat:

@@ -14,6 +14,7 @@ from tabletop_protocol import (
     CAP_ENTITIES,
     CAP_INTERACT,
     CAP_LIGHT,
+    CAP_MARKS,
     CAP_POWER,
     CAP_STATUS,
     CHAT_KINDS,
@@ -28,8 +29,11 @@ from tabletop_protocol import (
     Envelope,
     WorldMirror,
     block_edit,
+    bookmark,
     box_edit_msg,
     brush_msg,
+    container_edit,
+    container_slots,
     decode_light,
     decode_rle,
     entity_op,
@@ -647,3 +651,126 @@ def test_power_validation_rejects(name, patch):
     msg.update(patch)
     with pytest.raises(ValueError):
         validate(msg)
+
+
+def test_world_state_fixture_and_rules():
+    """[living] world_state (PROTOCOL.md "World state: time and weather"): a stormy midnight in the overworld."""
+    msg = json.loads((FIX / "world_state.json").read_text())
+    validate(msg)
+    assert msg["day_time"] == 18000 and msg["rain"] == 1 and msg["thunder"] == 1 and msg["dimension"] == "overworld"
+    for patch in ({"dimension": "nether"}, {"day_time": 24000}, {"rain": 0}, {"rain": 0.5}):
+        bad = dict(msg, **patch)
+        with pytest.raises(ValueError):
+            validate(bad)
+
+
+def test_entities_living_fields():
+    """[living] leads, chests, orbs, bobbers, carried blocks, shulker lids, display entities and visible names."""
+    msg = json.loads((FIX / "entities_living.json").read_text())
+    validate(msg)
+    m = EntityMirror()
+    m.apply(msg)
+    e = m.entities
+    assert e[301]["leash"] == 7 and e[303]["leash"] == 302 and e[302]["type"] == "minecraft:leash_knot"
+    assert e[304]["chested"] and e[304]["equipment"]["body"] == "minecraft:red_carpet"
+    assert e[305]["xp"] == 17 and e[306]["owner"] == 7 and e[307]["carried"].startswith("minecraft:grass_block")
+    assert e[308]["peek"] == 0.5 and e[308]["attach"] == "north" and e[313]["sheared"] and e[314]["name_visible"]
+    text, item, block = e[309]["display"], e[310]["display"], e[311]["display"]
+    assert text["billboard"] == "center" and text["text"].split("\n") == ["Welcome", "to the farm"] and text["background"] == 0x40000000
+    assert item["item_transform"] == "fixed" and item["brightness"] == [15, 15]
+    assert math.isclose(sum(q * q for q in item["left_rotation"]), 1, abs_tol=1e-3)
+    assert block["scale"] == [0.5, 0.5, 0.5] and "text" not in block
+    m.apply({"full": False, "entities": [{"id": 301, "leash": None}, {"id": 309, "display": None}]})
+    assert e[301]["leash"] is None and e[309]["display"] is None
+    for patch in ({"billboard": "sideways"}, {"left_rotation": [0, 0, 1]}, {"brightness": [16, 0]}):
+        bad = json.loads((FIX / "entities_living.json").read_text())
+        bad["entities"][9]["display"].update(patch)
+        with pytest.raises(ValueError):
+            validate(bad)
+    bad = json.loads((FIX / "entities_living.json").read_text())
+    bad["entities"][7]["attach"] = "sideways"
+    with pytest.raises(ValueError):
+        validate(bad)
+
+
+# [operator] marks (bookmarks, spawn, worlds), containers and signs (PROTOCOL.md "Marks: bookmarks, spawn and worlds",
+# "Containers", "Signs")
+OPERATOR_FIXTURES = ("hello_operator", "welcome_operator", "bookmark", "bookmark_remove", "bookmarks", "error_mark_denied",
+                     "region_info_worlds", "region_request_jump", "container_query", "container", "container_furnace",
+                     "container_closed", "container_edit", "container_edit_put", "container_edit_sort", "container_close",
+                     "error_container_denied", "sign_edit")
+
+
+def test_operator_fixtures_exist_and_validate():
+    for name in OPERATOR_FIXTURES:
+        validate(json.loads((FIX / f"{name}.json").read_text()))
+
+
+def test_operator_caps_worlds_and_marks():
+    hello = json.loads((FIX / "hello_operator.json").read_text())
+    welcome = json.loads((FIX / "welcome_operator.json").read_text())
+    assert CAP_MARKS in hello["caps"] and CAP_MARKS in welcome["caps"]
+    assert [w["env"] for w in welcome["worlds"]] == ["normal", "nether", "the_end"]
+    assert welcome["marks"] == {"max": 200, "edit": True}
+    assert welcome["interact"]["containers"] in ("edit", "view", "off") and welcome["interact"]["signs"] is True
+    info = json.loads((FIX / "region_info_worlds.json").read_text())
+    assert info["spawn"] == welcome["worlds"][0]["spawn"] and info["worlds"] == welcome["worlds"]
+    jump = json.loads((FIX / "region_request_jump.json").read_text())
+    nether = next(w for w in welcome["worlds"] if w["name"] == jump["world"])
+    top = jump["origin"][1] + jump["dims"][1]
+    assert nether["min_y"] <= jump["origin"][1] and top <= nether["max_y"], "a jump stays inside the build height"
+
+
+def test_operator_builders_match_the_fixtures():
+    env = Envelope()
+    add = json.loads((FIX / "bookmark.json").read_text())
+    built = env.wrap("bookmark", **bookmark("add", "Village", "world", (120, 64, -300)))
+    validate(built)
+    assert {k: built[k] for k in ("op", "name", "world", "pos")} == {k: add[k] for k in ("op", "name", "world", "pos")}
+    built = env.wrap("bookmark", **bookmark("remove", "Village"))
+    validate(built)
+    assert "world" not in built and built["name"] == "Village"
+    edit = json.loads((FIX / "container_edit.json").read_text())
+    built = env.wrap("container_edit", **container_edit((1, 64, 2), 5, "minecraft:torch", 32, was=("minecraft:torch", 64)))
+    validate(built)
+    assert {k: built[k] for k in ("pos", "slot", "item", "count", "was")} == {k: edit[k] for k in ("pos", "slot", "item", "count", "was")}
+    sort = env.wrap("container_edit", **container_edit((1, 64, 2), op="sort"))
+    validate(sort)
+    assert sort["op"] == "sort" and "slot" not in sort
+    chest = json.loads((FIX / "container.json").read_text())
+    assert container_slots(chest) == {0: ("minecraft:diamond", 3), 5: ("minecraft:torch", 64), 30: ("minecraft:oak_planks", 16)}
+    assert chest["size"] == 54 and chest["other"] == [2, 64, 2]
+    assert json.loads((FIX / "error_container_denied.json").read_text())["op"] == "container_edit"
+
+
+@pytest.mark.parametrize("name,patch", [
+    ("bookmark", {"op": "rename"}),
+    ("bookmark", {"name": " "}),
+    ("bookmark", {"pos": [1, 2.5, 3]}),
+    ("bookmarks", {"max": 1}),
+    ("bookmarks", {"marks": [{"name": "A", "world": "world", "pos": [1, 2, 3]}, {"name": "a", "world": "world", "pos": [1, 2, 3]}]}),
+    ("welcome_operator", {"worlds": [{"name": "world", "env": "overworld", "min_y": 0, "max_y": 256, "spawn": [0, 64, 0]}]}),
+    ("welcome_operator", {"worlds": [{"name": "world", "env": "normal", "min_y": 0, "max_y": 0, "spawn": [0, 64, 0]}]}),
+    ("region_info_worlds", {"spawn": [0.5, 64, 0]}),
+    ("container", {"items": [[54, "minecraft:dirt", 1]]}),
+    ("container", {"items": [[0, "minecraft:dirt", 1], [0, "minecraft:stone", 2]]}),
+    ("container", {"items": [[0, "dirt", 1]]}),
+    ("container", {"edit": "maybe"}),
+    ("container_closed", {"reason": None}),
+    ("container_edit", {"slot": -1}),
+    ("container_edit", {"count": 128}),
+    ("container_edit", {"was": ["minecraft:torch"]}),
+    ("container_edit_sort", {"op": "shuffle"}),
+    ("sign_edit", {"side": "top"}),
+    ("sign_edit", {"lines": ["a", "b", "c"]}),
+    ("sign_edit", {"color": "teal"}),
+])
+def test_operator_validation_rejects(name, patch):
+    msg = json.loads((FIX / f"{name}.json").read_text())
+    msg.update(patch)
+    with pytest.raises(ValueError):
+        validate(msg)
+
+
+def test_operator_error_codes():
+    validate({"v": 1, "type": "error", "seq": 0, "t": 0, "code": "mark_denied", "message": "x"})

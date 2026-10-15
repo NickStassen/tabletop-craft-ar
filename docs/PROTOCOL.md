@@ -78,6 +78,11 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 | `box_edit` | C→S | fill, replace, clear, walls, hollow or clone a box of blocks ("Box edits", needs `power_v1`) |
 | `box_progress` | S→C | a box edit, undo or redo running, then its result ("Box edits") |
 | `brush` | C→S | one stroke of a sphere or cylinder brush: paint, replace, erase, smooth ("Brushes", needs `power_v1`) |
+| `world_state` | S→C | the region's world's time of day, rain and thunder, dimension: on change and about once a second ("World state: time and weather", needs `world_v1`) |
+| `bookmark` / `bookmarks` | C→S / S→C | add or remove a shared bookmark; every bookmark, after `welcome` and on each change ("Marks: bookmarks, spawn and worlds", needs `marks_v1`) |
+| `container_query` / `container` | C→S / S→C | open a container's view; its slots, re-sent while they change, or the view's end ("Containers", needs `interact_v1`) |
+| `container_edit` / `container_close` | C→S | set one slot or sort the container; stop watching it ("Containers") |
+| `sign_edit` | C→S | one side of a sign: four lines, dye colour, glowing ink ("Signs", needs `interact_v1`) |
 
 ### 4.1 `hello` (C→S)
 
@@ -92,7 +97,7 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 - `client`: free string, e.g. `quest-app` or `fake-quest`.
 - `protocols`: protocol versions the client speaks. The server picks the highest one it also supports.
 - `token`: shared secret from the plugin `config.yml` (`auth.token`). If it's empty in config, auth is disabled (LAN dev only). A wrong token gets `error` `auth_failed` and then close code 4003.
-- `caps`: capability strings. v1 defines `rle_palette_v1` (required) and `avatar` (client will send poses). Optional extras: `light_v1` and `biomes_v1` (§4.5.1), `edit_v1` (§4.20), `entities_v1` (§4.21), `actions_v1` (§4.22), `chat_v1`, `command_v1` and `status_v1` (§4.26–4.28), `block_entities_v1` (§4.29), `interact_v1` ("Using blocks and items"), `power_v1` ("Undo, box edits and brushes"); unknown caps are ignored.
+- `caps`: capability strings. v1 defines `rle_palette_v1` (required) and `avatar` (client will send poses). Optional extras: `light_v1` and `biomes_v1` (§4.5.1), `edit_v1` (§4.20), `entities_v1` (§4.21), `actions_v1` (§4.22), `chat_v1`, `command_v1` and `status_v1` (§4.26–4.28), `block_entities_v1` (§4.29), `interact_v1` ("Using blocks and items"), `world_v1` ("World state: time and weather"), `marks_v1` ("Marks: bookmarks, spawn and worlds"), `power_v1` ("Undo, box edits and brushes"); unknown caps are ignored.
 - `operator_name` (optional string): the name the headset wants in game chat (§4.26). The server keeps `[A-Za-z0-9_]`, at most 16 characters.
 - The client MUST NOT send anything else before it gets `welcome`. The server closes with 4002 if `hello` doesn't arrive within 5 s.
 
@@ -123,7 +128,7 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 
 - `origin`: int[3], world block coords of the region's min corner.
 - `dims`: int[3] `[dx,dy,dz]`, each ≥ 1 and ≤ `limits.max_dims`. Y is clamped to the world's min/max build height; a clamp sends back the actual values in the next `chunk_snapshot`.
-- Optional `follow`: player name string. When it's set, the server re-centers X/Z on that player whenever they move more than `dx/4` from the center, and sends a new snapshot. v1 servers MAY reply `error` `unsupported` for `follow`.
+- Optional `follow`: player name string. The server answers `error` `unsupported`: headsets follow a player themselves with `region_query` and `region_request` ("Following a player"; next version, the field was never implemented).
 - The server replies with `chunk_snapshot`. From then on `block_update` and `player_positions` only cover this region (the previous subscription is replaced).
 
 ### 4.4 `chunk_snapshot` (S→C)
@@ -319,12 +324,13 @@ Codes (strings, closed set in v1):
 | `skin_failed` | no | the skin lookup failed; the default skin is in use |
 | `internal` | no | server-side exception |
 | `edit_denied` | no | a `block_edit` was refused: no `edit_v1`, occupied cell, denied state (§4.20); an `undo`, `redo`, `box_edit` or `brush` refused (no `power_v1`, nothing to undo, a job still running, over a limit; "Undo, box edits and brushes") |
-| `out_of_region` | no | a `block_edit`, `interact`, `entity_op`, `box_edit` or `brush` outside the session's region (§4.20, "Using blocks and items", "Box edits") |
+| `out_of_region` | no | a `block_edit`, `interact`, `entity_op`, `container_query`, `container_edit`, `sign_edit`, `box_edit` or `brush` outside the session's region (§4.20, "Using blocks and items", "Containers", "Signs", "Box edits") |
 | `bad_state` | no | a `block_edit` state that isn't a placeable block state (§4.20) |
 | `chat_denied` | no | a `chat_send` without `chat_v1`, or `chat.send` is off (§4.26) |
 | `command_denied` | no | a `command` or `command_complete` without `command_v1`, or a command the server's policy refuses (§4.27) |
-| `interact_denied` | no | an `interact` or `entity_op` without `interact_v1`, with a family switched off, or that does nothing there ("Using blocks and items") |
+| `interact_denied` | no | an `interact` or `entity_op` without `interact_v1`, with a family switched off, or that does nothing there ("Using blocks and items"); a `container_query`, `container_edit` or `sign_edit` that isn't allowed or valid there ("Containers", "Signs") |
 | `not_found` | no | an `entity_op` whose entity is gone (died, despawned, unloaded) ("Acting on mobs") |
+| `mark_denied` | no | a `bookmark` without `marks_v1`, on a read-only server (`marks.edit`), over `marks.max`, or removing a name that doesn't exist ("Marks: bookmarks, spawn and worlds") |
 
 `ref_seq` is the `seq` of the offending message, if any. When `fatal` is true, the sender closes the socket right after.
 
@@ -385,8 +391,10 @@ So the headset can find a server without typing its address (QUEST_SETUP.md Part
 - **v0.4.0: faster gliding (§4.17, §4.25), no field changes.** A glide `region_request` may move the origin by several whole sections at once; the default `max_region` is 352×384×352 and 25,165,824 blocks (a config still holding the 0.3.0 defaults is raised on start); a server reads only the sections of a moved or resized region that weren't in the old one (the delta lists exactly those). Fixture `region_changed.json` carries the new default limits.
 - **v0.4.0: chat, commands and server status (§4.26–4.28).** New caps `chat_v1`, `command_v1` (needs `auth.token` by default) and `status_v1`; messages `chat`, `chat_send`, `command`, `command_result`, `command_output`, `command_complete`, `command_suggestions`, `server_status`, `world_query`, `world_info`, `players_query`, `players_info`; `hello.operator_name`; `welcome.chat` and `welcome.commands`; errors `chat_denied`, `command_denied`. Fixtures `hello_control.json`, `welcome_control.json`, `chat*.json`, `command*.json`, `error_command_denied.json`, `server_status.json`, `world_query.json`, `world_info.json`, `players_query.json`, `players_info.json`.
 - **v0.4.0: block entities (§4.29).** New cap `block_entities_v1` and message `block_entities`: sign text, banner patterns, player head profiles, pot sherds, spawner mobs, beacon tiers, campfire, shelf and vault items and active conduits, as per-chunk deltas with `removed`, and `reset` on a session's first region and after a world change; config.yml `block-entities`. Fixtures `block_entities.json`, `block_entities_reset.json`.
+- **next version: operator tools ("Operator tools": "Worlds and spawn", "Following a player", "Marks: bookmarks, spawn and worlds", "Containers", "Signs").** `welcome.worlds` and `region_info.worlds`/`spawn`; new cap `marks_v1` (config.yml `marks`) with `bookmark` and `bookmarks` (after `welcome` and on each change) and `welcome.marks`; error `mark_denied`; with `interact_v1`: `container_query`, `container`, `container_edit`, `container_close`, `sign_edit`, and `welcome.interact.containers`/`signs` (config.yml `interact.containers`, `interact.signs`, `interact.sign-event`). An `interact` on a container or sign is still refused (`interact_denied`). `subscribe.follow` is answered `unsupported`: headsets follow players themselves. Fixtures listed under "Operator tools: Fixtures and tests".
 - **next version: using blocks, items and mobs ("Using blocks and items", "Acting on mobs").** New cap `interact_v1` (config.yml `interact`); messages `interact`, `item_registry` (after `block_registry`, `interact_v1` sessions only), `entity_op`, `entity_info`; `welcome.interact` (the switches); errors `interact_denied`, `not_found`; `out_of_region` also for `interact` and `entity_op`. Errors about an `interact` carry `op: "interact"` and `pos`, errors about an `entity_op` carry `op: "entity_op"`, `entity_op` and `uuid`. Fixtures `hello_interact.json`, `welcome_interact.json`, `interact.json`, `interact_item.json`, `item_registry.json`, `entity_op*.json`, `entity_info.json`, `error_interact_denied.json`, `error_not_found.json`.
-- **next version: undo, box edits and brushes ("Undo, box edits and brushes").** New cap `power_v1` (with `edit_v1`; config.yml `edit.power`, `edit.undo-depth`, `edit.box-max-blocks`, `edit.box-budget-ms`, `edit.brush-...`); `block_edit` and `interact` gain an optional `group`; messages `undo`, `redo`, `history`, `box_edit`, `box_progress`, `brush`; `welcome.limits` gains `undo_depth`, `box_max_blocks`, `brush_max_radius`, `brush_blocks_per_second` for `power_v1` sessions. Errors about them carry `op` (`undo`, `redo`, `box_edit` with `box_op`, `brush` with `brush_op`) and `group`. Fixtures `hello_power.json`, `welcome_power.json`, `block_edit_group.json`, `interact_group.json`, `undo.json`, `redo.json`, `history.json`, `box_edit_fill.json`, `box_edit_replace.json`, `box_edit_clone.json`, `box_progress.json`, `box_progress_done.json`, `brush.json`, `brush_replace.json`, `error_box_denied.json`.
+- **next version: undo, box edits and brushes ("Undo, box edits and brushes").** New cap `power_v1` (with `edit_v1`; config.yml `edit.power`, `edit.undo-depth`, `edit.box-max-blocks`, `edit.box-budget-ms`, `edit.brush-...`); `block_edit`, `interact`, `container_edit` and `sign_edit` gain an optional `group` (container and sign edits are journalled too); messages `undo`, `redo`, `history`, `box_edit`, `box_progress`, `brush`; `welcome.limits` gains `undo_depth`, `box_max_blocks`, `brush_max_radius`, `brush_blocks_per_second` for `power_v1` sessions. Errors about them carry `op` (`undo`, `redo`, `box_edit` with `box_op`, `brush` with `brush_op`) and `group`. Fixtures `hello_power.json`, `welcome_power.json`, `block_edit_group.json`, `interact_group.json`, `undo.json`, `redo.json`, `history.json`, `box_edit_fill.json`, `box_edit_replace.json`, `box_edit_clone.json`, `box_progress.json`, `box_progress_done.json`, `brush.json`, `brush_replace.json`, `error_box_denied.json`.
+- **next version: a living world ("World state: time and weather", "Living entities").** New cap `world_v1` and message `world_state` (time, day time, rain, thunder, dimension, sky light; on change and about once a second; config.yml `world-state`). `entities` entries gain `leash` (the holder's id), `eye`, `chested`, `name_visible`, `xp`, `owner`, `carried`, `peek`, `attach` and `display` (display entity transformation, billboard, brightness, item context, text); text displays are listed; a snow golem without its pumpkin is `sheared`; a cushion has its `color`. Fixtures `world_state.json`, `entities_living.json`.
 
 ## 4.13–4.16 Runtime region control (v1, additive)
 
@@ -518,7 +526,7 @@ Sent with `player_positions` (10 Hz) to sessions with `entities_v1` whenever som
  ]}
 ```
 
-- **Which entities:** every entity whose bounding box touches the region box grown by `entities.margin` (default 2) blocks on each side, except players (they're in `player_positions`), the giant's own entities (scoreboard tag `tabletop_avatar`), markers, interactions, text displays and area effect clouds. At most `entities.max` (default 256); past that, the ones nearest the region centre win.
+- **Which entities:** every entity whose bounding box touches the region box grown by `entities.margin` (default 2) blocks on each side, except players (they're in `player_positions`), the giant's own entities (scoreboard tag `tabletop_avatar`), markers, interactions and area effect clouds (text displays are sent since the next version, "Living entities"). At most `entities.max` (default 256); past that, the ones nearest the region centre win.
 - **Deltas:** the server remembers what it sent each session. An entry for an `id` the client doesn't hold yet is a **full entry** (every field that applies; false/null/empty ones are left out). An entry for a known `id` lists only what changed: `pos` when it moved by at least 0.01 block on an axis, angles when they turned by at least 1°, any other field when it differs. A field that went away is sent as `false`, `null` or `[]`. `removed` lists ids that left the region or despawned. With `full: true` the list replaces the client's whole set: entities it doesn't name are gone, and its entries are full entries. The server sends one after every region change. A client that gets a delta for an `id` it doesn't hold ignores it.
 - **Fields** (all optional except `id`; a full entry always has `type` and `pos`):
   - `id` (int): the server's entity id, unique while the entity exists. `uuid` (string, full entries).
@@ -527,7 +535,7 @@ Sent with `player_positions` (10 Hz) to sessions with `entities_v1` whenever som
   - `yaw`, `pitch`: degrees, §3 convention. For living entities they are the **head**'s, and `body_yaw` is the body's. Other entities have no `body_yaw` (their yaw is the body's).
   - `on_ground` (bool), `vehicle` (id of what it rides), `passengers` (ids in seat order, players included; see `player_positions[].id`).
   - `size`: `[width, height]` of the bounding box in blocks. Clients draw a box of this size for types they don't know, and slimes scale with it.
-  - Looks: `baby`, `small` (armour stands), `sheared`, `tamed`, `angry`, `invisible` (bools). `variant`: the registry key path for vanilla ids (`temperate`, `pale`, `calico`, `desert`, `kebab`), `namespace:path` otherwise; enum values in lower case (horse colour `dark_brown`, rabbit `salt_and_pepper`, panda gene, axolotl, parrot, fox, llama colour, salmon size, pufferfish `small`/`medium`/`big`, tropical fish pattern). `color`: a dye colour (sheep wool, shulker, tropical fish body, a tamed wolf's or cat's collar). `markings`: horse markings (`white`, `whitefield`, `white_dots`, `black_dots`) or the tropical fish pattern colour. `profession`: villagers and zombie villagers; missing for none. `pose`: as for players, plus `sitting`; missing = standing. `name`: the custom name as plain text.
+  - Looks: `baby`, `small` (armour stands), `sheared`, `tamed`, `angry`, `invisible` (bools). `variant`: the registry key path for vanilla ids (`temperate`, `pale`, `calico`, `desert`, `kebab`), `namespace:path` otherwise; enum values in lower case (horse colour `dark_brown`, rabbit `salt_and_pepper`, panda gene, axolotl, parrot, fox, llama colour, salmon size, pufferfish `small`/`medium`/`big`, tropical fish pattern). `color`: a dye colour (sheep wool, shulker, tropical fish body, a tamed wolf's or cat's collar, a cushion). `markings`: horse markings (`white`, `whitefield`, `white_dots`, `black_dots`) or the tropical fish pattern colour. `profession`: villagers and zombie villagers; missing for none. `pose`: as for players, plus `sitting`; missing = standing. `name`: the custom name as plain text.
   - Armour stands: `arms` and `base_plate` (bools, like the other looks: left out when false) say whether the stand shows its arms and its base plate (a stand placed in survival has a base plate and no arms). `stand_pose`: the stand's pose in degrees, `{"head": [x, y, z], "body": [...], "left_arm": [...], "right_arm": [...], "left_leg": [...], "right_leg": [...]}` (0.1° steps, the game's `Rotations`); left out when every part has the game's default pose (head and body 0, left arm −10/0/−10, right arm −15/0/10, left leg −1/0/−1, right leg 1/0/1). The whole object is resent when any angle changes, and `null` clears it. Fixture `tools/fixtures/entities_armor_stand.json`.
   - Items and blocks: `item` (item key of a dropped item, an item frame's item or an item display's item), `count` (dropped stacks over 1), `block` (block state of a falling block or a block display), `facing` (`north`, `south`... of item frames, paintings and leash knots), `rotation` (an item frame's item rotation, 0–7).
   - `equipment`: as for players, plus `body` (horse or wolf armour, llama carpet) and `saddle`. The whole object is resent when any slot changes.
@@ -838,7 +846,7 @@ There is no acknowledgement and nothing is guessed on the client: results arrive
 | note block, repeater, comparator, daylight detector | next note (and the note plays when the block above is air), next delay, compare/subtract (then the comparator refreshes its output), inverted |
 | bell, cake, candle cake, composter, jukebox | rings; one bite (the last one removes it); a lit candle cake goes out, an unlit one is eaten (cake with one bite, the candle drops); a full composter (level 8) empties and drops bone meal; a jukebox with a disc ejects it |
 | lit candles and campfires | go out |
-| chests, trapped chests, barrels, shulker boxes, hoppers, dispensers, droppers, furnaces, smokers, blast furnaces, brewing stands, crafters, copper chests; signs | a hook for the container view and the sign editor of a later version: refused for now (`interact_denied`) |
+| chests, trapped chests, barrels, shulker boxes, hoppers, dispensers, droppers, furnaces, smokers, blast furnaces, brewing stands, crafters, copper chests; signs | not an `interact`: the headset opens them with `container_query` ("Containers") and edits signs with `sign_edit` ("Signs"); an `interact` on them gets `interact_denied` |
 | anything else | `interact_denied` ("nothing to use on stone"); the client places a block there instead |
 
 **Items** (`item`):
@@ -913,7 +921,7 @@ Refusals are `error` with `ref_seq`, `op: "entity_op"`, `entity_op` (the op) and
 
 `entity_type` (not `type`: that is the envelope's), `id` (as in `entities`), `pos` (feet, world), `name` (a player's name or the custom name), `health` ([current, max], living entities), `owner` (tamed animals), `age` (ageable mobs: negative = ticks until grown up), `baby`, `ai` (false while held or with NoAI), `frozen` (mobs: not aware), `glowing`, and when true `held`, `leashed`, `player`; `vehicle` (the type it rides) and `passengers` (count) when there are any.
 
-**Client guidance** (non-normative; the Quest's `World/UseRules.cs`, `World/EntityRaycast.cs`, `XR/BlockEditMode.cs`, `XR/EntityCard.cs`): the left trigger follows vanilla's right-click order: a mob the ray hits first (an item is used on it, else `info` opens a card), a block the empty hand can use, the selected item on the face, else a `block_edit` place; holding the left grip (sneak) skips the first two. The ray hits mobs and players as their eased boxes (at least half a block, players 0.6 × 1.8 or 1.5 sneaking), and the nearer of a mob and a block wins. Containers and signs call the client's container-view and sign-editor hooks, which a later version fills. Nothing is guessed locally; refusals become toasts.
+**Client guidance** (non-normative; the Quest's `World/UseRules.cs`, `World/EntityRaycast.cs`, `XR/BlockEditMode.cs`, `XR/EntityCard.cs`): the left trigger follows vanilla's right-click order: a mob the ray hits first (an item is used on it, else `info` opens a card), a block the empty hand can use, the selected item on the face, else a `block_edit` place; holding the left grip (sneak) skips the first two. The ray hits mobs and players as their eased boxes (at least half a block, players 0.6 × 1.8 or 1.5 sneaking), and the nearer of a mob and a block wins. Containers and signs call the client's container-view and sign-editor hooks ("Containers", "Signs"). Nothing is guessed locally; refusals become toasts.
 
 ### Fixtures and tests
 
@@ -927,7 +935,7 @@ Power tools for the headset operator: undo and redo of its own edits, box edits 
 "undo_depth":10000,"box_max_blocks":32768,"brush_max_radius":8,"brush_blocks_per_second":20000
 ```
 
-A 0 means that tool is off on this server (`edit.undo-depth`, `edit.box-max-blocks`, `edit.brush-blocks-per-second`). Everything here stays inside the session's region and the world border, uses the same block rules as `block_edit` (only `block_registry` blocks, never `edit.deny`), and is not seen by protection plugins. Docs: QUEST_SETUP.md Part N (the controls), ARCHITECTURE.md §3.12.
+A 0 means that tool is off on this server (`edit.undo-depth`, `edit.box-max-blocks`, `edit.brush-blocks-per-second`). Everything here stays inside the session's region and the world border, uses the same block rules as `block_edit` (only `block_registry` blocks, never `edit.deny`), and is not seen by protection plugins. Docs: QUEST_SETUP.md Part O (the controls), ARCHITECTURE.md §3.13.
 
 ### Edit groups: `group` on `block_edit` and `interact`
 
@@ -946,7 +954,7 @@ A 0 means that tool is off on this server (`edit.undo-depth`, `edit.box-max-bloc
 ```
 
 The server keeps a journal per session (it goes with the session: a reconnect starts empty). Every change a `block_edit`, `interact`, `box_edit` or `brush` of the session makes is recorded as (position, the state and block entity before, the state after), grouped by `group`:
-- **What is recorded.** For `block_edit` and `interact` the server compares the cells around the target before and after it runs (a 3×3×3 window; 7 × 14 × 7 for bone meal, which grows plants and trees), so both halves of a door or bed, a waterlogged cell and a neighbour whose connection changed are all in the group. Block entities in the window (chests, barrels, shulker boxes, signs, banners, spawners...) are snapshotted first, so a broken chest comes back with its items. Box edits and brush strokes record each cell they change, and the neighbours whose connections they recomputed.
+- **What is recorded.** For `block_edit` and `interact` the server compares the cells around the target before and after it runs (a 3×3×3 window; 7 × 14 × 7 for bone meal, which grows plants and trees), so both halves of a door or bed, a waterlogged cell and a neighbour whose connection changed are all in the group. Block entities in the window (chests, barrels, shulker boxes, signs, banners, spawners...) are snapshotted first, so a broken chest comes back with its items. Box edits and brush strokes record each cell they change, and the neighbours whose connections they recomputed. A `container_edit` or `sign_edit` ("Containers", "Signs") records the block entity it changed (both halves of a double chest) when its contents or text differ afterwards; its undo puts the whole block entity back as it was before the edit, so a change someone else made to the same chest in between is overwritten (the block state is checked, the contents aren't).
 - **Bounds.** At most `edit.undo-depth` blocks (default 10000) per session in undo and redo together: the oldest groups are dropped first, but the newest group is always kept whole, so a box bigger than the depth can be undone until the next edit. At most `edit.undo-tile-entities` (256) block entity snapshots: past that the oldest lose theirs and come back as an empty block.
 - **`undo`** takes the newest group and puts each cell's "before" back, newest change first. A cell whose block isn't the one the group left there is **skipped** (someone or something changed it since: a player, physics, a `/setblock`); water or lava that only flowed in counts as air. Cells outside the session's current region (the area moved) are skipped too (`outside`). The cells put back form a group on the redo list.
 - **`redo`** takes the newest undone group and puts each cell's "after" back, oldest first, with the same skip rules. It goes back on the undo list. Any new group clears the redo list.
@@ -1001,4 +1009,186 @@ One stroke; the client sends them while its trigger is held (the Quest at most e
 
 ### Fixtures and tests (power)
 
-Fixtures `hello_power.json`, `welcome_power.json`, `block_edit_group.json`, `interact_group.json`, `undo.json`, `redo.json`, `history.json`, `box_edit_fill.json`, `box_edit_replace.json`, `box_edit_clone.json`, `box_progress.json`, `box_progress_done.json`, `brush.json`, `brush_replace.json`, `error_box_denied.json`. Java `PowerFixtureTest` (parsers and builders against the fixtures), `UndoJournalTest` (groups, merging, depth, redo, block entity caps), `BoxPlanTest` (the cells of each op, the clone's turn, brush shapes and smoothing); Python `test_tabletop_protocol.py` (`validate_power`); C# `Tests~/PowerTests.cs` (parsing, B's tap and hold, groups on `block_edit` and `interact`, the wand, paste, brushes, the Tools tab). Live: `tools/power_check.py` (37 checks on a flat world) and `Tests~ --live-power URL [TOKEN]` (the app's own classes).
+Fixtures `hello_power.json`, `welcome_power.json`, `block_edit_group.json`, `interact_group.json`, `undo.json`, `redo.json`, `history.json`, `box_edit_fill.json`, `box_edit_replace.json`, `box_edit_clone.json`, `box_progress.json`, `box_progress_done.json`, `brush.json`, `brush_replace.json`, `error_box_denied.json`. Java `PowerFixtureTest` (parsers and builders against the fixtures), `UndoJournalTest` (groups, merging, depth, redo, block entity caps), `BoxPlanTest` (the cells of each op, the clone's turn, brush shapes and smoothing); Python `test_tabletop_protocol.py` (`validate_power`); C# `Tests~/PowerTests.cs` (parsing, B's tap and hold, groups on `block_edit` and `interact`, the wand, paste, brushes, the Tools tab). Live: `tools/power_check.py` (39 checks on a flat world) and `Tests~ --live-power URL [TOKEN]` (the app's own classes).
+
+## World state: time and weather (next version; cap `world_v1`)
+
+So the headset can light the miniature like the game does at night, in rain and in thunderstorms, and draw rain, snow and lightning. A client lists `world_v1` in `hello.caps`; the server grants it unless config.yml `world-state.enabled` is false and lists it in `welcome.caps`.
+
+```json
+{"v":1,"type":"world_state","seq":7,"t":1760370001000,"world":"world","dimension":"overworld","skylight":true,
+ "time":114000,"day_time":18000,"rain":1,"thunder":1}
+```
+
+| field | type | meaning |
+|---|---|---|
+| `world` | string | the world of the session's region |
+| `dimension` | string | `overworld`, `the_nether`, `the_end` or `custom` (`World#getEnvironment`) |
+| `skylight` | bool | the dimension has sky light |
+| `time` | int | total ticks of the world's clock (`World#getFullTime`): the day count and the moon phase |
+| `day_time` | int | 0–23999 (`World#getTime`): what the game's day timeline is keyed on (6000 noon, 18000 midnight) |
+| `rain`, `thunder` | 0 or 1 | it rains (or snows), a thunderstorm; `thunder` only while `rain` |
+| `fixed_time` | bool, optional | the clock doesn't run (the Nether and the End); missing = false |
+| `ticking` | bool, optional | false while the clock is stopped (the daylight cycle game rule is off, or the server's tick is frozen); missing = true |
+
+**When.** Right after the session's region is known, whenever the world, the dimension, the weather or the clock mode changes or the clock jumps (`/time set`: more than 40 ticks off what the client predicts), and otherwise about once a second (every 20 ticks). Between messages the client runs the clock at 20 ticks a second unless `fixed_time` or `ticking: false`. About 150 bytes a second.
+
+Client guidance (non-normative; Quest `World/DayLight.cs`, `World/WorldLight.cs`, `World/WeatherRenderer.cs`): the light follows 26.3's lightmap inputs: the overworld's `sky_light_factor` and `sky_light_color` timeline (data/minecraft/timeline/day.json: factor 1 from tick 730 to 11270, 0.24 from 13140 to 22860, linear between; colour white to #7a7aff), the weather layers (rain moves the factor 31.25% and thunder 52.7% of the way to 0.24 and the colour toward #7a7aff), a lightning flash (factor 1 for 2 ticks), and the dimension's ambient colour and sky factor (Nether #302821 and 0, End #3f473f and 0); rain and thunder fade by 0.01 a tick like the game's rain levels. Rain or snow falls per column by the biome at the surface (none in biomes without precipitation; snow below 0.15 of the height-adjusted temperature), down to the highest block that blocks motion. The `lightning_bolt` entity (§4.21) is drawn with the game's bolt geometry and flashes the sky.
+
+Fixture `world_state.json`. Java `LivingTest` (message and send rule), Python `test_world_state_fixture_and_rules`, C# `Tests~/LivingTests.cs` (world clock, lightmap). Live: `tools/living_check.py`.
+
+## Living entities: leads, gear, displays (next version; `entities_v1`)
+
+More fields of `entities` entries (§4.21), with the same delta rules (left out when not set in full entries; a field that went away is sent as `null`, `false` or 0):
+
+| field | type | meaning |
+|---|---|---|
+| `leash` | int | the entity id of whoever holds this entity's lead: a player (`player_positions[].id`), a leash knot, a mob, a happy ghast holding a boat |
+| `eye` | number | eye height in blocks, living entities (the game's lead offsets and rope hold points use it); 2 decimals |
+| `chested` | bool | a donkey, mule or llama carries a chest |
+| `name_visible` | bool | the custom `name` shows over the entity all the time (CustomNameVisible) |
+| `xp` | int | an experience orb's value (its icon) |
+| `owner` | int | a fishing bobber's player (the line goes to their rod hand) |
+| `carried` | string | the block state an enderman carries |
+| `peek` | number | how far a shulker's lid is open, 0..1; resent when it moved by 0.05 or opened or closed fully |
+| `attach` | string | the face a shulker sticks to, when not `down` (`up`, `north`...) |
+| `display` | object | display entities, below; the whole object is resent when anything in it changes |
+
+- Gear stays in `equipment`: `body` (horse, wolf and nautilus armour, a llama's carpet, a happy ghast's harness) and `saddle`. A tamed wolf's or cat's `color` is its collar.
+- A snow golem without its pumpkin is `sheared`. A cushion has its `color`.
+- Text displays are listed now (they weren't before); `marker`, `interaction` and `area_effect_cloud` still aren't.
+
+**`display`** (block, item and text displays), from `Display#getTransformation` and the display's state:
+
+```json
+"display":{"translation":[0.0,0.5,0.0],"left_rotation":[0.0,0.0,0.3827,0.9239],"scale":[2.0,2.0,2.0],
+           "right_rotation":[0.0,0.0,0.0,1.0],"billboard":"fixed","brightness":[15,15],"item_transform":"fixed"}
+```
+
+| field | meaning |
+|---|---|
+| `translation`, `scale` | 3 numbers (3 decimals), game frame |
+| `left_rotation`, `right_rotation` | quaternions `[x, y, z, w]` (4 decimals), game frame; the transformation is translation × left × scale × right |
+| `billboard` | `fixed`, `vertical`, `horizontal` or `center` |
+| `brightness` | `[block, sky]` light override, missing = the world's light at the entity |
+| `item_transform` | item displays: `none`, `thirdperson_lefthand`, `thirdperson_righthand`, `firstperson_lefthand`, `firstperson_righthand`, `head`, `gui`, `ground`, `fixed` |
+| `text`, `line_width`, `background`, `text_opacity`, `align` | text displays: plain text (lines split by `\n`), the line width in font pixels, the ARGB background colour, opacity 0–255, `center`/`left`/`right`; `shadow`, `see_through`, `default_background` when set |
+
+The block display's block is its `block`, the item display's item its `item`, as before.
+
+Client guidance (non-normative; Quest `World/LivingLooks.cs`, `EntityFigure.Living.cs`, `LeashRenderer.cs`): draw a lead as the game's LeashFeatureRenderer does (24 steps, two crossed ribbons, alternating browns, sagging) from the entity's leash offset to the holder's rope hold point every frame; gear as the game's equipment layers with the 26.x `assets/minecraft/equipment/*.json` textures; displays with orientation (billboard) × translation × left rotation × scale × right rotation, no bob or spin, a block display's block with its corner at the entity, an item display's item turned 180° about Y.
+
+Fixture `entities_living.json` (a leashed wolf and its knot, a horse in armour with a saddle, a chested llama with a carpet, an orb, a bobber, an enderman with a block, a shulker on a wall, text, item and block displays, a lightning bolt, a snow golem without its pumpkin, a villager with a visible name). Java `LivingTest`, Python `test_entities_living_fields`, C# `Tests~/LivingEntityTests.cs`. Live: `tools/living_check.py`.
+
+## Operator tools: following, marks, containers, signs (next version; caps `marks_v1`, `interact_v1`)
+
+Navigation powers and block-entity editing for the headset operator. Jumps and following need no message of their own: they are `region_request`s (§4.13, origin form with `view_margin`, §4.17) on the shared region (last writer wins: every headset on the server moves along). Docs: QUEST_SETUP.md Part N, ARCHITECTURE.md §3.12.
+
+### Worlds and spawn
+
+`welcome` (every client) and `region_info` list the server's worlds; `region_info` also carries the region world's spawn:
+
+```json
+"worlds":[{"name":"world","env":"normal","min_y":-64,"max_y":320,"spawn":[0,64,0]},
+          {"name":"world_nether","env":"nether","min_y":0,"max_y":256,"spawn":[0,70,0]},
+          {"name":"world_the_end","env":"the_end","min_y":0,"max_y":256,"spawn":[100,49,0]}]
+"spawn":[0,64,0]
+```
+
+- `env`: `normal`, `nether`, `the_end` or `custom` (as in `server_status`, §4.28). `min_y`/`max_y`: the build height `[min_y, max_y)`, the same as `limits.build_height` for that world. `spawn`: `World#getSpawnLocation` as a block.
+- A world switch is a `region_request` with that world's `world`, the same x/z size and margins, the height (and y margin) shrunk to fit its build height, centred on its spawn or a bookmark. Another world is always a full snapshot; `region_changed.limits.build_height` (§4.13) confirms the height. Fixture `region_request_jump.json` (into the nether).
+
+### Following a player
+
+Client-side (the server's `subscribe.follow` is not supported, §4.3). The headset:
+- while the player stands on the table (they are in `player_positions`, §4.6), glides the view after their eased position: the offset closes exponentially (about 90% a second), with a dead zone of 0.75 block across and a quarter of the window height up and down, so walking around doesn't bob the table. The glide moves the region by section shifts like the left stick (§4.17);
+- asks where they are with `region_query{player}` (§4.13) once a second while they aren't on the table, and every 5 s while they are (a world change); `region_info.players[0]` gives `world` and `pos`, an `error` (`bad_message`, "no online player named ...") means they left;
+- jumps (a `region_request` centred on them, as a world switch above) when they are more than 16 blocks beyond the loaded region or in another world, and puts the view on them when the region arrives;
+- stops following on any manual glide, area setup, Reset view, a jump of its own, or the player leaving.
+
+The giant itself can't be followed: it stands where the headset looks at the table, so following it would chase itself.
+
+### Marks: bookmarks, spawn and worlds (`marks_v1`)
+
+Shared bookmarks: named world positions every headset sees, kept in `plugins/TabletopCraftAR/bookmarks.yml`. Granted when config.yml `marks.enabled` (default true) and, with `marks.require-token`, `auth.token` is set; echoed in `welcome.caps`. `welcome` then carries `"marks":{"max":200,"edit":true}` (`marks.max`, and `marks.edit`: false = the headsets only read and jump).
+
+**`bookmark` (C→S)**:
+
+```json
+{"v":1,"type":"bookmark","seq":70,"t":1760370007000,"op":"add","name":"Village","world":"world","pos":[120,64,-300]}
+{"v":1,"type":"bookmark","seq":71,"t":1760370007100,"op":"remove","name":"Village"}
+```
+
+- `name`: at most 32 characters after control characters and `§` are removed and whitespace is collapsed; names are unique ignoring case (adding an existing name moves it). `pos`: integer world coordinates (`y` clamped to the world's build height); `world` must exist (else `world_not_found`).
+- Refusals: `mark_denied` with `op: "bookmark"` and `name` (no `marks_v1`, `marks.edit` off, more than `marks.max`, removing an unknown name); `bad_message` when malformed. Shares the query rate limit (`commands.completions-per-second`, 10).
+
+**`bookmarks` (S→C)**, to every `marks_v1` session after `welcome` (after `block_registry` and `item_registry`, before the first snapshot) and whenever one changes:
+
+```json
+{"v":1,"type":"bookmarks","seq":3,"t":1760370007010,"max":200,"marks":[
+ {"name":"Nether hub","world":"world_nether","pos":[8,70,-4],"by":"Operator"},
+ {"name":"Village","world":"world","pos":[120,64,-300],"by":"Operator"}]}
+```
+
+Sorted by name (ignoring case); `by`: the operator name of the headset that added it.
+
+Jumping (non-normative; the Quest's Marks tab): to typed coordinates (`x z` keeps the view's height; `x y z`; `~` relative to the view), the world's spawn, a bookmark, or another world's spawn. Each is a `region_request` keeping the x/z size and margins, centred on the target; in the same world the origin moves by whole 16-block sections from the current one (centred to within 8 blocks) so the server reads only the new sections and may send a delta (§4.18), and the client then puts the view on the target itself.
+
+### Containers (`interact_v1`)
+
+The headset's container view: chests (a double chest as one view), trapped and copper chests, barrels, shulker boxes, hoppers, dispensers, droppers, furnaces, smokers, blast furnaces, brewing stands and crafters inside the region. Needs `interact_v1` and config.yml `interact.containers`: `edit` (default), `view` (look only) or `false`; `welcome.interact.containers` says which.
+
+**`container_query` (C→S)** opens (or refreshes) the session's view; one view per session, a query for another container ends the previous one. **`container_close` (C→S)** ends it.
+
+```json
+{"v":1,"type":"container_query","seq":92,"t":1760370008000,"pos":[1,64,2]}
+{"v":1,"type":"container_close","seq":96,"t":1760370008400,"pos":[1,64,2]}
+```
+
+**`container` (S→C)**: the answer to a query (with its `ref_seq`), then again (without `ref_seq`) whenever the contents change while the view is open (checked every 4 ticks and right after an edit):
+
+```json
+{"v":1,"type":"container","seq":140,"t":1760370008010,"ref_seq":92,"pos":[1,64,2],"block":"minecraft:chest","title":"Large Chest",
+ "size":54,"other":[2,64,2],"edit":"edit","items":[[0,"minecraft:diamond",3],[5,"minecraft:torch",64],[30,"minecraft:oak_planks",16]]}
+{"v":1,"type":"container","seq":142,"t":1760370008030,"pos":[1,64,2],"closed":true,"reason":"the container is gone"}
+```
+
+- `items`: the filled slots as `[slot, item id, count]` (item components such as names and enchantments are kept on the server, not sent). `size`: the slot count (54 for a double chest: the left half's 27, then the right half's). `other`: the other half of a double chest. `title`: the custom name, else vanilla's (`Chest`, `Large Chest`, `Barrel`, `Shulker Box`, `Item Hopper`, `Furnace`...). `edit`: `edit` or `view`.
+- `closed: true` with a `reason` ends the view by itself: the block is gone or no longer a container, the region moved away from it or to another world, or containers were switched off.
+- While any headset views a chest, barrel or shulker box, its lid stays open for Java players (`Lidded#open`; a barrel's `open` property shows in `block_update`); it closes when the last view ends (close, another query, disconnect, plugin stop).
+
+**`container_edit` (C→S)**:
+
+```json
+{"v":1,"type":"container_edit","seq":93,"t":1760370008100,"pos":[1,64,2],"slot":5,"item":"minecraft:torch","count":32,"was":["minecraft:torch",64]}
+{"v":1,"type":"container_edit","seq":95,"t":1760370008300,"pos":[1,64,2],"op":"sort"}
+```
+
+| field | meaning |
+|---|---|
+| `op` | `set` (default) or `sort` |
+| `slot` | `set`: the slot (0 .. size − 1) |
+| `item`, `count` | `set`: the slot becomes `count` × `item` (an item id); `item` null or `count` 0 empties it ("take out" and "clear": the items go nowhere, as a creative player's would). The count is clamped to the item's stack size; the same item keeps its components (a named sword stays named) |
+| `was` | optional `[item or null, count]`: what the client saw in the slot; if the slot holds anything else now (a Java player or a hopper changed it), the edit is refused |
+
+- `sort` (chests, barrels, shulker boxes, hoppers, dispensers, droppers only): stacks of the same item and components merged up to their stack size, ordered by item id, the biggest first.
+- Slot rules as vanilla's `canPlaceItem`: a furnace's output slot takes nothing and its fuel slot only fuel; a brewing stand's bottle slots take potions and glass bottles, its fuel slot only blaze powder; a shulker box takes no shulker box.
+- No acknowledgement: the next `container` shows the result. Refusals are `error` with `ref_seq`, `op` (`container_query` or `container_edit`) and `pos`: `out_of_region`, `interact_denied` ("no container there (stone)", "containers are view-only on this server (interact.containers: view)", "the slot changed meanwhile (it holds 16 ender pearl)", "stone isn't fuel", "a shulker box can't go inside a shulker box"). Container messages share the `interact` rate limit.
+- With `power_v1`, each edit is journalled for undo ("Undo, box edits and brushes"): an optional `group`, as on `block_edit`; both halves of a double chest.
+
+### Signs (`interact_v1`)
+
+**`sign_edit` (C→S)**, with `interact_v1` and config.yml `interact.signs` (default true; `welcome.interact.signs`):
+
+```json
+{"v":1,"type":"sign_edit","seq":97,"t":1760370008500,"pos":[106,64,-35],"side":"front","lines":["","Shop","open 9-5",""],"color":"light_blue","glowing":true}
+```
+
+- `side`: `front` or `back`. `lines`: exactly 4 strings; control characters and `§` are removed, each is cut to 90 characters. `color` (optional): a dye name. `glowing` (optional): glowing ink. Standing, wall and hanging signs.
+- With `interact.sign-event` (default true) the server first fires a `SignChangeEvent` (no player: the headset isn't one), so protection and logging plugins can see the change, alter its lines or cancel it ("another plugin refused the sign change (protection)"). A listener that needs a player fails inside its own handler (the server logs it) and doesn't block the edit.
+- A waxed sign is refused, as in vanilla. No acknowledgement: the new text reaches every headset through `block_entities` (§4.29). Refusals are `error` with `op: "sign_edit"` and `pos` (`out_of_region`, `interact_denied`).
+- With `power_v1`, each edit is journalled for undo ("Undo, box edits and brushes"; an optional `group`, as on `block_edit`).
+
+### Fixtures and tests
+
+Fixtures `hello_operator.json`, `welcome_operator.json` (`worlds`, `marks`, `interact.containers`/`signs`), `region_info_worlds.json`, `region_request_jump.json`, `bookmark.json`, `bookmark_remove.json`, `bookmarks.json`, `error_mark_denied.json`, `container_query.json`, `container.json` (a double chest), `container_furnace.json` (view only), `container_closed.json`, `container_edit.json`, `container_edit_put.json`, `container_edit_sort.json`, `container_close.json`, `error_container_denied.json`, `sign_edit.json`. Java `OperatorFixtureTest` (parsers and builders) and `ContainerRulesTest` (slot rules, sorting, titles, the bookmark store), Python `test_tabletop_protocol.py` (`validate_operator`, `validate_worlds`), C# `Tests~/OperatorTests.cs` (parsing, jump plans, following against `NavState`, the Marks tab, the container view, the sign editor). Live: `tools/operator_check.py` (35 checks with a mineflayer player) and `Tests~ --live-operator URL TOKEN PLAYER` (following with the app's own classes).

@@ -73,6 +73,7 @@ public final class TabletopPlugin extends JavaPlugin {
     private final EntityStreamer entities = new EntityStreamer(this);   // entities_v1 (PROTOCOL.md 4.21)
     private final ActionListener actions = new ActionListener(this);    // actions_v1 (PROTOCOL.md 4.22)
     private final BlockEntityStreamer blockEntities = new BlockEntityStreamer(this);   // [blocks] block_entities_v1 (PROTOCOL.md 4.29)
+    private final WorldStateStreamer worldState = new WorldStateStreamer(this);   // [living] world_v1: time and weather
     // Block editing from the headset (block_edit, PROTOCOL.md 4.20), config section "edit". Read on websocket threads.
     private volatile boolean editEnabled = true, editRequireToken, editTokenSet, editPhysics = true;
     private volatile int editRate = 20;
@@ -85,6 +86,8 @@ public final class TabletopPlugin extends JavaPlugin {
     final InteractService interact = new InteractService(this);
     // [power] undo/redo, box edits and brushes from the headset (power_v1, config section edit)
     final PowerService power = new PowerService(this);
+    // [operator] worlds and spawn, shared bookmarks, container view and editing, sign editing
+    final OperatorService operator = new OperatorService(this);
     // [comfort] LAN discovery (PROTOCOL.md 7, config.yml discovery): answers the headset's UDP probe on its own thread.
     private LanBeacon beacon;
     private volatile int onlinePlayers;
@@ -138,6 +141,7 @@ public final class TabletopPlugin extends JavaPlugin {
         entities.configure(c.getBoolean("entities.enabled", true), c.getInt("entities.max", 256), c.getInt("entities.margin", 2));
         actions.enabled = c.getBoolean("actions.enabled", true);
         blockEntities.configure(c.getBoolean("block-entities.enabled", true), c.getDouble("block-entities.budget-ms", 0.3), c.getInt("block-entities.rescan-ticks", 40));   // [blocks]
+        worldState.enabled = c.getBoolean("world-state.enabled", true);   // [living]
         editEnabled = c.getBoolean("edit.enabled", true);
         editRequireToken = c.getBoolean("edit.require-token", false);
         editTokenSet = !c.getString("auth.token", "").isEmpty();
@@ -150,6 +154,7 @@ public final class TabletopPlugin extends JavaPlugin {
         control.configure(c);   // [talk]
         interact.configure(c);  // [hands]
         power.configure(c);     // [power]
+        operator.configure(c);  // [operator]
         World iw = Bukkit.getWorld(defaultRegion().world());
         interact.buildItemRegistry(iw != null ? iw : Bukkit.getWorlds().isEmpty() ? null : Bukkit.getWorlds().get(0));
         outbound = Executors.newSingleThreadExecutor(r -> { Thread t = new Thread(r, "tabletop-outbound"); t.setDaemon(true); return t; });
@@ -183,6 +188,7 @@ public final class TabletopPlugin extends JavaPlugin {
         if (tickTask != null) tickTask.cancel();
         interact.shutdown();   // [hands] held mobs get their gravity and AI back
         power.shutdown();      // [power] running box edits stop (their sessions close)
+        operator.shutdown();   // [operator] container lids close
         if (beacon != null) { beacon.stop(); beacon = null; }
         if (configSaveAt >= 0) { configSaveAt = -1; saveConfig(); }
         movesInFlight = 0; moveTargets.clear();   // [nav]
@@ -206,6 +212,9 @@ public final class TabletopPlugin extends JavaPlugin {
     boolean entitiesEnabled() { return entities.enabled; }
     boolean actionsEnabled() { return actions.enabled; }
     boolean blockEntitiesEnabled() { return blockEntities.enabled; }   // [blocks]
+    boolean worldStateEnabled() { return worldState.enabled; }
+    /** [living] world_state goes out in order with the snapshots (the outbound thread). */
+    void sendWorldState(Session s, JsonObject body) { send(s, body); }
     void send(Session s, JsonObject body) { if (outbound != null && !outbound.isShutdown()) outbound.execute(() -> s.send(body)); }
     /** Like send, adding the UTF-8 size to a counter (entities bytes/s). */
     void sendCounting(Session s, JsonObject body, java.util.concurrent.atomic.AtomicLong bytes, java.util.concurrent.atomic.AtomicLong total) {
@@ -259,8 +268,10 @@ public final class TabletopPlugin extends JavaPlugin {
         if (tickCount % Math.max(1, getConfig().getInt("stream.players-every-ticks", 2)) == 0) { sendPlayers(); entities.tick(ready()); }
         actions.flush(ready());   // swings, digging, breaks, damage of this tick (PROTOCOL.md 4.22)
         blockEntities.tick(ready());   // [blocks] sign text, banner patterns, heads... (PROTOCOL.md 4.29), budgeted
+        worldState.tick(ready());   // [living] time of day and weather, on change and about once a second
         control.tick(tickCount);  // [talk] late command output, server_status
         interact.tick();          // [hands] held mobs that got no update for 3 s are let go
+        operator.tick(tickCount); // [operator] open container views: changes re-sent, gone ones closed
         avatar.tickBubble();      // [talk] the giant's speech bubble follows the head and expires
         if (tickCount % 20 == 0) { timeouts(); onlinePlayers = Bukkit.getOnlinePlayers().size(); }
         // [nav] A move read that never finished (a chunk load failed) must not hold diffs back forever.
@@ -314,6 +325,7 @@ public final class TabletopPlugin extends JavaPlugin {
         if (s.wantsEntities) sc.add(Protocol.CAP_ENTITIES);   // entities (PROTOCOL.md 4.21)
         if (s.wantsActions) sc.add(Protocol.CAP_ACTIONS);     // actions (PROTOCOL.md 4.22)
         if (s.wantsBlockEntities) sc.add(Protocol.CAP_BLOCK_ENTITIES);   // [blocks] block entity data (PROTOCOL.md 4.29)
+        if (s.wantsWorld) sc.add(Protocol.CAP_WORLD);          // [living] world_state
         sc.add("view_margin");
         sc.add("pose_snapshot_id");
         if (s.canEdit) sc.add(Protocol.CAP_EDIT);   // block editing (PROTOCOL.md 4.20)
@@ -323,12 +335,15 @@ public final class TabletopPlugin extends JavaPlugin {
         if (s.wantsStatus) sc.add(ControlMessages.CAP_STATUS);
         if (s.canInteract) sc.add(InteractMessages.CAP);   // [hands]
         if (power.granted(s)) sc.add(PowerMessages.CAP);   // [power]
+        if (s.wantsMarks) sc.add(OperatorMessages.CAP_MARKS);   // [operator]
         w.add("caps", sc);
         control.welcome(s, w);
         interact.welcome(s, w);   // [hands] welcome.interact: the switches
+        operator.welcome(s, w);   // [operator] welcome.worlds, welcome.marks, welcome.interact containers/signs
         send(s, w);
         send(s, blockRegistry.message());   // [menu] every placeable block, once per connection (PROTOCOL.md 4.24)
         if (s.canInteract) send(s, interact.itemRegistryMessage());   // [hands] usable items and spawn eggs
+        if (s.wantsMarks) send(s, operator.bookmarksMessage());       // [operator] the shared bookmarks
         subscribe(s, r, null);
     }
 
@@ -360,7 +375,8 @@ public final class TabletopPlugin extends JavaPlugin {
         int y0 = Math.max(origin[1], w.getMinHeight());
         int y1 = Math.min(origin[1] + dims[1], w.getMaxHeight());
         if (y1 <= y0) { send(s, Protocol.error("region_too_large", "region is outside the build height", refSeq, false)); return; }
-        if (follow) send(s, Protocol.error("unsupported", "follow is not implemented in v0.1", refSeq, false));
+        // [operator] Following a player is the headset's job (it glides and jumps with region_request; PROTOCOL.md "Following a player").
+        if (follow) send(s, Protocol.error("unsupported", "subscribe.follow is not supported: headsets follow players themselves (region_request)", refSeq, false));
         subscribe(s, new RegionSpec(wn, origin[0], y0, origin[2], dims[0], y1 - y0, dims[2]), refSeq);
     }
 
@@ -673,6 +689,7 @@ public final class TabletopPlugin extends JavaPlugin {
         if (s == avatarOwner) avatarOwnerGoneMs = System.currentTimeMillis();
         interact.onSessionClosed(s);   // [hands] let go of what it held
         power.onSessionClosed(s);      // [power] its journal and jobs go
+        operator.onSessionClosed(s);   // [operator] its container view ends (the lid closes)
         updateTickets();
     }
 
@@ -830,6 +847,7 @@ public final class TabletopPlugin extends JavaPlugin {
         caps.addTo(lim);
         addBuildHeight(lim, r.world());
         o.add("limits", lim);
+        operator.regionInfo(o, r.world());   // [operator] the region world's spawn and every world
         if (refSeq != null) o.addProperty("ref_seq", refSeq);
         send(s, o);
     }
@@ -1121,6 +1139,7 @@ public final class TabletopPlugin extends JavaPlugin {
                 sender.sendMessage("[tabletop] " + control.stats() + "; commands " + (control.commandsAllowed() ? "on, deny " + control.denyList() : "off (" + control.commandsOffReason() + ")"));   // [talk]
                 sender.sendMessage("[tabletop] " + interact.stats());   // [hands]
                 sender.sendMessage("[tabletop] " + power.stats());      // [power]
+                sender.sendMessage("[tabletop] " + operator.stats());   // [operator]
             }
             case "unfreeze-all" -> {   // [hands] every mob a headset froze (frozen.txt), also ones in chunks loaded later
                 int[] r = interact.unfreezeAll();

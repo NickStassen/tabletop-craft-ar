@@ -17,6 +17,8 @@
     <!-- [nav] which sections are meshed: near the visible window only -->
     <Compile Include="../Assets/Scripts/World/MeshScope.cs" />
     <Compile Include="../Assets/Scripts/World/BlockShading.cs;../Assets/Scripts/World/BiomeColors.cs" />
+    <!-- [living] time of day, weather, leads, gear, displays (PROTOCOL.md "World state", "Living entities") -->
+    <Compile Include="../Assets/Scripts/World/DayLight.cs;../Assets/Scripts/World/Precipitation.cs;../Assets/Scripts/World/LightningBolt.cs;../Assets/Scripts/World/Leash.cs;../Assets/Scripts/World/LivingLooks.cs" />
     <Compile Include="../Assets/Scripts/World/BlockModelBaker.cs;../Assets/Scripts/World/BlockModels.cs;../Assets/Scripts/World/PistonGhosts.cs;../Assets/Scripts/World/TextureMips.cs" />
     <Compile Include="../Assets/Scripts/World/PlayerModel.cs;../Assets/Scripts/World/PlayerAnimation.cs;../Assets/Scripts/World/SkinImage.cs" />
     <Compile Include="../Assets/Scripts/World/FluidMesher.cs;../Assets/Scripts/World/TextureAnimation.cs;../Assets/Scripts/World/EyeMedium.cs" />
@@ -31,6 +33,8 @@
     <Compile Include="../Assets/Scripts/Net/InteractProtocol.cs;../Assets/Scripts/World/UseRules.cs;../Assets/Scripts/World/EntityRaycast.cs;../Assets/Scripts/World/EntityCardModel.cs" />
     <!-- [power] undo/redo, box edits and brushes (power_v1) -->
     <Compile Include="../Assets/Scripts/Net/PowerProtocol.cs;../Assets/Scripts/World/PowerTools.cs" />
+    <!-- [operator] follow, jumps, marks, the container view and the sign editor -->
+    <Compile Include="../Assets/Scripts/Net/OperatorProtocol.cs;../Assets/Scripts/World/FollowState.cs;../Assets/Scripts/World/MarksModel.cs;../Assets/Scripts/World/ContainerModel.cs;../Assets/Scripts/World/SignEditorModel.cs" />
     <!-- [comfort] keyboard, prefs.json, LAN discovery, session helpers -->
     <Compile Include="../Assets/Scripts/World/KeyboardModel.cs;../Assets/Scripts/World/AppPrefs.cs;../Assets/Scripts/World/SessionState.cs;../Assets/Scripts/Net/LanDiscovery.cs" />
     <!-- [blocks] block entities: catalog, baked models, block_entities data (PROTOCOL.md 4.29) -->

@@ -1,0 +1,38 @@
+{
+ "v": 1,
+ "type": "container",
+ "seq": 140,
+ "t": 1760370008010,
+ "ref_seq": 92,
+ "pos": [
+  1,
+  64,
+  2
+ ],
+ "block": "minecraft:chest",
+ "title": "Large Chest",
+ "size": 54,
+ "other": [
+  2,
+  64,
+  2
+ ],
+ "edit": "edit",
+ "items": [
+  [
+   0,
+   "minecraft:diamond",
+   3
+  ],
+  [
+   5,
+   "minecraft:torch",
+   64
+  ],
+  [
+   30,
+   "minecraft:oak_planks",
+   16
+  ]
+ ]
+}

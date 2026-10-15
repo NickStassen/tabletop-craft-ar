@@ -109,6 +109,25 @@ namespace TabletopCraft
         PowerTools _tools;
         PowerToolMode _power;
         string _lastToolResult = "";
+        // [living] time of day and weather (WorldLight), rain, snow and lightning (WeatherRenderer), leads (LeashRenderer)
+        WorldLight _light;
+        WeatherRenderer _weather;
+
+        /// <summary>[living] The living-world parts: the light follows world_state, weather and leads are drawn on the table.</summary>
+        void SetupLiving()
+        {
+            _light = gameObject.AddComponent<WorldLight>();
+            _entities.Light = _light;
+            _entityTex.BlockOpaque = OpaqueMaterial; _entityTex.BlockTransparent = TransparentMaterial;   // blocks on entities, block displays
+            var weatherT = new GameObject("Weather").transform; weatherT.SetParent(_regionRoot, false);
+            _weather = weatherT.gameObject.AddComponent<WeatherRenderer>();
+            _weather.Model = _world; _weather.Light = _light; _weather.Textures = _entityTex; _weather.Nav = _nav.State; _weather.Head = Head;
+            _entities.Weather = _weather;
+            var leash = _entitiesRoot.gameObject.AddComponent<LeashRenderer>();
+            leash.Entities = _entities; leash.Players = _players; leash.Textures = _entityTex;
+        }
+        // [operator] what the server allows for bookmarks, the container view and the sign editor (welcome)
+        OperatorWelcome _operator = new OperatorWelcome();
 
         void Start()
         {
@@ -183,6 +202,7 @@ namespace TabletopCraft
             _nav.BlockSize = () => BlockSizeM; _nav.Suspended = () => _area.Active; _nav.Send = b => _link.Send(b);
             _area.Nav = _nav.State;
             eye.Caps = _caps;   // water cuts of the visible window get inside faces too (EyeEffects.cs)
+            SetupLiving();   // [living] needs the entities and the nav window
             // [area] width presets: left stick click, or a menu through Presets/Current/Request (XR/AreaSizeControl.cs)
             AreaSize = gameObject.AddComponent<AreaSizeControl>();
             AreaSize.Nav = _nav.State; AreaSize.Renderer = _renderer; AreaSize.Blocked = () => _area.Active; AreaSize.Send = b => _link.Send(b);
@@ -266,6 +286,30 @@ namespace TabletopCraft
             _edit.Undo = () => _power.Press(ToolButton.Undo);
             _menu.Model.SetTools(_tools);
             _menu.ToolPressed = id => _power.Press((ToolButton)id);
+            // [operator] Marks tab jumps, Players' Follow / Go to (NavController + World/FollowState.cs); the left trigger on a
+            // container or a sign opens the container view or the sign editor in the operator panel (BlockEditMode's hooks).
+            _ops.JumpTo = (w, p) => { if (!_nav.JumpTo(w, p)) _hud.Toast("No area yet", ToastKind.Warn); };
+            _ops.Follow = _nav.FollowCommand;
+            _ops.Icons = _icons; _ops.Nav = _nav.State; _ops.Following = _nav.Follow;
+            _ops.Selection = () => _edit.Editor.Selected;
+            _ops.Registry = () => _registry;
+            _nav.WorldInfo = n => _ops.Model.Marks.WorldOf(n);
+            _nav.PlayerShown = _players.TryShown;
+            _nav.SendTracked = b => _link.SendTracked(b);
+            _nav.FollowBlocked = () => _area.Active;
+            _nav.FollowNote = t => _hud.Toast(t, ToastKind.Info);
+            _edit.OnContainerUse = pos =>
+            {
+                if (!_operator.ContainersOn) { _edit.Editor.Result = "can't open containers: they're off on this server (interact.containers)"; return; }
+                _ops.OpenContainer(pos);
+            };
+            _edit.OnSignUse = pos =>
+            {
+                if (!_operator.Signs) { _edit.Editor.Result = "can't edit signs: it's off on this server (interact.signs)"; return; }
+                var local = pos - _world.Origin;
+                string state = _world.Loaded && _world.InBounds(local.x, local.y, local.z) ? _world.State(_world.Get(local.x, local.y, local.z)) : null;
+                _ops.OpenSign(pos, state, _blockEntities.Store.Get(pos));
+            };
             _chatView = gameObject.AddComponent<ChatView>();
             _chatView.Head = Head; _chatView.LeftHand = LeftHand; _chatView.Log = _ops.Model.Log; _chatView.Bubbles = _ops.Bubbles;
             _chatView.Hidden = () => _ops.Open || _menu.Open || _area.Active;
@@ -316,6 +360,7 @@ namespace TabletopCraft
                 BlockShading.MinLight = (float)c.D("min_light", BlockShading.MinLight);         // brightness of light level 0
                 GreedyMesher.LeavesInner = c.B("leaves_inner", true);                           // faces between leaves, like vanilla
                 ResourcePackAtlas.Mipmaps = c.B("mipmaps", true);                               // mip-mapped block textures
+                WorldLight.WeatherFx = c.B("weather_fx", true);                                 // [living] rain, snow, lightning
                 // [menu] show_hud, [area] area_width and block_size_m are shared with prefs.json: see LoadPrefs
                 _operatorName = c.S("operator_name");                                           // [talk] the name in chat
                 foreach (var q in c.A("quick_commands") ?? new List<object>()) if (q is string qs) _quickCommands.Add(qs);   // [talk] Console quick buttons
@@ -475,6 +520,7 @@ namespace TabletopCraft
         void ResetView()
         {
             _placement.NorthUp();
+            _nav.StopFollow("Reset view");   // [operator]
             _nav.State.Recenter();
             _nav.Place();
             if (_nav.State.Loaded) AreaSize.FitToTable(AreaSizing.Current(_nav.State));
@@ -502,6 +548,7 @@ namespace TabletopCraft
             _blocks.localScale = Vector3.one * bs;
             _players.BlockSizeM = bs;
             _entities.BlockSizeM = bs;   // [entities]
+            if (_weather != null) _weather.BlockSizeM = bs;   // [living]
             RecenterRegion();
             _avatarConfigAt = Time.unscaledTime + 0.3f;
         }
@@ -571,13 +618,23 @@ namespace TabletopCraft
             $"\nBLOCKS {(_registry != null ? _registry.Count + " placeable" : "-")}  {_icons.Status}" +
             $"\nTALK {TalkStatus()}" +   // [talk]
             $"\nHANDS {HandsStatus()}" +   // [hands]
-            $"\nPOWER {_tools.Status}";   // [power]
+            $"\nPOWER {_tools.Status}" +   // [power]
+            $"\nTIME {LivingStatus()}";   // [living]
 
         /// <summary>[hands] Using blocks, items and mobs as the server granted it, and what the left trigger does first.</summary>
         string HandsStatus() =>
             !_interact.Allowed ? "off (the server has no interact_v1, or interact.enabled is off)"
             : $"on, {_items?.Count ?? 0} items, left trigger {(_leftTrigger == TriggerMode.Use ? "uses first (grip = place)" : "places (grip = use)")}" +
               $"{(_interact.Entities ? "" : ", no mobs")}{(_interact.HarmPlayers ? ", players can be hurt" : "")}";
+
+        /// <summary>[living] The world's time and weather as the table shows them (WorldLight, WeatherRenderer).</summary>
+        string LivingStatus()
+        {
+            var c = _light != null ? _light.Clock : null;
+            if (c == null || !c.Known) return "- (no world_state: noon)";
+            return $"{(int)c.DayTime} {c.Dimension}  rain {c.Rain:F2} thunder {c.Thunder:F2}  sky {_light.Current.SkyFactor:F2}" +
+                   $"  drops {(_weather != null ? _weather.Drops : 0)}{(WorldLight.WeatherFx ? "" : " (weather_fx off)")}";
+        }
 
         /// <summary>[talk] Chat, commands and status as the server granted them (X opens the operator panel).</summary>
         string TalkStatus()
@@ -640,19 +697,33 @@ namespace TabletopCraft
                     _tools.OnWelcome(m); _menu.Model.SetTools(_tools);   // [power] power_v1 and its limits: the Tools tab
                     if (!_interact.Allowed && _items != null) { _items = null; _menu.SetItems(null); }
                     _card.Model.Close();
+                    _operator = OperatorWelcome.From(m);   // [operator] worlds, bookmarks, containers, signs
+                    _ops.Model.Marks.OnWelcome(_operator);
+                    _ops.Model.LeaveMode();               // a container view of the old session is gone
+                    _ops.Model.Outbox.Clear();
+                    _nav.Follow.Focus.Clear();
+                    Debug.Log($"[Tabletop] OPERATOR worlds {_operator.Worlds.Count}, bookmarks {(_operator.Marks ? (_operator.MarksEdit ? "on" : "read-only") : "off")}, containers {_operator.Containers}, signs {(_operator.Signs ? "on" : "off")}");
                     // Light from the server makes faces merge less: scale the area-setup face estimate (soft cap).
                     AreaMath.LightFactor = AreaMath.LightFactorFor(m.A("caps")?.Contains(Protocol.CapLight) == true, BlockShading.SmoothLighting);
                     _link.Send(Protocol.AvatarConfig(true, BlockSizeM, SkinPlayer, true, "Tabletop Giant"));
                     // [comfort] a new session lists its players and entities afresh (stale ones were hidden while offline)
                     _players.Apply(new List<PlayerInfo>());
                     _entities.Clear();
+                    _light.Reset();   // [living] noon until this server's world_state
                     if (_announce) { _announce = false; _hud.Toast("Connected to " + ServerAddress.HostOf(_link.Url), ToastKind.Info); }
                     break;
                 case "region_info":
+                {
+                    // [operator] the region world's spawn and the worlds; following's own region_query answers stop here
+                    var spawn = m.A("spawn");
+                    _ops.Model.Marks.OnRegionInfo(WorldEntry.ListFrom(m.A("worlds")), m.O("region")?.S("world"),
+                                                  spawn != null && spawn.Count == 3 ? new Vector3Int((int)(double)spawn[0], (int)(double)spawn[1], (int)(double)spawn[2]) : (Vector3Int?)null);
+                    if (_nav.OnFollowReply(m)) { _nav.OnLimits(m.O("limits")); break; }
                     _area.OnRegionInfo(RegionInfo.From(m));
                     _nav.OnLimits(m.O("limits"));   // [nav]
                     AreaSize.OnLimits(m.O("limits"));   // [area]
                     break;
+                }
                 case "region_changed":
                     // A snapshot of the new region follows; just note who changed it (shared region, last writer wins).
                     _area.OnRegionChanged(m, m.S("by_session") == _session);
@@ -677,6 +748,7 @@ namespace TabletopCraft
                     break;
                 case "entities": _entities.Apply(m); break;   // [entities] PROTOCOL.md 4.21
                 case "block_entities": _blockEntities.Apply(m); break;   // [blocks] PROTOCOL.md 4.29
+                case "world_state": _light.Apply(m); break;   // [living] time of day and weather
                 case "actions":                                  // [entities] PROTOCOL.md 4.22
                     _actions.Clear();
                     GameAction.Parse(m, _actions);
@@ -691,6 +763,7 @@ namespace TabletopCraft
                     break;
                 case "chat": case "command_result": case "command_output": case "command_suggestions":   // [talk] PROTOCOL.md 4.26-4.28
                 case "server_status": case "world_info": case "players_info":
+                case "bookmarks": case "container":   // [operator] PROTOCOL.md "Marks...", "Containers"
                     _ops.OnMessage(m);
                     break;
                 case ItemRegistry.Type:   // [hands] usable items and spawn eggs (PROTOCOL.md "Using blocks and items")
@@ -718,6 +791,7 @@ namespace TabletopCraft
                     catch (Exception e) { Debug.LogWarning("[Tabletop] bad block_registry: " + e.Message); _hud.Toast("Bad block list from the server", ToastKind.Error); }
                     break;
                 case "error":
+                    if (_nav.OnFollowReply(m)) break;   // [operator] following's region_query: the player left
                     if (_ops.OnError(m)) { Debug.Log($"[Tabletop] panel error {m.S("code")}: {m.S("message")}"); break; }   // [talk] the panel shows it
                     _tools.OnError(m);   // [power] a refused box edit, undo, redo or stroke: its job is no longer pending
                     _lastError = $"{m.S("code")}: {m.S("message")}";

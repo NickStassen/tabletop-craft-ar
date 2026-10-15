@@ -46,6 +46,7 @@ from tabletop_protocol import (
     block_edit,
     box_edit_msg,
     brush_msg,
+    container_edit,
     interact,
     validate,
 )
@@ -299,6 +300,30 @@ async def run(a: argparse.Namespace) -> dict:
         text = " ".join(r4.get("lines") or []) if r4 else ""
         check(r3 and not r3.get("ok") and "diamond" in text, "a box cleared over a chest spills nothing; its undo brings the diamonds back",
               spilled=spilled[:80], data=text[:120])
+        # [operator] a container_edit and a sign_edit are journalled too: undo puts the old contents and text back
+        await c.send("container_edit", **container_edit(chest, 3, "minecraft:gold_ingot", 5), group=g())
+        await asyncio.sleep(0.3)
+        r5 = not c.errors("interact_denied")
+        got = " ".join((await c.command(f"data get block {x} {y} {z} Items") or {}).get("lines") or [])
+        r = await undo()
+        after = " ".join((await c.command(f"data get block {x} {y} {z} Items") or {}).get("lines") or [])
+        r = await undo(redo=True)
+        redone = " ".join((await c.command(f"data get block {x} {y} {z} Items") or {}).get("lines") or [])
+        check(r5 and "gold_ingot" in got and "gold_ingot" not in after and "diamond" in after and "gold_ingot" in redone,
+              "a container edit is undone (the gold goes, the diamonds stay) and redone", before=got[-90:], undone=after[-90:])
+        sign = P(14, 2)
+        await place(sign, "minecraft:oak_sign[rotation=0,waterlogged=false]", g())
+        await c.until(lambda: name(at(sign)) == "oak_sign")
+        await c.send("sign_edit", pos=list(sign), side="front", lines=["", "Hello", "", ""], group=g())
+        await asyncio.sleep(0.4)
+        sx, sy, sz = sign
+        said = " ".join((await c.command(f"data get block {sx} {sy} {sz} front_text.messages") or {}).get("lines") or [])
+        r = await undo()
+        unsaid = " ".join((await c.command(f"data get block {sx} {sy} {sz} front_text.messages") or {}).get("lines") or [])
+        check("Hello" in said and "Hello" not in unsaid and name(at(sign)) == "oak_sign",
+              "a sign edit is undone (the text goes, the sign stays)",
+              before=said[-80:], undone=unsaid[-80:])
+        await brk(sign, None)
         await c.command(f"item replace block {x} {y} {z} container.0 with minecraft:air")
     else:
         check(True, "chest contents: skipped (no command_v1: pass --token)")

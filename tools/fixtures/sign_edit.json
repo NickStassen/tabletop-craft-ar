@@ -1,0 +1,20 @@
+{
+ "v": 1,
+ "type": "sign_edit",
+ "seq": 97,
+ "t": 1760370008500,
+ "pos": [
+  106,
+  64,
+  -35
+ ],
+ "side": "front",
+ "lines": [
+  "",
+  "Shop",
+  "open 9-5",
+  ""
+ ],
+ "color": "light_blue",
+ "glowing": true
+}
