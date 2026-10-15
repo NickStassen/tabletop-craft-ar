@@ -32,7 +32,7 @@ Java players (LAN) ──game protocol──▶ Paper 26.3 + tabletop plugin ◀
 |---|---|
 | Plugin: snapshot, block updates, players, subscribe, errors, timeouts | Tested end to end on a headless Paper 26.3 server (and earlier on 1.21.11); see [TESTING](docs/TESTING.md) |
 | Giant avatar following poses | Floating head + hands (default): positions and head rotation match the poses exactly on a 26.3 test server, and a mineflayer player receives the three displays (TESTING section 7); not yet seen by eye. Mannequin modes: on the first headset session a Java client on an online-mode server saw the giant follow the headset wearing the user's skin (exact placement); ground placement was tried and replaced as the default |
-| Java players on the table (skinned, animated figures) | Geometry, UVs, animation and skin rules unit-tested; skin download checked in the Unity Editor; not yet seen on a headset |
+| Java players on the table (skinned, animated figures) | Working on a Quest 3 headset: a Java player's figure shows up on the miniature (see the "Both sides of the same world" clip below). Geometry, UVs, animation and skin rules are unit-tested, and skin download was checked in the Unity Editor |
 | Quest C# protocol/mesher code | Compiled and unit-tested with .NET 8 outside Unity, plus a live session against the plugin |
 | Block editing from the headset (break, place, pick) | Verified on a Quest 3 (the screenshots below), and tested live against Paper 26.3 (unit tests, `Tests~ --live-edit`, `tools/edit_check.py`). See [TESTING](docs/TESTING.md) "Block editing" and [QUEST_SETUP](docs/QUEST_SETUP.md) Part I |
 | Quest app in Unity | Compiles and builds an APK on Linux, headless (Unity 6000.0.84f1, Meta XR 85.0.0); see [TESTING](docs/TESTING.md) section 5 |
