@@ -128,14 +128,18 @@ sealed class ZipAssets : IModelAssets, IDisposable
 sealed class PackFaces : IFaceSource, IModelSource
 {
     readonly BlockModels _models;
-    readonly Dictionary<string, FaceKey[]> _faces = new Dictionary<string, FaceKey[]>();
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, FaceKey[]> _faces = new System.Collections.Concurrent.ConcurrentDictionary<string, FaceKey[]>();
+    readonly int _owner = System.Threading.Thread.CurrentThread.ManagedThreadId;
 
     public PackFaces(IModelAssets assets, bool entityBoxes = true) { _models = new BlockModels(assets) { EntityBoxes = entityBoxes }; }
 
+    /// <summary>[mesh] Like the atlas, a worker thread never bakes: an unprepared state is an uncached flat colour
+    /// (only the live glide harness meshes on workers; everything else runs on the creating thread).</summary>
     public FaceKey Face(string state, int dir)
     {
         if (!_faces.TryGetValue(state, out var f))
         {
+            if (System.Threading.Thread.CurrentThread.ManagedThreadId != _owner) return new FaceKey { Layer = -1, Color = BlockRules.FlatColor(state) };
             f = new FaceKey[6];
             var flat = BlockRules.FlatColor(state);
             for (int i = 0; i < 6; i++) f[i] = new FaceKey { Layer = -1, Color = flat };

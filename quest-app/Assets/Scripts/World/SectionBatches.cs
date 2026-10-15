@@ -260,6 +260,14 @@ namespace TabletopCraft.World
         public static bool Ready(bool sectionsPending, float dirtySince, float now, float maxWait, bool staging) =>
             !sectionsPending || (!staging && now - dirtySince >= maxWait);
 
+        /// <summary>[mesh] True when none of the batch's section columns is in the visible box (x and z; a batch spans the
+        /// full height). Such a batch can wait for more of its sections before it is uploaded (TabletopRenderer).</summary>
+        public static bool OffScreen(BatchLayout layout, Vector3Int key, SectionBox visible)
+        {
+            var f = layout.First(key);
+            return (long)f.x + layout.Columns <= visible.Min.x || f.x >= visible.Max.x || (long)f.z + layout.Columns <= visible.Min.z || f.z >= visible.Max.z;
+        }
+
         /// <summary>
         /// After a re-keyed snapshot (a shift or resize by whole sections): batches that lost sections (dropped by the
         /// new region) must be rebuilt; batches that no longer cover any section of the region go away. Batches that

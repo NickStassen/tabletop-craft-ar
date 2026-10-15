@@ -276,6 +276,39 @@ namespace TabletopCraft.EditorTools
                 expect = all;
                 Report("lazy margin meshes them again when the window comes back", "re-meshed", frames, sw.ElapsedMilliseconds);
             }
+            {
+                // [mesh] Surface skirt: while the view moves, the visible columns whose new sections aren't on screen yet get a
+                // skirt tile (World/SurfaceSkirt.cs); when everything is meshed and uploaded the tiles go and what is on screen
+                // is the terrain alone again.
+                bool skirtWas = SurfaceSkirt.Enabled; SurfaceSkirt.Enabled = true;
+                var n = model.SectionCount;
+                var box = new SectionBox { Min = new Vector3Int(0, 0, 0), Max = n };
+                r.Scope = r.KeepScope = r.VisibleScope = box;
+                r.Motion = new Vector3(20, 0, 0);
+                r.SkirtBottom = 0; r.SkirtTop = model.Dims.y;
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var next = Terrain(model.Origin + new Vector3Int(16, 0, 0), model.Dims, ++id);
+                var plan = SectionPlan.Compute(model, Snap(next), r.Unsettled(), null);
+                var oldOrigin = model.Origin;
+                model.ApplySnapshot(Snap(next));
+                r.OnSnapshot(plan, oldOrigin, next.Origin);
+                int frames = 0, most = 0, shown = 0;
+                for (; frames < 20000 && (frames < 3 || !r.Idle || r.Refreshing > 0 || r.SkirtTiles > 0); frames++)
+                {
+                    update.Invoke(r, null);
+                    most = Mathf.Max(most, r.SkirtTiles);
+                    foreach (var mf in go.GetComponentsInChildren<MeshFilter>(false)) if (mf.name == "skirt" && mf.sharedMesh && mf.sharedMesh.vertexCount > 0) { shown++; break; }
+                    System.Threading.Thread.Sleep(1);
+                }
+                bool cleared = r.SkirtTiles == 0;
+                foreach (var mf in go.GetComponentsInChildren<MeshFilter>(false)) if (mf.name == "skirt") cleared = false;
+                if (most == 0 || shown == 0 || !cleared) { errors++; Debug.LogError($"BATCHRENDER skirt: most {most} tiles, shown in {shown} frames, cleared {cleared}"); }
+                expect = Expect(model, expect, plan, atlas);
+                Report("skirt while gliding east", $"up to {most} skirt tiles, on screen in {shown} frames, all gone after", frames, sw.ElapsedMilliseconds);
+                r.Motion = Vector3.zero;
+                r.Scope = r.KeepScope = r.VisibleScope = SectionBox.All;
+                SurfaceSkirt.Enabled = skirtWas;
+            }
             Debug.Log($"BATCHRENDER done: {errors} errors");
             Object.DestroyImmediate(go);
             if (Application.isBatchMode) EditorApplication.Exit(errors == 0 ? 0 : 1);

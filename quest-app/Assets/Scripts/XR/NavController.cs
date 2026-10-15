@@ -54,7 +54,8 @@ namespace TabletopCraft.XR
             Debug.Log($"[Tabletop] GLIDE width={Mathf.Max(State.Window.x, State.Window.z)} margin={State.Margin.x} blocks_s={v:F1} table_cm_s={v * bs * 100:F1} " +
                       $"asked_blocks_s={_logWant / _logT:F1} stream_cap={_logStream:F0} mesh_cap={(State.MeshCap > 1e6f ? "-" : State.MeshCap.ToString("F0"))} " +
                       $"mesh_rate_s={(Renderer ? Renderer.MeshRate : 0):F0} latency_ms={State.LatencyEma * 1000:F0} holes_s={_logHoles:F1} " +
-                      $"pending={(Renderer ? Renderer.Pending : 0)} requests={State.Requests}");
+                      $"pending={(Renderer ? Renderer.Pending : 0)} requests={State.Requests} " +
+                      $"mesh_ms={(Renderer ? Renderer.MsPerSection : 0):F2} per_job={(Renderer ? Renderer.LastPerJob : 0)} skirt_tiles={(Renderer ? Renderer.SkirtTiles : 0)}");   // [mesh] worker time per section, job size, skirt
             _logT = _logDist = _logWant = _logHoles = 0;
         }
 
@@ -242,6 +243,8 @@ namespace TabletopCraft.XR
                 Renderer.KeepScope = MeshScope.Keep(State, n);
                 Renderer.VisibleScope = MeshScope.Visible(State, n);
                 Renderer.Motion = State.Velocity;
+                var (wlo, whi) = MeshScope.Window(State);   // [mesh] the skirt shows the first block below the window top
+                Renderer.SkirtBottom = Mathf.FloorToInt(wlo.y); Renderer.SkirtTop = Mathf.CeilToInt(whi.y);
             }
         }
 

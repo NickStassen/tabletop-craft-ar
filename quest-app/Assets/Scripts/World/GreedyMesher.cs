@@ -36,7 +36,7 @@ namespace TabletopCraft.World
         public byte Random;      // [random] per-block texture rotation table (RandomUv in BlockModels.cs), 0 = none
         public byte Shade;       // BakedModel.Shade: 0 smooth light + AO, 1 flat (no AO), 2 full bright (magma)
         public byte Light;       // [living] fluids: the LightCode folded into the key with the lit colour (FluidMesher), 0 elsewhere
-        public bool Equals(FaceKey o) => Layer == o.Layer && Color.r == o.Color.r && Color.g == o.Color.g && Color.b == o.Color.b && Color.a == o.Color.a && Transparent == o.Transparent && Tint == o.Tint && UvMap == o.UvMap && Random == o.Random && Shade == o.Shade && Light == o.Light
+        public bool Equals(in FaceKey o) => Layer == o.Layer && Color.r == o.Color.r && Color.g == o.Color.g && Color.b == o.Color.b && Color.a == o.Color.a && Transparent == o.Transparent && Tint == o.Tint && UvMap == o.UvMap && Random == o.Random && Shade == o.Shade && Light == o.Light
             && Overlay == o.Overlay && (Overlay == 0 || (OverlayTint == o.OverlayTint && OverlayUvMap == o.OverlayUvMap && OverlayColor.r == o.OverlayColor.r && OverlayColor.g == o.OverlayColor.g && OverlayColor.b == o.OverlayColor.b && OverlayColor.a == o.OverlayColor.a));
 
         /// <summary>The overlay layer as a face key of its own (for colours and UVs), or default when there is none.</summary>
@@ -87,94 +87,178 @@ namespace TabletopCraft.World
         /// (fewer faces). tabletop.json "leaves_inner".</summary>
         public static bool LeavesInner = true;
 
-        public static void Build(WorldModel w, Vector3Int section, IFaceSource faces, MeshData m)
-        {
-            m.Clear();
-            int S = WorldModel.Section;
-            bool[] keepSame = LeavesInner ? LeavesOf(w) : null;   // palette ids whose faces against themselves are drawn
-            Vector3Int b0 = section * S;
-            Vector3Int size = new Vector3Int(Mathf.Min(S, w.Dims.x - b0.x), Mathf.Min(S, w.Dims.y - b0.y), Mathf.Min(S, w.Dims.z - b0.z));
-            var mask = new FaceKey[S * S];
-            var has = new bool[S * S];
-            var corners = new Quad4[S * S];  // per-face vertex colours from BlockShading
-            var ocorners = new Quad4[S * S]; // the same for the face's overlay layer (FaceKey.Overlay), when it has one
+        public static void Build(WorldModel w, Vector3Int section, IFaceSource faces, MeshData m) => (_scratch ?? (_scratch = new Scratch())).Build(w, section, faces, m);
 
-            for (int dir = 0; dir < 6; dir++)
+        // [mesh] One scratch per worker thread, fetched once per section (thread-static access is slow under IL2CPP).
+        [System.ThreadStatic] static Scratch _scratch;
+
+        const int S = WorldModel.Section, P = S + 2;   // P: the section plus a one-cell border on every side
+        const byte Outside = 0xFF;                      // a padded cell outside the region (WorldModel.Get gives 0xFFFF)
+
+        /// <summary>
+        /// [mesh] The greedy pass with its per-section state. The section and its one-cell border are copied once into
+        /// padded arrays (palette id and BlockShape per cell, from WorldModel.ShapeOf's per-palette table), and face keys
+        /// and the leaves flag are looked up once per palette id per section instead of once per cell and direction
+        /// (each was a string-keyed dictionary lookup: about 50k per section, most of the cost of an all-air or
+        /// all-stone section). A section without cubes returns at once. Output is identical to the per-cell version:
+        /// same faces, same order (Tests~ MeshTests: hashes of real sections before and after).
+        /// </summary>
+        sealed class Scratch
+        {
+            readonly ushort[] _ids = new ushort[P * P * P];
+            readonly byte[] _shapes = new byte[P * P * P];
+            readonly FaceKey[] _mask = new FaceKey[S * S];
+            readonly bool[] _has = new bool[S * S];
+            readonly Quad4[] _corners = new Quad4[S * S];   // per-face vertex colours from BlockShading
+            readonly Quad4[] _ocorners = new Quad4[S * S];  // the same for the face's overlay layer (FaceKey.Overlay), when it has one
+            readonly int[] _c = new int[3];
+            readonly ShadeCache _shade = new ShadeCache();   // light and shapes around the section, for FaceCorners
+            // Per palette id, valid while its stamp equals _stamp (one stamp per Build call).
+            int _stamp;
+            int[] _keyStamp = new int[256 * 6], _leafStamp = new int[256];
+            FaceKey[] _keys = new FaceKey[256 * 6];
+            bool[] _leaf = new bool[256];
+
+            static int Pad(int x, int y, int z) => ((y + 1) * P + (z + 1)) * P + (x + 1);   // section-local -1..S
+
+            public void Build(WorldModel w, Vector3Int section, IFaceSource faces, MeshData m)
             {
-                int axis = dir / 2;              // 0=x 1=y 2=z
-                int ua = (axis + 1) % 3, va = (axis + 2) % 3;
-                Vector3Int n = Dirs[dir];
-                for (int d = 0; d < size[axis]; d++)
-                {
-                    // Build the mask for this slice.
-                    for (int v = 0; v < size[va]; v++)
-                        for (int u = 0; u < size[ua]; u++)
-                        {
-                            var p = new Vector3Int(); p[axis] = d; p[ua] = u; p[va] = v; p += b0;
-                            int k = u + v * S;
-                            has[k] = false;
-                            ushort id = w.Get(p.x, p.y, p.z);
-                            string st = w.State(id);
-                            var shape = BlockRules.Shape(st);
-                            if (shape != BlockShape.Cube && shape != BlockShape.TransparentCube) continue;   // fluids: FluidMesher
-                            var q = p + n;
-                            ushort nid = w.Get(q.x, q.y, q.z);
-                            if (nid != 0xFFFF)
-                            {
-                                var ns = BlockRules.Shape(w.State(nid));
-                                if (ns == BlockShape.Cube) continue;                 // hidden by an opaque neighbour
-                                // glass next to same glass, water next to water; not leaves (vanilla draws those, LeavesInner)
-                                if (nid == id && shape != BlockShape.Cube && !(keepSame != null && id < keepSame.Length && keepSame[id])) continue;
-                            }
-                            mask[k] = faces.Face(st, dir);
-                            mask[k].Transparent |= shape != BlockShape.Cube;
-                            corners[k] = BlockShading.FaceCorners(w, mask[k], p.x, p.y, p.z, dir);
-                            if (mask[k].Overlay != 0) ocorners[k] = BlockShading.FaceCorners(w, mask[k].OverlayKey(), p.x, p.y, p.z, dir);
-                            has[k] = true;
-                        }
-                    // Greedy merge: same key and same corner colours; along u only if the colours don't change along u
-                    // (c0 == c1, c3 == c2), along v only if they don't change along v (c0 == c3, c1 == c2).
-                    for (int v = 0; v < size[va]; v++)
-                        for (int u = 0; u < size[ua];)
-                        {
-                            int k = u + v * S;
-                            if (!has[k]) { u++; continue; }
-                            var key = mask[k];
-                            var col = corners[k];
-                            var ocol = ocorners[k];
-                            bool ov = key.Overlay != 0;
-                            int wdt = 1;
-                            // [living] colours and light codes both (Quad4.Same): a sunlit face and a torch-lit one look the
-                            // same at noon but not at night.
-                            if (col.Same(0, 1) && col.Same(3, 2) && (!ov || (ocol.Same(0, 1) && ocol.Same(3, 2))))
-                                while (u + wdt < size[ua] && has[k + wdt] && mask[k + wdt].Equals(key) && Same(corners[k + wdt], col) && (!ov || Same(ocorners[k + wdt], ocol))) wdt++;
-                            int hgt = 1;
-                            bool ok = col.Same(0, 3) && col.Same(1, 2) && (!ov || (ocol.Same(0, 3) && ocol.Same(1, 2)));
-                            while (v + hgt < size[va] && ok)
-                            {
-                                for (int i = 0; i < wdt; i++)
-                                {
-                                    int kk = u + i + (v + hgt) * S;
-                                    if (!has[kk] || !mask[kk].Equals(key) || !Same(corners[kk], col) || (ov && !Same(ocorners[kk], ocol))) { ok = false; break; }
-                                }
-                                if (ok) hgt++;
-                            }
-                            EmitQuad(m, b0, axis, ua, va, dir, d, u, v, wdt, hgt, key, col, ocol);
-                            for (int j = 0; j < hgt; j++) for (int i = 0; i < wdt; i++) has[u + i + (v + j) * S] = false;
-                            u += wdt;
-                        }
-                }
-            }
-        }
+                m.Clear();
+                Vector3Int b0 = section * S;
+                Vector3Int size = new Vector3Int(Mathf.Min(S, w.Dims.x - b0.x), Mathf.Min(S, w.Dims.y - b0.y), Mathf.Min(S, w.Dims.z - b0.z));
+                if (size.x <= 0 || size.y <= 0 || size.z <= 0) return;
+                if (Fill(w, b0, size) == 0) return;   // no cubes in the section: no greedy faces
+                _shade.Bind(w, b0);
+                if (++_stamp == int.MaxValue) { _stamp = 1; System.Array.Clear(_keyStamp, 0, _keyStamp.Length); System.Array.Clear(_leafStamp, 0, _leafStamp.Length); }
+                bool leavesInner = LeavesInner;   // faces between two leaves blocks are drawn (vanilla cutoutLeaves)
+                var mask = _mask; var has = _has; var corners = _corners; var ocorners = _ocorners;
+                var ids = _ids; var shapes = _shapes; var c = _c;
 
-        /// <summary>Per palette index: a leaves block (every *_leaves; vanilla's LeavesBlock subclasses).</summary>
-        static bool[] LeavesOf(WorldModel w)
-        {
-            var pal = w.Palette;
-            int n = pal.Count;
-            var r = new bool[n];
-            for (int i = 0; i < n && i < pal.Count; i++) r[i] = BlockRules.Path(pal[i]).EndsWith("_leaves", System.StringComparison.Ordinal);
-            return r;
+                for (int dir = 0; dir < 6; dir++)
+                {
+                    int axis = dir / 2;              // 0=x 1=y 2=z
+                    int ua = (axis + 1) % 3, va = (axis + 2) % 3;
+                    int sa = Stride(axis), su = Stride(ua), sv = Stride(va);
+                    int nOff = (dir & 1) == 1 ? sa : -sa;
+                    for (int d = 0; d < size[axis]; d++)
+                    {
+                        // Build the mask for this slice.
+                        for (int v = 0; v < size[va]; v++)
+                        {
+                            int row = Pad(0, 0, 0) + d * sa + v * sv;
+                            for (int u = 0; u < size[ua]; u++)
+                            {
+                                int k = u + v * S;
+                                has[k] = false;
+                                int i = row + u * su;
+                                byte shape = shapes[i];
+                                if (shape != (byte)BlockShape.Cube && shape != (byte)BlockShape.TransparentCube) continue;   // fluids: FluidMesher
+                                int ni = i + nOff;
+                                ushort id = ids[i], nid = ids[ni];
+                                if (nid != 0xFFFF)
+                                {
+                                    if (shapes[ni] == (byte)BlockShape.Cube) continue;          // hidden by an opaque neighbour
+                                    // glass next to same glass, water next to water; not leaves (vanilla draws those, LeavesInner)
+                                    if (nid == id && shape != (byte)BlockShape.Cube && !(leavesInner && Leaf(w, id))) continue;
+                                }
+                                c[axis] = d; c[ua] = u; c[va] = v;
+                                int px = b0.x + c[0], py = b0.y + c[1], pz = b0.z + c[2];
+                                mask[k] = Key(w, faces, id, dir);
+                                mask[k].Transparent |= shape != (byte)BlockShape.Cube;
+                                corners[k] = BlockShading.FaceCorners(_shade, w, mask[k], px, py, pz, dir);
+                                if (mask[k].Overlay != 0) ocorners[k] = BlockShading.FaceCorners(_shade, w, mask[k].OverlayKey(), px, py, pz, dir);
+                                has[k] = true;
+                            }
+                        }
+                        // Greedy merge: same key and same corner colours; along u only if the colours don't change along u
+                        // (c0 == c1, c3 == c2), along v only if they don't change along v (c0 == c3, c1 == c2).
+                        for (int v = 0; v < size[va]; v++)
+                            for (int u = 0; u < size[ua];)
+                            {
+                                int k = u + v * S;
+                                if (!has[k]) { u++; continue; }
+                                var key = mask[k];
+                                var col = corners[k];
+                                var ocol = ocorners[k];
+                                bool ov = key.Overlay != 0;
+                                int wdt = 1;
+                                // [living] colours and light codes both (Quad4.Same): a sunlit face and a torch-lit one look the
+                                // same at noon but not at night.
+                                if (col.Same(0, 1) && col.Same(3, 2) && (!ov || (ocol.Same(0, 1) && ocol.Same(3, 2))))
+                                    while (u + wdt < size[ua] && has[k + wdt] && mask[k + wdt].Equals(key) && Same(corners[k + wdt], col) && (!ov || Same(ocorners[k + wdt], ocol))) wdt++;
+                                int hgt = 1;
+                                bool ok = col.Same(0, 3) && col.Same(1, 2) && (!ov || (ocol.Same(0, 3) && ocol.Same(1, 2)));
+                                while (v + hgt < size[va] && ok)
+                                {
+                                    for (int i = 0; i < wdt; i++)
+                                    {
+                                        int kk = u + i + (v + hgt) * S;
+                                        if (!has[kk] || !mask[kk].Equals(key) || !Same(corners[kk], col) || (ov && !Same(ocorners[kk], ocol))) { ok = false; break; }
+                                    }
+                                    if (ok) hgt++;
+                                }
+                                EmitQuad(m, b0, axis, ua, va, dir, d, u, v, wdt, hgt, key, col, ocol);
+                                for (int j = 0; j < hgt; j++) for (int i = 0; i < wdt; i++) has[u + i + (v + j) * S] = false;
+                                u += wdt;
+                            }
+                    }
+                }
+                _shade.Unbind();
+            }
+
+            static int Stride(int axis) => axis == 0 ? 1 : axis == 1 ? P * P : P;
+
+            /// <summary>Copies the section and its border into the padded arrays. Returns the number of cube cells
+            /// (opaque or not) inside the section: 0 means the greedy pass has nothing to draw.</summary>
+            int Fill(WorldModel w, Vector3Int b0, Vector3Int size)
+            {
+                var d = w.Dims; var grid = w.Grid;
+                int cubes = 0;
+                for (int y = -1; y <= S; y++)
+                {
+                    int wy = b0.y + y;
+                    bool yIn = wy >= 0 && wy < d.y;
+                    for (int z = -1; z <= S; z++)
+                    {
+                        int wz = b0.z + z;
+                        bool yzIn = yIn && wz >= 0 && wz < d.z;
+                        int i = Pad(-1, y, z), row = (wy * d.z + wz) * d.x;
+                        bool inner = y >= 0 && z >= 0 && y < size.y && z < size.z;
+                        for (int x = -1; x <= S; x++, i++)
+                        {
+                            int wx = b0.x + x;
+                            if (!yzIn || wx < 0 || wx >= d.x) { _ids[i] = 0xFFFF; _shapes[i] = Outside; continue; }
+                            ushort id = grid[row + wx];
+                            var sh = w.ShapeOf(id);
+                            _ids[i] = id; _shapes[i] = (byte)sh;
+                            if (inner && x >= 0 && x < size.x && (sh == BlockShape.Cube || sh == BlockShape.TransparentCube)) cubes++;
+                        }
+                    }
+                }
+                return cubes;
+            }
+
+            /// <summary>The face key of palette id for dir, looked up once per section.</summary>
+            FaceKey Key(WorldModel w, IFaceSource faces, ushort id, int dir)
+            {
+                int j = id * 6 + dir;
+                if (j >= _keyStamp.Length) { int n = (id + 1) * 2 * 6; System.Array.Resize(ref _keyStamp, n); System.Array.Resize(ref _keys, n); }
+                if (_keyStamp[j] != _stamp) { _keys[j] = faces.Face(w.State(id), dir); _keyStamp[j] = _stamp; }
+                return _keys[j];
+            }
+
+            /// <summary>Per palette id: a leaves block (every *_leaves; vanilla's LeavesBlock subclasses).</summary>
+            bool Leaf(WorldModel w, ushort id)
+            {
+                if (id >= _leafStamp.Length) { int n = (id + 1) * 2; System.Array.Resize(ref _leafStamp, n); System.Array.Resize(ref _leaf, n); }
+                if (_leafStamp[id] != _stamp)
+                {
+                    var pal = w.Palette;
+                    _leaf[id] = id < pal.Count && BlockRules.Path(pal[id]).EndsWith("_leaves", System.StringComparison.Ordinal);
+                    _leafStamp[id] = _stamp;
+                }
+                return _leaf[id];
+            }
         }
 
         static bool Eq(Color32 a, Color32 b) => a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
@@ -226,16 +310,20 @@ namespace TabletopCraft.World
         /// <summary>Non-cube shapes: baked pack models (BlockShape.Model); without a pack, placeholder crossed quads and slabs.</summary>
         public static void BuildSpecials(WorldModel w, Vector3Int section, IFaceSource faces, MeshData m)
         {
-            int S = WorldModel.Section;
             Vector3Int b0 = section * S;
             var models = faces as IModelSource;   // baked resource-pack models (BlockModels.cs), null without a pack
             bool moving = !w.MovingShown.IsEmpty;  // [piston] moving_piston cells draw what moves through them (PistonGhosts)
+            var grid = w.Grid;
             for (int y = b0.y; y < Mathf.Min(b0.y + S, w.Dims.y); y++)
                 for (int z = b0.z; z < Mathf.Min(b0.z + S, w.Dims.z); z++)
                     for (int x = b0.x; x < Mathf.Min(b0.x + S, w.Dims.x); x++)
                     {
-                        string st = w.State(w.Get(x, y, z));
-                        var shape = BlockRules.Shape(st);
+                        // [mesh] The shape from the palette id (WorldModel.ShapeOf): the state string is only needed for
+                        // the few cells drawn here, not for the air and cubes around them.
+                        ushort id = grid[w.Index(x, y, z)];
+                        var shape = w.ShapeOf(id);
+                        if (shape != BlockShape.Cross && shape != BlockShape.Slab && shape != BlockShape.Model) continue;
+                        string st = w.State(id);
                         if (shape == BlockShape.Cross) Cross(m, w, x, y, z, faces.Face(st, 4));
                         else if (shape == BlockShape.Slab) Box(m, w, new Vector3Int(x, y, z), new Vector3(x, y + (st.Contains("type=top") ? 0.5f : 0), z), new Vector3(1, 0.5f, 1), faces, st);
                         else if (shape == BlockShape.Model)

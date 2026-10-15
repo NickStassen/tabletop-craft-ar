@@ -96,6 +96,28 @@ namespace TabletopCraft.World
             return 1e7f + d - (along > 0 ? 1e6f : 0f);
         }
 
+        /// <summary>[mesh] Most sections one worker job takes (a job's sections are committed until it ends).</summary>
+        public static int MaxSectionsPerJob = 64;
+        /// <summary>[mesh] Work a job is given, in frames: the renderer hands out jobs once per frame, so a job that ends
+        /// before the next frame leaves its worker idle.</summary>
+        public static float JobFrames = 1.5f;
+
+        /// <summary>
+        /// [mesh] Sections per worker job: JobFrames of work at msPerSection (the measured worker time per section), at
+        /// least min (tabletop.json "mesh_sections_per_job") and at most MaxSectionsPerJob. Unknown cost (0) = min.
+        /// </summary>
+        public static int SectionsPerJob(float msPerSection, float frameMs, int min)
+        {
+            min = Math.Max(1, min);
+            if (msPerSection <= 0 || frameMs <= 0) return min;
+            double n = Math.Ceiling(JobFrames * Math.Min(frameMs, 50f) / msPerSection);
+            return (int)Math.Max(min, Math.Min(Math.Max(min, MaxSectionsPerJob), n));
+        }
+
+        /// <summary>[mesh] With the surface skirt on (SurfaceSkirt), how much faster than meshing keeps up a glide may go:
+        /// the leading strip shows the skirt and detail fills in behind. 1 = no skirt (tabletop.json "surface_skirt").</summary>
+        public static float SkirtFactor = 1f;
+
         /// <summary>Share of the measured meshing rate a glide may use (the rest is for edits, refreshes and slack).</summary>
         public static float Utilisation = 0.65f;
 
@@ -111,7 +133,32 @@ namespace TabletopCraft.World
             if (len < 1e-6f) return float.MaxValue;
             int ex = active.Max.x - active.Min.x, ey = active.Max.y - active.Min.y, ez = active.Max.z - active.Min.z;
             float perBlock = (Math.Abs(dir.x) * ey * ez + Math.Abs(dir.y) * ex * ez + Math.Abs(dir.z) * ex * ey) / len / WorldModel.Section;
-            return perBlock <= 0 ? float.MaxValue : sectionsPerSecond * Utilisation / perBlock;
+            return perBlock <= 0 ? float.MaxValue : sectionsPerSecond * Utilisation * SkirtFactor / perBlock;
+        }
+    }
+
+    /// <summary>
+    /// [mesh] Worker time per meshed section: workers Add their Stopwatch ticks per section (any thread), the main thread
+    /// folds them into an EMA once per frame (Frame). 0 until the first section.
+    /// </summary>
+    public sealed class MeshWorkMeter
+    {
+        long _ticks, _count;
+        public float MsPerSection;
+
+        public void Add(long stopwatchTicks)
+        {
+            System.Threading.Interlocked.Add(ref _ticks, stopwatchTicks);
+            System.Threading.Interlocked.Increment(ref _count);
+        }
+
+        public void Frame()
+        {
+            long n = System.Threading.Interlocked.Exchange(ref _count, 0);
+            long t = System.Threading.Interlocked.Exchange(ref _ticks, 0);
+            if (n <= 0) return;
+            float ms = (float)(t * 1000.0 / System.Diagnostics.Stopwatch.Frequency / n);
+            MsPerSection = MsPerSection <= 0 ? ms : 0.8f * MsPerSection + 0.2f * ms;
         }
     }
 
