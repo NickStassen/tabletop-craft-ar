@@ -6,9 +6,9 @@ A live block world from a **Minecraft: Java Edition** server, shown as a miniatu
 
 > Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft. This project ships no Mojang assets: textures come from a resource pack you supply.
 
-![The Minecraft world floating as a miniature in a real room through the Quest 3 passthrough: forest canopy, cliffs, a lava fall and water](docs/media/tabletop-forest-floating.gif)
+![Turning and scaling the miniature in a real room: it shrinks to a block on the floor, tumbles as it is turned, then grows until the viewer is standing in the terrain](docs/media/tabletop-scale-move.gif)
 
-*The same live world as a miniature in the room, seen through the Quest 3 passthrough. Further down: what a Java player sees of the headset user, and the Java player seen from the headset.*
+*Grabbing, turning and scaling the miniature from the headset (Quest 3 passthrough). The world shrinks to a block on the floor, is turned, then scaled back up until you are standing in the terrain. A short pause in the middle is cut. Below: building from the block menu, and a Java player seen from the headset, plus the other direction.*
 
 Related: the idea write-up [VR-7 in NickStassen/ideas](https://github.com/NickStassen/ideas/blob/master/vr/07-minecraft-ar-tabletop.md) and the sister project [ironman-quest3-hud](https://github.com/NickStassen/ironman-quest3-hud), which has the Unity 6000.0.84f1 + Meta XR setup this project reuses.
 
@@ -55,9 +55,13 @@ Gliding into the terrain: a lush cave with glow berries and a lava fall. It's li
 
 ### Both sides of the same world
 
-A Java player standing in a hut on the miniature, seen from the headset (the name label is blurred):
+Picking a block from the block menu and building on the miniature. The menu floats by the left hand, you point the ray at a spot, and the selected block (here an oak door) goes in:
 
-![A Java player's avatar standing in a hut on the miniature, seen from the headset](docs/media/tabletop-avatar-in-house.gif)
+![Opening the block menu, picking an oak door and placing it on a hut on the miniature](docs/media/tabletop-build-select.gif)
+
+A Java player on the miniature, seen from the headset: the player's figure stands on the mountain next to a real terrarium, and a cat has come to look at the world.
+
+![The miniature in a room with a cat sitting on a terrarium next to it, and the Java player's figure on the mountain](docs/media/tabletop-cat-terrarium.gif)
 
 The other direction: the headset user appears to Java players as a giant head that follows the headset, here floating outside and looking in through a window of the hut.
 
