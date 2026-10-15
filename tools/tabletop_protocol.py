@@ -102,6 +102,25 @@ REQUIRED.update(INTERACT_REQUIRED)
 ERROR_CODES |= {"interact_denied", "not_found"}
 _ID = re.compile(r"^[a-z0-9_.\-]+:[a-z0-9_./\-]+$")
 
+# [power] Undo/redo, box edits and brushes (PROTOCOL.md "Undo and redo", "Box edits", "Brushes"; cap power_v1).
+CAP_POWER = "power_v1"
+BOX_OPS = ("fill", "replace", "clear", "walls", "hollow", "clone")
+BRUSH_OPS = ("paint", "replace", "erase", "smooth")
+BRUSH_SHAPES = ("sphere", "cylinder")
+JOB_OPS = BOX_OPS + ("undo", "redo")
+JOB_PHASES = ("read", "write", "fixup", "done", "failed")
+POWER_LIMITS = ("undo_depth", "box_max_blocks", "brush_max_radius", "brush_blocks_per_second")
+POWER_REQUIRED = {
+    "undo": [],
+    "redo": [],
+    "history": ["undo", "redo", "undo_blocks", "redo_blocks"],
+    "box_edit": ["op", "from", "to"],
+    "box_progress": ["op", "phase", "processed", "total", "changed", "skipped", "finished"],
+    "brush": ["op", "center", "radius"],
+}
+REQUIRED.update(POWER_REQUIRED)
+_STATE = re.compile(r"^[a-z0-9_.\-]+(:[a-z0-9_./\-]+)?(\[[a-z0-9_=,]*\])?$")
+
 
 def validate(msg: dict) -> None:
     t = msg.get("type")
@@ -182,6 +201,86 @@ def validate(msg: dict) -> None:
         validate_interact(msg)   # [hands]
     if t == "welcome" and "interact" in msg and not isinstance(msg["interact"], dict):
         raise ValueError("welcome interact must be an object")
+    if t in POWER_REQUIRED or t in ("block_edit", "interact") or (t == "welcome" and CAP_POWER in (msg.get("caps") or [])):
+        validate_power(msg)   # [power]
+
+
+def _group_ok(v) -> bool:
+    return v is None or (isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 0xFFFFFFFF)
+
+
+def validate_power(msg: dict) -> None:
+    """[power] group on block_edit and interact; undo, redo, history, box_edit, box_progress, brush; welcome limits."""
+    t = msg["type"]
+    if not _group_ok(msg.get("group")):
+        raise ValueError(f"{t} group must be a non-negative integer")
+    if t == "welcome":
+        lim = msg["limits"]
+        for k in POWER_LIMITS:
+            if not isinstance(lim.get(k), int) or lim[k] < 0:
+                raise ValueError(f"a power_v1 welcome needs limits.{k} (a non-negative integer)")
+    elif t == "history":
+        if not all(isinstance(msg[k], int) and msg[k] >= 0 for k in POWER_REQUIRED["history"]):
+            raise ValueError("history counts must be non-negative integers")
+    elif t == "box_edit":
+        op = msg["op"]
+        if op not in BOX_OPS:
+            raise ValueError(f"box_edit op must be one of {BOX_OPS}")
+        if not (_ints(msg["from"], 3) and _ints(msg["to"], 3)):
+            raise ValueError("box_edit from and to must be [x, y, z] integers")
+        if op not in ("clear", "clone") and not (isinstance(msg.get("state"), str) and _STATE.match(msg["state"])):
+            raise ValueError(f"box_edit {op} needs a block state")
+        if op == "replace" and not (isinstance(msg.get("filter"), str) and _STATE.match(msg["filter"])):
+            raise ValueError("box_edit replace needs a filter")
+        if op == "clone":
+            if not _ints(msg.get("dest"), 3):
+                raise ValueError("box_edit clone needs dest [x, y, z]")
+            if msg.get("rotate", 0) not in (0, 1, 2, 3):
+                raise ValueError("box_edit rotate must be 0..3 quarter turns")
+    elif t == "box_progress":
+        if msg["op"] not in JOB_OPS or msg["phase"] not in JOB_PHASES:
+            raise ValueError(f"box_progress op {msg['op']} / phase {msg['phase']} unknown")
+        if not isinstance(msg["finished"], bool) or msg["processed"] > msg["total"]:
+            raise ValueError("box_progress finished must be a bool and processed <= total")
+        for p in msg.get("skipped_pos") or []:
+            if not _ints(p, 3):
+                raise ValueError("box_progress skipped_pos entries must be [x, y, z]")
+    elif t == "brush":
+        op = msg["op"]
+        if op not in BRUSH_OPS or msg.get("shape", "sphere") not in BRUSH_SHAPES:
+            raise ValueError(f"brush op must be one of {BRUSH_OPS} and shape one of {BRUSH_SHAPES}")
+        if not _ints(msg["center"], 3) or not isinstance(msg["radius"], int) or msg["radius"] < 0:
+            raise ValueError("brush needs center [x, y, z] and a radius >= 0")
+        if op in ("paint", "replace") and not (isinstance(msg.get("state"), str) and _STATE.match(msg["state"])):
+            raise ValueError(f"brush {op} needs a block state")
+        if op == "replace" and not isinstance(msg.get("filter"), str):
+            raise ValueError("brush replace needs a filter")
+
+
+def box_edit_msg(op: str, a, b, state: str | None = None, filter: str | None = None, dest=None, rotate: int = 0,
+                 group: int | None = None) -> dict:
+    """[power] box_edit payload; wrap it with Envelope.wrap("box_edit", **payload)."""
+    d: dict = {"op": op, "from": [int(v) for v in a], "to": [int(v) for v in b]}
+    if state is not None:
+        d["state"] = state
+    if filter is not None:
+        d["filter"] = filter
+    if dest is not None:
+        d["dest"] = [int(v) for v in dest]
+        d["rotate"] = rotate
+    if group is not None:
+        d["group"] = group
+    return d
+
+
+def brush_msg(op: str, center, radius: int, shape: str = "sphere", state: str | None = None, filter: str | None = None,
+              height: int | None = None, group: int | None = None) -> dict:
+    """[power] brush payload; wrap it with Envelope.wrap("brush", **payload)."""
+    d: dict = {"op": op, "shape": shape, "center": [int(v) for v in center], "radius": radius}
+    for k, v in (("state", state), ("filter", filter), ("height", height), ("group", group)):
+        if v is not None:
+            d[k] = v
+    return d
 
 
 def _vec(v) -> bool:

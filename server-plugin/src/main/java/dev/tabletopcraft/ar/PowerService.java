@@ -57,6 +57,7 @@ import java.util.concurrent.ConcurrentHashMap;
 final class PowerService {
     static final int MAX_STROKES = 3;
     static final int PROGRESS_TICKS = 10;
+    static final int[][] DIRS = { { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 } };
 
     private final TabletopPlugin plugin;
     private EditWorld editWorld;
@@ -332,14 +333,15 @@ final class PowerService {
                     j.phase = "failed";
                     done = true;
                 }
-                j.tickNs = Math.max(j.tickNs, System.nanoTime() - t0);
+                long spent = System.nanoTime() - t0;
+                j.tickNs = Math.max(j.tickNs, spent);
+                j.busyNs += spent;
+                if (spent > budgetMs * 1.5e6) j.slowTicks++;
+                j.ticks++;
                 if (done) { ps.jobs.poll(); j.finish(); }
+                else if (j.ticks % PROGRESS_TICKS == 0 && !(j instanceof BrushJob)) plugin.send(ps.s, PowerMessages.boxProgress(j.progress(false)));
             }
             rr++;
-            for (PS ps : order) {
-                Job j = ps.jobs.peek();
-                if (j != null && ++j.ticks % PROGRESS_TICKS == 0 && !(j instanceof BrushJob)) plugin.send(ps.s, PowerMessages.boxProgress(j.progress(false)));
-            }
             order.removeIf(ps -> ps.jobs.isEmpty());
         }
         for (PS ps : sessions.values()) {
@@ -360,15 +362,15 @@ final class PowerService {
         final Long group, refSeq;
         final long started = System.nanoTime();
         String phase = "write";
-        long processed, total, changed, skipped, outside;
+        long processed, total, changedCount, skipped, outside;
         int ticks;
-        long tickNs;
+        long tickNs, busyNs, fixNs;
+        int slowTicks;
         final List<int[]> skippedPos = new ArrayList<>();
         /** The cells this job changed (keys), for the fix-up pass. */
-        final List<Long> changedKeys = new ArrayList<>();
-        final Set<Long> changedSet = new HashSet<>();
+        final LongSet changedKeys = new LongSet();
         private int fix;
-        private final Set<Long> dirtyChunks = new HashSet<>();
+        private final LongSet dirtyChunks = new LongSet();
 
         Job(PS ps, World w, String op, Long group, Long refSeq) { this.ps = ps; this.w = w; this.op = op; this.group = group; this.refSeq = refSeq; }
 
@@ -378,7 +380,7 @@ final class PowerService {
         String describe() { return total > 0 ? String.format("a %s (%d %%)", op, processed * 100 / Math.max(1, total)) : "a " + op; }
 
         PowerMessages.Progress progress(boolean finished) {
-            return new PowerMessages.Progress(op, group, refSeq, phase, processed, total, changed, skipped, outside, finished, skippedPos,
+            return new PowerMessages.Progress(op, group, refSeq, phase, processed, total, changedCount, skipped, outside, finished, skippedPos,
                 (System.nanoTime() - started) / 1e6, ticks);
         }
 
@@ -389,8 +391,8 @@ final class PowerService {
                 tile.update(true, false);
             } else b.setBlockData(data, false);
             long k = UndoJournal.Cell.key(b.getX(), b.getY(), b.getZ());
-            if (changedSet.add(k)) changedKeys.add(k);
-            changed++;
+            changedKeys.add(k);
+            changedCount++;
             cellsChanged++;
             if (dirtyChunks.add(((long) (b.getX() >> 4) << 32) ^ (b.getZ() >> 4) & 0xffffffffL)) plugin.markDirty(w.getName(), b.getX(), b.getY(), b.getZ());
         }
@@ -404,8 +406,12 @@ final class PowerService {
          */
         boolean fixup(long end, UndoJournal.Group<BlockData, BlockState> record) {
             phase = "fixup";
+            long f0 = System.nanoTime();
+            try { return fixupSlice(end, record); } finally { fixNs += System.nanoTime() - f0; }
+        }
+
+        private boolean fixupSlice(long end, UndoJournal.Group<BlockData, BlockState> record) {
             RegionSpec r = ps.s.region;
-            int[][] dirs = { { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 } };
             int n = 0;
             while (fix < changedKeys.size()) {
                 if ((++n & 15) == 0 && System.nanoTime() >= end) return false;
@@ -413,9 +419,9 @@ final class PowerService {
                 int x = UndoJournal.Cell.keyX(k), y = UndoJournal.Cell.keyY(k), z = UndoJournal.Cell.keyZ(k);
                 Block b = w.getBlockAt(x, y, z);
                 reshape(b, record, r);
-                for (int[] d : dirs) {
+                for (int[] d : DIRS) {
                     int nx = x + d[0], ny = y + d[1], nz = z + d[2];
-                    if (changedSet.contains(UndoJournal.Cell.key(nx, ny, nz)) || ny < w.getMinHeight() || ny >= w.getMaxHeight()) continue;
+                    if (changedKeys.contains(UndoJournal.Cell.key(nx, ny, nz)) || ny < w.getMinHeight() || ny >= w.getMaxHeight()) continue;
                     if (r == null || !r.containsWorld(nx, ny, nz) || !w.isChunkLoaded(nx >> 4, nz >> 4)) continue;
                     reshape(w.getBlockAt(nx, ny, nz), record, r);
                 }
@@ -450,9 +456,12 @@ final class PowerService {
             phase = phase.equals("failed") ? "failed" : "done";
             jobsDone++;
             done();
+            String line = String.format("POWER session=%s %s group=%s %s changed=%d skipped=%d outside=%d of %d in %.1f ms over %d ticks, main thread %.1f ms (fix-up %.1f), max %.2f ms in a tick, %d ticks over 1.5x the budget",
+                ps.s.id, op, group, BoxPlan.done(op), changedCount, skipped, outside, total, (System.nanoTime() - started) / 1e6, ticks, busyNs / 1e6, fixNs / 1e6, tickNs / 1e6, slowTicks);
+            // Brush strokes come several a second while the trigger is held: no box_progress, and logged only at FINE.
+            if (this instanceof BrushJob) { plugin.getLogger().fine(line); return; }
             plugin.send(ps.s, PowerMessages.boxProgress(progress(true)));
-            plugin.getLogger().info(String.format("POWER session=%s %s group=%s %s changed=%d skipped=%d outside=%d of %d in %.1f ms over %d ticks, max %.2f ms in a tick",
-                ps.s.id, op, group, BoxPlan.done(op), changed, skipped, outside, total, (System.nanoTime() - started) / 1e6, ticks + 1, tickNs / 1e6));
+            plugin.getLogger().info(line);
         }
 
         abstract void done();
@@ -545,7 +554,7 @@ final class PowerService {
                     if (now.equals(to)) continue;
                     BlockState tile = snapshot(b, now);
                     put(b, to, null);
-                    remember(record, b, now, tile, b.getBlockData());
+                    remember(record, b, now, tile, to);
                 }
             }
             return fixup(end, record);
@@ -693,7 +702,7 @@ final class PowerService {
                 if (now.equals(to)) continue;
                 BlockState tile = snapshot(blk, now);
                 put(blk, to, null);
-                remember(record, blk, now, tile, blk.getBlockData());
+                remember(record, blk, now, tile, to);
             }
             return fixup(end, record);
         }
