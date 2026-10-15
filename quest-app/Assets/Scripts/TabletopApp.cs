@@ -439,6 +439,7 @@ namespace TabletopCraft
                 BlockShading.Brightness = (float)c.D("brightness", BlockShading.Brightness);   // vanilla slider, default 1 = Bright
                 BlockShading.MinLight = (float)c.D("min_light", BlockShading.MinLight);         // brightness of light level 0
                 GreedyMesher.LeavesInner = c.B("leaves_inner", true);                           // faces between leaves, like vanilla
+                ApplyPerf(c.S("perf") ?? "high", c.I("foveation", 3));   // [perf] clocks and foveated rendering (wide areas are GPU-bound)
                 ResourcePackAtlas.Mipmaps = c.B("mipmaps", true);                               // mip-mapped block textures
                 WorldLight.WeatherFx = c.B("weather_fx", true);                                 // [living] rain, snow, lightning
                 AmbientParticleRenderer.Enabled = c.B("particles", true);                       // [motion] ambient particles
@@ -468,6 +469,27 @@ namespace TabletopCraft
         /// [comfort] prefs.json (World/AppPrefs.cs). block_size_m, show_hud and area_width can be in both files: a
         /// tabletop.json value wins when it's new or was edited since the last start; otherwise the headset's choice.
         /// </summary>
+        /// <summary>[perf] Wide areas are GPU-bound (VrApi GPU% about 0.98 at clock level 2): ask the Quest for sustained-high
+        /// clocks (perf: high, boost or default) and dynamic foveated rendering (0 off .. 4 HighTop); the miniature sits
+        /// mid-view and the periphery is mostly passthrough.</summary>
+        static void ApplyPerf(string perf, int foveation)
+        {
+            try
+            {
+                if (perf != "default")
+                {
+                    var lvl = perf == "boost" ? OVRManager.ProcessorPerformanceLevel.Boost : OVRManager.ProcessorPerformanceLevel.SustainedHigh;
+                    OVRManager.suggestedCpuPerfLevel = lvl;
+                    OVRManager.suggestedGpuPerfLevel = lvl;
+                }
+                int f = Math.Max(0, Math.Min(4, foveation));
+                OVRManager.foveatedRenderingLevel = (OVRManager.FoveatedRenderingLevel)f;
+                OVRManager.useDynamicFoveatedRendering = f > 0;
+                Debug.Log($"[Tabletop] PERF_LEVELS perf={perf} foveation={OVRManager.foveatedRenderingLevel} dynamic={OVRManager.useDynamicFoveatedRendering}");
+            }
+            catch (Exception e) { Debug.LogWarning("[Tabletop] perf levels: " + e.Message); }
+        }
+
         void LoadPrefs()
         {
             try { if (File.Exists(PrefsPath)) _prefs = AppPrefs.Parse(File.ReadAllText(PrefsPath)); }
