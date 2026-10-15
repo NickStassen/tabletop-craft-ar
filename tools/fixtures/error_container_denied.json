@@ -1,0 +1,16 @@
+{
+ "v": 1,
+ "type": "error",
+ "seq": 143,
+ "t": 1760370008210,
+ "code": "interact_denied",
+ "message": "a shulker box can't go inside a shulker box",
+ "ref_seq": 94,
+ "fatal": false,
+ "op": "container_edit",
+ "pos": [
+  1,
+  64,
+  2
+ ]
+}

@@ -1,0 +1,14 @@
+{
+ "v": 1,
+ "type": "brush",
+ "seq": 161,
+ "t": 1760370008150,
+ "op": "replace",
+ "shape": "cylinder",
+ "center": [105, 63, -35],
+ "radius": 4,
+ "height": 1,
+ "state": "minecraft:dirt_path",
+ "filter": "minecraft:grass_block",
+ "group": 13
+}

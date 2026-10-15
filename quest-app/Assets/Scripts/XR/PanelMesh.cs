@@ -28,6 +28,17 @@ namespace TabletopCraft.XR
             _t.Add(n); _t.Add(n + 1); _t.Add(n + 2); _t.Add(n); _t.Add(n + 2); _t.Add(n + 3);
         }
 
+        /// <summary>[operator] A textured quad (an icon from the block menu's icon atlas): a b c d clockwise from the top-left.</summary>
+        public void QuadUV(Vector3 a, Vector3 b, Vector3 c, Vector3 d, Rect uv)
+        {
+            var col = new Color32(255, 255, 255, 255);
+            int n = _v.Count;
+            _v.Add(a); _v.Add(b); _v.Add(c); _v.Add(d);
+            for (int k = 0; k < 4; k++) _c.Add(col);
+            _uv.Add(new Vector2(uv.xMin, uv.yMax)); _uv.Add(new Vector2(uv.xMax, uv.yMax)); _uv.Add(new Vector2(uv.xMax, uv.yMin)); _uv.Add(new Vector2(uv.xMin, uv.yMin));
+            _t.Add(n); _t.Add(n + 1); _t.Add(n + 2); _t.Add(n); _t.Add(n + 2); _t.Add(n + 3);
+        }
+
         public void Tri(Vector3 a, Vector3 b, Vector3 c, Color32 col)
         {
             col = Lin(col);

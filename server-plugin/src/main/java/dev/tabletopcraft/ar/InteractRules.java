@@ -16,8 +16,8 @@ import java.util.function.Predicate;
  *       {@code interact.iron-doors}); levers flip, buttons press and release after 20 or 30 ticks; note blocks tune,
  *       repeaters cycle their delay, comparators their mode, daylight detectors invert; bells ring; cakes lose a bite;
  *       a full composter empties; a jukebox ejects its disc; lit candles, candle cakes and campfires go out. Chests,
- *       barrels, shulker boxes and other containers, and signs, are {@link Kind#CONTAINER} / {@link Kind#SIGN}: a hook
- *       for the container view and the sign editor of a later version (refused for now).</li>
+ *       barrels, shulker boxes and other containers, and signs, are {@link Kind#CONTAINER} / {@link Kind#SIGN}: the
+ *       headset opens them with container_query and sign_edit (OperatorService), so an interact on them is refused.</li>
  *   <li><b>An item on a face</b> ({@link #useItem}): bone meal, flint and steel / fire charge (TNT, candles, campfires,
  *       fire), buckets (water, lava, powder snow, and the empty bucket that picks a source up), axes (strip, scrape,
  *       unwax), honeycomb (wax), hoes (till), shovels (path, douse), shears (carve a pumpkin, stop a vine growing), spawn
@@ -233,8 +233,9 @@ public final class InteractRules {
             case JUKEBOX -> { return new Effect(null, List.of(), null, 1f, Extra.EJECT, null, 0, null); }
             case CANDLE -> { return Effect.of("block.candle.extinguish", new Change(0, 0, 0, EditRules.withProp(state, "lit", "false"))); }
             case CAMPFIRE -> { return Effect.of("block.fire.extinguish", new Change(0, 0, 0, EditRules.withProp(state, "lit", "false"))); }
-            case CONTAINER -> { return Effect.deny(label + ": containers open in the container view, which isn't in this version (hold the left grip to place against it)"); }
-            case SIGN -> { return Effect.deny(label + ": signs are edited in the sign editor, which isn't in this version"); }
+            // [operator] the headset opens these with container_query / sign_edit (PROTOCOL.md "Containers", "Signs")
+            case CONTAINER -> { return Effect.deny(label + ": containers open with container_query (the container view), not interact"); }
+            case SIGN -> { return Effect.deny(label + ": signs are edited with sign_edit (the sign editor), not interact"); }
             default -> {
                 if ((p.equals("iron_door") || p.equals("iron_trapdoor")) && !f.ironDoors()) return Effect.deny(label + " only opens with redstone (interact.iron-doors)");
                 return Effect.deny("nothing to use on " + label);

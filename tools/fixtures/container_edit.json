@@ -1,0 +1,18 @@
+{
+ "v": 1,
+ "type": "container_edit",
+ "seq": 93,
+ "t": 1760370008100,
+ "pos": [
+  1,
+  64,
+  2
+ ],
+ "slot": 5,
+ "item": "minecraft:torch",
+ "count": 32,
+ "was": [
+  "minecraft:torch",
+  64
+ ]
+}

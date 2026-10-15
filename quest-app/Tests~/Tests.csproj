@@ -33,6 +33,10 @@
     <Compile Include="../Assets/Scripts/Net/ControlProtocol.cs;../Assets/Scripts/World/ChatLog.cs;../Assets/Scripts/World/ConsoleModel.cs;../Assets/Scripts/World/OperatorPanelModel.cs" />
     <!-- [hands] using blocks, items and mobs (interact_v1) -->
     <Compile Include="../Assets/Scripts/Net/InteractProtocol.cs;../Assets/Scripts/World/UseRules.cs;../Assets/Scripts/World/EntityRaycast.cs;../Assets/Scripts/World/EntityCardModel.cs" />
+    <!-- [power] undo/redo, box edits and brushes (power_v1) -->
+    <Compile Include="../Assets/Scripts/Net/PowerProtocol.cs;../Assets/Scripts/World/PowerTools.cs" />
+    <!-- [operator] follow, jumps, marks, the container view and the sign editor -->
+    <Compile Include="../Assets/Scripts/Net/OperatorProtocol.cs;../Assets/Scripts/World/FollowState.cs;../Assets/Scripts/World/MarksModel.cs;../Assets/Scripts/World/ContainerModel.cs;../Assets/Scripts/World/SignEditorModel.cs" />
     <!-- [comfort] keyboard, prefs.json, LAN discovery, session helpers -->
     <Compile Include="../Assets/Scripts/World/KeyboardModel.cs;../Assets/Scripts/World/AppPrefs.cs;../Assets/Scripts/World/SessionState.cs;../Assets/Scripts/Net/LanDiscovery.cs" />
     <!-- [blocks] block entities: catalog, baked models, block_entities data (PROTOCOL.md 4.29) -->

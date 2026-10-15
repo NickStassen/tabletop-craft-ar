@@ -1,0 +1,18 @@
+{
+ "v": 1,
+ "type": "container_edit",
+ "seq": 94,
+ "t": 1760370008200,
+ "pos": [
+  1,
+  64,
+  2
+ ],
+ "slot": 7,
+ "item": "minecraft:oak_log",
+ "count": 16,
+ "was": [
+  null,
+  0
+ ]
+}

@@ -4,7 +4,8 @@
 //
 //   Tabs: the server's categories (block_registry), [hands] Use and Eggs (item_registry: usable items and spawn eggs,
 //         when the server grants interact_v1; with the name tag selected the Use tab shows its text field and keyboard,
-//         like naming one at an anvil), Search (on-panel keyboard, World/KeyboardModel.cs; blocks and items), Info
+//         like naming one at an anvil), [power] Tools (when the server grants power_v1: the wand, brushes, undo and
+//         redo, World/PowerTools.cs), Search (on-panel keyboard, World/KeyboardModel.cs; blocks and items), Info
 //         (status, "Show HUD", "Reset view", and the Server field: type an address or pick a server found on the LAN).
 //   Grid: 9 columns, scrolled by rows (right stick or the arrows while the ray is on the panel).
 //   Hotbar: 9 recent picks, most recent first, one per block (picking oak stairs again moves them to the front).
@@ -18,7 +19,7 @@ using TabletopCraft.Net;
 namespace TabletopCraft.World
 {
     public enum MenuPart { None, Panel, Tab, Cell, ScrollUp, ScrollDown, Hotbar, Key, AreaStep, HudToggle,
-                           ResetView, ServerField, ServerFind, ServerConnect, ServerCancel, FoundServer }
+                           ResetView, ServerField, ServerFind, ServerConnect, ServerCancel, FoundServer, Tool }
 
     public struct MenuHit
     {
@@ -41,7 +42,7 @@ namespace TabletopCraft.World
     public struct MenuItem { public MenuPart Part; public int Index; public MenuRect R; public string Label; }
 
     public enum MenuActionKind { None, Select, Tab, Typed, Scrolled, HotbarSlot, Area, HudToggle,
-                                 ResetView, ServerEdit, ServerFind, ServerConnect, ServerCancel }
+                                 ResetView, ServerEdit, ServerFind, ServerConnect, ServerCancel, Tool }
 
     public struct MenuAction
     {
@@ -168,13 +169,18 @@ namespace TabletopCraft.World
         public int ItemTabCount => UseItems != null ? 2 : 0;
         public int UseTab => UseItems != null ? CategoryCount : -1;
         public int EggsTab => UseItems != null ? CategoryCount + 1 : -1;
-        public int SearchTab => CategoryCount + ItemTabCount;
+        /// <summary>[power] The Tools tab follows Use and Eggs when the server granted power_v1 (else -1).</summary>
+        public PowerTools Tools { get; private set; }
+        bool _toolsShown;
+        public int ToolTabCount => _toolsShown ? 1 : 0;
+        public int ToolsTab => _toolsShown ? CategoryCount + ItemTabCount : -1;
+        public int SearchTab => CategoryCount + ItemTabCount + ToolTabCount;
         public int InfoTab => SearchTab + 1;
         public bool CapturesRight => Open && PointerOnPanel;
         public IReadOnlyList<BlockEntry> Items => _items;
         /// <summary>[hands] The Use tab with the name tag selected: its text field and keyboard under a shorter grid.</summary>
         public bool NameTagField => Tab == UseTab && InteractProtocol.ItemId(Selected) == InteractProtocol.NameTag;
-        public int GridRows => Tab == InfoTab ? 0 : Tab == SearchTab || NameTagField ? SearchRows : Rows;
+        public int GridRows => Tab == InfoTab || Tab == ToolsTab ? 0 : Tab == SearchTab || NameTagField ? SearchRows : Rows;
         public int RowCount => (_items.Count + Columns - 1) / Columns;
         public int MaxScroll => Math.Max(0, RowCount - GridRows);
 
@@ -201,12 +207,26 @@ namespace TabletopCraft.World
             Refresh(true);
         }
 
-        /// <summary>A stable name for a tab (prefs.json): the category id, "use", "eggs", "search" or "info".</summary>
+        /// <summary>[power] The tools (welcome granted power_v1 or not): the Tools tab comes or goes. Call again after
+        /// every welcome (the same PowerTools, its Limits updated).</summary>
+        public void SetTools(PowerTools tools)
+        {
+            string cur = TabId(Tab);
+            Tools = tools;
+            _toolsShown = tools != null && tools.Limits.Allowed;
+            int t = cur != null ? TabOfId(cur) : -1;
+            Tab = t >= 0 ? t : Math.Min(Tab, InfoTab);
+            if (_wantTab != null) { int want = TabOfId(_wantTab); if (want >= 0) { Tab = want; _wantTab = null; } }
+            _scrollByTab.Clear();
+            Refresh(true);
+        }
+
+        /// <summary>A stable name for a tab (prefs.json): the category id, "use", "eggs", "tools", "search" or "info".</summary>
         public string TabId(int tab) => tab == SearchTab ? "search" : tab == InfoTab ? "info" : tab == UseTab ? "use" : tab == EggsTab ? "eggs"
-            : Registry != null && tab >= 0 && tab < CategoryCount ? Registry.CategoryIds[tab] : null;
+            : tab == ToolsTab ? "tools" : Registry != null && tab >= 0 && tab < CategoryCount ? Registry.CategoryIds[tab] : null;
 
         int TabOfId(string id) => id == "search" ? SearchTab : id == "info" ? InfoTab : id == "use" ? UseTab : id == "eggs" ? EggsTab
-            : Registry != null ? Registry.CategoryIds.IndexOf(id) : -1;
+            : id == "tools" ? ToolsTab : Registry != null ? Registry.CategoryIds.IndexOf(id) : -1;
 
         /// <summary>Restores the tab from prefs.json. A category tab waits for the server's block list (SetRegistry), Use
         /// and Eggs for its item list (SetItems).</summary>
@@ -215,7 +235,7 @@ namespace TabletopCraft.World
             if (string.IsNullOrEmpty(id)) return;
             int t = TabOfId(id);
             if (t >= 0) SetTab(t);
-            else if (Registry == null || (UseItems == null && (id == "use" || id == "eggs"))) _wantTab = id;
+            else if (Registry == null || (UseItems == null && (id == "use" || id == "eggs")) || (!_toolsShown && id == "tools")) _wantTab = id;
         }
 
         /// <summary>Restores the hotbar and the selected block from prefs.json.</summary>
@@ -299,6 +319,9 @@ namespace TabletopCraft.World
                 case MenuPart.ServerCancel:
                     ServerEditing = false; Note = ""; Version++;
                     return new MenuAction { Kind = MenuActionKind.ServerCancel };
+                case MenuPart.Tool:   // [power] the app runs it (PowerTools.Press) and the panel shows the result
+                    Version++;
+                    return new MenuAction { Kind = MenuActionKind.Tool, Value = Hover.Index };
             }
             return none;
         }
@@ -415,6 +438,7 @@ namespace TabletopCraft.World
             if (Hover.Part == MenuPart.FoundServer && Hover.Index < Found.Count) return Found[Hover.Index].Url;
             if (Hover.Part == MenuPart.ServerField) return "Change the server: " + ServerUrl;
             if (Hover.Part == MenuPart.ResetView) return "North up, fit to the table, view in the middle of the area";
+            if (Hover.Part == MenuPart.Tool) return ToolHint((ToolButton)Hover.Index);   // [power]
             if (Note.Length > 0) return Note;
             return "Selected: " + LabelOf(Selected);
         }
@@ -424,7 +448,33 @@ namespace TabletopCraft.World
             : Registry?.Find(state) is BlockEntry e && BlockRegistry.IdOf(state) == e.Id ? e.Label : BlockRegistry.DefaultLabel(BlockRegistry.PathOf(BlockRegistry.IdOf(state)));
 
         public string TabLabel(int tab) => tab == SearchTab ? "Search" : tab == InfoTab ? "Info" : tab == UseTab ? "Use items" : tab == EggsTab ? "Spawn eggs"
-            : Registry != null && tab < CategoryCount ? Registry.CategoryLabels[tab] : "";
+            : tab == ToolsTab ? "Power tools: wand, brushes, undo" : Registry != null && tab < CategoryCount ? Registry.CategoryLabels[tab] : "";
+
+        /// <summary>[power] What a Tools tab button does (the name line while the ray is on it).</summary>
+        public static string ToolHint(ToolButton b)
+        {
+            switch (b)
+            {
+                case ToolButton.Wand: return "Box wand: left trigger = corner A, + left grip = corner B";
+                case ToolButton.Brush: return "Brush: off, sphere, cylinder, disc (hold the left trigger)";
+                case ToolButton.Fill: return "Fill the box with the selected block";
+                case ToolButton.Replace: return "Replace the B-picked block with the selected one";
+                case ToolButton.Clear: return "Clear the box (air)";
+                case ToolButton.Walls: return "Four walls of the selected block";
+                case ToolButton.Hollow: return "A shell of the selected block, air inside";
+                case ToolButton.Clone: return "Copy the box: aim, left trigger pastes, B ends";
+                case ToolButton.Rotate: return "Turn the copy a quarter, clockwise";
+                case ToolButton.ClearCorners: return "Forget corners A and B";
+                case ToolButton.Paint: return "Brush paints the selected block";
+                case ToolButton.BrushReplace: return "Brush replaces the B-picked block";
+                case ToolButton.Erase: return "Brush erases to air";
+                case ToolButton.Smooth: return "Brush smooths bumps and holes";
+                case ToolButton.RadiusDown: case ToolButton.RadiusUp: return "Brush radius";
+                case ToolButton.Undo: return "Undo the last edit group (or hold B)";
+                case ToolButton.Redo: return "Redo what undo took back";
+            }
+            return "";
+        }
 
         /// <summary>Short tab captions that fit 10 tabs on the panel.</summary>
         public string TabCaption(int tab)
@@ -433,6 +483,7 @@ namespace TabletopCraft.World
             if (tab == InfoTab) return "Info";
             if (tab == UseTab) return "Use";     // [hands]
             if (tab == EggsTab) return "Eggs";
+            if (tab == ToolsTab) return "Tools"; // [power]
             string id = Registry != null && tab < CategoryCount ? Registry.CategoryIds[tab] : "";
             switch (id)
             {
@@ -452,7 +503,7 @@ namespace TabletopCraft.World
             else if (Tab == EggsTab) _items = UseItems.Eggs;
             else if (Registry == null) _items = new List<BlockEntry>();
             else if (Tab == SearchTab) { _items = Search(Registry, Query); if (UseItems != null) _items.AddRange(Search(UseItems, Query)); }
-            else if (Tab == InfoTab) _items = new List<BlockEntry>();
+            else if (Tab == InfoTab || Tab == ToolsTab) _items = new List<BlockEntry>();
             else _items = Registry.ByCategory[Tab];
             int s = _scrollByTab.TryGetValue(Tab, out var v) ? v : 0;
             Scroll = Math.Max(0, Math.Min(MaxScroll, keepScroll ? Scroll : s));
@@ -510,6 +561,7 @@ namespace TabletopCraft.World
             y += TabH + Gap;
             if (Tab == SearchTab) { L.SearchField = new MenuRect(Margin, y, inner, SearchH); y += SearchH + Gap; }
             if (Tab == InfoTab && ServerEditing) y = ServerLayout(L, y, inner);
+            else if (Tab == ToolsTab) y = ToolsLayout(L, y, inner);   // [power]
             else
             {
                 int rows = Tab == InfoTab ? Rows : GridRows;
@@ -580,6 +632,23 @@ namespace TabletopCraft.World
             return y + KeyboardModel.Rows * KeyH + Gap;
         }
 
+        /// <summary>[power] The Tools tab: rows of buttons (PowerTools.Rows), then five lines of status.</summary>
+        float ToolsLayout(MenuLayout L, float y, float inner)
+        {
+            foreach (var row in PowerTools.Rows)
+            {
+                float bw = (inner - (row.Length - 1) * Gap) / row.Length;
+                for (int i = 0; i < row.Length; i++)
+                    L.Items.Add(new MenuItem { Part = MenuPart.Tool, Index = (int)row[i], R = new MenuRect(Margin + i * (bw + Gap), y, bw, ButtonH),
+                                               Label = Tools != null ? Tools.Label(row[i]) : row[i].ToString() });
+                y += ButtonH + Gap;
+            }
+            L.ToolsInfo = new MenuRect(Margin, y, inner, ToolsInfoH);
+            return y + ToolsInfoH + Gap;
+        }
+
+        public const float ToolsInfoH = 0.064f;
+
         /// <summary>What a point on the panel (metres from the top-left, y down) hits; Panel for the background, None outside.</summary>
         public static MenuHit HitTest(MenuLayout L, float x, float y)
         {
@@ -595,5 +664,6 @@ namespace TabletopCraft.World
         public readonly List<MenuItem> Items = new List<MenuItem>();
         public MenuRect Grid, Name, SearchField, Info, ScrollTrack, AreaLabel, ServerText, FoundNote;
         public MenuRect NameTagField;   // [hands] the name tag's text (Use tab)
+        public MenuRect ToolsInfo;      // [power] the Tools tab's status lines
     }
 }

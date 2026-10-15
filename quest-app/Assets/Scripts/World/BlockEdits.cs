@@ -230,6 +230,16 @@ namespace TabletopCraft.World
         /// <summary>Last thing that happened, for the status text.</summary>
         public string Result = "";
         public int Sent;
+        /// <summary>[power] The edit group the next messages belong to (one trigger press = one group, so one undo takes
+        /// back one hold); 0 = none. XR/BlockEditMode sets it from World/PowerTools.cs's EditGroups.</summary>
+        public int Group;
+
+        /// <summary>[power] Adds the current group (PROTOCOL.md "Undo and redo"); servers without power_v1 ignore it.</summary>
+        Dictionary<string, object> Stamp(Dictionary<string, object> m)
+        {
+            if (m != null && Group > 0) m["group"] = Group;
+            return m;
+        }
         /// <summary>[menu] The server's block_registry (PROTOCOL.md 4.24): only its blocks and variants can be placed, a
         /// pick takes the block's default state, wall forms come from its variants. Null = no registry yet.</summary>
         public BlockRegistry Registry;
@@ -257,7 +267,7 @@ namespace TabletopCraft.World
             if (!shown) Pending.MarkSent(world, now);   // not shown yet: don't send it again while the trigger is held
             Sent++;
             Result = "broke " + BlockEditRules.Label(old);
-            return Protocol.BlockEdit("break", world, null, BlockRaycast.FaceNames[h.Face]);
+            return Stamp(Protocol.BlockEdit("break", world, null, BlockRaycast.FaceNames[h.Face]));
         }
 
         /// <summary>
@@ -343,7 +353,7 @@ namespace TabletopCraft.World
             if (!shown) Pending.MarkSent(world, now);   // a block new to the palette: the cell looks empty until the server answers
             Sent++;
             Result = "placed " + BlockEditRules.Label(p.State);
-            return Protocol.BlockEdit("place", world, p.State, BlockRaycast.FaceNames[h.Face]);
+            return Stamp(Protocol.BlockEdit("place", world, p.State, BlockRaycast.FaceNames[h.Face]));
         }
 
         /// <summary>
@@ -357,7 +367,7 @@ namespace TabletopCraft.World
             string label = BlockEditRules.Label(w.State(w.Get(h.Block.x, h.Block.y, h.Block.z)));
             Sent++;
             Result = item == null ? "used " + label : "used " + BlockRules.Path(item).Replace('_', ' ') + " on " + label;
-            return InteractProtocol.Interact(w.Origin + h.Block, BlockRaycast.FaceNames[h.Face], h.Point - (Vector3)h.Block, item, sneak, rayDir);
+            return Stamp(InteractProtocol.Interact(w.Origin + h.Block, BlockRaycast.FaceNames[h.Face], h.Point - (Vector3)h.Block, item, sneak, rayDir));
         }
 
         /// <summary>Pick block (middle click): the hit block becomes the selection, as its item would place it: the

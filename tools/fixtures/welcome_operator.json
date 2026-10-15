@@ -1,0 +1,107 @@
+{
+ "v": 1,
+ "type": "welcome",
+ "seq": 0,
+ "t": 1760370000012,
+ "protocol": 1,
+ "server": "tabletop-plugin",
+ "server_version": "0.5.0",
+ "mc_version": "26.3",
+ "session": "6f1c2a3b",
+ "world": "world",
+ "region": {
+  "origin": [
+   100,
+   60,
+   -40
+  ],
+  "dims": [
+   32,
+   64,
+   32
+  ],
+  "view_margin": [
+   0,
+   0,
+   0
+  ]
+ },
+ "limits": {
+  "max_dims": [
+   288,
+   384,
+   288
+  ],
+  "max_blocks": 16777216,
+  "max_bytes": 33554432,
+  "max_view_width": 256,
+  "build_height": [
+   -64,
+   320
+  ],
+  "pose_hz_max": 60,
+  "player_hz": 10
+ },
+ "avatar_supported": true,
+ "caps": [
+  "view_margin",
+  "pose_snapshot_id",
+  "edit_v1",
+  "entities_v1",
+  "actions_v1",
+  "interact_v1",
+  "marks_v1"
+ ],
+ "interact": {
+  "iron_doors": true,
+  "fire": true,
+  "tnt": true,
+  "fluids": true,
+  "lightning": "real",
+  "entities": true,
+  "harm_players": false,
+  "attack_damage": 5.0,
+  "max_spawns_per_minute": 60,
+  "containers": "edit",
+  "signs": true
+ },
+ "worlds": [
+  {
+   "name": "world",
+   "env": "normal",
+   "min_y": -64,
+   "max_y": 320,
+   "spawn": [
+    0,
+    64,
+    0
+   ]
+  },
+  {
+   "name": "world_nether",
+   "env": "nether",
+   "min_y": 0,
+   "max_y": 256,
+   "spawn": [
+    0,
+    70,
+    0
+   ]
+  },
+  {
+   "name": "world_the_end",
+   "env": "the_end",
+   "min_y": 0,
+   "max_y": 256,
+   "spawn": [
+    100,
+    49,
+    0
+   ]
+  }
+ ],
+ "marks": {
+  "max": 200,
+  "edit": true
+ }
+}

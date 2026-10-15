@@ -1,0 +1,12 @@
+{
+ "v": 1,
+ "type": "box_edit",
+ "seq": 131,
+ "t": 1760370007200,
+ "op": "replace",
+ "from": [101, 60, -30],
+ "to": [110, 64, -21],
+ "state": "minecraft:glass",
+ "filter": "minecraft:stone_bricks",
+ "group": 10
+}

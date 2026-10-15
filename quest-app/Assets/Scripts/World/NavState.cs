@@ -116,7 +116,7 @@ namespace TabletopCraft.World
             // [nav] A glide request's round trip ends when its region is applied.
             if (Pending)
             {
-                if (_pendingKind != "resize") LatencyEma = 0.7f * LatencyEma + 0.3f * Math.Max(0.05f, now - _pendingSince);
+                if (_pendingKind != "resize" && _pendingKind != "jump") LatencyEma = 0.7f * LatencyEma + 0.3f * Math.Max(0.05f, now - _pendingSince);
                 Pending = false;
             }
             var c = RegionCentre;
@@ -423,6 +423,6 @@ namespace TabletopCraft.World
     public struct RegionMove
     {
         public Vector3Int Origin, Dims, Margin;
-        public string Kind;   // "shift" or "pad"
+        public string Kind;   // "shift", "pad", "resize" or [operator] "jump" (World/FollowState.cs: Jumps.Plan)
     }
 }

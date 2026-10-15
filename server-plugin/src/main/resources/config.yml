@@ -124,6 +124,27 @@ edit:
     - minecraft:jigsaw
     - minecraft:test_block
     - minecraft:test_instance_block
+  # [power] Undo/redo, box tools and brushes for headsets that ask for power_v1 (PROTOCOL.md "Undo and redo", "Box
+  # edits", "Brushes"). Needs edit_v1 above. Only inside the table's region and the world border, like block editing.
+  power: true
+  # true: only when auth.token above is set (every connected headset presented the token).
+  power-require-token: false
+  # Blocks of undo history per headset (the oldest edits are forgotten first; the newest edit is always kept whole,
+  # so a box bigger than this can be undone until the next edit). 0 = no undo.
+  undo-depth: 10000
+  # Block entity contents (chest items, sign text, banner patterns...) kept for undo per headset; past this the oldest
+  # are dropped and those blocks come back empty.
+  undo-tile-entities: 256
+  # Largest box edit (fill, replace, clear, walls, hollow, clone), as vanilla's /fill. 0 = no box tools.
+  box-max-blocks: 32768
+  # Main-thread time per tick for box edits, undo, redo and brush strokes of all headsets together (a 32768-block fill
+  # takes a few seconds; box_progress reports it).
+  box-budget-ms: 2
+  # Brush radius limit (at most 16) and blocks per second per headset (a radius 8 sphere is 2553 blocks). 0 = no brushes.
+  brush-max-radius: 8
+  brush-blocks-per-second: 20000
+  # undo, redo and box_edit messages per second per headset (a token bucket); more get error rate_limited.
+  power-actions-per-second: 5
 # [hands] Using blocks, items and mobs from the headset (interact_v1, PROTOCOL.md "Using blocks and items" and "Acting
 # on mobs"): the left trigger opens doors, flips levers, presses buttons, uses bone meal, buckets, flint and steel,
 # axes, hoes, shovels, shears, spawn eggs and a lightning wand; the right trigger hits mobs, the right grip carries
@@ -154,6 +175,25 @@ interact:
   deny-spawn: [minecraft:wither, minecraft:ender_dragon]
   # Spawn-egg mobs per minute per headset.
   max-spawns-per-minute: 60
+  # [operator] The left trigger on a chest, barrel, shulker box, hopper, dispenser, dropper, furnace, smoker, blast
+  # furnace, brewing stand or crafter opens the headset's container view (PROTOCOL.md "Containers"): edit (take items out
+  # to nowhere, put any item in, clear, sort), view (look only) or false. The lid stays open while a headset looks.
+  containers: edit
+  # [operator] Signs: the left trigger opens the sign editor (front and back, four lines, dye colour, glowing ink).
+  signs: true
+  # Fire a SignChangeEvent before a headset changes a sign, so protection and logging plugins can see, change or cancel
+  # it. The event has no player (the headset isn't one): a plugin that needs one logs an error and doesn't block the edit.
+  sign-event: true
+# [operator] Shared bookmarks for the headsets' Marks tab (marks_v1, PROTOCOL.md "Marks: bookmarks, spawn and worlds"),
+# stored in plugins/TabletopCraftAR/bookmarks.yml and sent to every headset. Jumps to a bookmark, the spawn or typed
+# coordinates are ordinary region_requests, so they need nothing here.
+marks:
+  enabled: true
+  # true: only when auth.token above is set (every connected headset presented the token).
+  require-token: false
+  # false: headsets see and use the bookmarks but can't add or remove them.
+  edit: true
+  max: 200
 # [talk] Chat between Java players and the headset (chat_v1, PROTOCOL.md 4.26). Headsets that ask for chat_v1 get
 # game chat, joins, quits, deaths, advancements, plugin broadcasts and /say, /me; with "send" they can talk too.
 chat:

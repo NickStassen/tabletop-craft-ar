@@ -182,7 +182,7 @@ Break and place blocks in the miniature like a creative-mode player. The plugin 
 1. Point the **right controller** at the terrain. A thin dark outline marks the block you're aiming at (like the game's selection box), and a faint laser runs from the controller to it; when the ray hits nothing, a short faded stub still shows where you point. Under the selected block by the controller, a small line names what you aim at and where it is in the world (`oak stairs @ 105,64,-35`). The ray goes through air and water, so you can aim at the sea floor. Plants, slabs, torches and other non-full blocks are targeted by their whole cell. Only blocks inside the visible box count: the hidden margin around it (Part H) can't be hit or built on, and blocks cut by the box's sides can be hit on their visible part.
 2. **Right trigger**: break the outlined block. Hold it to keep breaking every quarter second while you sweep. A door, bed or tall plant goes as a whole.
 3. **Left trigger**: place the selected block (unless the block you point at is one a hand uses, such as a door or a lever, or a mob is in the way: then it uses that, as a right click does; hold the **left grip** to always place. Part M). A faint see-through copy of it, turned the way it will be placed, shows the cell it fills, inside a second outline. Both turn red when the placement would be refused (the cell is taken, a torch has nothing to hang on, a door has no room above). As in the game, aiming at short grass, a single snow layer, vines, a fern or similar places into that cell, and placing next to one replaces it; two or more snow layers stay. Hold to keep placing. Placing into water works and waterlogs slabs, stairs and the like; on land they're dry. You can't place outside the area, into a solid block, or a solid block into a player or a mob.
-4. **B** (right): pick the outlined block as the selected block, like middle-click; it also goes to the front of the hotbar (Part J). You get the block as its item would place it: a wall torch picks a torch, a door's top half the door, grown wheat young wheat. The selection starts as stone. It floats above the right controller as a small textured cube with its name. Any other block comes from the block menu (Part J). A block the server won't place (fire, a potted plant) isn't picked: "Can't place fire" appears briefly instead.
+4. **B** (right), a short press: pick the outlined block as the selected block, like middle-click (the pick happens when you let go of B); it also goes to the front of the hotbar (Part J). **Hold B** for 0.6 s to undo your last edit instead (Part O). You get the block as its item would place it: a wall torch picks a torch, a door's top half the door, grown wheat young wheat. The selection starts as stone. It floats above the right controller as a small textured cube with its name. Any other block comes from the block menu (Part J). A block the server won't place (fire, a potted plant) isn't picked: "Can't place fire" appears briefly instead.
 5. Orientation follows the game's own rules, from the face you click, where on it, and where the controller points:
    - logs, pillars and chains line up with the face you click;
    - most blocks with a facing turn toward you (furnaces, chests, pumpkins, repeaters); stairs, doors, fence gates, beds and campfires face the way you point, anvils sideways;
@@ -212,13 +212,13 @@ Build with any block, like the creative inventory. The server sends its list of 
 | **Right trigger** on the menu | Click: choose a block (it becomes the selected block and goes to the front of the hotbar, with a short buzz), switch tabs, press a key, choose a hotbar slot, or press the arrows. |
 | **Right thumbstick up/down** on the menu | Scroll the grid a row at a time (hold to keep scrolling). |
 | **Right thumbstick click** (menu closed) | Select the next hotbar slot. |
-| **B** (right) | Pick a block from the miniature (Part I); it goes to the front of the hotbar. |
+| **B** (right) | Pick a block from the miniature (Part I); it goes to the front of the hotbar. Held 0.6 s: undo (Part O). |
 | **Left trigger** | Place the selected block (Part I), or use the selected item, a door or lever, or a mob (Part M). |
 
 While the ray is on the menu, the right trigger doesn't break blocks, the right stick scrolls the menu instead of scaling or turning the table, and gliding, turning and editing pause. Everything works normally again the moment the ray leaves the menu or the menu closes. Area setup (Y) closes the menu.
 
 The menu, top to bottom:
-- **Tabs:** Build, Color, Nature, Func. (functional), Redst. (redstone), Other: the server's categories, close to the game's creative tabs. Then **Use** and **Eggs** (items and spawn eggs, when the server allows using them, Part M), **Search** and **Info**.
+- **Tabs:** Build, Color, Nature, Func. (functional), Redst. (redstone), Other: the server's categories, close to the game's creative tabs. Then **Use** and **Eggs** (items and spawn eggs, when the server allows using them, Part M), **Tools** (the box wand, brushes, undo and redo, when the server allows them, Part O), **Search** and **Info**.
 - **Grid:** 9 blocks per row, 5 rows; arrows and a scroll bar on the right. Blocks of a family sit together (oak log, wood, planks, stairs, slab, fence...; colored blocks by kind, in the game's dye order). The selected block is framed.
 - **Search:** a keyboard on the panel and 3 rows of results. Letters (lower case; **shift** for one capital, twice for caps lock), `?123` for digits and symbols (`/ : . , - _ @ # ~ ^ [ ] { } = + * ! ? " '`), `ABC` back, **space**, **del**, **clear**, and **pick**, which selects the first result. Every word you type must appear in the name or id (`oak st` finds oak stairs); names that start with what you typed come first. An empty search lists every block. The menu uses its own keyboard rather than the Quest system keyboard: the system keyboard needs an extra Android manifest flag, takes focus from the app (passthrough and tracking pause behind it) and can't be tested in a headless build, while the panel keyboard is the same code path as every other button (and the same keyboard will serve chat and commands later).
 - **Info:** the full status (link, RTT, world, pack, light, table, poses, mesh, entities, view, area, edit, block list, icons), refreshed 4 times a second, then the **Show HUD** toggle (below), **Reset view** (Part H "Finding your way") and **Server: ... (change)**, which opens the Server field with the keyboard and the servers found on the LAN (Part D).
@@ -239,6 +239,7 @@ The old status text in the middle of the view is gone:
 - **Area setup panel**: above your left hand while setup (Y) runs (Part G).
 - **Selected block**: floats above the right controller (Part I), with the small hotbar; an item shows as its icon (Part M).
 - **Mob info card**: above the mob or player you used it on (Part M).
+- **Power tools**: the wand's cyan box and the paste's orange box on the table, the Tools tab (box size, block, filter, undo counts, the running job), and a short message when a box edit, undo or redo finishes (Part O).
 - **Chat**: the last lines above the left wrist, bubbles over players, and the operator panel on **X** (Part L).
 - **Small HUD** (for debugging): turn on **Show HUD** in the Info tab, or add `"show_hud": true` to `tabletop.json`. It's the same status as the Info tab, about a third of the old size, low and to the left.
 
@@ -259,7 +260,7 @@ For measurements, `tabletop.json` can start the app at a preset: `"area_width": 
 - `AREA_LOADED width=192 region=224x128x224 load_s=1.8 faces=... batches=64 renderers=64 draw_calls~128 sections=706/1568 verts=... tris=... gpu_kb=...` once the new area is fully meshed and uploaded.
 - `PERF width=192 frames=360 fps=72.0 frame_ms p50=13.9 p90=14.1 p99=16.2 max=22.0 over15ms=3 faces=... pending=0 batches=...` every 5 s: Unity's frame times (`Time.unscaledDeltaTime`) next to VrApi's own FPS lines.
 
-## Part L: the operator panel: chat, console, players, world, server
+## Part L: the operator panel: chat, console, players, world, server, marks
 
 You are the server's operator without a game account. The operator panel lets you chat with Java players, run server commands and watch the server. Chat and the status work on any server; commands need a token (security, below).
 
@@ -294,6 +295,7 @@ The tabs:
 - **Players:** everyone online (any world) with game mode, health, food and ping, refreshed every second. Select a player, then: **Here @** teleports them on top of the block you last aimed at (in its dimension), **Heal**, **Feed**, **Kick** (type a reason, enter kicks; **Cancel** backs out) and the four game modes.
 - **World:** the region's world: time, day, weather, difficulty, tick state. **Time** day/noon/night/midnight, **Weather** clear/rain/thunder, **Bolt @** (lightning on the block you last aimed at), **Freeze/Unfreeze** and **Step 20** (the game's `/tick`), **Difficulty**, and every game rule the server has, as toggles (a lit toggle is on), with the server's own names (26.x: `advance_time`, `mob_griefing`...). Numeric rules are in the Console (`gamerule random_tick_speed 0`).
 - **Server:** TPS (1, 5, 15 min), MSPT, memory, players, the tick state and, per world, loaded chunks, entities, players, the time and the weather, every 2 s.
+- **Marks:** jump to another world, the spawn, typed coordinates or a shared bookmark; who you follow (Part N). The Players tab's **View** row follows the selected player or jumps to them once (Part N); the container view and the sign editor also open in this panel (Part N).
 
 Without the token the command buttons are greyed and the note line says **needs auth.token**; chat, Players, World and Server still show their information. The line at the bottom of the panel says what happened last (the last command's answer, or why a button did nothing). The **Info** tab of the block menu has a `TALK` line: chat (as which name, or read-only), commands on or off, status.
 
@@ -337,9 +339,68 @@ So with stone selected, pointing at a door opens it; to place stone against the 
 
 **The info card** floats above the mob (or player) with its type and name, health, owner, how long until a baby grows up, and whether it is frozen, glowing, on a lead or riding. Point the right ray at a button: **Kill**, **Remove** (gone without dying), **Freeze / Unfreeze** (it stands still and ignores everything; it stays frozen across restarts until unfrozen, and `/tabletop unfreeze-all` on the server wakes every mob a headset froze), **Glow**, **Close**. It closes by itself when the mob is gone or after 30 s, and with **B**.
 
-Nothing changes on the table until the server answers (0.1–0.2 s). When it refuses, a short message says why (`Can't: the axe does nothing to stone`, `Can't: fire is off on this server (interact.fire)`). Chests, barrels, shulker boxes and signs don't open yet (a later version adds the container view and the sign editor; for now a message says so): hold the left grip to place against them.
+Nothing changes on the table until the server answers (0.1–0.2 s). When it refuses, a short message says why (`Can't: the axe does nothing to stone`, `Can't: fire is off on this server (interact.fire)`). Chests, barrels, shulker boxes, furnaces and other containers open the container view, and signs the sign editor, in the operator panel (Part N); hold the left grip to place against them.
 
 Server options (config.yml `interact`): `enabled`, `require-token`, `max-per-second` (10), `entities` (mobs at all), `harm-players` (false), `iron-doors`, `fire`, `tnt`, `fluids`, `lightning` (true, effect, false), `attack-damage` (5), `deny-spawn` (wither and ender dragon) and `max-spawns-per-minute` (60). Everything stays inside the area like block editing, and protection plugins aren't consulted; fire and lava can spread beyond the area. Each use is logged as `INTERACT session=... item block x,y,z face=... -> new state`, each mob action as `ENTITY session=... op type uuid`.
+
+## Part N: Marks, follow, containers and signs
+
+The operator panel (X, Part L) also moves the view around the world and opens chests and signs. Everything here works without the token, except bookmarks on a server with `marks.require-token: true`.
+
+**Marks tab.** The top line says where the view is (`Overworld  105 64 -35`) and who you follow.
+- **World** row: one button per world the server has (Overworld, Nether, End and a fourth one; more worlds are reached through bookmarks or Follow). The lit one is where the view is. A button moves the view to that world's spawn; the width and the margins stay the same, the height shrinks to fit the Nether and the End (they are 256 high). Another world loads in full, so it takes a moment.
+- **Spawn** jumps to this world's spawn. **Stop follow** stops following (below).
+- **Go to**: click the field, type `x z` or `x y z` on the keyboard (**?123** for digits and `-`; `~` means here, `~20 ~ ~-5` is 20 east and 5 north of the view centre), then **go** (the keyboard's enter) or **Go**. Without a height the view keeps its own.
+- **Bookmarks**, shared with every headset on the server and kept by the server (`plugins/TabletopCraftAR/bookmarks.yml`): **Add mark** names the place under the view centre (`Mark 3`, or type your own) and **Save** (enter) stores it; select a row, then **Go** jumps there (in its world: a row in another world shows `[Nether]`) and **Delete** removes it. The right stick scrolls the list. A server can make them read-only (`marks.edit: false`): the buttons grey out.
+- Every jump moves the shared area, so other headsets on the server move with you (the last request wins, as for gliding). In the same world only the new part is loaded; the view lands exactly on the target.
+
+**Following a player.** In the Players tab select someone, then **Follow** (in the **View** row). The view glides after them as they walk, run, ride or fly, a little behind (about a second), and stays still while they wander a block or two or step up and down a few blocks; when they teleport far away, die and respawn, or go through a portal, the view jumps after them, into the Nether or the End too. **Go to** jumps to them once without following. Following stops when you push the left stick, open area setup (Y), use Reset view, jump somewhere from the Marks tab, press **Stop** (Players) or **Stop follow** (Marks), or when they leave the server; a message says why. The giant itself can't be followed: it is where you look at the table.
+
+**Containers.** The left trigger on a chest, trapped chest, copper chest, barrel, shulker box, hopper, dispenser, dropper, furnace, smoker, blast furnace, brewing stand or crafter (the outline is cyan) opens it in the operator panel: the title (`Large Chest` for a double chest, which is one view of 54 slots), the slots with their item icons and counts, in rows of 9 (3×3 for dispensers, droppers and crafters, one row for hoppers, furnaces and brewing stands, whose empty slots say what they take: input, fuel, output; bottle, ingredient, fuel). Java players see the lid open while you look. The view updates by itself when a Java player, a hopper or a command changes it.
+
+| Control | Action |
+|---|---|
+| **Right trigger** on a slot | Select it (the top line says what it holds). |
+| **1 / 16 / 64** | How many items Take and Put move. |
+| **Take** | Take that many out of the selected slot (they go nowhere, as a creative player's would). |
+| **Put** | Put that many of your selected hotbar block or item into the slot: added to the same item (up to its stack size), or in place of another. |
+| **Clear** | Empty the slot. |
+| **Sort** | Merge and order the whole container (chests, barrels, shulker boxes, hoppers, dispensers, droppers). |
+| **Close**, a tab, X or ≡ | Close the view (the lid closes). |
+
+The server checks every change again: a furnace's fuel slot takes only fuel and its output slot nothing, a brewing stand's slots only what belongs there, a shulker box no shulker box, and when a Java player changed the slot since you looked the change is refused (`the slot changed meanwhile`); the note line says why. A server can make containers view-only or switch them off (`interact.containers: view` or `false`): the buttons grey out, or the left trigger says so.
+
+**Signs.** The left trigger on a sign (standing, wall or hanging) opens the sign editor, filled with what the sign says now. **Front** / **Back** switch sides; select a line with the right trigger and type on the keyboard (**next**, the enter key, moves to the next line); the swatches set the text colour and **Glow** the glowing ink; **Save** sends the sides you changed, and the sign on the table (and in the game) shows the new text a moment later. A waxed sign can't be edited, and another plugin (a protection plugin) may refuse the change; the note line says so. `interact.signs: false` on the server switches the editor off.
+
+To place a block against a chest or a sign instead, hold the left grip while you pull the trigger (Part M).
+
+Logs: `JUMP`, `JUMP landed`, `FOLLOW`, `CONTAINER open`, `SIGN edit` (`adb logcat -s Unity | grep Tabletop`); on the server `MARK`, `CONTAINER`, `CONTAINER_DENIED`, `SIGN`, `SIGN_DENIED`, and `/tabletop status` adds an operator line.
+
+## Part O: power tools: undo, boxes and brushes
+
+Undo your edits, fill and copy whole boxes like `/fill` and `/clone`, and sculpt with brushes. The plugin allows it by default (config.yml `edit.power: true`, together with block editing); the block menu's Info tab has a `POWER` line with the undo and redo counts.
+
+**Undo.** Every pull of a trigger is one edit group: everything a held trigger placed, broke or used comes back with one undo. **Hold B** (right) for 0.6 s: the last group is undone (a buzz), and while you keep holding, another one every 0.4 s. A short press of B still picks a block. The **Tools** tab has **Undo (n)** and **Redo (n)** buttons with how many groups there are. A block someone else (or physics: falling sand, flowing water) changed since is left as it is, and a short message says so (`Undone 12 blocks; 2 changed since, left as they are`); so is anything that's outside the area now (glide back to undo it). Undo brings back both halves of doors and beds, and a broken chest with its items (a chest broken with the trigger spills like in the game, and those items stay on the ground too; a box or brush never spills a chest). It doesn't take back mobs you spawned, primed TNT or fire that spread. The server keeps 10000 blocks of history for each headset (`edit.undo-depth`; a bigger box can be undone until your next edit), and a new connection starts empty.
+
+**The box wand.** In the block menu's **Tools** tab press **Wand**. Then:
+1. **Left trigger** on a block sets **corner A**; **left grip + left trigger** sets **corner B**. A cyan box shows the selection (one block until B is set). The left trigger does nothing else while the wand is on (no placing, no using blocks); the right trigger still breaks.
+2. Pick the block to build with as usual (the menu, the hotbar, right stick click), then press a button in the Tools tab: **Fill** (the whole box), **Walls** (the four sides), **Hollow** (a shell, air inside), **Clear** (air), or **Replace**: first tap **B** on a block of the kind to replace (with the wand on, B picks that filter instead of the selected block), then Replace swaps every one of them in the box for the selected block.
+3. **Clone** copies the box: an orange box of the copy follows where you aim (it stands on the face you point at); the **left trigger** pastes it there, as often as you like; **Rotate** turns it a quarter clockwise (stairs, logs and doors turn with it); a tap on **B** or Clone again ends pasting. Chest contents are copied too.
+4. **Clear corners** forgets the box; **Wand** again turns it off.
+
+A box can hold up to 32768 blocks (vanilla's `/fill` limit, `edit.box-max-blocks`) and must be inside the area. The server builds it a slice per tick so the game doesn't stutter: a 32768-block fill takes about a second; the Tools tab shows `Filling 12000 / 32768 (36 %)` meanwhile and a message says when it's done. One box (or undo) runs at a time: the next waits for it (`Wait: ...`). Fences, panes and walls connect to what's around the box, sand in it falls and water flows into a cleared box, as with `/fill`.
+
+**Brushes.** Press **Brush** (it cycles **sphere**, **cylinder**, **disc**, off), choose **Paint**, **Replace** (the block you tapped B on becomes the selected block), **Erase** or **Smooth**, and **Radius −/+** (1–8). Then hold the **left trigger** and sweep: a stroke goes at the aimed block about seven times a second, and a faint cyan box shows the brush's reach. Smooth knocks off bumps and fills small holes. One hold is one undo. The server allows 20000 brushed blocks a second per headset (`edit.brush-blocks-per-second`); the headset keeps under it (a radius-8 sphere is 2553 blocks).
+
+| Control | Action |
+|---|---|
+| **B** held 0.6 s | Undo the last edit group; keep holding to undo more |
+| **B** tap with the wand or a brush on | Pick the filter for Replace (or end pasting) |
+| **Left trigger** (wand) | Corner A; with the **left grip**: corner B; while pasting: paste |
+| **Left trigger** held (brush) | Paint strokes at the aimed block |
+| **Tools tab** | Wand, Brush, Fill, Replace, Clear, Walls, Hollow, Clone, Rotate, Clear corners, Paint, Replace, Erase, Smooth, Radius −/+, Undo, Redo |
+
+Server options (config.yml `edit`): `power`, `power-require-token`, `undo-depth` (10000), `undo-tile-entities` (256), `box-max-blocks` (32768), `box-budget-ms` (2), `brush-max-radius` (8), `brush-blocks-per-second` (20000), `power-actions-per-second` (5). Each box edit, undo and redo is logged as `POWER session=... fill group=... filled changed=... in ... ms over ... ticks, main thread ... ms`.
 
 ## Logs
 

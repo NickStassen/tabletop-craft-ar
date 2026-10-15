@@ -14,18 +14,26 @@ from tabletop_protocol import (
     CAP_ENTITIES,
     CAP_INTERACT,
     CAP_LIGHT,
+    CAP_MARKS,
+    CAP_POWER,
     CAP_STATUS,
     CHAT_KINDS,
     DISCOVERY_PORT,
     ENTITY_OPS,
     ITEM_CATEGORIES,
     LIGHTNING_ITEM,
+    POWER_LIMITS,
     REGISTRY_CATEGORIES,
     BlockEntityMirror,
     EntityMirror,
     Envelope,
     WorldMirror,
     block_edit,
+    bookmark,
+    box_edit_msg,
+    brush_msg,
+    container_edit,
+    container_slots,
     decode_light,
     decode_rle,
     entity_op,
@@ -578,6 +586,73 @@ def test_interact_error_codes():
         validate(Envelope().wrap("entity_op", **entity_op("3c1e5f7a-2b4d-4e6f-8a9b-0c1d2e3f4a5b", op, **extra)))
 
 
+# [power] undo/redo, box edits and brushes (PROTOCOL.md "Undo and redo", "Box edits", "Brushes")
+POWER_FIXTURES = ("hello_power", "welcome_power", "block_edit_group", "interact_group", "undo", "redo", "history", "box_edit_fill",
+                  "box_edit_replace", "box_edit_clone", "box_progress", "box_progress_done", "brush", "brush_replace", "error_box_denied")
+
+
+def test_power_fixtures_exist_and_validate():
+    for name in POWER_FIXTURES:
+        validate(json.loads((FIX / f"{name}.json").read_text()))
+
+
+def test_power_caps_and_limits():
+    hello = json.loads((FIX / "hello_power.json").read_text())
+    welcome = json.loads((FIX / "welcome_power.json").read_text())
+    assert CAP_POWER in hello["caps"] and CAP_POWER in welcome["caps"] and CAP_EDIT in welcome["caps"]
+    assert {k: welcome["limits"][k] for k in POWER_LIMITS} == {"undo_depth": 10000, "box_max_blocks": 32768, "brush_max_radius": 8,
+                                                                "brush_blocks_per_second": 20000}
+    del welcome["limits"]["undo_depth"]
+    with pytest.raises(ValueError):
+        validate(welcome)
+
+
+def test_power_builders_match_the_fixtures():
+    env = Envelope()
+    fill = json.loads((FIX / "box_edit_fill.json").read_text())
+    built = env.wrap("box_edit", **box_edit_msg("fill", fill["from"], fill["to"], state=fill["state"], group=fill["group"]))
+    validate(built)
+    keys = ("op", "from", "to", "state", "group")
+    assert {k: built[k] for k in keys} == {k: fill[k] for k in keys}
+    clone = json.loads((FIX / "box_edit_clone.json").read_text())
+    built = env.wrap("box_edit", **box_edit_msg("clone", clone["from"], clone["to"], dest=clone["dest"], rotate=1, group=11))
+    validate(built)
+    assert built["dest"] == clone["dest"] and built["rotate"] == 1 and "state" not in built
+    br = json.loads((FIX / "brush_replace.json").read_text())
+    built = env.wrap("brush", **brush_msg("replace", br["center"], 4, "cylinder", state=br["state"], filter=br["filter"], height=1,
+                                          group=13))
+    validate(built)
+    assert {k: built[k] for k in br if k not in ("seq", "t")} == {k: br[k] for k in br if k not in ("seq", "t")}
+    done = json.loads((FIX / "box_progress_done.json").read_text())
+    assert done["finished"] and done["changed"] + done["skipped"] + done["outside"] == done["processed"]
+
+
+@pytest.mark.parametrize("name,patch", [
+    ("block_edit_group", {"group": -1}),
+    ("block_edit_group", {"group": 1.5}),
+    ("interact_group", {"group": "eight"}),
+    ("box_edit_fill", {"op": "melt"}),
+    ("box_edit_fill", {"state": None}),
+    ("box_edit_fill", {"from": [1, 2]}),
+    ("box_edit_replace", {"filter": None}),
+    ("box_edit_clone", {"rotate": 4}),
+    ("box_edit_clone", {"dest": None}),
+    ("box_progress", {"processed": 40000}),
+    ("box_progress", {"op": "brush"}),
+    ("box_progress_done", {"skipped_pos": [[1, 2]]}),
+    ("brush", {"shape": "cube"}),
+    ("brush", {"radius": -1}),
+    ("brush", {"state": None}),
+    ("brush_replace", {"filter": None}),
+    ("history", {"undo": -1}),
+])
+def test_power_validation_rejects(name, patch):
+    msg = json.loads((FIX / f"{name}.json").read_text())
+    msg.update(patch)
+    with pytest.raises(ValueError):
+        validate(msg)
+
+
 def test_world_state_fixture_and_rules():
     """[living] world_state (PROTOCOL.md "World state: time and weather"): a stormy midnight in the overworld."""
     msg = json.loads((FIX / "world_state.json").read_text())
@@ -616,3 +691,86 @@ def test_entities_living_fields():
     bad["entities"][7]["attach"] = "sideways"
     with pytest.raises(ValueError):
         validate(bad)
+
+
+# [operator] marks (bookmarks, spawn, worlds), containers and signs (PROTOCOL.md "Marks: bookmarks, spawn and worlds",
+# "Containers", "Signs")
+OPERATOR_FIXTURES = ("hello_operator", "welcome_operator", "bookmark", "bookmark_remove", "bookmarks", "error_mark_denied",
+                     "region_info_worlds", "region_request_jump", "container_query", "container", "container_furnace",
+                     "container_closed", "container_edit", "container_edit_put", "container_edit_sort", "container_close",
+                     "error_container_denied", "sign_edit")
+
+
+def test_operator_fixtures_exist_and_validate():
+    for name in OPERATOR_FIXTURES:
+        validate(json.loads((FIX / f"{name}.json").read_text()))
+
+
+def test_operator_caps_worlds_and_marks():
+    hello = json.loads((FIX / "hello_operator.json").read_text())
+    welcome = json.loads((FIX / "welcome_operator.json").read_text())
+    assert CAP_MARKS in hello["caps"] and CAP_MARKS in welcome["caps"]
+    assert [w["env"] for w in welcome["worlds"]] == ["normal", "nether", "the_end"]
+    assert welcome["marks"] == {"max": 200, "edit": True}
+    assert welcome["interact"]["containers"] in ("edit", "view", "off") and welcome["interact"]["signs"] is True
+    info = json.loads((FIX / "region_info_worlds.json").read_text())
+    assert info["spawn"] == welcome["worlds"][0]["spawn"] and info["worlds"] == welcome["worlds"]
+    jump = json.loads((FIX / "region_request_jump.json").read_text())
+    nether = next(w for w in welcome["worlds"] if w["name"] == jump["world"])
+    top = jump["origin"][1] + jump["dims"][1]
+    assert nether["min_y"] <= jump["origin"][1] and top <= nether["max_y"], "a jump stays inside the build height"
+
+
+def test_operator_builders_match_the_fixtures():
+    env = Envelope()
+    add = json.loads((FIX / "bookmark.json").read_text())
+    built = env.wrap("bookmark", **bookmark("add", "Village", "world", (120, 64, -300)))
+    validate(built)
+    assert {k: built[k] for k in ("op", "name", "world", "pos")} == {k: add[k] for k in ("op", "name", "world", "pos")}
+    built = env.wrap("bookmark", **bookmark("remove", "Village"))
+    validate(built)
+    assert "world" not in built and built["name"] == "Village"
+    edit = json.loads((FIX / "container_edit.json").read_text())
+    built = env.wrap("container_edit", **container_edit((1, 64, 2), 5, "minecraft:torch", 32, was=("minecraft:torch", 64)))
+    validate(built)
+    assert {k: built[k] for k in ("pos", "slot", "item", "count", "was")} == {k: edit[k] for k in ("pos", "slot", "item", "count", "was")}
+    sort = env.wrap("container_edit", **container_edit((1, 64, 2), op="sort"))
+    validate(sort)
+    assert sort["op"] == "sort" and "slot" not in sort
+    chest = json.loads((FIX / "container.json").read_text())
+    assert container_slots(chest) == {0: ("minecraft:diamond", 3), 5: ("minecraft:torch", 64), 30: ("minecraft:oak_planks", 16)}
+    assert chest["size"] == 54 and chest["other"] == [2, 64, 2]
+    assert json.loads((FIX / "error_container_denied.json").read_text())["op"] == "container_edit"
+
+
+@pytest.mark.parametrize("name,patch", [
+    ("bookmark", {"op": "rename"}),
+    ("bookmark", {"name": " "}),
+    ("bookmark", {"pos": [1, 2.5, 3]}),
+    ("bookmarks", {"max": 1}),
+    ("bookmarks", {"marks": [{"name": "A", "world": "world", "pos": [1, 2, 3]}, {"name": "a", "world": "world", "pos": [1, 2, 3]}]}),
+    ("welcome_operator", {"worlds": [{"name": "world", "env": "overworld", "min_y": 0, "max_y": 256, "spawn": [0, 64, 0]}]}),
+    ("welcome_operator", {"worlds": [{"name": "world", "env": "normal", "min_y": 0, "max_y": 0, "spawn": [0, 64, 0]}]}),
+    ("region_info_worlds", {"spawn": [0.5, 64, 0]}),
+    ("container", {"items": [[54, "minecraft:dirt", 1]]}),
+    ("container", {"items": [[0, "minecraft:dirt", 1], [0, "minecraft:stone", 2]]}),
+    ("container", {"items": [[0, "dirt", 1]]}),
+    ("container", {"edit": "maybe"}),
+    ("container_closed", {"reason": None}),
+    ("container_edit", {"slot": -1}),
+    ("container_edit", {"count": 128}),
+    ("container_edit", {"was": ["minecraft:torch"]}),
+    ("container_edit_sort", {"op": "shuffle"}),
+    ("sign_edit", {"side": "top"}),
+    ("sign_edit", {"lines": ["a", "b", "c"]}),
+    ("sign_edit", {"color": "teal"}),
+])
+def test_operator_validation_rejects(name, patch):
+    msg = json.loads((FIX / f"{name}.json").read_text())
+    msg.update(patch)
+    with pytest.raises(ValueError):
+        validate(msg)
+
+
+def test_operator_error_codes():
+    validate({"v": 1, "type": "error", "seq": 0, "t": 0, "code": "mark_denied", "message": "x"})
