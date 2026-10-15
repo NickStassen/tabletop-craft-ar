@@ -1,0 +1,32 @@
+{
+ "v": 1,
+ "type": "container",
+ "seq": 141,
+ "t": 1760370008020,
+ "pos": [
+  4,
+  64,
+  2
+ ],
+ "block": "minecraft:furnace",
+ "title": "Furnace",
+ "size": 3,
+ "edit": "view",
+ "items": [
+  [
+   0,
+   "minecraft:raw_iron",
+   12
+  ],
+  [
+   1,
+   "minecraft:coal",
+   5
+  ],
+  [
+   2,
+   "minecraft:iron_ingot",
+   4
+  ]
+ ]
+}

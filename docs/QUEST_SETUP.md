@@ -259,7 +259,7 @@ For measurements, `tabletop.json` can start the app at a preset: `"area_width": 
 - `AREA_LOADED width=192 region=224x128x224 load_s=1.8 faces=... batches=64 renderers=64 draw_calls~128 sections=706/1568 verts=... tris=... gpu_kb=...` once the new area is fully meshed and uploaded.
 - `PERF width=192 frames=360 fps=72.0 frame_ms p50=13.9 p90=14.1 p99=16.2 max=22.0 over15ms=3 faces=... pending=0 batches=...` every 5 s: Unity's frame times (`Time.unscaledDeltaTime`) next to VrApi's own FPS lines.
 
-## Part L: the operator panel: chat, console, players, world, server
+## Part L: the operator panel: chat, console, players, world, server, marks
 
 You are the server's operator without a game account. The operator panel lets you chat with Java players, run server commands and watch the server. Chat and the status work on any server; commands need a token (security, below).
 
@@ -294,6 +294,7 @@ The tabs:
 - **Players:** everyone online (any world) with game mode, health, food and ping, refreshed every second. Select a player, then: **Here @** teleports them on top of the block you last aimed at (in its dimension), **Heal**, **Feed**, **Kick** (type a reason, enter kicks; **Cancel** backs out) and the four game modes.
 - **World:** the region's world: time, day, weather, difficulty, tick state. **Time** day/noon/night/midnight, **Weather** clear/rain/thunder, **Bolt @** (lightning on the block you last aimed at), **Freeze/Unfreeze** and **Step 20** (the game's `/tick`), **Difficulty**, and every game rule the server has, as toggles (a lit toggle is on), with the server's own names (26.x: `advance_time`, `mob_griefing`...). Numeric rules are in the Console (`gamerule random_tick_speed 0`).
 - **Server:** TPS (1, 5, 15 min), MSPT, memory, players, the tick state and, per world, loaded chunks, entities, players, the time and the weather, every 2 s.
+- **Marks:** jump to another world, the spawn, typed coordinates or a shared bookmark; who you follow (Part N). The Players tab's **View** row follows the selected player or jumps to them once (Part N); the container view and the sign editor also open in this panel (Part N).
 
 Without the token the command buttons are greyed and the note line says **needs auth.token**; chat, Players, World and Server still show their information. The line at the bottom of the panel says what happened last (the last command's answer, or why a button did nothing). The **Info** tab of the block menu has a `TALK` line: chat (as which name, or read-only), commands on or off, status.
 
@@ -337,9 +338,42 @@ So with stone selected, pointing at a door opens it; to place stone against the 
 
 **The info card** floats above the mob (or player) with its type and name, health, owner, how long until a baby grows up, and whether it is frozen, glowing, on a lead or riding. Point the right ray at a button: **Kill**, **Remove** (gone without dying), **Freeze / Unfreeze** (it stands still and ignores everything; it stays frozen across restarts until unfrozen, and `/tabletop unfreeze-all` on the server wakes every mob a headset froze), **Glow**, **Close**. It closes by itself when the mob is gone or after 30 s, and with **B**.
 
-Nothing changes on the table until the server answers (0.1–0.2 s). When it refuses, a short message says why (`Can't: the axe does nothing to stone`, `Can't: fire is off on this server (interact.fire)`). Chests, barrels, shulker boxes and signs don't open yet (a later version adds the container view and the sign editor; for now a message says so): hold the left grip to place against them.
+Nothing changes on the table until the server answers (0.1–0.2 s). When it refuses, a short message says why (`Can't: the axe does nothing to stone`, `Can't: fire is off on this server (interact.fire)`). Chests, barrels, shulker boxes, furnaces and other containers open the container view, and signs the sign editor, in the operator panel (Part N); hold the left grip to place against them.
 
 Server options (config.yml `interact`): `enabled`, `require-token`, `max-per-second` (10), `entities` (mobs at all), `harm-players` (false), `iron-doors`, `fire`, `tnt`, `fluids`, `lightning` (true, effect, false), `attack-damage` (5), `deny-spawn` (wither and ender dragon) and `max-spawns-per-minute` (60). Everything stays inside the area like block editing, and protection plugins aren't consulted; fire and lava can spread beyond the area. Each use is logged as `INTERACT session=... item block x,y,z face=... -> new state`, each mob action as `ENTITY session=... op type uuid`.
+
+## Part N: Marks, follow, containers and signs
+
+The operator panel (X, Part L) also moves the view around the world and opens chests and signs. Everything here works without the token, except bookmarks on a server with `marks.require-token: true`.
+
+**Marks tab.** The top line says where the view is (`Overworld  105 64 -35`) and who you follow.
+- **World** row: one button per world the server has (Overworld, Nether, End and a fourth one; more worlds are reached through bookmarks or Follow). The lit one is where the view is. A button moves the view to that world's spawn; the width and the margins stay the same, the height shrinks to fit the Nether and the End (they are 256 high). Another world loads in full, so it takes a moment.
+- **Spawn** jumps to this world's spawn. **Stop follow** stops following (below).
+- **Go to**: click the field, type `x z` or `x y z` on the keyboard (**?123** for digits and `-`; `~` means here, `~20 ~ ~-5` is 20 east and 5 north of the view centre), then **go** (the keyboard's enter) or **Go**. Without a height the view keeps its own.
+- **Bookmarks**, shared with every headset on the server and kept by the server (`plugins/TabletopCraftAR/bookmarks.yml`): **Add mark** names the place under the view centre (`Mark 3`, or type your own) and **Save** (enter) stores it; select a row, then **Go** jumps there (in its world: a row in another world shows `[Nether]`) and **Delete** removes it. The right stick scrolls the list. A server can make them read-only (`marks.edit: false`): the buttons grey out.
+- Every jump moves the shared area, so other headsets on the server move with you (the last request wins, as for gliding). In the same world only the new part is loaded; the view lands exactly on the target.
+
+**Following a player.** In the Players tab select someone, then **Follow** (in the **View** row). The view glides after them as they walk, run, ride or fly, a little behind (about a second), and stays still while they wander a block or two or step up and down a few blocks; when they teleport far away, die and respawn, or go through a portal, the view jumps after them, into the Nether or the End too. **Go to** jumps to them once without following. Following stops when you push the left stick, open area setup (Y), use Reset view, jump somewhere from the Marks tab, press **Stop** (Players) or **Stop follow** (Marks), or when they leave the server; a message says why. The giant itself can't be followed: it is where you look at the table.
+
+**Containers.** The left trigger on a chest, trapped chest, copper chest, barrel, shulker box, hopper, dispenser, dropper, furnace, smoker, blast furnace, brewing stand or crafter (the outline is cyan) opens it in the operator panel: the title (`Large Chest` for a double chest, which is one view of 54 slots), the slots with their item icons and counts, in rows of 9 (3×3 for dispensers, droppers and crafters, one row for hoppers, furnaces and brewing stands, whose empty slots say what they take: input, fuel, output; bottle, ingredient, fuel). Java players see the lid open while you look. The view updates by itself when a Java player, a hopper or a command changes it.
+
+| Control | Action |
+|---|---|
+| **Right trigger** on a slot | Select it (the top line says what it holds). |
+| **1 / 16 / 64** | How many items Take and Put move. |
+| **Take** | Take that many out of the selected slot (they go nowhere, as a creative player's would). |
+| **Put** | Put that many of your selected hotbar block or item into the slot: added to the same item (up to its stack size), or in place of another. |
+| **Clear** | Empty the slot. |
+| **Sort** | Merge and order the whole container (chests, barrels, shulker boxes, hoppers, dispensers, droppers). |
+| **Close**, a tab, X or ≡ | Close the view (the lid closes). |
+
+The server checks every change again: a furnace's fuel slot takes only fuel and its output slot nothing, a brewing stand's slots only what belongs there, a shulker box no shulker box, and when a Java player changed the slot since you looked the change is refused (`the slot changed meanwhile`); the note line says why. A server can make containers view-only or switch them off (`interact.containers: view` or `false`): the buttons grey out, or the left trigger says so.
+
+**Signs.** The left trigger on a sign (standing, wall or hanging) opens the sign editor, filled with what the sign says now. **Front** / **Back** switch sides; select a line with the right trigger and type on the keyboard (**next**, the enter key, moves to the next line); the swatches set the text colour and **Glow** the glowing ink; **Save** sends the sides you changed, and the sign on the table (and in the game) shows the new text a moment later. A waxed sign can't be edited, and another plugin (a protection plugin) may refuse the change; the note line says so. `interact.signs: false` on the server switches the editor off.
+
+To place a block against a chest or a sign instead, hold the left grip while you pull the trigger (Part M).
+
+Logs: `JUMP`, `JUMP landed`, `FOLLOW`, `CONTAINER open`, `SIGN edit` (`adb logcat -s Unity | grep Tabletop`); on the server `MARK`, `CONTAINER`, `CONTAINER_DENIED`, `SIGN`, `SIGN_DENIED`, and `/tabletop status` adds an operator line.
 
 ## Logs
 

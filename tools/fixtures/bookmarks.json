@@ -1,0 +1,29 @@
+{
+ "v": 1,
+ "type": "bookmarks",
+ "seq": 3,
+ "t": 1760370007010,
+ "max": 200,
+ "marks": [
+  {
+   "name": "Nether hub",
+   "world": "world_nether",
+   "pos": [
+    8,
+    70,
+    -4
+   ],
+   "by": "Operator"
+  },
+  {
+   "name": "Village",
+   "world": "world",
+   "pos": [
+    120,
+    64,
+    -300
+   ],
+   "by": "Operator"
+  }
+ ]
+}

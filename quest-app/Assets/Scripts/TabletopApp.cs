@@ -121,6 +121,8 @@ namespace TabletopCraft
             var leash = _entitiesRoot.gameObject.AddComponent<LeashRenderer>();
             leash.Entities = _entities; leash.Players = _players; leash.Textures = _entityTex;
         }
+        // [operator] what the server allows for bookmarks, the container view and the sign editor (welcome)
+        OperatorWelcome _operator = new OperatorWelcome();
 
         void Start()
         {
@@ -267,6 +269,30 @@ namespace TabletopCraft
             _card.Top = _edit.TryEntityTop;
             _card.Result = r => _edit.Editor.Result = r;
             _edit.Blocked = () => _area.Active || _menu.CapturesRight || _ops.CapturesRight || _card.CapturesRight;
+            // [operator] Marks tab jumps, Players' Follow / Go to (NavController + World/FollowState.cs); the left trigger on a
+            // container or a sign opens the container view or the sign editor in the operator panel (BlockEditMode's hooks).
+            _ops.JumpTo = (w, p) => { if (!_nav.JumpTo(w, p)) _hud.Toast("No area yet", ToastKind.Warn); };
+            _ops.Follow = _nav.FollowCommand;
+            _ops.Icons = _icons; _ops.Nav = _nav.State; _ops.Following = _nav.Follow;
+            _ops.Selection = () => _edit.Editor.Selected;
+            _ops.Registry = () => _registry;
+            _nav.WorldInfo = n => _ops.Model.Marks.WorldOf(n);
+            _nav.PlayerShown = _players.TryShown;
+            _nav.SendTracked = b => _link.SendTracked(b);
+            _nav.FollowBlocked = () => _area.Active;
+            _nav.FollowNote = t => _hud.Toast(t, ToastKind.Info);
+            _edit.OnContainerUse = pos =>
+            {
+                if (!_operator.ContainersOn) { _edit.Editor.Result = "can't open containers: they're off on this server (interact.containers)"; return; }
+                _ops.OpenContainer(pos);
+            };
+            _edit.OnSignUse = pos =>
+            {
+                if (!_operator.Signs) { _edit.Editor.Result = "can't edit signs: it's off on this server (interact.signs)"; return; }
+                var local = pos - _world.Origin;
+                string state = _world.Loaded && _world.InBounds(local.x, local.y, local.z) ? _world.State(_world.Get(local.x, local.y, local.z)) : null;
+                _ops.OpenSign(pos, state, _blockEntities.Store.Get(pos));
+            };
             _chatView = gameObject.AddComponent<ChatView>();
             _chatView.Head = Head; _chatView.LeftHand = LeftHand; _chatView.Log = _ops.Model.Log; _chatView.Bubbles = _ops.Bubbles;
             _chatView.Hidden = () => _ops.Open || _menu.Open || _area.Active;
@@ -477,6 +503,7 @@ namespace TabletopCraft
         void ResetView()
         {
             _placement.NorthUp();
+            _nav.StopFollow("Reset view");   // [operator]
             _nav.State.Recenter();
             _nav.Place();
             if (_nav.State.Loaded) AreaSize.FitToTable(AreaSizing.Current(_nav.State));
@@ -639,6 +666,12 @@ namespace TabletopCraft
                     _interact = InteractWelcome.From(m);   // [hands] item_registry follows for interact_v1 sessions
                     if (!_interact.Allowed && _items != null) { _items = null; _menu.SetItems(null); }
                     _card.Model.Close();
+                    _operator = OperatorWelcome.From(m);   // [operator] worlds, bookmarks, containers, signs
+                    _ops.Model.Marks.OnWelcome(_operator);
+                    _ops.Model.LeaveMode();               // a container view of the old session is gone
+                    _ops.Model.Outbox.Clear();
+                    _nav.Follow.Focus.Clear();
+                    Debug.Log($"[Tabletop] OPERATOR worlds {_operator.Worlds.Count}, bookmarks {(_operator.Marks ? (_operator.MarksEdit ? "on" : "read-only") : "off")}, containers {_operator.Containers}, signs {(_operator.Signs ? "on" : "off")}");
                     // Light from the server makes faces merge less: scale the area-setup face estimate (soft cap).
                     AreaMath.LightFactor = AreaMath.LightFactorFor(m.A("caps")?.Contains(Protocol.CapLight) == true, BlockShading.SmoothLighting);
                     _link.Send(Protocol.AvatarConfig(true, BlockSizeM, SkinPlayer, true, "Tabletop Giant"));
@@ -649,10 +682,17 @@ namespace TabletopCraft
                     if (_announce) { _announce = false; _hud.Toast("Connected to " + ServerAddress.HostOf(_link.Url), ToastKind.Info); }
                     break;
                 case "region_info":
+                {
+                    // [operator] the region world's spawn and the worlds; following's own region_query answers stop here
+                    var spawn = m.A("spawn");
+                    _ops.Model.Marks.OnRegionInfo(WorldEntry.ListFrom(m.A("worlds")), m.O("region")?.S("world"),
+                                                  spawn != null && spawn.Count == 3 ? new Vector3Int((int)(double)spawn[0], (int)(double)spawn[1], (int)(double)spawn[2]) : (Vector3Int?)null);
+                    if (_nav.OnFollowReply(m)) { _nav.OnLimits(m.O("limits")); break; }
                     _area.OnRegionInfo(RegionInfo.From(m));
                     _nav.OnLimits(m.O("limits"));   // [nav]
                     AreaSize.OnLimits(m.O("limits"));   // [area]
                     break;
+                }
                 case "region_changed":
                     // A snapshot of the new region follows; just note who changed it (shared region, last writer wins).
                     _area.OnRegionChanged(m, m.S("by_session") == _session);
@@ -692,6 +732,7 @@ namespace TabletopCraft
                     break;
                 case "chat": case "command_result": case "command_output": case "command_suggestions":   // [talk] PROTOCOL.md 4.26-4.28
                 case "server_status": case "world_info": case "players_info":
+                case "bookmarks": case "container":   // [operator] PROTOCOL.md "Marks...", "Containers"
                     _ops.OnMessage(m);
                     break;
                 case ItemRegistry.Type:   // [hands] usable items and spawn eggs (PROTOCOL.md "Using blocks and items")
@@ -717,6 +758,7 @@ namespace TabletopCraft
                     catch (Exception e) { Debug.LogWarning("[Tabletop] bad block_registry: " + e.Message); _hud.Toast("Bad block list from the server", ToastKind.Error); }
                     break;
                 case "error":
+                    if (_nav.OnFollowReply(m)) break;   // [operator] following's region_query: the player left
                     if (_ops.OnError(m)) { Debug.Log($"[Tabletop] panel error {m.S("code")}: {m.S("message")}"); break; }   // [talk] the panel shows it
                     _lastError = $"{m.S("code")}: {m.S("message")}";
                     string areaBefore = _area.Status;   // [menu]

@@ -108,6 +108,22 @@ REQUIRED["world_state"] = ["world", "dimension", "skylight", "time", "day_time",
 DIMENSIONS = ("overworld", "the_nether", "the_end", "custom")
 BILLBOARDS = ("fixed", "vertical", "horizontal", "center")
 
+# [operator] Marks (bookmarks, spawn, worlds; cap marks_v1), containers and signs (interact_v1). PROTOCOL.md "Marks:
+# bookmarks, spawn and worlds", "Containers", "Signs".
+CAP_MARKS = "marks_v1"
+OPERATOR_REQUIRED = {
+    "bookmark": ["op", "name"],
+    "bookmarks": ["max", "marks"],
+    "container_query": ["pos"],
+    "container": ["pos"],
+    "container_edit": ["pos"],
+    "container_close": ["pos"],
+    "sign_edit": ["pos", "side", "lines"],
+}
+REQUIRED.update(OPERATOR_REQUIRED)
+ERROR_CODES |= {"mark_denied"}
+WORLD_ENVS = ("normal", "nether", "the_end", "custom")
+
 
 def validate(msg: dict) -> None:
     t = msg.get("type")
@@ -187,6 +203,12 @@ def validate(msg: dict) -> None:
         validate_control(msg)   # [talk]
     if t in INTERACT_REQUIRED:
         validate_interact(msg)   # [hands]
+    if t in OPERATOR_REQUIRED:
+        validate_operator(msg)   # [operator]
+    if t in ("welcome", "region_info") and "worlds" in msg:
+        validate_worlds(msg["worlds"])   # [operator]
+    if t == "region_info" and "spawn" in msg and not _ints(msg["spawn"], 3):
+        raise ValueError("region_info spawn must be [x, y, z] integers")
     if t == "welcome" and "interact" in msg and not isinstance(msg["interact"], dict):
         raise ValueError("welcome interact must be an object")
     if t == "world_state":
@@ -247,6 +269,121 @@ def validate_interact(msg: dict) -> None:
         h = msg.get("health")
         if h is not None and not (isinstance(h, list) and len(h) == 2):
             raise ValueError("entity_info health must be [health, max]")
+
+
+def validate_worlds(worlds) -> None:
+    """[operator] welcome.worlds / region_info.worlds: name, env, build height [min_y, max_y), spawn."""
+    if not isinstance(worlds, list) or not worlds:
+        raise ValueError("worlds must be a non-empty list")
+    for w in worlds:
+        if not isinstance(w.get("name"), str) or w.get("env") not in WORLD_ENVS:
+            raise ValueError(f"world entry {w} needs a name and env in {WORLD_ENVS}")
+        if not (isinstance(w.get("min_y"), int) and isinstance(w.get("max_y"), int) and w["min_y"] < w["max_y"]):
+            raise ValueError(f"world {w.get('name')} needs min_y < max_y")
+        if not _ints(w.get("spawn"), 3):
+            raise ValueError(f"world {w.get('name')} spawn must be [x, y, z] integers")
+
+
+def validate_operator(msg: dict) -> None:
+    """[operator] bookmark, bookmarks, container_query, container, container_edit, container_close, sign_edit."""
+    t = msg["type"]
+    if t == "bookmark":
+        if msg["op"] not in ("add", "remove"):
+            raise ValueError("bookmark op must be add or remove")
+        if not isinstance(msg["name"], str) or not msg["name"].strip() or len(msg["name"]) > 64:
+            raise ValueError("bookmark name must be 1..32 characters")
+        if msg["op"] == "add" and not (isinstance(msg.get("world"), str) and _ints(msg.get("pos"), 3)):
+            raise ValueError("bookmark add needs world and pos [x, y, z] integers")
+    elif t == "bookmarks":
+        names = set()
+        for k in msg["marks"]:
+            if not isinstance(k.get("name"), str) or not isinstance(k.get("world"), str) or not _ints(k.get("pos"), 3):
+                raise ValueError(f"bookmarks entry {k} needs name, world and pos")
+            if k["name"].lower() in names:
+                raise ValueError(f"bookmarks lists {k['name']} twice")
+            names.add(k["name"].lower())
+        if len(msg["marks"]) > msg["max"]:
+            raise ValueError("bookmarks lists more than max")
+    elif t in ("container_query", "container_close"):
+        if not _ints(msg["pos"], 3):
+            raise ValueError(f"{t} pos must be [x, y, z] integers")
+    elif t == "container":
+        if not _ints(msg["pos"], 3):
+            raise ValueError("container pos must be [x, y, z] integers")
+        if msg.get("closed"):
+            if not isinstance(msg.get("reason"), str):
+                raise ValueError("a closed container needs a reason")
+            return
+        for k in ("block", "title", "size", "items", "edit"):
+            if k not in msg:
+                raise ValueError(f"container missing {k}")
+        if msg["edit"] not in ("edit", "view") or not isinstance(msg["size"], int) or msg["size"] < 1:
+            raise ValueError("container edit must be edit or view, size >= 1")
+        if msg.get("other") is not None and not _ints(msg["other"], 3):
+            raise ValueError("container other must be [x, y, z] integers")
+        slots = set()
+        for e in msg["items"]:
+            if not (isinstance(e, list) and len(e) == 3 and isinstance(e[0], int) and 0 <= e[0] < msg["size"]
+                    and isinstance(e[1], str) and _ID.match(e[1]) and isinstance(e[2], int) and e[2] > 0):
+                raise ValueError(f"container item {e} must be [slot, item id, count > 0] inside size")
+            if e[0] in slots:
+                raise ValueError(f"container lists slot {e[0]} twice")
+            slots.add(e[0])
+    elif t == "container_edit":
+        if not _ints(msg["pos"], 3):
+            raise ValueError("container_edit pos must be [x, y, z] integers")
+        op = msg.get("op", "set")
+        if op not in ("set", "sort"):
+            raise ValueError("container_edit op must be set or sort")
+        if op == "set":
+            if not isinstance(msg.get("slot"), int) or not 0 <= msg["slot"] <= 255:
+                raise ValueError("container_edit set needs slot 0..255")
+            item = msg.get("item")
+            if item is not None and not (isinstance(item, str) and _ID.match(item)):
+                raise ValueError("container_edit item must be a namespaced item id or null")
+            c = msg.get("count", 0 if item is None else 1)
+            if not isinstance(c, int) or not 0 <= c <= 127:
+                raise ValueError("container_edit count must be 0..127")
+            was = msg.get("was")
+            if was is not None and not (isinstance(was, list) and len(was) == 2 and (was[0] is None or _ID.match(str(was[0])))
+                                        and isinstance(was[1], int)):
+                raise ValueError("container_edit was must be [item or null, count]")
+    elif t == "sign_edit":
+        if not _ints(msg["pos"], 3) or msg["side"] not in ("front", "back"):
+            raise ValueError("sign_edit needs pos [x, y, z] and side front or back")
+        if not (isinstance(msg["lines"], list) and len(msg["lines"]) == 4 and all(isinstance(x, str) for x in msg["lines"])):
+            raise ValueError("sign_edit lines must be 4 strings")
+        if msg.get("color") is not None and msg["color"] not in DYES:
+            raise ValueError(f"sign_edit color must be a dye colour, got {msg['color']}")
+        if msg.get("glowing") is not None and not isinstance(msg["glowing"], bool):
+            raise ValueError("sign_edit glowing must be a boolean")
+
+
+def bookmark(op: str, name: str, world: str | None = None, pos=None) -> dict:
+    """[operator] bookmark payload; wrap it with Envelope.wrap("bookmark", **payload)."""
+    d: dict = {"op": op, "name": name}
+    if world is not None:
+        d["world"] = world
+    if pos is not None:
+        d["pos"] = [int(v) for v in pos]
+    return d
+
+
+def container_edit(pos, slot: int | None = None, item: str | None = None, count: int = 0, was=None, op: str = "set") -> dict:
+    """[operator] container_edit payload: set slot to count x item (None or 0 empties it), or op "sort"."""
+    d: dict = {"pos": [int(v) for v in pos]}
+    if op != "set":
+        d["op"] = op
+        return d
+    d.update({"slot": slot, "item": item, "count": count})
+    if was is not None:
+        d["was"] = list(was)
+    return d
+
+
+def container_slots(msg: dict) -> dict[int, tuple[str, int]]:
+    """[operator] A container message's slots: slot -> (item, count)."""
+    return {e[0]: (e[1], e[2]) for e in msg.get("items", [])}
 
 
 def interact(pos, face: str, item: str | None = None, sneak: bool = False, hit=None, dir=None) -> dict:
