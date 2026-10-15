@@ -26,6 +26,15 @@ final class SkinLookup {
     /** PROTOCOL.md model names: "slim" (3 px arms) or "wide" (4 px arms, Mojang's CLASSIC). */
     static String model(boolean slim) { return slim ? "slim" : "wide"; }
 
+    /**
+     * player_positions[].skin (PROTOCOL.md 4.6): send it the first time a player is listed on a connection and again
+     * whenever the URL changes (Floodgate sets a Bedrock player's skin seconds after the join). Records what was sent.
+     */
+    static boolean changed(java.util.Map<UUID, String> sent, UUID player, String url) {
+        String now = url == null ? "" : url;
+        return !now.equals(sent.put(player, now));
+    }
+
     /** Blocking (call off the main thread). Null when the name isn't a valid or existing Java account. */
     static UUID uuidForName(String name) throws IOException, InterruptedException {
         if (name == null || !VALID_NAME.matcher(name).matches()) return null;

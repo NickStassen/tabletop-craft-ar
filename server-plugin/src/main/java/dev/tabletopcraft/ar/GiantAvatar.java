@@ -14,9 +14,11 @@ import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.Mannequin;
+import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.MainHand;
+import org.bukkit.plugin.Plugin;
 import org.bukkit.util.Transformation;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
@@ -24,6 +26,7 @@ import org.joml.Vector3f;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Predicate;
 
 /**
  * ARCHITECTURE.md 3.5. Two looks, chosen by {@link GiantPlacement.Mode}:
@@ -33,6 +36,8 @@ import java.util.Locale;
  * <li>ground / exact: a Mannequin (real player model + skin, SCALE attribute) plus two ItemDisplay hands, eased in
  *     on the server.</li>
  * </ul>
+ * [bedrock] Bedrock viewers (Geyser) get no item displays, so a floating giant can also carry a Mannequin shown only
+ * to them, in place of the head ({@link #syncViewer}, {@link BedrockSupport}).
  * This class owns the entities; the maths is in {@link GiantPlacement}.
  */
 public final class GiantAvatar {
@@ -70,8 +75,14 @@ public final class GiantAvatar {
     /** Hand block picked from the resolved skin (auto mode), or null. */
     public String skinHandBlock;
     public String skinNote;
+    /** [bedrock] Spawn the Bedrock Mannequin with a floating giant (config avatar.bedrock auto + Floodgate/Geyser). */
+    public boolean bedrockBodyOn;
+    /** [bedrock] Who gets it, and the plugin that owns the per-player visibility. */
+    public Predicate<Player> bedrockViewer = p -> false;
+    public Plugin owner;
 
     private Mannequin body;
+    private Mannequin bedrockBody;   // [bedrock] floating only, visible to Bedrock players only
     private ItemDisplay head, left, right;
     // [talk] The operator's last chat line above the head for chat.bubble-seconds (PROTOCOL.md 4.26), tagged TAG so
     // EntitySampler/ActionListener skip it (text displays are hidden from the entity stream anyway).
@@ -124,6 +135,12 @@ public final class GiantAvatar {
                 float s = (float) (sizes.headBlocks() / GiantPlacement.PLAYER_HEAD_BLOCKS);
                 d.setTransformation(new Transformation(new Vector3f(), new Quaternionf(), new Vector3f(s, s, s), new Quaternionf(0, 1, 0, 0)));
             });
+            if (bedrockBodyOn && owner != null) {
+                bedrockBody = newMannequin(w, at.clone().subtract(0, GiantPlacement.EYE_HEIGHT * bedrockScale(), 0), false);
+                AttributeInstance attr = bedrockBody.getAttribute(Attribute.SCALE);
+                if (attr != null) attr.setBaseValue(bedrockScale());
+                for (Player p : owner.getServer().getOnlinePlayers()) syncViewer(p);
+            }
         }
         if (showHands) {
             handBlock = pickHandBlock();
@@ -134,7 +151,16 @@ public final class GiantAvatar {
     }
 
     private void spawnMannequin(World w, Location at) {
-        body = w.spawn(at, Mannequin.class, m -> {
+        body = newMannequin(w, at, true);
+        AttributeInstance attr = body.getAttribute(Attribute.SCALE);
+        scale = computeScale(SCALE_ATTRIBUTE_MAX);
+        if (attr != null) attr.setBaseValue(scale);
+    }
+
+    /** A still, invulnerable, tagged Mannequin wearing the skin; {@code visible} false hides it until shown per player. */
+    private Mannequin newMannequin(World w, Location at, boolean visible) {
+        return w.spawn(at, Mannequin.class, m -> {
+            m.setVisibleByDefault(visible);
             m.setPersistent(false);
             m.addScoreboardTag(TAG);
             m.setImmovable(true);
@@ -149,9 +175,20 @@ public final class GiantAvatar {
             if (p != null) m.setProfile(p);
             if (nameTag != null && !nameTag.isBlank()) { m.customName(Component.text(nameTag)); m.setCustomNameVisible(true); }
         });
-        AttributeInstance attr = body.getAttribute(Attribute.SCALE);
-        scale = computeScale(SCALE_ATTRIBUTE_MAX);
-        if (attr != null) attr.setBaseValue(scale);
+    }
+
+    /** [bedrock] The Bedrock Mannequin's SCALE: its head as big as the floating head, within the attribute cap. */
+    private double bedrockScale() { return GiantPlacement.bedrockScale(sizes.headBlocks(), Math.min(maxScale, SCALE_ATTRIBUTE_MAX)); }
+
+    /**
+     * [bedrock] Per-player visibility of a floating giant: a Bedrock player sees the Bedrock Mannequin instead of the
+     * head (which Geyser can't show anyway); everyone else keeps the default (head shown, Mannequin hidden). Called on
+     * spawn for everyone online and on join. Main thread.
+     */
+    public void syncViewer(Player p) {
+        if (owner == null || bedrockBody == null || !bedrockBody.isValid() || !bedrockViewer.test(p)) return;
+        p.showEntity(owner, bedrockBody);
+        if (head != null && head.isValid()) p.hideEntity(owner, head);
     }
 
     private void setupDisplay(ItemDisplay d) {
@@ -196,6 +233,7 @@ public final class GiantAvatar {
         if (!spawned()) return;
         ResolvableProfile p = profile();
         if (body != null && p != null) body.setProfile(p);
+        if (bedrockBody != null && bedrockBody.isValid() && p != null) bedrockBody.setProfile(p);   // [bedrock]
         if (head != null && head.isValid()) head.setItemStack(headItem());
         String hb = pickHandBlock();
         if (!hb.equals(handBlock)) {
@@ -227,7 +265,12 @@ public final class GiantAvatar {
     /** Re-applies the scale after a block size or max_scale change; the hands pick it up with the next pose. */
     public void rescale() {
         if (!spawned()) return;
-        if (head != null) { computeSizes(); return; }
+        if (head != null) {
+            computeSizes();
+            AttributeInstance attr = bedrockBody != null && bedrockBody.isValid() ? bedrockBody.getAttribute(Attribute.SCALE) : null;
+            if (attr != null) attr.setBaseValue(bedrockScale());   // [bedrock]
+            return;
+        }
         scale = computeScale(SCALE_ATTRIBUTE_MAX);
         AttributeInstance attr = body.getAttribute(Attribute.SCALE);
         if (attr != null) attr.setBaseValue(scale);
@@ -235,13 +278,14 @@ public final class GiantAvatar {
 
     public void remove() {
         for (Entity e : entities()) e.remove();
-        body = null; head = left = right = null; bubble = null;   // [talk]
+        body = bedrockBody = null; head = left = right = null; bubble = null;   // [talk] [bedrock]
         eye = null; settling = false;
     }
 
     public List<Entity> entities() {
         List<Entity> l = new ArrayList<>();
         if (body != null && body.isValid()) l.add(body);
+        if (bedrockBody != null && bedrockBody.isValid()) l.add(bedrockBody);   // [bedrock]
         if (head != null && head.isValid()) l.add(head);
         if (left != null && left.isValid()) l.add(left);
         if (right != null && right.isValid()) l.add(right);
@@ -327,6 +371,12 @@ public final class GiantAvatar {
             head.teleport(new Location(w, s.eye()[0], s.eye()[1], s.eye()[2]));
             head.setInterpolationDelay(0);
             head.setTransformation(transformation(GiantPlacement.headTransform(h, sizes.headBlocks())));
+            if (bedrockBody != null && bedrockBody.isValid()) {   // [bedrock] eyes where the floating head is
+                bodyYaw = GiantPlacement.lagBodyYaw(bodyYaw, yaw, BODY_YAW_LAG);
+                bedrockBody.teleport(new Location(w, s.eye()[0], s.eye()[1] - GiantPlacement.EYE_HEIGHT * bedrockScale(), s.eye()[2], yaw, pitch));
+                bedrockBody.setRotation(yaw, pitch);
+                bedrockBody.setBodyYaw(bodyYaw);
+            }
         } else {
             bodyYaw = GiantPlacement.lagBodyYaw(bodyYaw, yaw, BODY_YAW_LAG);
             body.teleport(new Location(w, s.feet()[0], s.feet()[1], s.feet()[2], yaw, pitch));

@@ -94,6 +94,15 @@ public final class GiantPlacement {
         return new FloatingSizes(head * k, hand * k, head);
     }
 
+    /**
+     * [bedrock] SCALE of the Mannequin that stands in for a floating head on Bedrock clients: its 0.5-block head as big
+     * as the floating head, at most {@code cap} (the attribute's 16, or max-scale), at least the attribute's 0.0625.
+     * Its eyes go where the head is, so its feet are {@link #EYE_HEIGHT} x this below.
+     */
+    public static double bedrockScale(double headBlocks, double cap) {
+        return Math.max(0.0625, Math.min(cap, headBlocks / PLAYER_HEAD_BLOCKS));
+    }
+
     /** Display transformation pieces: left and right rotations as quaternions (x, y, z, w), and a scale. */
     public record DisplayTransform(float[] left, float[] scale, float[] right) {}
 
