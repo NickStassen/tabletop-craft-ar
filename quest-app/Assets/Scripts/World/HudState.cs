@@ -90,6 +90,8 @@ namespace TabletopCraft.World
             {
                 case null: return null;
                 case "edit_denied": return "Edit refused: " + message;
+                case "interact_denied": return "Can't: " + message;               // [hands]
+                case "not_found": return "Gone: " + message;
                 case "bad_state": return "Can't place: " + message;
                 case "out_of_region": return "Can't edit outside the area";
                 case "rate_limited": return "Too many edits, slow down";
