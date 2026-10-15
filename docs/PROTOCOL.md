@@ -73,6 +73,11 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 | `item_registry` | S→C | the items the headset may use and the spawn eggs, once after `block_registry` ("Using blocks and items") |
 | `entity_op` | C→S | hit, kill, remove, use an item on, name, move, carry, freeze or light up a mob or player, or ask about it ("Acting on mobs") |
 | `entity_info` | S→C | what the server knows about one entity, the reply to `entity_op` `info` ("Acting on mobs") |
+| `undo` / `redo` | C→S | take back the newest edit group, or put back the newest undone one ("Undo and redo", needs `power_v1`) |
+| `history` | S→C | how many edit groups (and blocks) can be undone and redone ("Undo and redo") |
+| `box_edit` | C→S | fill, replace, clear, walls, hollow or clone a box of blocks ("Box edits", needs `power_v1`) |
+| `box_progress` | S→C | a box edit, undo or redo running, then its result ("Box edits") |
+| `brush` | C→S | one stroke of a sphere or cylinder brush: paint, replace, erase, smooth ("Brushes", needs `power_v1`) |
 
 ### 4.1 `hello` (C→S)
 
@@ -87,7 +92,7 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 - `client`: free string, e.g. `quest-app` or `fake-quest`.
 - `protocols`: protocol versions the client speaks. The server picks the highest one it also supports.
 - `token`: shared secret from the plugin `config.yml` (`auth.token`). If it's empty in config, auth is disabled (LAN dev only). A wrong token gets `error` `auth_failed` and then close code 4003.
-- `caps`: capability strings. v1 defines `rle_palette_v1` (required) and `avatar` (client will send poses). Optional extras: `light_v1` and `biomes_v1` (§4.5.1), `edit_v1` (§4.20), `entities_v1` (§4.21), `actions_v1` (§4.22), `chat_v1`, `command_v1` and `status_v1` (§4.26–4.28), `block_entities_v1` (§4.29), `interact_v1` ("Using blocks and items"); unknown caps are ignored.
+- `caps`: capability strings. v1 defines `rle_palette_v1` (required) and `avatar` (client will send poses). Optional extras: `light_v1` and `biomes_v1` (§4.5.1), `edit_v1` (§4.20), `entities_v1` (§4.21), `actions_v1` (§4.22), `chat_v1`, `command_v1` and `status_v1` (§4.26–4.28), `block_entities_v1` (§4.29), `interact_v1` ("Using blocks and items"), `power_v1` ("Undo, box edits and brushes"); unknown caps are ignored.
 - `operator_name` (optional string): the name the headset wants in game chat (§4.26). The server keeps `[A-Za-z0-9_]`, at most 16 characters.
 - The client MUST NOT send anything else before it gets `welcome`. The server closes with 4002 if `hello` doesn't arrive within 5 s.
 
@@ -313,8 +318,8 @@ Codes (strings, closed set in v1):
 | `rate_limited` | no | too many messages (e.g. poses > `pose_hz_max`) |
 | `skin_failed` | no | the skin lookup failed; the default skin is in use |
 | `internal` | no | server-side exception |
-| `edit_denied` | no | a `block_edit` was refused: no `edit_v1`, occupied cell, denied state (§4.20) |
-| `out_of_region` | no | a `block_edit`, `interact` or `entity_op` outside the session's region (§4.20, "Using blocks and items") |
+| `edit_denied` | no | a `block_edit` was refused: no `edit_v1`, occupied cell, denied state (§4.20); an `undo`, `redo`, `box_edit` or `brush` refused (no `power_v1`, nothing to undo, a job still running, over a limit; "Undo, box edits and brushes") |
+| `out_of_region` | no | a `block_edit`, `interact`, `entity_op`, `box_edit` or `brush` outside the session's region (§4.20, "Using blocks and items", "Box edits") |
 | `bad_state` | no | a `block_edit` state that isn't a placeable block state (§4.20) |
 | `chat_denied` | no | a `chat_send` without `chat_v1`, or `chat.send` is off (§4.26) |
 | `command_denied` | no | a `command` or `command_complete` without `command_v1`, or a command the server's policy refuses (§4.27) |
@@ -381,6 +386,7 @@ So the headset can find a server without typing its address (QUEST_SETUP.md Part
 - **v0.4.0: chat, commands and server status (§4.26–4.28).** New caps `chat_v1`, `command_v1` (needs `auth.token` by default) and `status_v1`; messages `chat`, `chat_send`, `command`, `command_result`, `command_output`, `command_complete`, `command_suggestions`, `server_status`, `world_query`, `world_info`, `players_query`, `players_info`; `hello.operator_name`; `welcome.chat` and `welcome.commands`; errors `chat_denied`, `command_denied`. Fixtures `hello_control.json`, `welcome_control.json`, `chat*.json`, `command*.json`, `error_command_denied.json`, `server_status.json`, `world_query.json`, `world_info.json`, `players_query.json`, `players_info.json`.
 - **v0.4.0: block entities (§4.29).** New cap `block_entities_v1` and message `block_entities`: sign text, banner patterns, player head profiles, pot sherds, spawner mobs, beacon tiers, campfire, shelf and vault items and active conduits, as per-chunk deltas with `removed`, and `reset` on a session's first region and after a world change; config.yml `block-entities`. Fixtures `block_entities.json`, `block_entities_reset.json`.
 - **next version: using blocks, items and mobs ("Using blocks and items", "Acting on mobs").** New cap `interact_v1` (config.yml `interact`); messages `interact`, `item_registry` (after `block_registry`, `interact_v1` sessions only), `entity_op`, `entity_info`; `welcome.interact` (the switches); errors `interact_denied`, `not_found`; `out_of_region` also for `interact` and `entity_op`. Errors about an `interact` carry `op: "interact"` and `pos`, errors about an `entity_op` carry `op: "entity_op"`, `entity_op` and `uuid`. Fixtures `hello_interact.json`, `welcome_interact.json`, `interact.json`, `interact_item.json`, `item_registry.json`, `entity_op*.json`, `entity_info.json`, `error_interact_denied.json`, `error_not_found.json`.
+- **next version: undo, box edits and brushes ("Undo, box edits and brushes").** New cap `power_v1` (with `edit_v1`; config.yml `edit.power`, `edit.undo-depth`, `edit.box-max-blocks`, `edit.box-budget-ms`, `edit.brush-...`); `block_edit` and `interact` gain an optional `group`; messages `undo`, `redo`, `history`, `box_edit`, `box_progress`, `brush`; `welcome.limits` gains `undo_depth`, `box_max_blocks`, `brush_max_radius`, `brush_blocks_per_second` for `power_v1` sessions. Errors about them carry `op` (`undo`, `redo`, `box_edit` with `box_op`, `brush` with `brush_op`) and `group`. Fixtures `hello_power.json`, `welcome_power.json`, `block_edit_group.json`, `interact_group.json`, `undo.json`, `redo.json`, `history.json`, `box_edit_fill.json`, `box_edit_replace.json`, `box_edit_clone.json`, `box_progress.json`, `box_progress_done.json`, `brush.json`, `brush_replace.json`, `error_box_denied.json`.
 
 ## 4.13–4.16 Runtime region control (v1, additive)
 
@@ -912,3 +918,87 @@ Refusals are `error` with `ref_seq`, `op: "entity_op"`, `entity_op` (the op) and
 ### Fixtures and tests
 
 Fixtures `hello_interact.json`, `welcome_interact.json`, `interact.json`, `interact_item.json`, `item_registry.json`, `entity_op.json`, `entity_op_move.json`, `entity_op_use.json`, `entity_op_name.json`, `entity_info.json`, `error_interact_denied.json`, `error_not_found.json`. Java `InteractRulesTest` (the whole table on state strings) and `InteractFixtureTest` (parsers and builders against the fixtures), Python `test_tabletop_protocol.py` (`validate_interact`), C# `Tests~/InteractTests.cs` (parsing, the right-click order, the entity ray, the menu tabs, the info card). Live: `tools/interact_check.py` (41 checks on a flat world) and `Tests~ --live-interact URL` (the app's own classes).
+
+## Undo, box edits and brushes (next version; cap `power_v1`)
+
+Power tools for the headset operator: undo and redo of its own edits, box edits like vanilla's `/fill` and `/clone`, and sphere or cylinder brushes. Granted to sessions that ask for `power_v1` in `hello.caps` and got `edit_v1`, when config.yml `edit.power` is on (default) and, with `edit.power-require-token`, `auth.token` is set; echoed in `welcome.caps`. `welcome.limits` then also carries:
+
+```json
+"undo_depth":10000,"box_max_blocks":32768,"brush_max_radius":8,"brush_blocks_per_second":20000
+```
+
+A 0 means that tool is off on this server (`edit.undo-depth`, `edit.box-max-blocks`, `edit.brush-blocks-per-second`). Everything here stays inside the session's region and the world border, uses the same block rules as `block_edit` (only `block_registry` blocks, never `edit.deny`), and is not seen by protection plugins. Docs: QUEST_SETUP.md Part N (the controls), ARCHITECTURE.md §3.12.
+
+### Edit groups: `group` on `block_edit` and `interact`
+
+```json
+{"v":1,"type":"block_edit","seq":44,"t":1760370004200,"op":"place","pos":[106,64,-35],"state":"minecraft:stone_bricks","face":"east","group":7}
+```
+
+`group` (optional, an integer 0..2^32-1, chosen by the client) ties the edits and uses of one trigger hold together: one `undo` takes back the whole group. The client starts a new id with every trigger press (the Quest counts up from 1 per connection). Without `group` each message is its own group. Servers without `power_v1` ignore the field. `box_edit` and `brush` carry a `group` too: one box is one group, and the strokes of one brush hold share one.
+
+### Undo and redo: `undo`, `redo` (C→S), `history` (S→C)
+
+```json
+{"v":1,"type":"undo","seq":120,"t":1760370006000}
+{"v":1,"type":"redo","seq":121,"t":1760370006500}
+{"v":1,"type":"history","seq":140,"t":1760370006120,"undo":3,"redo":1,"undo_blocks":45,"redo_blocks":2,"depth":10000}
+```
+
+The server keeps a journal per session (it goes with the session: a reconnect starts empty). Every change a `block_edit`, `interact`, `box_edit` or `brush` of the session makes is recorded as (position, the state and block entity before, the state after), grouped by `group`:
+- **What is recorded.** For `block_edit` and `interact` the server compares the cells around the target before and after it runs (a 3×3×3 window; 7 × 14 × 7 for bone meal, which grows plants and trees), so both halves of a door or bed, a waterlogged cell and a neighbour whose connection changed are all in the group. Block entities in the window (chests, barrels, shulker boxes, signs, banners, spawners...) are snapshotted first, so a broken chest comes back with its items. Box edits and brush strokes record each cell they change, and the neighbours whose connections they recomputed.
+- **Bounds.** At most `edit.undo-depth` blocks (default 10000) per session in undo and redo together: the oldest groups are dropped first, but the newest group is always kept whole, so a box bigger than the depth can be undone until the next edit. At most `edit.undo-tile-entities` (256) block entity snapshots: past that the oldest lose theirs and come back as an empty block.
+- **`undo`** takes the newest group and puts each cell's "before" back, newest change first. A cell whose block isn't the one the group left there is **skipped** (someone or something changed it since: a player, physics, a `/setblock`); water or lava that only flowed in counts as air. Cells outside the session's current region (the area moved) are skipped too (`outside`). The cells put back form a group on the redo list.
+- **`redo`** takes the newest undone group and puts each cell's "after" back, oldest first, with the same skip rules. It goes back on the undo list. Any new group clears the redo list.
+- Both run as a job like a box edit (below): one at a time per session, within the per-tick budget, then a `box_progress` with `op` `undo` or `redo`, `group` (the undone group's id, when the client gave it one), `changed`, `skipped` (with up to 16 `skipped_pos`, world positions) and `outside`.
+- **`history`** is sent whenever the counts change (at most once a tick): `undo` and `redo` are groups, `undo_blocks` and `redo_blocks` cells, `depth` the server's `edit.undo-depth`.
+- Refusals (`error` with `op` `undo` or `redo`): `edit_denied` "nothing to undo" / "nothing to redo", "wait: a fill (42 %) is still running", "undo is off on this server (edit.undo-depth: 0)", no `power_v1`; `rate_limited` past `edit.power-actions-per-second` (5).
+
+**What undo doesn't restore:** entities (a spawned mob, a primed TNT; the items a chest spills when a `block_edit` breaks it, as in vanilla, stay on the ground, so undoing that break duplicates them; box edits, brushes and undo itself empty a container before replacing it, so nothing spills there), changes after the moment of the edit (sand that fell, water that spread, fire, grown crops: those cells are skipped), anything beyond the window of a `block_edit` or `interact` (a lever's redstone line further away updates by itself when the lever comes back; a very large tree grown with bone meal), and block entities past `edit.undo-tile-entities`.
+
+### Box edits: `box_edit` (C→S), `box_progress` (S→C)
+
+```json
+{"v":1,"type":"box_edit","seq":130,"t":1760370007000,"op":"fill","from":[110,64,-30],"to":[101,60,-21],"state":"minecraft:stone_bricks","group":9}
+{"v":1,"type":"box_edit","seq":131,"t":1760370007200,"op":"replace","from":[101,60,-30],"to":[110,64,-21],"state":"minecraft:glass","filter":"minecraft:stone_bricks","group":10}
+{"v":1,"type":"box_edit","seq":132,"t":1760370007400,"op":"clone","from":[101,60,-30],"to":[104,62,-29],"dest":[112,60,-30],"rotate":1,"group":11}
+```
+
+| field | type | req | meaning |
+|---|---|---|---|
+| `op` | string | yes | `fill`: every cell gets `state`. `replace`: the cells matching `filter` get `state`. `clear`: every cell becomes air (with a `filter`, only the matching ones). `walls`: the four vertical sides get `state` (no floor or ceiling). `hollow`: the six faces get `state` and the inside becomes air (vanilla's `/fill ... hollow`). `clone`: the box is copied to `dest`. |
+| `from`, `to` | int[3] | yes | two opposite corners, world block coordinates, inclusive, in any order |
+| `state` | string | all but `clear`, `clone` | a block state, as for `block_edit` `place`: a `block_registry` block or variant, not air, not `edit.deny`, not one half of a door, bed or tall plant. Leaves are made persistent; a waterloggable state is waterlogged exactly where the cell held water |
+| `filter` | string | `replace` (and optionally `fill`, `clear`) | a block id (`minecraft:stone`: any of its states) or a state with the properties that must match (`minecraft:oak_stairs[facing=east]`) |
+| `dest` | int[3] | `clone` | the copy's minimum corner |
+| `rotate` | int | no | `clone`: quarter turns clockwise seen from above, 0..3. A cell at local (x, z) of a box sx by sz goes to (sz−1−z, x) of the turned box, and its state turns with it (a stair facing east faces south after one turn) |
+| `group` | int | no | the edit group (above) |
+
+- Limits: at most `edit.box-max-blocks` (default 32768, vanilla's `/fill` limit) cells, the source's for a clone; the box (and a clone's copy) inside the session's region (else `out_of_region`), the build height and the world border. One job per session: a second `box_edit`, an `undo` or a `redo` while one runs gets `edit_denied` "wait: ...". At most `edit.power-actions-per-second` (5) `box_edit`, `undo` and `redo` together.
+- The server applies a job a slice at a time, `edit.box-budget-ms` (default 2 ms) of main-thread time per tick for all sessions' jobs together, bottom layer first: `setBlockData(state, false)` (no neighbour reactions, like vanilla's `/fill`), recording each change for undo, then a fix-up pass over the cells it changed: connections from the neighbours (fences, panes, walls, stairs, rails, redstone, snowy grass, gates, leaves; and the neighbours just outside the box, inside the region), then, with `edit.physics`, the neighbours are told (vanilla's `updateNeighborsAt`, as `/fill` does: sand falls, water flows in, redstone reacts). A container in the way is emptied before it is replaced (its items are in the journal; nothing spills, as with `/fill`). A clone reads its source first (so source and copy may overlap), copies block entities (a chest's items too, like `/clone`) and leaves out `edit.deny` blocks (counted as skipped). Changes reach every headset through the normal diff: a `block_update`, or a sectioned snapshot of the changed sections when more than 4096 cells changed in a tick (§4.5, §4.18).
+- **`box_progress`** (S→C) every 10 ticks while a job runs and once when it ends (`finished: true`):
+
+```json
+{"v":1,"type":"box_progress","seq":150,"t":1760370007500,"op":"fill","group":9,"ref_seq":130,"phase":"write","processed":12000,"total":32768,"changed":11800,"skipped":0,"outside":0,"finished":false}
+{"v":1,"type":"box_progress","seq":151,"t":1760370006110,"op":"undo","group":7,"ref_seq":120,"phase":"done","processed":14,"total":14,"changed":12,"skipped":2,"outside":0,"finished":true,"skipped_pos":[[106,64,-35],[107,64,-35]],"ms":3.2,"ticks":1}
+```
+
+`op` is the box op, `undo` or `redo`; `ref_seq` the request's `seq`; `phase` `read` (a clone's source), `write`, `fixup`, `done` or `failed` (a server error stopped it; what changed so far stays and is undoable); `processed` of `total` cells looked at (walls only count the sides), `changed`, `skipped` (undo/redo conflicts, a clone's `edit.deny` blocks), `outside`; when finished `ms` (wall time) and `ticks`. Brush strokes send none.
+- Refusals: `error` with `op: "box_edit"`, `box_op` and `group`; codes `edit_denied` ("the box is 40000 blocks, more than 32768 (edit.box-max-blocks)", "command block can't be placed from the headset (edit.deny)", "wait: ..."), `out_of_region`, `bad_state`, `rate_limited`, `bad_message` (malformed). Fixture `error_box_denied.json`.
+
+### Brushes: `brush` (C→S)
+
+```json
+{"v":1,"type":"brush","seq":160,"t":1760370008000,"op":"paint","shape":"sphere","center":[105,63,-35],"radius":3,"state":"minecraft:moss_block","group":12}
+{"v":1,"type":"brush","seq":161,"t":1760370008150,"op":"replace","shape":"cylinder","center":[105,63,-35],"radius":4,"height":1,"state":"minecraft:dirt_path","filter":"minecraft:grass_block","group":13}
+```
+
+One stroke; the client sends them while its trigger is held (the Quest at most every 0.15 s, at the aimed block), all with the hold's `group`.
+- `shape`: `sphere` (default), the cells with dx² + dy² + dz² ≤ r² + r around `center`; or `cylinder`, upright, dx² + dz² ≤ r² + r, `height` layers (default 2r + 1, 1 = a flat disc) from −(height−1)/2 to height/2. `radius` 0..`brush_max_radius`.
+- `op`: `paint` (every cell gets `state`), `replace` (the cells matching `filter` get `state`), `erase` (every block becomes air), `smooth` (one 3×3×3 majority vote: a cell with at least 14 solid cells around it, itself included, is solid afterwards, else air; a cell that becomes solid takes the most common solid neighbour, so a lone bump goes, a lone hole fills and flat ground stays).
+- Cells outside the region, the build height or the border are left out. A stroke runs as a job like a box edit (within the same budget, with the fix-up pass) and is recorded in the hold's group; strokes queue behind each other (at most 3; more get `rate_limited` "brush strokes are queueing up"), and wait for a running box edit, undo or redo (`edit_denied` "wait: ...").
+- Each stroke costs its cell count (a radius 8 sphere is 2553) from a per-session bucket of `brush_blocks_per_second` (20000); a stroke that doesn't fit gets `rate_limited`. Refusals carry `op: "brush"`, `brush_op` and `group`.
+
+### Fixtures and tests (power)
+
+Fixtures `hello_power.json`, `welcome_power.json`, `block_edit_group.json`, `interact_group.json`, `undo.json`, `redo.json`, `history.json`, `box_edit_fill.json`, `box_edit_replace.json`, `box_edit_clone.json`, `box_progress.json`, `box_progress_done.json`, `brush.json`, `brush_replace.json`, `error_box_denied.json`. Java `PowerFixtureTest` (parsers and builders against the fixtures), `UndoJournalTest` (groups, merging, depth, redo, block entity caps), `BoxPlanTest` (the cells of each op, the clone's turn, brush shapes and smoothing); Python `test_tabletop_protocol.py` (`validate_power`); C# `Tests~/PowerTests.cs` (parsing, B's tap and hold, groups on `block_edit` and `interact`, the wand, paste, brushes, the Tools tab). Live: `tools/power_check.py` (37 checks on a flat world) and `Tests~ --live-power URL [TOKEN]` (the app's own classes).

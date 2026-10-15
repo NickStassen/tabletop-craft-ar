@@ -6,7 +6,9 @@ import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockState;
+import org.bukkit.block.Chest;
 import org.bukkit.block.TileState;
+import org.bukkit.inventory.BlockInventoryHolder;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.block.data.Levelled;
 import org.bukkit.block.data.MultipleFacing;
@@ -384,8 +386,18 @@ final class PowerService {
                 (System.nanoTime() - started) / 1e6, ticks);
         }
 
-        /** Sets b to data (or restores the block entity snapshot, which carries its state), without neighbour reactions. */
-        void put(Block b, BlockData data, BlockState tile) {
+        /**
+         * Sets b (now holding {@code now}) to data (or restores the block entity snapshot, which carries its state),
+         * without neighbour reactions. A block with an inventory is emptied first: Paper's setBlockData(..., false)
+         * still runs block entity side effects, so a chest would spill what the journal already keeps (vanilla's /fill
+         * skips them too). A chest's own half only, never the double chest's other half.
+         */
+        void put(Block b, BlockData now, BlockData data, BlockState tile) {
+            if (hasTile(now)) {
+                BlockState live = b.getState(false);
+                if (live instanceof Chest c) c.getBlockInventory().clear();
+                else if (live instanceof BlockInventoryHolder h) h.getInventory().clear();
+            }
             if (tile != null) {
                 if (!tile.getBlockData().equals(data)) tile.setBlockData(data);
                 tile.update(true, false);
@@ -553,7 +565,7 @@ final class PowerService {
                     to = wet(to, now);
                     if (now.equals(to)) continue;
                     BlockState tile = snapshot(b, now);
-                    put(b, to, null);
+                    put(b, now, to, null);
                     remember(record, b, now, tile, to);
                 }
             }
@@ -574,7 +586,7 @@ final class PowerService {
             BlockState srcTile = srcTiles[(int) idx];
             if (now.equals(to) && srcTile == null) return;
             BlockState beforeTile = snapshot(b, now);
-            put(b, to, srcTile != null ? srcTile.copy(b.getLocation()) : null);
+            put(b, now, to, srcTile != null ? srcTile.copy(b.getLocation()) : null);
             remember(record, b, now, beforeTile, b.getBlockData());
         }
 
@@ -631,10 +643,10 @@ final class PowerService {
                 if (!same(now, redo ? c.before : c.after)) { skip(c.x, c.y, c.z); continue; }
                 if (redo) {
                     c.beforeTile = snapshot(b, now);
-                    put(b, c.after, c.afterTile);
+                    put(b, now, c.after, c.afterTile);
                 } else {
                     c.afterTile = snapshot(b, now);
-                    put(b, c.before, c.beforeTile);
+                    put(b, now, c.before, c.beforeTile);
                 }
                 kept.cells.put(c.key(), c);
             }
@@ -701,7 +713,7 @@ final class PowerService {
                 to = wet(to, now);
                 if (now.equals(to)) continue;
                 BlockState tile = snapshot(blk, now);
-                put(blk, to, null);
+                put(blk, now, to, null);
                 remember(record, blk, now, tile, to);
             }
             return fixup(end, record);

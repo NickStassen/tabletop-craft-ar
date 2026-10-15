@@ -1027,3 +1027,32 @@ The outline colours and the yellow mob box at table scale; aiming at small mobs 
 - A daylight detector's power follows its new mode within a second (its block entity's tick), not at once.
 - A held mob's AI-off is saved with the mob: if the server crashes while a headset carries it, it stays NoAI (`/data merge entity <uuid> {NoAI:0b}` fixes it).
 - Fire and lava can spread beyond the region; TNT can blow up blocks outside it.
+
+## Undo, box edits and brushes (`power_v1`, PROTOCOL "Undo, box edits and brushes"; Paper 26.3, 2026-10-15, no headset)
+
+### Tests
+
+- Java: `PowerFixtureTest` (6: groups on `block_edit`/`interact`, `box_edit` and `brush` parsing and refusals, `history`/`box_progress`/error builders against the fixtures, welcome limits), `UndoJournalTest` (10: one hold = one group, first-before/latest-after merging, a cell back where it began leaves the group, redo cleared by a new group, groups per world, the depth keeps the newest group whole, brush strokes merging, block entity snapshot cap, position keys), `BoxPlanTest` (5: walk order, the cells of fill/clear/replace/walls/hollow, the clone's quarter turns as bijections, brush shapes (81 cells for a radius-2 sphere, 2553 for 8), smoothing a bump and a hole).
+- Python: `test_tabletop_protocol.py` validates the 15 new fixtures and rejects 17 broken variants (`validate_power`); `ruff` clean.
+- C#: `Tests~/PowerTests.cs`, 72 checks: fixtures, B's tap/hold/repeat and a press carried over from a blocked moment (`TapHoldButton`), groups stamped on `block_edit` and `interact` by `BlockEditor`, the wand's corners, fill/replace/clear refusals (no box, no filter, an item, over the cap), the undo-depth warning, clone paste size, origin and turns, B ending paste, brush cycling, radius limits, stroke throttling and the client's blocks-per-second bucket, undo/redo counts, one job at a time and its timeout, the Tools tab (placement after Use/Eggs, restored from prefs, buttons fit, clicks, removed for a server without `power_v1`). `ALL PASS` with `--jar` and `--entity-models`.
+- Unity: batch compile clean (no `error CS`, no warnings in `Assets/`), `ShaderCheck` 120 variants, 0 errors.
+
+### Live server (own Paper 26.3, flat world, ports 25622/8822, `auth.token` set for `command_v1`)
+
+`python tools/power_check.py --url ws://127.0.0.1:8822/tabletop --token T --log tools/run/power/server.log`: **37/37 PASS**. It clears its bench with four 32×32×32 boxes, then: three places in one group undone and redone as one (history 3 blocks, then 1 to redo); a break group back; an opened door closed again by undo (both halves), then its placement undone (both halves); a door broken from its top half back whole; a chest with 7 diamonds (`/item replace`) broken and undone with its diamonds (`/data get block`); a box clear over that chest spills nothing (`execute if entity @e[type=item]` fails) and its undo brings the diamonds back; a cell changed by `/setblock` skipped and reported (`skipped_pos`); a new edit clears redo; fill 500, replace 500 (corners in reverse), clear 500 and its undo; walls 60 (nothing inside); hollow (a stone shell, the gold block inside cleared); clone turned a quarter (east-facing stairs face south, positions as `BoxPlan.rotate`); refusals with readable messages (33600 blocks over the cap, a box outside the region, a command block from `edit.deny`); a 32768-block fill with `box_progress` while running and an undo refused meanwhile ("wait: a fill (80 %) is still running"); brushes (81 moss blocks for a radius-2 sphere, erased, a lone dirt bump smoothed away, strokes over the queue or blocks-per-second refused); a client without `power_v1` refused undo; a fresh session has nothing to undo; every message validates; the neighbour bridge is on.
+
+`Tests~ --live-power ws://127.0.0.1:8822/tabletop TOKEN`: **6/6 PASS** with the app's own `LinkClient`, `SnapshotAssembler`, `BlockEditor` (group stamping) and `PowerTools` (undo of a three-block hold, a wand fill of 32 blocks and its clear).
+
+Main thread (the `POWER` log lines, JIT warm): a 32768-block fill in 22 ticks (1.06 s), 44 ms of main thread (fix-up 19 ms), at most 2.06 ms in a tick with `edit.box-budget-ms: 2`; its undo in 19 ticks (0.91 s), 36.5 ms; a 500-block fill right after start 6 ticks (11 ms, the JIT still cold); a 3-block undo 1.8 ms. One earlier run had a single 3.8 ms tick in the big fill (a GC pause inside the slice).
+
+### Not verified (needs the headset)
+
+B's hold timing (0.6 s, then 0.4 s repeats) and the pick moving to B's release; the Tools tab's layout and readability (eleven tabs, seven button rows, five status lines); the wand's cyan box and the paste's orange box at table scale, cut to the visible window; aiming corners with the left trigger while the right ray aims; the left grip for corner B (the grip is also the glide modifier); brush strokes while sweeping (rate, haptics, the reach box); toasts for finished jobs and refusals; how a 32768-block job looks on the table while the diffs and section snapshots arrive.
+
+### Known gaps
+
+- Undo doesn't bring back entities (spawned mobs, primed TNT, items spilled by a chest broken with the trigger, which therefore duplicate when the break is undone), nor what happened later (sand that fell, water that spread, fire, crops grown): those cells are skipped.
+- `block_edit`/`interact` are journalled from a window around the target (3×3×3, bone meal 7×14×7): a big tree grown with bone meal can reach past it; a lever's redstone further away comes back by itself through the neighbour update.
+- The journal lives with the connection: a reconnect starts with nothing to undo. Cells outside the current area are skipped (glide back to undo them).
+- A brush stroke's cells outside the area are left out silently; strokes send no `box_progress`.
+- Box and brush jobs empty block inventories (chests, barrels, hoppers, jukeboxes, lecterns, pots, chiseled bookshelves...) before replacing them (kept for undo); a campfire's items aren't an inventory in the API and still drop.

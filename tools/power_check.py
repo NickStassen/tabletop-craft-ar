@@ -286,8 +286,20 @@ async def run(a: argparse.Namespace) -> dict:
         text = " ".join(r2.get("lines") or []) if r2 else ""
         check(r1 and r1.get("ok") and r and "diamond" in text and "7" in text, "a broken chest comes back with its diamonds",
               data=text[:160])
-        await c.command(f"item replace block {x} {y} {z} container.0 with minecraft:air")
         await c.command(f"kill @e[type=item,x={x},y={y},z={z},distance=..4]")
+        # a box clear over the full chest: nothing spills (the journal keeps the items), and its undo brings them back
+        s = await c.send("box_edit", **box_edit_msg("clear", chest, chest, group=g()))
+        await c.until(lambda: c.done(s) or c.errors(ref_seq=s), 10)
+        await c.until(lambda: at(chest) == AIR)
+        r3 = await c.command(f"execute if entity @e[type=item,x={x},y={y},z={z},distance=..4]")
+        spilled = " ".join(r3.get("lines") or []) if r3 else "?"
+        r = await undo()
+        await c.until(lambda: name(at(chest)) == "chest")
+        r4 = await c.command(f"data get block {x} {y} {z} Items")
+        text = " ".join(r4.get("lines") or []) if r4 else ""
+        check(r3 and not r3.get("ok") and "diamond" in text, "a box cleared over a chest spills nothing; its undo brings the diamonds back",
+              spilled=spilled[:80], data=text[:120])
+        await c.command(f"item replace block {x} {y} {z} container.0 with minecraft:air")
     else:
         check(True, "chest contents: skipped (no command_v1: pass --token)")
 
