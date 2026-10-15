@@ -79,12 +79,10 @@ Ordered by how much each adds to the feeling of a living world on the table that
 
 **5. God powers.**
 - (Done, not yet tried on the headset) A block palette, hotbar and creative inventory: the server's `block_registry` (PROTOCOL.md 4.24), the block menu on the left hand with categories, search and icons from the user's pack, a 9-slot hotbar (QUEST_SETUP.md Part J).
-- Interacting with doors, levers, buttons and TNT.
+- (Done, not yet tried on the headset) Using blocks, items and mobs (`interact_v1`, QUEST_SETUP.md Part M): the left trigger in vanilla's right-click order (doors, levers, buttons, note blocks...; bone meal, buckets, flint and steel and TNT, axes, hoes, shovels, shears, spawn eggs, a lightning wand), Use and Eggs tabs in the block menu, hitting, carrying (right grip), naming, freezing and removing mobs and players, an info card. Open: the container view and the sign editor (the hooks are there), more of vanilla's right clicks (anvils, beds, cauldrons, item frames, trading).
 - Undo.
 - Lightning, time and weather gestures. (Buttons done, not yet tried on the headset: the operator panel's World tab, with lightning at the pointer; QUEST_SETUP.md Part L.)
-- Picking up and moving mobs or players.
 - Terraform brushes.
-- Spawning mobs.
 - (Done, not yet tried on the headset) Chat to and from players and server commands: `chat_v1`, `command_v1`, `status_v1` (PROTOCOL.md 4.26–4.28), the operator panel on X with Chat, Console, Players, World and Server tabs, chat on the wrist and bubbles over players, the giant's speech bubble for Java players (QUEST_SETUP.md Part L). Open: dictation in.
 
 **6. Multiple headsets.**

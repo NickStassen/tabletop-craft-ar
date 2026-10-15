@@ -993,3 +993,37 @@ The real mesh rate and the speed it allows at 192 and 256 (read `GLIDE ... mesh_
 - When a delta lands, sections that were being meshed are meshed again (their job is dropped as stale): up to about 5% of the meshing at 256.
 - The headset still copies the whole grid per delta; reusing buffers would remove that allocation.
 - The mesh cap is unknown until meshing has been saturated for 0.5 s; until then only the stream cap applies.
+
+## Using blocks, items and mobs (`interact_v1`, PROTOCOL "Using blocks and items", "Acting on mobs"; Paper 26.3, 2026-10-15, no headset)
+
+The left trigger in vanilla's right-click order (mob, usable block, item on the face, place; left grip = sneak), items and spawn eggs in the block menu, hitting, carrying, naming, freezing and removing mobs, and the info card.
+
+### Tests
+
+| Suite | Result |
+|---|---|
+| Plugin JUnit (`./gradlew build`) | 155 tests after merging 0.4.0, 0 failures. `InteractRulesTest` 15: every empty-hand family on state strings (iron doors with and without the switch, both door halves and their sounds per wood, a gate swinging away from the ray, a lever's and a button's support block, button ticks, note/delay/mode wrap-around, cakes, candle cakes, composters, jukeboxes, candles, campfires, container and sign hooks), axes (strip, scrape with the copper naming, unwax), honeycomb, hoes and shovels (air above, not from below, rooted dirt drops), shears, fire (TNT, candles, campfires, soul fire, switches), buckets (sources, flowing water, waterlogging, replaceable cells, ultra-warm), eggs, bone meal, the wand, and the usable list per switch. `InteractFixtureTest` 8: all 12 fixtures through the parsers and builders, 17 malformed messages, name cleaning. |
+| Python (`pytest -q`, `ruff check .`) | 159 passed after merging 0.4.0, ruff clean; 16 new: the 12 fixtures validate, caps and the welcome switches, the `interact`/`entity_op` builders against the fixtures, 12 malformed variants, the error codes and every op. |
+| Tests~ (`dotnet run -- --jar 26.3.jar --entity-models entity_models.json`) | ALL PASS, 1046 checks after merging 0.4.0; 72 in `InteractTests.cs`: the fixtures through `Net/InteractProtocol.cs`, `UseRules.Kind` against the server's table, the right-click order (sneak, the `left_trigger` swap, no cap, mobs off, containers and signs), outline colours, which actions repeat, the bucket's fluid ray, the entity ray (nearest wins, the carried one skipped, a mob in front of and behind a wall, half-block minimum, the visible window, drop points), the Use and Eggs tabs (order, captions, a saved tab restored when the items arrive, search, the name tag field and its keyboard, egg picks), `BlockEditor.Interact` and the info card. |
+| Unity 6000.0.84f1 headless compile, `ShaderCheck` | clean before and after merging 0.4.0 (no errors, no warnings in `Assets/`); 120 shader variants, 0 errors |
+
+### Live server (own Paper 26.3, flat world, ports 25621/8821)
+
+`python tools/interact_check.py --url ws://127.0.0.1:8821/tabletop --log tools/run/hands/server.log`: **41/41 PASS**, before and after merging 0.4.0. It moves the region to the grass (y = −61), builds a bench with `block_edit`, and checks: `item_registry` between `block_registry` and the first snapshot (18 usable items, 86 spawn eggs, no wither egg); an oak door opens with both halves (91–142 ms round trip) and closes from its top half; a lever on a stone block powers dust on the far side of that block to 15 and back to 0 (the neighbour bridge, `INTERACT_NEIGHBOURS on`); a stone button goes down and is back up 1.15–1.19 s after the click (20 ticks plus the diff); a note block goes up a note; bone meal grows a sapling (2–7 tries: vanilla's 45 % per use); an axe strips a log; a water bucket pours a source and the empty bucket picks it up; a pig egg spawns a pig, which is named Rex, hit (a `hurt` action, 10 → 5 health), held at the hand point with AI off, dropped with AI back, left held without updates (let go after 3 s), frozen and unfrozen, made to glow, moved, refused a move out of the region (`out_of_region`), and killed; an unknown uuid is `not_found` with `op` and `uuid`; flint and steel primes TNT (the block goes, a `minecraft:tnt` entity comes) and `entity_op remove` takes it away before it explodes; the lightning wand strikes; refusals with `op`/`pos`: a chest (the container hook), an axe on stone, a position outside the region, a diamond (not offered), a client without `interact_v1` (and it gets no `item_registry`).
+
+`Tests~ --live-interact ws://127.0.0.1:8821/tabletop`: **12/12 PASS** with the app's own `LinkClient`, `SnapshotAssembler`, `EntityStore`, `UseRules`, `BlockEditor.Interact`, `EntityRaycast` and `EntityCardModel` (a door opened, a pig spawned, hit from above by the entity ray before the grass, its card shown and the pig killed from the card's Kill button).
+
+Main thread per use (the `INTERACT` log lines): 0.16–3 ms; a first spawn 9.6 ms while classes load; building the item registry 11–26 ms once on start.
+
+### Not verified (needs the headset)
+
+The outline colours and the yellow mob box at table scale; aiming at small mobs and players among blocks; the left grip as sneak while gliding (the grip is also the vertical-glide modifier: the stick decides); the right grip carry (the 0.25 s delay against both-grips drags, the ghost box, the drop point on slopes, hold messages at 10 Hz) and the both-grips drag taking over; the item icon above the controller; the Use/Eggs tabs, icons of items and the lightning wand (lightning rod icon), the name tag keyboard; the info card's placement above the mob, readability and its buttons with the right ray while the block menu or operator panel is open; haptics; toasts for refusals.
+
+### Known gaps
+
+- Chests, barrels, shulker boxes, other containers and signs only call the hooks (`OnContainerUse`, `OnSignUse` in `XR/BlockEditMode.cs`; the server refuses them with `interact_denied`) until the container view and the sign editor come.
+- Only the curated table: no anvils, crafting tables, beds, respawn anchors, lecterns, flower pots, cauldrons, beehives, sweet berries, cave vine berries, composting items, candles on cakes, stacking items on blocks (sea pickles, candles), item frames, armour stands' equipment, villager trading, riding, or items such as potions, bows, fireworks, ender pearls and music discs.
+- Sounds and particles are the plugin's own (`World#playSound` with vanilla keys, a few particles), not the game's level events; a door that another plugin protects opens anyway (no events fire, as with `block_edit`).
+- A daylight detector's power follows its new mode within a second (its block entity's tick), not at once.
+- A held mob's AI-off is saved with the mob: if the server crashes while a headset carries it, it stays NoAI (`/data merge entity <uuid> {NoAI:0b}` fixes it).
+- Fire and lava can spread beyond the region; TNT can blow up blocks outside it.

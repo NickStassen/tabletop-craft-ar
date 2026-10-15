@@ -69,6 +69,10 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 | `world_query` / `world_info` | C→S / S→C | a world's time, weather, difficulty, tick state and game rules (§4.28) |
 | `players_query` / `players_info` | C→S / S→C | every online player with health, food, game mode, ping (§4.28) |
 | `block_entities` | S→C | sign text, banner patterns, head skins, pot sherds, spawner mobs, beacon tiers, campfire/shelf/vault items, active conduits, as deltas (§4.29, needs `block_entities_v1`) |
+| `interact` | C→S | use a block with an empty hand, or an item on a block's face ("Using blocks and items", needs `interact_v1`) |
+| `item_registry` | S→C | the items the headset may use and the spawn eggs, once after `block_registry` ("Using blocks and items") |
+| `entity_op` | C→S | hit, kill, remove, use an item on, name, move, carry, freeze or light up a mob or player, or ask about it ("Acting on mobs") |
+| `entity_info` | S→C | what the server knows about one entity, the reply to `entity_op` `info` ("Acting on mobs") |
 
 ### 4.1 `hello` (C→S)
 
@@ -83,7 +87,7 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 - `client`: free string, e.g. `quest-app` or `fake-quest`.
 - `protocols`: protocol versions the client speaks. The server picks the highest one it also supports.
 - `token`: shared secret from the plugin `config.yml` (`auth.token`). If it's empty in config, auth is disabled (LAN dev only). A wrong token gets `error` `auth_failed` and then close code 4003.
-- `caps`: capability strings. v1 defines `rle_palette_v1` (required) and `avatar` (client will send poses). Optional extras: `light_v1` and `biomes_v1` (§4.5.1), `edit_v1` (§4.20), `entities_v1` (§4.21), `actions_v1` (§4.22), `chat_v1`, `command_v1` and `status_v1` (§4.26–4.28), `block_entities_v1` (§4.29); unknown caps are ignored.
+- `caps`: capability strings. v1 defines `rle_palette_v1` (required) and `avatar` (client will send poses). Optional extras: `light_v1` and `biomes_v1` (§4.5.1), `edit_v1` (§4.20), `entities_v1` (§4.21), `actions_v1` (§4.22), `chat_v1`, `command_v1` and `status_v1` (§4.26–4.28), `block_entities_v1` (§4.29), `interact_v1` ("Using blocks and items"); unknown caps are ignored.
 - `operator_name` (optional string): the name the headset wants in game chat (§4.26). The server keeps `[A-Za-z0-9_]`, at most 16 characters.
 - The client MUST NOT send anything else before it gets `welcome`. The server closes with 4002 if `hello` doesn't arrive within 5 s.
 
@@ -310,10 +314,12 @@ Codes (strings, closed set in v1):
 | `skin_failed` | no | the skin lookup failed; the default skin is in use |
 | `internal` | no | server-side exception |
 | `edit_denied` | no | a `block_edit` was refused: no `edit_v1`, occupied cell, denied state (§4.20) |
-| `out_of_region` | no | a `block_edit` outside the session's region (§4.20) |
+| `out_of_region` | no | a `block_edit`, `interact` or `entity_op` outside the session's region (§4.20, "Using blocks and items") |
 | `bad_state` | no | a `block_edit` state that isn't a placeable block state (§4.20) |
 | `chat_denied` | no | a `chat_send` without `chat_v1`, or `chat.send` is off (§4.26) |
 | `command_denied` | no | a `command` or `command_complete` without `command_v1`, or a command the server's policy refuses (§4.27) |
+| `interact_denied` | no | an `interact` or `entity_op` without `interact_v1`, with a family switched off, or that does nothing there ("Using blocks and items") |
+| `not_found` | no | an `entity_op` whose entity is gone (died, despawned, unloaded) ("Acting on mobs") |
 
 `ref_seq` is the `seq` of the offending message, if any. When `fatal` is true, the sender closes the socket right after.
 
@@ -374,6 +380,7 @@ So the headset can find a server without typing its address (QUEST_SETUP.md Part
 - **v0.4.0: faster gliding (§4.17, §4.25), no field changes.** A glide `region_request` may move the origin by several whole sections at once; the default `max_region` is 352×384×352 and 25,165,824 blocks (a config still holding the 0.3.0 defaults is raised on start); a server reads only the sections of a moved or resized region that weren't in the old one (the delta lists exactly those). Fixture `region_changed.json` carries the new default limits.
 - **v0.4.0: chat, commands and server status (§4.26–4.28).** New caps `chat_v1`, `command_v1` (needs `auth.token` by default) and `status_v1`; messages `chat`, `chat_send`, `command`, `command_result`, `command_output`, `command_complete`, `command_suggestions`, `server_status`, `world_query`, `world_info`, `players_query`, `players_info`; `hello.operator_name`; `welcome.chat` and `welcome.commands`; errors `chat_denied`, `command_denied`. Fixtures `hello_control.json`, `welcome_control.json`, `chat*.json`, `command*.json`, `error_command_denied.json`, `server_status.json`, `world_query.json`, `world_info.json`, `players_query.json`, `players_info.json`.
 - **v0.4.0: block entities (§4.29).** New cap `block_entities_v1` and message `block_entities`: sign text, banner patterns, player head profiles, pot sherds, spawner mobs, beacon tiers, campfire, shelf and vault items and active conduits, as per-chunk deltas with `removed`, and `reset` on a session's first region and after a world change; config.yml `block-entities`. Fixtures `block_entities.json`, `block_entities_reset.json`.
+- **next version: using blocks, items and mobs ("Using blocks and items", "Acting on mobs").** New cap `interact_v1` (config.yml `interact`); messages `interact`, `item_registry` (after `block_registry`, `interact_v1` sessions only), `entity_op`, `entity_info`; `welcome.interact` (the switches); errors `interact_denied`, `not_found`; `out_of_region` also for `interact` and `entity_op`. Errors about an `interact` carry `op: "interact"` and `pos`, errors about an `entity_op` carry `op: "entity_op"`, `entity_op` and `uuid`. Fixtures `hello_interact.json`, `welcome_interact.json`, `interact.json`, `interact_item.json`, `item_registry.json`, `entity_op*.json`, `entity_info.json`, `error_interact_denied.json`, `error_not_found.json`.
 
 ## 4.13–4.16 Runtime region control (v1, additive)
 
@@ -786,3 +793,122 @@ Entries by `kind`. An entry exists only when it has something to say:
 Client guidance (non-normative; Quest `World/BlockEntityRenderer.cs`): the terrain mesher leaves out the blocks vanilla draws entirely in code (chests, shulker boxes, heads, banners, bell bodies, pots, conduits, statues, end portals and gateways), and the block entity renderer draws them from the block state plus these entries, with the entity model layers in the user's `entity_models.json` (QUEST_SETUP.md Part E) and the pack's textures. Without that file it draws plain boxes.
 
 Fixtures and tests: `block_entities.json` (one entry of each kind and a removal), `block_entities_reset.json`. Java `BlockEntityJsonTest` and `FixtureTest` build them with the plugin's builders (plus per-chunk deltas and pruning), Python `test_tabletop_protocol.py` validates and mirrors them (`BlockEntityMirror`), C# `Tests~/BlockEntityTests.cs` applies them. Live: `tools/block_entities_check.py`.
+
+## Using blocks and items (next version; cap `interact_v1`)
+
+The headset uses blocks and items like a creative player's right click: it opens doors, flips levers, presses buttons, tunes note blocks, uses bone meal, buckets, flint and steel, axes, hoes, shovels, shears, spawn eggs and a lightning wand. Granted when config.yml `interact.enabled` (default true) and, with `interact.require-token`, `auth.token` is set; echoed in `welcome.caps`. `welcome` then carries the switches the client needs to colour its outline and fill its menus:
+
+```json
+"interact":{"iron_doors":true,"fire":true,"tnt":true,"fluids":true,"lightning":"real","entities":true,"harm_players":false,"attack_damage":5.0,"max_spawns_per_minute":60}
+```
+
+`lightning`: `real`, `effect` (flash and sound only) or `off`. The others are the config switches of the same names. Docs: QUEST_SETUP.md Part M (the controls), ARCHITECTURE.md §3.11.
+
+### `interact` (C→S)
+
+```json
+{"v":1,"type":"interact","seq":90,"t":1760370004000,"pos":[105,64,-35],"face":"north","hit":[0.5,0.7,0.0],"item":null,"sneak":false,"dir":[0.1,-0.5,0.86]}
+{"v":1,"type":"interact","seq":91,"t":1760370004100,"pos":[105,63,-35],"face":"up","item":"minecraft:bone_meal","sneak":false,"dir":[0.0,-0.9,0.44]}
+```
+
+| field | type | req | meaning |
+|---|---|---|---|
+| `pos` | int[3] | yes | the clicked block, world coordinates; must be inside the session's region (`out_of_region`) |
+| `face` | string | yes | the clicked face (`west`, `east`, `down`, `up`, `north`, `south`) |
+| `item` | string or null | no | null or missing: an empty hand uses the block. An item id: that item is used on the face; it must be in `item_registry` (any axe, hoe or shovel stands for its tool class) |
+| `hit` | number[3] | no | where the ray met the block, 0..1 inside it |
+| `sneak` | bool | no | informational: the client chose sneak (it then sends `item` or a `block_edit` instead of an empty-hand use) |
+| `dir` | number[3] | no | the ray direction, world axes (a fence gate swings away from it; a pumpkin carved from above faces back along it) |
+
+There is no acknowledgement and nothing is guessed on the client: results arrive as `block_update`, `entities` and `actions` (typically 100–200 ms). At most `interact.max-per-second` (10) `interact` and `entity_op` together per session; more get `rate_limited`. Protection plugins are not consulted, as for `block_edit`; changes outside the region are refused, but fire and lava can spread beyond it.
+
+**Empty hand** (the server's `InteractRules`, families by block id; the client mirrors them to colour its outline):
+
+| block | what happens |
+|---|---|
+| doors, trapdoors, fence gates | open or close, both halves of a door; iron doors and trapdoors only with `interact.iron-doors` (default true); a gate opened from the side it faces turns to swing away; the door's own sound (wooden, cherry, bamboo, nether wood, copper, iron) |
+| lever | flips; the block it hangs on also updates its neighbours, so redstone behind a wall sees the power (vanilla does this; see ARCHITECTURE.md §3.11) |
+| buttons | pressed, and released by the block's own tick after 20 ticks (stone, polished blackstone) or 30 (wood) |
+| note block, repeater, comparator, daylight detector | next note (and the note plays when the block above is air), next delay, compare/subtract (then the comparator refreshes its output), inverted |
+| bell, cake, candle cake, composter, jukebox | rings; one bite (the last one removes it); a lit candle cake goes out, an unlit one is eaten (cake with one bite, the candle drops); a full composter (level 8) empties and drops bone meal; a jukebox with a disc ejects it |
+| lit candles and campfires | go out |
+| chests, trapped chests, barrels, shulker boxes, hoppers, dispensers, droppers, furnaces, smokers, blast furnaces, brewing stands, crafters, copper chests; signs | a hook for the container view and the sign editor of a later version: refused for now (`interact_denied`) |
+| anything else | `interact_denied` ("nothing to use on stone"); the client places a block there instead |
+
+**Items** (`item`):
+
+| item | what happens |
+|---|---|
+| `minecraft:bone_meal` | vanilla bone meal (`Block#applyBoneMeal`): crops, saplings, grass, flowers, seagrass...; `interact_denied` when it does nothing |
+| `minecraft:flint_and_steel`, `minecraft:fire_charge` | TNT becomes a primed TNT (fuse 80 ticks; `interact.tnt`); an unlit candle, candle cake or campfire that isn't under water lights; otherwise fire (soul fire on soul sand or soil) in the face cell if it is air and fire can stay there (`interact.fire`) |
+| `minecraft:bucket` | picks up a water or lava source, powder snow, or a waterlogged block's water (`interact.fluids`). Clients aim it at fluid sources (vanilla's source-only ray) |
+| `minecraft:water_bucket`, `minecraft:lava_bucket`, `minecraft:powder_snow_bucket` | water waterlogs the clicked block when it can, else the fluid (or powder snow) goes into the face cell if that is air, a fluid or replaceable; water evaporates in an ultra-warm dimension (`interact.fluids`) |
+| any axe | strips a log, wood, stem, hyphae or bamboo block; scrapes copper one weathering stage back; unwaxes waxed copper (properties kept) |
+| `minecraft:honeycomb` | waxes copper |
+| any hoe | grass, dirt and paths to farmland, coarse dirt to dirt (air above, not from below); rooted dirt to dirt (drops hanging roots) |
+| any shovel | puts out a lit campfire; grass, dirt, podzol, coarse dirt, mycelium, rooted dirt to a path (air above) |
+| `minecraft:shears` | a pumpkin is carved (facing the clicked side, from above facing the headset; 4 seeds drop); kelp, weeping, twisting and cave vines stop growing |
+| a spawn egg | a spawner takes that mob; anywhere else the mob spawns in the clicked cell when it has no collision box (grass), else in the face cell; at most `interact.max-spawns-per-minute` (60) per session |
+| `tabletop:lightning` | a lightning bolt (`real`) or only its flash (`effect`) at the face cell (`interact.lightning`) |
+| name tag, lead, wheat, carrots, seeds | only on mobs (`entity_op`); on a block `interact_denied` |
+
+Refusals are `error` with `ref_seq`, `op: "interact"` and `pos`, the message readable as it is ("the axe does nothing to stone", "fire is off on this server (interact.fire)"). Fixture `error_interact_denied.json`.
+
+### `item_registry` (S→C)
+
+Sent once to `interact_v1` sessions, after `block_registry` and before the first `chunk_snapshot`:
+
+```json
+{"v":1,"type":"item_registry","seq":2,"t":1760370000014,"count":21,
+ "categories":[
+  {"id":"use","label":"Use","items":["minecraft:flint_and_steel","minecraft:fire_charge","minecraft:bone_meal","minecraft:bucket","minecraft:water_bucket","minecraft:lava_bucket","minecraft:powder_snow_bucket","minecraft:iron_axe","minecraft:honeycomb","minecraft:iron_hoe","minecraft:iron_shovel","minecraft:shears","minecraft:name_tag","minecraft:lead","minecraft:wheat","minecraft:carrot","minecraft:wheat_seeds","tabletop:lightning"]},
+  {"id":"spawn_eggs","label":"Spawn Eggs","items":["minecraft:cow_spawn_egg","minecraft:pig_spawn_egg","minecraft:sheep_spawn_egg"]}]}
+```
+
+- `use`: one item per tool class the server implements, in menu order, without the families that are switched off (fire and TNT: flint and steel and fire charges; fluids: the buckets; entities: name tag, lead, foods; lightning: the wand). `tabletop:lightning` is a virtual item (clients draw it with the lightning rod's icon).
+- `spawn_eggs`: the eggs of every spawnable entity type the region's world enables (feature flags), minus `interact.deny-spawn` (default the wither and the ender dragon), sorted by id. 86 on Paper 26.3.
+- `count`: items in both lists.
+
+### Acting on mobs: `entity_op` (C→S) and `entity_info` (S→C)
+
+With `interact.entities` (default true) the headset acts on the entities it sees in `entities` and `player_positions`, named by their `uuid`:
+
+```json
+{"v":1,"type":"entity_op","seq":95,"t":1760370005000,"uuid":"3c1e5f7a-2b4d-4e6f-8a9b-0c1d2e3f4a5b","op":"attack","dir":[0.1,-0.4,0.9]}
+{"v":1,"type":"entity_op","seq":96,"t":1760370005100,"uuid":"3c1e…","op":"move","to":[110.5,64.0,-30.5],"yaw":90.0}
+{"v":1,"type":"entity_op","seq":97,"t":1760370005200,"uuid":"3c1e…","op":"use","item":"minecraft:shears"}
+{"v":1,"type":"entity_op","seq":98,"t":1760370005300,"uuid":"3c1e…","op":"name","text":"Rex"}
+```
+
+The entity must exist (else `not_found`) and stand inside the region grown by `entities.margin` (else `out_of_region`); a `to` must be inside the region. The giant's own entities are never found.
+
+| `op` | fields | what happens |
+|---|---|---|
+| `attack` | `dir` (optional, the ray) | `interact.attack-damage` (5) generic damage and a knockback along `dir`; the red flash comes back as an `actions` `hurt`. Players only with `interact.harm-players` (default false) |
+| `kill` | | a living entity dies (`/kill`'s damage type); boats, minecarts, items and frames are removed. Players only with `harm-players` |
+| `remove` | | the entity is removed without dying (not players) |
+| `use` | `item` | shears shear a sheep, mooshroom, snow golem...; a food the animal breeds with puts it in love (a baby grows up faster); a spawn egg of the same mob spawns a baby, of another mob that mob; a lead ties the mob to the nearest fence within 7 blocks (a knot), or unties it; `tabletop:lightning` strikes it |
+| `name` | `text` | the mob's name (formatting codes and control characters removed, at most 64 characters; empty removes it); a named mob no longer despawns. Not players |
+| `move` | `to`, `yaw` (optional) | teleport there (players by `PLUGIN` cause); it leaves its vehicle, passengers come along |
+| `hold` | `to` | carried: gravity and AI off, teleported to `to` (about 10 a second while the headset carries it). Restored on `drop`, when the session closes, after 3 s without a `hold` or `drop`, and when the plugin stops. Not players |
+| `drop` | `to` (optional) | put down at `to` (or where it hangs) with gravity and AI back |
+| `freeze`, `unfreeze` | | `Mob#setAware`: it stands still and doesn't react. It is saved with the mob, so the plugin lists frozen mobs in `plugins/TabletopCraftAR/frozen.txt` and `/tabletop unfreeze-all` wakes them (unloaded ones when their chunk loads) |
+| `glow` | | toggles the glowing outline |
+| `info` | | answered with `entity_info` |
+
+Refusals are `error` with `ref_seq`, `op: "entity_op"`, `entity_op` (the op) and `uuid`. `hold` and `drop` have a rate limit of their own (20 a second); the other ops share the `interact` limit.
+
+**`entity_info` (S→C)**:
+
+```json
+{"v":1,"type":"entity_info","seq":120,"t":1760370005310,"ref_seq":99,"uuid":"3c1e…","id":104,"entity_type":"minecraft:wolf","name":"Rex",
+ "pos":[108.7,64.0,-28.0],"health":[14.0,20.0],"owner":"Alex","age":-2400,"baby":true,"ai":true,"frozen":false,"glowing":false}
+```
+
+`entity_type` (not `type`: that is the envelope's), `id` (as in `entities`), `pos` (feet, world), `name` (a player's name or the custom name), `health` ([current, max], living entities), `owner` (tamed animals), `age` (ageable mobs: negative = ticks until grown up), `baby`, `ai` (false while held or with NoAI), `frozen` (mobs: not aware), `glowing`, and when true `held`, `leashed`, `player`; `vehicle` (the type it rides) and `passengers` (count) when there are any.
+
+**Client guidance** (non-normative; the Quest's `World/UseRules.cs`, `World/EntityRaycast.cs`, `XR/BlockEditMode.cs`, `XR/EntityCard.cs`): the left trigger follows vanilla's right-click order: a mob the ray hits first (an item is used on it, else `info` opens a card), a block the empty hand can use, the selected item on the face, else a `block_edit` place; holding the left grip (sneak) skips the first two. The ray hits mobs and players as their eased boxes (at least half a block, players 0.6 × 1.8 or 1.5 sneaking), and the nearer of a mob and a block wins. Containers and signs call the client's container-view and sign-editor hooks, which a later version fills. Nothing is guessed locally; refusals become toasts.
+
+### Fixtures and tests
+
+Fixtures `hello_interact.json`, `welcome_interact.json`, `interact.json`, `interact_item.json`, `item_registry.json`, `entity_op.json`, `entity_op_move.json`, `entity_op_use.json`, `entity_op_name.json`, `entity_info.json`, `error_interact_denied.json`, `error_not_found.json`. Java `InteractRulesTest` (the whole table on state strings) and `InteractFixtureTest` (parsers and builders against the fixtures), Python `test_tabletop_protocol.py` (`validate_interact`), C# `Tests~/InteractTests.cs` (parsing, the right-click order, the entity ray, the menu tabs, the info card). Live: `tools/interact_check.py` (41 checks on a flat world) and `Tests~ --live-interact URL` (the app's own classes).

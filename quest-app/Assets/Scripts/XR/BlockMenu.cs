@@ -1,5 +1,6 @@
 // The creative-style block menu (docs/QUEST_SETUP.md "Block menu"): a panel beside the left hand with the server's
-// block categories, search and an Info tab, a 9-slot hotbar, and (when the app wires it) an area-size row. The logic
+// block categories, [hands] Use and Eggs tabs (item_registry), search and an Info tab, a 9-slot hotbar of blocks and
+// items, and (when the app wires it) an area-size row. The logic
 // is engine-free in World/BlockMenuModel.cs; this draws it (meshes with Sprites/Default, TextMesh, no uGUI) and maps
 // the controllers onto it:
 //
