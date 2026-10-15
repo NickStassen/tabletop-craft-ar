@@ -1,0 +1,11 @@
+{
+ "v": 1,
+ "type": "history",
+ "seq": 140,
+ "t": 1760370006120,
+ "undo": 3,
+ "redo": 1,
+ "undo_blocks": 45,
+ "redo_blocks": 2,
+ "depth": 10000
+}

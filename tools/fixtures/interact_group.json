@@ -1,0 +1,11 @@
+{
+ "v": 1,
+ "type": "interact",
+ "seq": 92,
+ "t": 1760370004300,
+ "pos": [105, 64, -35],
+ "face": "north",
+ "item": null,
+ "sneak": false,
+ "group": 8
+}

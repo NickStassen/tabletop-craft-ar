@@ -116,12 +116,28 @@ public final class LinkServer extends WebSocketServer {
                 }
                 case "block_edit" -> {   // PROTOCOL.md 4.20; rate-limited here so a flood never reaches the main thread
                     BlockEdit e = BlockEdit.parse(m);
+                    Long group = PowerMessages.group(m);   // [power] one trigger hold = one undo group
                     EditLimiter lim = s.editLimiter;
                     if (s.canEdit && lim != null && !lim.tryAcquire(System.nanoTime())) {
                         s.send(e.error("rate_limited", "more than " + plugin.editRate() + " edits per second", refSeq));
                         return;
                     }
-                    plugin.enqueue(() -> plugin.onBlockEdit(s, e, refSeq));
+                    plugin.enqueue(() -> plugin.power.journalled(s, group, "edit", e.x(), e.y(), e.z(), 1, 1, () -> plugin.onBlockEdit(s, e, refSeq)));
+                }
+                // [power] undo/redo, box edits, brushes (power_v1): parsed and rate-limited here, run as budgeted jobs
+                case "undo", "redo" -> {
+                    if (!plugin.power.admit(s)) { s.send(PowerMessages.error("rate_limited", "too many " + type + "s per second", refSeq, type, null, null)); return; }
+                    boolean redo = type.equals("redo");
+                    plugin.enqueue(() -> plugin.power.onUndo(s, redo, refSeq));
+                }
+                case "box_edit" -> {
+                    PowerMessages.BoxEdit e = PowerMessages.boxEdit(m);
+                    if (!plugin.power.admit(s)) { s.send(e.error("rate_limited", "too many box edits per second", refSeq)); return; }
+                    plugin.enqueue(() -> plugin.power.onBoxEdit(s, e, refSeq));
+                }
+                case "brush" -> {
+                    PowerMessages.Brush b = PowerMessages.brush(m, Math.max(0, plugin.power.brushMaxRadius));
+                    plugin.enqueue(() -> plugin.power.onBrush(s, b, refSeq));
                 }
                 // [talk] chat, commands, status (PROTOCOL.md 4.26-4.28): parsed and rate-limited here, run on the main thread
                 case "chat_send" -> {
@@ -144,11 +160,13 @@ public final class LinkServer extends WebSocketServer {
                 // [hands] using blocks, items and mobs (interact_v1): parsed and rate-limited here, applied on the main thread
                 case "interact" -> {
                     InteractMessages.Interact in = InteractMessages.interact(m);
+                    Long group = PowerMessages.group(m);   // [power] journalled for undo like block_edit
                     if (s.canInteract && s.interactLimiter != null && !s.interactLimiter.tryAcquire(System.nanoTime())) {
                         s.send(in.error("rate_limited", "more than " + (int) plugin.interact.rate + " uses per second (interact.max-per-second)", refSeq));
                         return;
                     }
-                    plugin.enqueue(() -> plugin.interact.onInteract(s, in, refSeq));
+                    int[] win = PowerService.window(in.item());
+                    plugin.enqueue(() -> plugin.power.journalled(s, group, "interact", in.x(), in.y(), in.z(), win[0], win[1], () -> plugin.interact.onInteract(s, in, refSeq)));
                 }
                 case "entity_op" -> {
                     InteractMessages.EntityOp op = InteractMessages.entityOp(m);
@@ -194,6 +212,7 @@ public final class LinkServer extends WebSocketServer {
             for (var e : m.getAsJsonArray("caps")) if (e.isJsonPrimitive()) caps.add(e.getAsString());
             s.caps = java.util.Set.copyOf(caps);
         }
+        boolean wantsPower = false;   // [power] granted after the loop: it needs edit_v1, which may come later in the list
         if (m.has("caps") && m.get("caps").isJsonArray())
             for (var e : m.getAsJsonArray("caps")) {
                 if (!e.isJsonPrimitive()) continue;
@@ -209,7 +228,9 @@ public final class LinkServer extends WebSocketServer {
                 else if (c.equals(ControlMessages.CAP_COMMAND) && plugin.control.commandsAllowed()) s.canCommand = true;
                 else if (c.equals(ControlMessages.CAP_STATUS) && plugin.control.statusAllowed()) s.wantsStatus = true;
                 else if (c.equals(InteractMessages.CAP) && plugin.interact.allowed()) plugin.interact.grant(s);   // [hands]
+                else if (c.equals(PowerMessages.CAP)) wantsPower = true;
             }
+        if (wantsPower && s.canEdit && plugin.power.allowed()) plugin.power.grant(s);   // [power]
         ControlService cs = plugin.control;   // [talk] rate limits (token buckets) and the chat name
         s.chatLimiter = new EditLimiter(cs.chatRate, cs.chatBurst);
         s.commandLimiter = new EditLimiter(cs.commandRate, cs.commandBurst);

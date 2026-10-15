@@ -1,0 +1,11 @@
+{
+ "v": 1,
+ "type": "box_edit",
+ "seq": 130,
+ "t": 1760370007000,
+ "op": "fill",
+ "from": [110, 64, -30],
+ "to": [101, 60, -21],
+ "state": "minecraft:stone_bricks",
+ "group": 9
+}

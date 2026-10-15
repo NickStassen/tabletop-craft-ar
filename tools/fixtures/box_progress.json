@@ -1,0 +1,16 @@
+{
+ "v": 1,
+ "type": "box_progress",
+ "seq": 150,
+ "t": 1760370007500,
+ "op": "fill",
+ "group": 9,
+ "ref_seq": 130,
+ "phase": "write",
+ "processed": 12000,
+ "total": 32768,
+ "changed": 11800,
+ "skipped": 0,
+ "outside": 0,
+ "finished": false
+}
