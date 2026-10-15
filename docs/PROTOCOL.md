@@ -567,6 +567,7 @@ At most one per tick, to sessions with `actions_v1`, with what happened inside t
 - `break`: the block state `block` at `pos` was broken by a player (`id`) or an explosion (no `id`; at most 48 blocks per explosion). The block itself goes away through `block_update` as usual; this is for the break particles.
 - `place`: the block state `block` was placed at `pos` by player `id` (a small puff; the arm swing comes as its own `swing`).
 - `hurt`: entity or player `id` took damage (the red flash); `crit` marks a critical hit.
+- `lid`, `bell`, `explode` (next version): container lids, bells and explosions, "Block animations"; `sound`, `sound_stop`: "Sound".
 - Repeats within a tick collapse: the latest `dig` per block, one `swing` per entity and hand, one `hurt` per entity. At most 128 actions per tick. Blocks count when they are inside the region; players up to 16 blocks out horizontally and other entities up to 2, like `player_positions` and `entities`.
 
 ### 4.23 Fixtures, tests, changelog
@@ -1197,6 +1198,7 @@ The headset's container view: chests (a double chest as one view), trapped and c
 ### Fixtures and tests
 
 Fixtures `hello_operator.json`, `welcome_operator.json` (`worlds`, `marks`, `interact.containers`/`signs`), `region_info_worlds.json`, `region_request_jump.json`, `bookmark.json`, `bookmark_remove.json`, `bookmarks.json`, `error_mark_denied.json`, `container_query.json`, `container.json` (a double chest), `container_furnace.json` (view only), `container_closed.json`, `container_edit.json`, `container_edit_put.json`, `container_edit_sort.json`, `container_close.json`, `error_container_denied.json`, `sign_edit.json`. Java `OperatorFixtureTest` (parsers and builders) and `ContainerRulesTest` (slot rules, sorting, titles, the bookmark store), Python `test_tabletop_protocol.py` (`validate_operator`, `validate_worlds`), C# `Tests~/OperatorTests.cs` (parsing, jump plans, following against `NavState`, the Marks tab, the container view, the sign editor). Live: `tools/operator_check.py` (35 checks with a mineflayer player) and `Tests~ --live-operator URL TOKEN PLAYER` (following with the app's own classes).
+- **next version: block animations ("Block animations").** The `actions` kinds `lid` (a container lid opens or closes), `bell` (a bell rung, with the side) and `explode` (an explosion's point and power) for `actions_v1` sessions; `entities` entries gain `fuse` (primed TNT, ticks left) and `swell` (a creeper, 0..1), and the poses `dying`, `sitting` and `sleeping` are now drawn. No new cap. Fixtures `actions_motion.json`, `entities_motion.json` (Java `MotionTest`, Python `test_motion_messages`, C# `MotionTests`). Client-only: flowing fluids and ambient particles (QUEST_SETUP.md Part E, tabletop.json `particles`).
 
 ## Sound (next version; cap `sound_v1`)
 
@@ -1271,3 +1273,34 @@ Optional and off by default: a server operator who wants to skip `adb` can let t
 - **Why binary frames over the same WebSocket** and not an HTTP GET with the token: the session is already authenticated and LAN-checked, no second port or firewall rule is needed, Java-WebSocket can't serve plain HTTP on its port, and pulling chunk by chunk gives flow control and resuming for free.
 
 Fixtures `assets.json`, `asset_get.json`, `error_asset_denied.json`, `asset_chunk.bin` (one frame). Java `SoundTest` (frame byte for byte, LAN check), Python `test_asset_messages_and_frame`, C# `Tests~/SoundTests.cs` (offer, frame, a download against an in-memory server with resume and a checksum mismatch). Live: `tools/sound_check.py --assets-dir DIR`, `Tests~ --live-assets URL TOKEN` (the app's own classes; dummy files).
+
+## Block animations (next version; `actions_v1`, `entities_v1`)
+
+What moves on the table besides blocks changing: container lids, bells, explosions, and a few entity states. No new cap: `actions_v1` sessions get the three action kinds (in the per-tick `actions` message, §4.22) and `entities_v1` sessions the two entity fields.
+
+### `actions` kinds `lid`, `bell`, `explode`
+
+```json
+{"v":1,"type":"actions","seq":31,"t":1760370004100,"actions":[
+  {"kind":"lid","pos":[107,64,-35],"open":true},
+  {"kind":"lid","pos":[109,64,-35],"open":false},
+  {"kind":"bell","pos":[104,65,-33],"dir":"east"},
+  {"kind":"explode","pos":[110.2,63.0,-30.7],"power":4.0}]}
+```
+
+- **`lid`**: integer block `pos`, `open` (bool). Sent when a container's first viewer opens it and when its last viewer closes it (the game's `container_open` / `container_close` game events), for chests, trapped chests, ender chests, copper chests and shulker boxes. Barrels need nothing: their `open` is in the block state. The client moves the lid like vanilla: 0.1 a tick toward open or closed (10 ticks), a chest lid turned by `-(1 - (1 - o)^3)·π/2`, a shulker box lid raised 8 px and turned 270°. A double chest gets one action per half. Repeats at one block within a tick collapse to the last.
+- **`bell`**: integer block `pos` and `dir` (`north`, `south`, `east` or `west`): the side the bell was hit on (Paper's `BellRingEvent` direction; for a bell rung by redstone, its facing). The client swings the bell body by `sin(t/π)/(4 + t/3)` for 50 ticks about x (north/south) or z (east/west).
+- **`explode`**: `pos` (the explosion's point, doubles) and `power` (vanilla's explosion power, which Bukkit's events don't carry: TNT and TNT minecarts 4, creepers 3 (charged 6), end crystals 6, the wither's birth 7, fireballs and wither skulls 1, beds and respawn anchors 5, anything else 3). Not sent for wind charges. Also sent a little outside the region (6 blocks), so a cloud at its edge shows. The client draws the explosion clouds (power 2 and up: 48 clouds within 4 blocks over 8 ticks, scaled with the power; less: one) and a flash; the broken blocks still come as `break` actions (at most 48).
+
+### `entities` fields `fuse` and `swell`, and the poses drawn
+
+```json
+{"id":401,"type":"minecraft:tnt","pos":[120.5,64.0,-25.5],"yaw":0.0,"pitch":0.0,"size":[0.98,0.98],"fuse":37}
+{"id":402,"type":"minecraft:creeper","pos":[122.5,64.0,-25.5],"yaw":90.0,"pitch":0.0,"size":[0.6,1.7],"eye":1.45,"swell":0.5}
+```
+
+- **`fuse`** (int, primed TNT only): ticks left before it explodes. The client counts it down by itself at 20 a second; the server sends it again only when it has moved 10 ticks or more since the last time (so twice a second). The TNT swells by up to 30 % over its last 10 ticks and turns white while `fuse / 5` is even (TntRenderer).
+- **`swell`** (0..1, 2 decimals, creepers while swelling): the game's swelling (`swell / (maxSwell - 2)`), sent when it moved by 0.05 or more, and 0 when it calmed down. The creeper grows `(1 + g·0.4)·h` across and `(1 + g·0.1)/h` up (`g = swell⁴`, `h` a small wobble) and blinks white every other tenth (CreeperRenderer).
+- **Poses** (the existing `pose` field, §4.21): `dying` (a mob at 0 health; the server removes it 20 ticks later) tips the mob over by `sqrt((t - 1)/20·1.6)` of 90° (spiders 180°); `sleeping` lays a mob in the bed under it (its head at the headboard; no bed, no change); `sitting` folds tamed wolves and cats as vanilla does.
+
+Fixtures `actions_motion.json`, `entities_motion.json`. Java `MotionTest` (the batch and the delta against the fixtures, fuse and swell resends), Python `test_motion_messages`, C# `MotionTests` (parsing, and the curves against the 26.3 numbers).

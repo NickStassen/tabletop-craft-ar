@@ -115,6 +115,7 @@ namespace TabletopCraft
         // [living] time of day and weather (WorldLight), rain, snow and lightning (WeatherRenderer), leads (LeashRenderer)
         WorldLight _light;
         WeatherRenderer _weather;
+        AmbientParticleRenderer _particles;   // [motion] torch flames, smoke, lava pops, leaves, fireflies...
         // [sound] spatial sound from the user's sounds.zip (World/TabletopSound.cs) and the opt-in download of the
         // operator's own files from their server (World/AssetSync.cs, PROTOCOL.md "Asset delivery")
         TabletopSound _sound;
@@ -195,6 +196,9 @@ namespace TabletopCraft
             _weather = weatherT.gameObject.AddComponent<WeatherRenderer>();
             _weather.Model = _world; _weather.Light = _light; _weather.Textures = _entityTex; _weather.Nav = _nav.State; _weather.Head = Head;
             _entities.Weather = _weather;
+            var particlesT = new GameObject("Particles").transform; particlesT.SetParent(_regionRoot, false);   // [motion]
+            _particles = particlesT.gameObject.AddComponent<AmbientParticleRenderer>();
+            _particles.Model = _world; _particles.Atlas = _atlas; _particles.Light = _light; _particles.Nav = _nav.State; _particles.BlockSizeM = BlockSizeM;
             var leash = _entitiesRoot.gameObject.AddComponent<LeashRenderer>();
             leash.Entities = _entities; leash.Players = _players; leash.Textures = _entityTex;
         }
@@ -437,6 +441,8 @@ namespace TabletopCraft
                 GreedyMesher.LeavesInner = c.B("leaves_inner", true);                           // faces between leaves, like vanilla
                 ResourcePackAtlas.Mipmaps = c.B("mipmaps", true);                               // mip-mapped block textures
                 WorldLight.WeatherFx = c.B("weather_fx", true);                                 // [living] rain, snow, lightning
+                AmbientParticleRenderer.Enabled = c.B("particles", true);                       // [motion] ambient particles
+                AmbientParticleRenderer.DensityScale = (float)c.D("particle_density", 1.0);     // [motion] 1 = vanilla near the player
                 // [menu] show_hud, [area] area_width and block_size_m are shared with prefs.json: see LoadPrefs
                 _operatorName = c.S("operator_name");                                           // [talk] the name in chat
                 foreach (var q in c.A("quick_commands") ?? new List<object>()) if (q is string qs) _quickCommands.Add(qs);   // [talk] Console quick buttons
@@ -640,6 +646,7 @@ namespace TabletopCraft
             _players.BlockSizeM = bs;
             _entities.BlockSizeM = bs;   // [entities]
             if (_weather != null) _weather.BlockSizeM = bs;   // [living]
+            if (_particles != null) _particles.BlockSizeM = bs;   // [motion]
             RecenterRegion();
             _avatarConfigAt = Time.unscaledTime + 0.3f;
         }
@@ -727,7 +734,8 @@ namespace TabletopCraft
             var c = _light != null ? _light.Clock : null;
             if (c == null || !c.Known) return "- (no world_state: noon)";
             return $"{(int)c.DayTime} {c.Dimension}  rain {c.Rain:F2} thunder {c.Thunder:F2}  sky {_light.Current.SkyFactor:F2}" +
-                   $"  drops {(_weather != null ? _weather.Drops : 0)}{(WorldLight.WeatherFx ? "" : " (weather_fx off)")}";
+                   $"  drops {(_weather != null ? _weather.Drops : 0)}{(WorldLight.WeatherFx ? "" : " (weather_fx off)")}" +
+                   $"  particles {(_particles != null ? _particles.Particles : 0)}/{(_particles != null ? _particles.Emitters : 0)}{(AmbientParticleRenderer.Enabled ? "" : " (off)")}";
         }
 
         /// <summary>[talk] Chat, commands and status as the server granted them (X opens the operator panel).</summary>
@@ -855,6 +863,8 @@ namespace TabletopCraft
                     foreach (var a in _actions)
                     {
                         if (a.Kind == ActionKind.Swing || a.Kind == ActionKind.Hurt) { if (!_entities.Act(a)) _players.Act(a); }
+                        else if (a.Kind == ActionKind.Lid || a.Kind == ActionKind.Bell) _blockEntities.Act(a);   // [motion] lids, bells
+                        else if (a.Kind == ActionKind.Explode) _particles?.Explode(a.At, a.Power);              // [motion] cloud and flash
                         else _effects.Apply(a);
                     }
                     break;

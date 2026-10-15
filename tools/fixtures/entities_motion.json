@@ -1,0 +1,19 @@
+{
+ "v": 1,
+ "type": "entities",
+ "seq": 32,
+ "t": 1760370004150,
+ "full": true,
+ "entities": [
+  {"id": 401, "type": "minecraft:tnt", "uuid": "3c1e7f0a-0000-4000-8000-000000000401", "pos": [120.5, 64.0, -25.5], "yaw": 0.0, "pitch": 0.0,
+   "on_ground": true, "size": [0.98, 0.98], "fuse": 37},
+  {"id": 402, "type": "minecraft:creeper", "uuid": "3c1e7f0a-0000-4000-8000-000000000402", "pos": [122.5, 64.0, -25.5], "yaw": 90.0, "pitch": 0.0,
+   "body_yaw": 90.0, "on_ground": true, "size": [0.6, 1.7], "eye": 1.45, "swell": 0.5},
+  {"id": 403, "type": "minecraft:zombie", "uuid": "3c1e7f0a-0000-4000-8000-000000000403", "pos": [124.5, 64.0, -25.5], "yaw": 180.0, "pitch": 0.0,
+   "body_yaw": 180.0, "on_ground": true, "size": [0.6, 1.95], "pose": "dying", "eye": 1.74},
+  {"id": 404, "type": "minecraft:wolf", "uuid": "3c1e7f0a-0000-4000-8000-000000000404", "pos": [126.5, 64.0, -25.5], "yaw": -90.0, "pitch": 0.0,
+   "body_yaw": -90.0, "on_ground": true, "size": [0.6, 0.85], "tamed": true, "pose": "sitting", "eye": 0.68},
+  {"id": 405, "type": "minecraft:villager", "uuid": "3c1e7f0a-0000-4000-8000-000000000405", "pos": [128.5, 64.69, -25.5], "yaw": 0.0, "pitch": 0.0,
+   "body_yaw": 0.0, "size": [0.2, 0.2], "variant": "minecraft:plains", "pose": "sleeping", "eye": 0.2}
+ ]
+}

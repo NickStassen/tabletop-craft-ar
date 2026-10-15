@@ -48,6 +48,45 @@ namespace TabletopCraft.World
             public float MobW, MobH, Spin, Age;
             public List<BeamSection> Beam;
             public bool BeamDirty = true;
+            public string MotionPose;       // [motion] the lid or bell pose drawn now (MotionCurves keys), null = at rest
+        }
+
+        // [motion] Lids and bells in motion (PROTOCOL.md "Block animations"), by world block.
+        sealed class Motion { public bool Open; public float Openness, BellTicks = -1, Seen; public string Dir; }
+        readonly Dictionary<Vector3Int, Motion> _motion = new Dictionary<Vector3Int, Motion>();
+        readonly List<Vector3Int> _motionDone = new List<Vector3Int>();
+
+        /// <summary>[motion] A lid or bell action from the server.</summary>
+        public void Act(in GameAction a)
+        {
+            if (a.Kind != ActionKind.Lid && a.Kind != ActionKind.Bell) return;
+            if (!_motion.TryGetValue(a.Pos, out var m)) _motion[a.Pos] = m = new Motion();
+            m.Seen = Time.unscaledTime;
+            if (a.Kind == ActionKind.Lid) m.Open = a.Open;
+            else { m.Dir = a.Dir; m.BellTicks = 0; }
+        }
+
+        /// <summary>[motion] Steps lids (0.1 a tick) and bells (50 ticks) and rebuilds an instance when its quantised pose
+        /// changes; forgets an entry once it is at rest (or its block entity never showed up within 5 s).</summary>
+        void AnimateMotion(float dt)
+        {
+            if (_motion.Count == 0) return;
+            float ticks = dt * MotionCurves.TicksPerSecond, now = Time.unscaledTime;
+            _motionDone.Clear();
+            foreach (var kv in _motion)
+            {
+                var m = kv.Value;
+                m.Openness = MotionCurves.StepLid(m.Openness, m.Open, ticks);
+                if (m.BellTicks >= 0) { m.BellTicks += ticks; if (m.BellTicks >= MotionCurves.BellTicks) m.BellTicks = -1; }
+                bool rest = !m.Open && m.Openness <= 0 && m.BellTicks < 0;
+                if (!_insts.TryGetValue(kv.Key, out var inst)) { if (rest || now - m.Seen > 5f) _motionDone.Add(kv.Key); continue; }
+                string key = inst.Kind == BlockEntityKind.Chest ? MotionCurves.ChestPoseKey(m.Openness)
+                           : inst.Kind == BlockEntityKind.ShulkerBox ? MotionCurves.ShulkerPoseKey(m.Openness)
+                           : inst.Kind == BlockEntityKind.Bell ? MotionCurves.BellPoseKey(m.Dir, m.BellTicks) : null;
+                if (key != inst.MotionPose) { inst.MotionPose = key; Rebuild(inst); }
+                if (rest) _motionDone.Add(kv.Key);
+            }
+            foreach (var k in _motionDone) _motion.Remove(k);
         }
 
         sealed class Member
@@ -358,6 +397,8 @@ namespace TabletopCraft.World
             if (inst.Mob != null) { inst.Mob.Destroy(); inst.Mob = null; inst.MobType = null; }
             var data = Store.Get(inst.World);
             BlockEntityCatalog.Parts(inst.State, data, _parts);
+            if (inst.MotionPose != null)   // [motion] an open lid or a swinging bell
+                for (int i = 0; i < _parts.Count; i++) { var mp = _parts[i]; if (mp.Pose == null) { mp.Pose = inst.MotionPose; _parts[i] = mp; } }
             bool fallback = false;
             foreach (var p in _parts)
             {
@@ -609,6 +650,7 @@ namespace TabletopCraft.World
                 foreach (var i in _insts.Values) Rebuild(i);
             }
             ScanStep();
+            AnimateMotion(Time.deltaTime);   // [motion] lids and bells
             RelightLiving();   // [living] night, weather, flashes
             if (_dirtyCells.Count > 0)
             {

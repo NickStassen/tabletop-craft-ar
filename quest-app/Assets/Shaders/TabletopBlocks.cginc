@@ -38,7 +38,15 @@ inline uint TabletopHash(int3 c)
 inline fixed4 TabletopSampleBlocks(float3 uv, float3 cellPos, float randomTable, float2 dx, float2 dy)
 {
     float2 st = uv.xy;
-    if (randomTable >= 0.5)
+    float layer = uv.z;
+    if (randomTable > 63.5)
+    {
+        // [flow] Table 64 (FluidRules.QuadTable): a texture twice the tile size kept as 4 layers (TL, TR, BL, BR);
+        // the 2-block cell picks one, so water_flow/lava_flow keep their full resolution. Unity v is up: top = q.y 1.
+        float2 q = floor(frac(uv.xy * 0.5) * 2.0);
+        layer += q.x + 2.0 * (1.0 - q.y);
+    }
+    else if (randomTable >= 0.5)
     {
         float4 t = _TabletopRandomUv[(int)randomTable];
         int3 c = (int3)floor(cellPos);
@@ -55,7 +63,7 @@ inline fixed4 TabletopSampleBlocks(float3 uv, float3 cellPos, float randomTable,
     // Magnified (a texel spans more than a pixel): the texel's centre, which bilinear filtering returns unblended.
     float n = _TabletopBlocksSize;
     if (n > 0 && max(dot(dx, dx), dot(dy, dy)) * n * n < 1.0) st = (floor(st * n) + 0.5) / n;
-    return _Blocks.SampleGrad(sampler_Blocks, float3(st, uv.z), dx, dy);
+    return _Blocks.SampleGrad(sampler_Blocks, float3(st, layer), dx, dy);
 }
 
 #endif

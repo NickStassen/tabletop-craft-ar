@@ -73,6 +73,17 @@ namespace TabletopCraft.World
             string name = BlockRules.Name(state);
             string ns = name.Contains(":") ? name.Substring(0, name.IndexOf(':')) : "minecraft";
             string path = BlockRules.Path(state);
+            if ((path == "water" || path == "lava") && state.Contains("tabletop="))
+            {
+                // [flow] FluidRules.WaterFlowState/LavaFlowState/OverlayState: textures vanilla's FluidStateModelSet names in code.
+                bool overlay = state.Contains("tabletop=overlay");
+                string tex = $"{ns}:block/{path}_{(overlay ? "overlay" : "flow")}";
+                int quad = overlay ? -1 : QuadLayer(tex);
+                var k = quad >= 0 ? Key(tex, false, state, quad) : Key(tex, false, state);
+                if (quad >= 0) k.Random = FluidRules.QuadTable;
+                for (int i = 0; i < 6; i++) faces[i] = k;
+                return;
+            }
             var bs = ReadJson($"assets/{ns}/blockstates/{path}.json");
             if (bs == null) return;
             string model = null;
@@ -150,9 +161,9 @@ namespace TabletopCraft.World
             return r != null && r.StartsWith("#") ? null : r;
         }
 
-        FaceKey Key(string texture, bool tinted, string state)
+        FaceKey Key(string texture, bool tinted, string state, int layer = int.MinValue)
         {
-            int layer = Layer(texture);
+            if (layer == int.MinValue) layer = Layer(texture);
             Color32 tint = new Color32(255, 255, 255, 255);
             string p = BlockRules.Path(state);
             // Tinted faces (model "tintindex") take a biome colour per block in the mesher (BlockShading); Color stays
@@ -183,6 +194,37 @@ namespace TabletopCraft.World
             l = _pixels.Count - 1;
             _layers[texture] = l;
             _arrayDirty = true;
+            return l;
+        }
+
+        readonly Dictionary<string, int> _quadLayers = new Dictionary<string, int>();   // [flow] texture -> first of 4 layers, -1 = not split
+
+        /// <summary>[flow] A texture whose frames are twice the tile size (vanilla's 32 px water_flow and lava_flow, of
+        /// which a block shows a 16 px part) as four tile-size layers in a row: top-left, top-right, bottom-left,
+        /// bottom-right, each animated like the whole. The block shader picks one per 2-block cell (FluidRules.QuadTable),
+        /// so the sprite keeps its full resolution. -1 when the texture is missing or not twice the tile size.</summary>
+        int QuadLayer(string texture)
+        {
+            if (_quadLayers.TryGetValue(texture, out int l)) return l;
+            l = -1;
+            string ns = "minecraft", p = texture;
+            int c = texture.IndexOf(':'); if (c >= 0) { ns = texture.Substring(0, c); p = texture.Substring(c + 1); }
+            var entry = _pixels.Count == 0 ? null : _zip.GetEntry($"assets/{ns}/textures/{p}.png");
+            if (entry != null)
+            {
+                byte[] bytes;
+                using (var s = entry.Open()) using (var ms = new MemoryStream()) { s.CopyTo(ms); bytes = ms.ToArray(); }
+                var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                if (tex.LoadImage(bytes) && tex.width == 2 * TileSize && tex.height >= tex.width)
+                {
+                    l = _pixels.Count;
+                    for (int q = 0; q < 4; q++)
+                        _pixels.Add(LoadAnimation(entry.FullName, tex, _pixels.Count, q) ?? Crop(tex.GetPixels32(), tex.width, tex.height, (q & 1) * TileSize, (q >> 1) * TileSize, TileSize, TileSize, TileSize));
+                    _arrayDirty = true;
+                }
+                UnityEngine.Object.Destroy(tex);
+            }
+            _quadLayers[texture] = l;
             return l;
         }
 

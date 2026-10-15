@@ -269,8 +269,38 @@ namespace TabletopCraft.World
             PoseTable["book_closed"] = BookPose(0, 0, 0);
         }
 
-        /// <summary>A pose by key (null when the key is null or unknown).</summary>
-        public static PoseValue[] Pose(string key) => key != null && PoseTable.TryGetValue(key, out var p) ? p : null;
+        /// <summary>A pose by key (null when the key is null or unknown); [motion] lid and bell keys are made on demand.</summary>
+        public static PoseValue[] Pose(string key)
+        {
+            if (key == null) return null;
+            if (PoseTable.TryGetValue(key, out var p)) return p;
+            p = MotionPose(key);
+            if (p != null) PoseTable[key] = p;
+            return p;
+        }
+
+        /// <summary>[motion] MotionCurves' quantised keys: "lid:q" (ChestModel lid and lock, q/16 open), "shulker:q"
+        /// (ShulkerBoxModel lid, q/16 open), "bell:dir:q" (BellModel body, q/100 radian of swing).</summary>
+        static PoseValue[] MotionPose(string key)
+        {
+            var s = key.Split(':');
+            if (s.Length == 2 && s[0] == "lid" && int.TryParse(s[1], out int q))
+            {
+                float a = MotionCurves.ChestLidRad(q / 16f);
+                return new[] { new PoseValue("lid", 3, a), new PoseValue("lock", 3, a) };
+            }
+            if (s.Length == 2 && s[0] == "shulker" && int.TryParse(s[1], out q))
+            {
+                MotionCurves.ShulkerLid(q / 16f, out float y, out float yr);
+                return new[] { new PoseValue("lid", 1, y), new PoseValue("lid", 4, yr) };
+            }
+            if (s.Length == 3 && s[0] == "bell" && int.TryParse(s[2], out q))
+            {
+                MotionCurves.BellAxes(s[1], q / 100f, out float x, out float z);
+                return new[] { new PoseValue("bell_body", 3, x), new PoseValue("bell_body", 5, z) };
+            }
+            return null;
+        }
 
         // ---------- textures ----------
 

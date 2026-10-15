@@ -93,6 +93,8 @@ public final class EntityDelta {
         if (e.owner != null) o.addProperty("owner", e.owner);
         str(o, "carried", e.carried);
         if (e.peek > 0) o.addProperty("peek", round2(e.peek));
+        if (e.fuse > 0) o.addProperty("fuse", e.fuse);                 // [motion]
+        if (e.swell > 0) o.addProperty("swell", round2(e.swell));
         str(o, "attach", e.attach);
         if (e.display != null) o.add("display", display(e.display));
     }
@@ -136,12 +138,17 @@ public final class EntityDelta {
         if (!Objects.equals(e.owner, was.owner)) { o.add("owner", e.owner == null ? JsonNull.INSTANCE : new JsonPrimitive(e.owner)); was.owner = e.owner; }
         if (!Objects.equals(e.carried, was.carried)) { o.addProperty("carried", e.carried); was.carried = e.carried; }
         if (Math.abs(e.peek - was.peek) >= PEEK_EPS || (e.peek == 0) != (was.peek == 0)) { o.addProperty("peek", round2(e.peek)); was.peek = e.peek; }
+        // [motion] the client counts a fuse down itself: resend when it drifts; a swell in steps like peek
+        if (Math.abs(e.fuse - was.fuse) >= FUSE_EPS || (e.fuse == 0) != (was.fuse == 0)) { o.addProperty("fuse", e.fuse); was.fuse = e.fuse; }
+        if (Math.abs(e.swell - was.swell) >= PEEK_EPS || (e.swell == 0) != (was.swell == 0)) { o.addProperty("swell", round2(e.swell)); was.swell = e.swell; }
         if (!Objects.equals(e.attach, was.attach)) { o.addProperty("attach", e.attach); was.attach = e.attach; }
         if (!Objects.equals(e.display, was.display)) { o.add("display", e.display == null ? JsonNull.INSTANCE : display(e.display)); was.display = e.display; }
     }
 
     /** A shulker's lid moves in small steps: resend its peek when it changed by this much (or opened/closed fully). */
     public static final double PEEK_EPS = 0.05;
+    /** [motion] Fuse ticks the client may count down on its own before the server corrects it. */
+    public static final int FUSE_EPS = 10;
 
     /** Changed fields of a known entity (cleared ones as false/null/[]), or null; updates {@code was} to match. */
     static JsonObject deltaEntry(EntityState e, EntityState was) {
@@ -196,6 +203,7 @@ public final class EntityDelta {
         c.item = e.item; c.block = e.block; c.facing = e.facing; c.count = e.count; c.rotation = e.rotation; c.equipment = e.equipment;
         c.leash = e.leash; c.eye = e.eye; c.chested = e.chested; c.nameVisible = e.nameVisible; c.xp = e.xp; c.owner = e.owner;
         c.carried = e.carried; c.peek = e.peek; c.attach = e.attach; c.display = e.display;
+        c.fuse = e.fuse; c.swell = e.swell;
         return c;
     }
 

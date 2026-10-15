@@ -206,6 +206,43 @@ namespace TabletopCraft.World
 
         public bool Humanoid => _rig != null && _rig.Humanoid;
 
+        // [motion] the sitting pose (MotionCurves.SitPose) over the animated one; undone when the pet stands up
+        MotionCurves.SitPart[] _sit;
+
+        public void Sit(MotionCurves.SitPart[] pose)
+        {
+            if (_model == null || _parts == null) return;
+            if (pose == null)
+            {
+                if (_sit == null) return;
+                foreach (var sp in _sit)   // back to the model's own pivots and turns (animated parts get theirs next frame)
+                {
+                    var p = _model.Find(sp.Part);
+                    if (p == null) continue;
+                    EntityModels.Pivot(p, out float x, out float y, out float z);
+                    _parts[p.Index].localPosition = new Vector3(x, y, z);
+                    var d = _defaultRad[p.Index];
+                    _parts[p.Index].localRotation = Rot(d.x, d.y, d.z);
+                }
+                _sit = null;
+                return;
+            }
+            _sit = pose;
+            foreach (var sp in pose)
+            {
+                var p = _model.Find(sp.Part);
+                if (p == null) continue;
+                EntityModels.Pivot(p, out float x, out float y, out float z);   // figure space: the pivot point-reflected
+                var t = _parts[p.Index];
+                t.localPosition = new Vector3(x - sp.Dx, y - sp.Dy, z - sp.Dz);
+                if (sp.TurnX || sp.TurnY)
+                {
+                    var d = _defaultRad[p.Index];
+                    t.localRotation = Rot(sp.TurnX ? sp.XRot : d.x, sp.TurnY ? sp.YRot : d.y, d.z);
+                }
+            }
+        }
+
         /// <summary>Applies one frame of animation (rotation deltas on the default pose of each animated part).</summary>
         public void Animate(in EntityAnimInput a, float pitchDeg)
         {

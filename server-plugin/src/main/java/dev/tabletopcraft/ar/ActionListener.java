@@ -92,10 +92,22 @@ final class ActionListener implements Listener {
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onExplode(EntityExplodeEvent e) { if (active) exploded(e.blockList()); }
+    public void onExplode(EntityExplodeEvent e) {
+        if (!active) return;
+        exploded(e.blockList());
+        Location l = e.getLocation();   // [motion] the cloud and flash (wind charges only gust)
+        String type = e.getEntityType().getKey().toString();
+        boolean charged = e.getEntity() instanceof org.bukkit.entity.Creeper c && c.isPowered();
+        if (!type.endsWith("wind_charge")) batch.explode(l.getWorld().getName(), l.getX(), l.getY(), l.getZ(), ActionBatch.explosionPower(type, charged));
+    }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onExplode(BlockExplodeEvent e) { if (active) exploded(e.blockList()); }
+    public void onExplode(BlockExplodeEvent e) {
+        if (!active) return;
+        exploded(e.blockList());
+        Block b = e.getBlock();   // [motion] a bed or respawn anchor going off
+        batch.explode(b.getWorld().getName(), b.getX() + 0.5, b.getY() + 0.5, b.getZ() + 0.5, ActionBatch.explosionPower(null, false));
+    }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onDamage(EntityDamageEvent e) {
@@ -145,17 +157,29 @@ final class ActionListener implements Listener {
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onBell(BellRingEvent e) { if (soundActive) blockSound(e.getBlock(), SoundRules.bell()); }
+    public void onBell(BellRingEvent e) {
+        if (!active) return;
+        Block b = e.getBlock();
+        org.bukkit.block.BlockFace f = e.getDirection();   // [motion] the swing: away from the side it was hit on
+        if (f == null && b.getBlockData() instanceof org.bukkit.block.data.Directional d) f = d.getFacing();
+        if (f != null && f.getModY() == 0) batch.bell(b.getWorld().getName(), b.getX(), b.getY(), b.getZ(), f.name().toLowerCase(java.util.Locale.ROOT));
+        if (soundActive) blockSound(b, SoundRules.bell());
+    }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onGameEvent(GenericGameEvent e) {
-        if (!soundActive) return;
+        if (!active) return;
         GameEvent g = e.getEvent();
         boolean open = g == GameEvent.CONTAINER_OPEN;
         if (open || g == GameEvent.CONTAINER_CLOSE) {
             Block b = e.getLocation().getBlock();
-            blockSound(b, SoundRules.container(b.getType().getKey().toString(), open, rnd.nextFloat()));
-        } else if (g == GameEvent.JUKEBOX_PLAY) {
+            String type = b.getType().getKey().toString();
+            if (ActionBatch.lidded(type)) batch.lid(b.getWorld().getName(), b.getX(), b.getY(), b.getZ(), open);   // [motion]
+            if (soundActive) blockSound(b, SoundRules.container(type, open, rnd.nextFloat()));
+            return;
+        }
+        if (!soundActive) return;
+        if (g == GameEvent.JUKEBOX_PLAY) {
             Block b = e.getLocation().getBlock();
             String song = song(b);
             if (song != null) sound(b.getLocation().add(0.5, 0.5, 0.5), SoundRules.song(song), true);

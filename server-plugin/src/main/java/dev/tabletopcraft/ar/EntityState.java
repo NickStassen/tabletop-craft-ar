@@ -52,6 +52,9 @@ public final class EntityState {
     /** Shulker: how far the lid is open (0..1, 2 decimals) and the face it sticks to when not "down". */
     public double peek;
     public String attach;
+    /** [motion] Primed TNT: ticks left on its fuse (0 = not sent); creeper: how far it has swelled (0..1, 2 decimals). */
+    public int fuse;
+    public double swell;
     /** Display entities (block, item and text displays): transformation, billboard, light and text; null otherwise. */
     public DisplayState display;
     /** Squared distance to the region centre: the nearest win when a region holds more than the cap. */

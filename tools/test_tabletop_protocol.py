@@ -822,3 +822,27 @@ def test_asset_messages_and_frame():
     assert asset_frame("sounds.zip", 262144, b"tabletop asset chunk") == raw
     with pytest.raises(ValueError):
         parse_asset_frame(b"XXXX" + raw[4:])
+
+
+def test_motion_messages():
+    """[motion] lid, bell and explode actions; fuse, swell and the dying/sitting/sleeping poses (PROTOCOL.md "Block animations")."""
+    a = json.loads((FIX / "actions_motion.json").read_text())
+    validate(a)
+    kinds = [x["kind"] for x in a["actions"]]
+    assert kinds == ["lid", "lid", "bell", "explode"]
+    assert [x["open"] for x in a["actions"][:2]] == [True, False]
+    for i, patch in ((0, {"open": "yes"}), (0, {"pos": [1.5, 2, 3]}), (2, {"dir": "up"}), (3, {"power": 0}), (3, {"pos": [1, 2]})):
+        b = json.loads(json.dumps(a))
+        b["actions"][i].update(patch)
+        with pytest.raises(ValueError):
+            validate(b)
+    e = json.loads((FIX / "entities_motion.json").read_text())
+    validate(e)
+    by = {x["id"]: x for x in e["entities"]}
+    assert by[401]["fuse"] == 37 and by[402]["swell"] == 0.5
+    assert [by[i]["pose"] for i in (403, 404, 405)] == ["dying", "sitting", "sleeping"]
+    for patch in ({"fuse": -1}, {"fuse": 2.5}, {"swell": 1.5}):
+        b = json.loads(json.dumps(e))
+        b["entities"][0].update(patch)
+        with pytest.raises(ValueError):
+            validate(b)

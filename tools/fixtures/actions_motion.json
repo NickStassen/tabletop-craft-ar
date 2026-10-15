@@ -1,0 +1,12 @@
+{
+ "v": 1,
+ "type": "actions",
+ "seq": 31,
+ "t": 1760370004100,
+ "actions": [
+  {"kind": "lid", "pos": [107, 64, -35], "open": true},
+  {"kind": "lid", "pos": [109, 64, -35], "open": false},
+  {"kind": "bell", "pos": [104, 65, -33], "dir": "east"},
+  {"kind": "explode", "pos": [110.2, 63.0, -30.7], "power": 4.0}
+ ]
+}

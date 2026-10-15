@@ -108,8 +108,13 @@ namespace TabletopCraft.World
             MarkDirty(x, y, z); CellChanged?.Invoke(x, y, z);
         }
 
+        /// <summary>[motion] Cells changed since the snapshot (block_update, local edits): pollers such as the ambient
+        /// particles rescan when it moves. Main thread.</summary>
+        public int Edits { get; private set; }
+
         void MarkDirty(int x, int y, int z)
         {
+            Edits++;
             // The block's section, plus every neighbouring section it touches when it sits on a border: their faces
             // may now be visible, and smooth light / AO read the 3x3x3 cells around a face (so edges and corners too).
             var s = new Vector3Int(x / Section, y / Section, z / Section);

@@ -133,6 +133,9 @@ REQUIRED["sound_groups"] = ["count", "groups"]
 REQUIRED["assets"] = ["chunk", "files"]
 REQUIRED["asset_get"] = ["name", "offset", "length"]
 ACTION_KINDS |= {"sound", "sound_stop"}
+# [motion] Block animations (PROTOCOL.md "Block animations"): container lids, bells, explosions.
+ACTION_KINDS |= {"lid", "bell", "explode"}
+BELL_DIRS = ("north", "south", "east", "west")
 ERROR_CODES |= {"asset_denied"}
 ASSET_NAMES = ("entity_models.json", "sounds.zip", "pack.zip")
 ASSET_MAX_CHUNK = 1 << 20
@@ -229,6 +232,12 @@ def validate(msg: dict) -> None:
                 raise ValueError(f"sound action needs a sound id, pos, volume and a pitch 0.5..2: {a}")   # [sound]
             if k == "sound_stop" and not _int_pos(a.get("pos")):
                 raise ValueError("sound_stop needs an integer block pos")
+            if k == "lid" and (not _int_pos(a.get("pos")) or not isinstance(a.get("open"), bool)):
+                raise ValueError(f"lid action needs an integer block pos and open: {a}")   # [motion]
+            if k == "bell" and (not _int_pos(a.get("pos")) or a.get("dir") not in BELL_DIRS):
+                raise ValueError(f"bell action needs an integer block pos and a horizontal dir: {a}")
+            if k == "explode" and (not _vec(a.get("pos")) or not 0 < a.get("power", 0) <= 16):
+                raise ValueError(f"explode action needs a pos and a power 0..16: {a}")
     if t == "block_edit":
         validate_block_edit(msg)
     if t == "block_registry":
@@ -697,6 +706,10 @@ def _check_living(e: dict) -> None:
             raise ValueError(f"entities {k} must be an entity id, got {e[k]}")
     if "peek" in e and not 0 <= e["peek"] <= 1:
         raise ValueError(f"shulker peek must be 0..1, got {e['peek']}")
+    if "fuse" in e and not (isinstance(e["fuse"], int) and e["fuse"] >= 0):
+        raise ValueError(f"fuse must be ticks >= 0, got {e['fuse']}")   # [motion]
+    if "swell" in e and not 0 <= e["swell"] <= 1:
+        raise ValueError(f"creeper swell must be 0..1, got {e['swell']}")
     if e.get("attach") is not None and e["attach"] not in FACES:
         raise ValueError(f"shulker attach must be one of {FACES}, got {e['attach']}")
     if "xp" in e and not (isinstance(e["xp"], int) and e["xp"] >= 0):

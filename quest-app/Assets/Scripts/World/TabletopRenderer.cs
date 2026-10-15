@@ -321,6 +321,8 @@ namespace TabletopCraft.World
             // FluidMesher meshes water/lava (incl. waterlogged blocks, kelp, seagrass) with these two states' faces. Always
             // ready, so a worker never resolves them, even for a block_update that lands mid-mesh (cached after the first call).
             for (int d = 0; d < 6; d++) { Atlas.Face(FluidRules.WaterState, d); Atlas.Face(FluidRules.LavaState, d); }
+            // [flow] Their flowing sprites and the water overlay (after the still ones: the first texture sets the tile size).
+            Atlas.Face(FluidRules.WaterFlowState, 4); Atlas.Face(FluidRules.LavaFlowState, 4); Atlas.Face(FluidRules.OverlayState, 4);
             for (; _prewarmedCount < Model.Palette.Count; _prewarmedCount++)
                 for (int d = 0; d < 6; d++) Atlas.Face(Model.Palette[_prewarmedCount], d);
             // [piston] what moving_piston cells draw instead (PistonGhosts): piston heads may not be in the palette.

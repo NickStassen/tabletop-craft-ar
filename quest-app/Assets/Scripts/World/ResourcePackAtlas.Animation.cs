@@ -36,8 +36,9 @@ namespace TabletopCraft.World
         public long FrameCopies { get; private set; }
 
         /// <summary>From Layer() for each new texture: if it is animated, keeps all its frames and returns the pixels
-        /// for its atlas layer (the first frame shown); otherwise null.</summary>
-        Color32[] LoadAnimation(string pngEntry, Texture2D tex, int layer)
+        /// for its atlas layer (the first frame shown); otherwise null. part 0-3: only that quarter of each frame
+        /// (top-left, top-right, bottom-left, bottom-right; [flow] QuadLayer), -1 = the whole frame.</summary>
+        Color32[] LoadAnimation(string pngEntry, Texture2D tex, int layer, int part = -1)
         {
             try
             {
@@ -52,7 +53,9 @@ namespace TabletopCraft.World
                 for (int i = 0; i < frames.Length; i++)
                 {
                     a.Origin(i, out int fx, out int fy);
-                    frames[i] = Crop(src, tex.width, tex.height, fx, fy, a.FrameWidth, a.FrameHeight, TileSize);
+                    int fw = a.FrameWidth, fh = a.FrameHeight;
+                    if (part >= 0) { fw /= 2; fh /= 2; fx += (part & 1) * fw; fy += (part >> 1) * fh; }
+                    frames[i] = Crop(src, tex.width, tex.height, fx, fy, fw, fh, TileSize);
                 }
                 Color32[][][] mips = null;
                 if (Mipmaps) { mips = new Color32[frames.Length][][]; for (int i = 0; i < frames.Length; i++) mips[i] = TextureMips.Chain(frames[i], TileSize); }
