@@ -114,6 +114,10 @@ namespace TabletopCraft.World
             return (int)Math.Max(min, Math.Min(Math.Max(min, MaxSectionsPerJob), n));
         }
 
+        /// <summary>[mesh] With the surface skirt on (SurfaceSkirt), how much faster than meshing keeps up a glide may go:
+        /// the leading strip shows the skirt and detail fills in behind. 1 = no skirt (tabletop.json "surface_skirt").</summary>
+        public static float SkirtFactor = 1f;
+
         /// <summary>Share of the measured meshing rate a glide may use (the rest is for edits, refreshes and slack).</summary>
         public static float Utilisation = 0.65f;
 
@@ -129,7 +133,7 @@ namespace TabletopCraft.World
             if (len < 1e-6f) return float.MaxValue;
             int ex = active.Max.x - active.Min.x, ey = active.Max.y - active.Min.y, ez = active.Max.z - active.Min.z;
             float perBlock = (Math.Abs(dir.x) * ey * ez + Math.Abs(dir.y) * ex * ez + Math.Abs(dir.z) * ex * ey) / len / WorldModel.Section;
-            return perBlock <= 0 ? float.MaxValue : sectionsPerSecond * Utilisation / perBlock;
+            return perBlock <= 0 ? float.MaxValue : sectionsPerSecond * Utilisation * SkirtFactor / perBlock;
         }
     }
 

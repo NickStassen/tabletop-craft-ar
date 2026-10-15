@@ -16,6 +16,8 @@
     <Compile Include="../Assets/Scripts/World/AreaSizing.cs;../Assets/Scripts/World/SectionBatches.cs" />
     <!-- [nav] which sections are meshed: near the visible window only -->
     <Compile Include="../Assets/Scripts/World/MeshScope.cs" />
+    <!-- [mesh] low-detail surface skirt -->
+    <Compile Include="../Assets/Scripts/World/SurfaceSkirt.cs" />
     <Compile Include="../Assets/Scripts/World/BlockShading.cs;../Assets/Scripts/World/BiomeColors.cs" />
     <!-- [living] time of day, weather, leads, gear, displays (PROTOCOL.md "World state", "Living entities") -->
     <Compile Include="../Assets/Scripts/World/DayLight.cs;../Assets/Scripts/World/Precipitation.cs;../Assets/Scripts/World/LightningBolt.cs;../Assets/Scripts/World/Leash.cs;../Assets/Scripts/World/LivingLooks.cs" />

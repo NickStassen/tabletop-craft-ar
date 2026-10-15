@@ -6,7 +6,10 @@
 //   {"server":"ws://192.168.1.50:8765/tabletop","token":"","skin_player":""}
 // [area] optional: "area_width": 192 (start at that width preset, block size fitted to the table),
 //   "batch_columns": 4 (sections per mesh batch side, TabletopRenderer)
-// [nav] optional: "mesh_sections_per_job": 4 (sections a meshing job takes in a row; lower it if gliding costs frames)
+// [nav] optional: "mesh_sections_per_job": 4 (fewest sections a meshing job takes in a row; [mesh] more when sections are
+//   cheap), "mesh_workers": 3 (meshing threads; the Quest 3 gives an app about three cores)
+// [mesh] optional: "surface_skirt": true (a low-detail surface where the window isn't meshed yet), "skirt_speed": 2 (with
+//   the skirt, glide up to this much faster than meshing keeps up; 1 = only as fast as detail arrives)
 // [talk] optional: "operator_name": "Nick" (the name in chat, else skin_player), "quick_commands": ["time set day"]
 // [hands] optional: "left_trigger": "use" (default: vanilla right-click order, left grip + trigger places) or "place"
 //   (the trigger always places or uses the selected item; left grip + trigger does the right-click order)
@@ -125,6 +128,7 @@ namespace TabletopCraft
         void Start()
         {
             LoadConfig();
+            MeshScope.SkirtFactor = SurfaceSkirt.Enabled ? SurfaceSkirt.SpeedFactor : 1f;   // [mesh] the skirt covers what meshing lags behind
             LoadPrefs();   // [comfort] prefs.json, and which of tabletop.json's shared keys win
             var rig = FindFirstObjectByType<OVRCameraRig>();
             if (rig != null)
@@ -147,6 +151,8 @@ namespace TabletopCraft
             if (!MarkerMaterial) MarkerMaterial = new Material(Shader.Find("Sprites/Default"));
 
             _renderer = _blocks.gameObject.AddComponent<TabletopRenderer>();
+            Debug.Log($"[Tabletop] MESH workers={_renderer.MaxJobsInFlight} cores={Environment.ProcessorCount} sections_per_job>={TabletopRenderer.SectionsPerJob} " +
+                      $"skirt={(SurfaceSkirt.Enabled ? "on" : "off")} skirt_speed={MeshScope.SkirtFactor:F1}");   // [mesh]
             _renderer.Model = _world; _renderer.Atlas = _atlas; _renderer.OpaqueMaterial = OpaqueMaterial; _renderer.TransparentMaterial = TransparentMaterial;
             _players = playersT.gameObject.AddComponent<PlayerMarkers>();
             _players.Model = _world; _players.MarkerMaterial = MarkerMaterial; _players.Atlas = _atlas;
@@ -324,6 +330,9 @@ namespace TabletopCraft
                 _leftTrigger = c.S("left_trigger") == "place" ? TriggerMode.Place : TriggerMode.Use;   // [hands] what the left trigger does first
                 BatchRules.Columns = Math.Max(1, c.I("batch_columns", BatchRules.Columns));     // [area] sections per batch side
                 TabletopRenderer.SectionsPerJob = Math.Max(1, c.I("mesh_sections_per_job", TabletopRenderer.SectionsPerJob));   // [nav] meshing throughput
+                TabletopRenderer.Workers = Mathf.Clamp(c.I("mesh_workers", TabletopRenderer.Workers), 1, 8);                    // [mesh] meshing threads
+                SurfaceSkirt.Enabled = c.B("surface_skirt", SurfaceSkirt.Enabled);                                            // [mesh] low-detail surface ahead
+                SurfaceSkirt.SpeedFactor = Mathf.Clamp((float)c.D("skirt_speed", SurfaceSkirt.SpeedFactor), 1f, 4f);          // [mesh] glide past meshing
             }
             catch (Exception e) { Debug.LogWarning("[Tabletop] bad tabletop.json: " + e.Message); }
         }

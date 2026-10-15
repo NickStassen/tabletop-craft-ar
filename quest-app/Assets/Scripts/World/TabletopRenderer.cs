@@ -24,7 +24,7 @@ using UnityEngine.Rendering;
 
 namespace TabletopCraft.World
 {
-    public sealed class TabletopRenderer : MonoBehaviour
+    public sealed partial class TabletopRenderer : MonoBehaviour
     {
         /// <summary>[mesh] Worker threads meshing at once (tabletop.json "mesh_workers"). The Quest 3 gives an app about
         /// three cores and Unity's main and render threads use two, so more workers mostly steal frame time.</summary>
@@ -87,7 +87,45 @@ namespace TabletopCraft.World
             _keepChecked = true; _keptFor = KeepScope;
             _drop.Clear();
             foreach (var k in _secs.Keys) if (!KeepScope.Contains(k)) _drop.Add(k);
-            foreach (var k in _drop) { Apply(k, null); Model.DirtySections.Add(k); _dropped.Add(k); }
+            foreach (var k in _drop) { Drop(k); Model.DirtySections.Add(k); _dropped.Add(k); }
+        }
+
+        /// <summary>
+        /// [mesh] Forgets a section's mesh that left KeepScope without re-uploading its batch: the batch's old geometry
+        /// there is at least Lead + KeepExtra blocks outside the window, where the clip box hides it. The batch goes on
+        /// the trail list and is rebuilt when it has no meshes left (an empty mesh: nothing to upload), when something
+        /// else dirties it, after TrailWait, or as soon as meshing is idle and the view stands still. A glide used to re-upload every batch along
+        /// the trailing edge each time a column left it (half the batch uploads at 256 wide).
+        /// </summary>
+        void Drop(Vector3Int s)
+        {
+            if (!_secs.TryGetValue(s, out var old)) return;
+            Quads -= old.Quads;
+            _secs.Remove(s);
+            var key = _layout.KeyOf(s);
+            if (!_dirty.ContainsKey(key) && !_trail.ContainsKey(key)) _trail[key] = Time.unscaledTime;
+        }
+
+        /// <summary>[mesh] Batches that only lost meshes (Drop), with the time they first did.</summary>
+        readonly Dictionary<Vector3Int, float> _trail = new Dictionary<Vector3Int, float>();
+        readonly List<Vector3Int> _trailReady = new List<Vector3Int>();
+        public float TrailWait = 4f;
+
+        /// <summary>[mesh] Moves trail batches that should be rebuilt now onto the dirty list (see Drop).</summary>
+        void FlushTrail(bool idle)
+        {
+            if (_trail.Count == 0) return;
+            float now = Time.unscaledTime;
+            _trailReady.Clear();
+            foreach (var kv in _trail)
+                if (idle || now - kv.Value >= TrailWait || !HasMeshes(kv.Key)) _trailReady.Add(kv.Key);
+            foreach (var k in _trailReady) { _trail.Remove(k); MarkBatch(k); }
+        }
+
+        bool HasMeshes(Vector3Int key)
+        {
+            foreach (var s in _layout.SectionsOf(key)) if (_secs.ContainsKey(s)) return true;
+            return false;
         }
         /// <summary>True while a new region is meshed behind the old meshes (they swap when it is complete).</summary>
         public bool Staging => _staging;
@@ -100,6 +138,7 @@ namespace TabletopCraft.World
         {
             public Vector3Int Key; public GameObject Go; public Mesh Mesh; public MeshRenderer Renderer;
             public int Y0; public bool Assembling, Dead;
+            public List<(Vector3Int, int)> Fresh;   // [mesh] the fresh section stamps this assembly covers (skirt)
             public int Verts, Indices, Opaque, Transparent, WaterBack, Sections;
             public long Bytes;
         }
@@ -151,7 +190,8 @@ namespace TabletopCraft.World
         public void Clear()
         {
             foreach (var b in _batches.Values) Kill(b);
-            _batches.Clear(); _dirty.Clear(); _secs.Clear();
+            _batches.Clear(); _dirty.Clear(); _secs.Clear(); _trail.Clear();
+            ClearSkirt();   // [mesh]
             Quads = 0;
             DropRetired();
             _lazy.Clear();
@@ -196,7 +236,7 @@ namespace TabletopCraft.World
                 _secs.Clear();
                 foreach (var kv in moved) _secs[kv.Key] = kv.Value;
                 Quads = quads;
-                foreach (var g in gone) { if (_batches.TryGetValue(g, out var b)) Kill(b); _batches.Remove(g); _dirty.Remove(g); }
+                foreach (var g in gone) { if (_batches.TryGetValue(g, out var b)) Kill(b); _batches.Remove(g); _dirty.Remove(g); _trail.Remove(g); }
                 _layout = layout;
                 foreach (var b in _batches.Values) b.Go.transform.localPosition = _layout.Position(b.Key, b.Y0);
                 foreach (var k in dirtyBatches) MarkBatch(k);
@@ -228,12 +268,13 @@ namespace TabletopCraft.World
                     _retiring.localPosition = Vector3.zero;
                     _staging = true; _stagingSince = Time.unscaledTime;
                 }
-                _batches.Clear(); _dirty.Clear(); _secs.Clear();
+                _batches.Clear(); _dirty.Clear(); _secs.Clear(); _trail.Clear();
                 _layout = layout;
                 Quads = 0;
                 _lazy.Clear();
             }
             _dropped.Clear();   // [nav]
+            SkirtOnSnapshot(plan);   // [mesh]
             // Retired meshes were built for an older origin: keep them where they are in the world.
             if (_retiring != null)
             {
@@ -319,11 +360,13 @@ namespace TabletopCraft.World
             _meshedNow = 0;
             _work.Frame();   // [mesh] worker time per section, for the job size
             DropOutsideKeep();   // [nav]
-            UpdateBatches();   // [area]
             int urgent = DirtyIn(Scope);   // [nav] dirty sections near the window; the rest of the margin waits
+            FlushTrail(urgent == 0 && _inFlight == 0 && Motion.sqrMagnitude < 0.01f);   // [mesh] idle and not gliding
+            UpdateBatches();   // [area]
             if (_staging && ((urgent == 0 && _inFlight == 0 && _dirty.Count == 0 && _assembling == 0) || Time.unscaledTime - _stagingSince > StagingTimeout)) FinishStaging();
             Dispatch(urgent);
             _saturated = _jobs >= MaxJobsInFlight;
+            UpdateSkirt();   // [mesh] low-detail surface where the window isn't meshed yet
         }
 
         /// <summary>Hands dirty sections in Scope to the worker jobs (urgent first; kept ones refreshed when idle).</summary>
@@ -398,22 +441,25 @@ namespace TabletopCraft.World
                 // Stale (a new snapshot arrived while meshing): its sections are already queued again.
                 if (j.SnapshotId != Model.SnapshotId) continue;
                 if (KeepScope.Contains(j.Section)) Apply(j.Section, j.Mesh);
-                else { Apply(j.Section, null); Model.DirtySections.Add(j.Section); _dropped.Add(j.Section); }   // [nav] left the kept box while meshing
+                else { Drop(j.Section); Model.DirtySections.Add(j.Section); _dropped.Add(j.Section); }   // [nav] left the kept box while meshing
             }
         }
 
         void Apply(Vector3Int s, SectionMesh mesh)
         {
+            _dropped.Remove(s);   // [mesh] meshed again since it was dropped: the next snapshot needn't re-mesh it
             _secs.TryGetValue(s, out var old);
             if (old == null && mesh == null) return;   // still empty: nothing changes on screen
             Quads += (mesh?.Quads ?? 0) - (old?.Quads ?? 0);
             if (mesh == null) _secs.Remove(s); else _secs[s] = mesh;
             MarkBatch(_layout.KeyOf(s));
+            MarkFresh(s);   // [mesh] not on screen until its batch is uploaded (the skirt covers it meanwhile)
         }
 
         void MarkBatch(Vector3Int key)
         {
             if (!_dirty.ContainsKey(key)) _dirty[key] = Time.unscaledTime;
+            _trail.Remove(key);   // [mesh] the rebuild leaves out the dropped meshes too
         }
 
         // ---------- [area] batches ----------
@@ -429,6 +475,7 @@ namespace TabletopCraft.World
                 r.batch.Assembling = false;
                 if (!r.batch.Dead) UploadBatch(r.batch, r.data);
                 r.data.Release();
+                Uploaded(r.batch.Fresh); r.batch.Fresh = null;   // [mesh]
             }
             if (_dirty.Count == 0 || _assembling >= MaxAssembliesInFlight) return;
             // Nearest to the view first.
@@ -450,6 +497,7 @@ namespace TabletopCraft.World
                     if (_secs.TryGetValue(s, out var m)) _parts.Add((m, _layout.Offset(s, key, b.Y0)));
                 var parts = _parts.ToArray();
                 b.Assembling = true; _assembling++;
+                b.Fresh = FreshOf(key);   // [mesh]
                 Task.Run(() =>
                 {
                     BatchData d;
@@ -463,7 +511,11 @@ namespace TabletopCraft.World
         bool SectionsPending(Vector3Int key)
         {
             // [nav] Dirty sections outside Scope wait for the window: a batch doesn't wait for them.
-            foreach (var s in _layout.SectionsOf(key)) if (_busy.Contains(s) || (Model.DirtySections.Contains(s) && Scope.Contains(s))) return true;
+            // [mesh] Except for a batch entirely off screen: it waits (at most BatchMaxWait) for its dirty sections in
+            // KeepScope too, so a batch ahead of a glide is uploaded once with both its columns instead of once per column.
+            bool offScreen = BatchRules.OffScreen(_layout, key, VisibleScope);
+            foreach (var s in _layout.SectionsOf(key))
+                if (_busy.Contains(s) || (Model.DirtySections.Contains(s) && (Scope.Contains(s) || (offScreen && KeepScope.Contains(s))))) return true;
             return false;
         }
 
