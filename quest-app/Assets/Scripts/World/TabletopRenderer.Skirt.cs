@@ -87,7 +87,7 @@ namespace TabletopCraft.World
                 var md = new MeshData();
                 foreach (var (c, corner) in jobs)
                 {
-                    int minTop = -1, maxTop = -1; BatchData data = null;
+                    int minTop = -2, maxTop = -2; BatchData data = null;   // -2: not built (a newer snapshot came)
                     try
                     {
                         if (w.SnapshotId == snap)
@@ -110,6 +110,11 @@ namespace TabletopCraft.World
             int S = WorldModel.Section, ox = corner.x - Model.Origin.x, oz = corner.z - Model.Origin.z, dy = corner.y - Model.Origin.y;
             var key = new Vector2Int(Mathf.FloorToInt(ox / (float)S), Mathf.FloorToInt(oz / (float)S));
             bool aligned = ox % S == 0 && oz % S == 0 && dy % S == 0;
+            if (minTop == -2)   // skipped for a newer snapshot: planned again next frame
+            {
+                if (aligned && _skirt.Tiles.TryGetValue(key, out var stale) && !stale.Built) _skirt.Tiles.Remove(key);
+                data?.Release(); return;
+            }
             var t = aligned ? _skirt.Built(key, minTop < 0 ? -1 : minTop + dy, maxTop < 0 ? -1 : maxTop + dy) : null;
             if (t == null || data == null) { data?.Release(); return; }   // not wanted any more, or no surface (dropped next frame)
             var tile = _skirtPool.Count > 0 ? _skirtPool.Pop() : NewSkirtTile();

@@ -1127,3 +1127,68 @@ The Marks tab's readability and the keyboard for coordinates and names; the worl
 - `SignChangeEvent` has no player: plugins that need one log an error and don't block the edit. Container edits fire no inventory events (protection plugins aren't asked).
 - Following is client-side: two headsets following different players fight over the shared region (the last request wins, as for gliding).
 - Jumps to typed `x z` keep the view's height, which may be underground or in the air at the target.
+
+## Faster meshing and the surface skirt (mesh; Paper 26.3, seed 12345, 2026-10-15, no headset)
+
+At 256 wide every block of travel brings about 16 new sections into the active box, so meshing limited gliding (TESTING "Faster gliding": 52-54 blocks/s on a PC, 34 with meshing 4× slower; the headset with 0.3.0 did 4-9). Measured on an x86 PC (Ryzen 7 9800X3D), own Paper 26.3 server (ports 25624/8824, 2 GB heap, plugin 0.4.0, chunks generated), clients with `sections_v1` + `light_v1` + `biomes_v1`, the 26.3 client jar as the pack.
+
+### Tests
+
+| Suite | Result |
+|---|---|
+| Quest scripts (`Tests~`, .NET 8, `--jar` + `--entity-models`) | 1,354/1,354 PASS (master 0.5.0: 1,326). New in `MeshTests.cs` (28): `ShadeCache` lights 7,200 random faces exactly like the world (random shapes and light, a 37×21×29 region, every section border and region edge, cubic and inner faces, light floors, flat and full-bright shades, smooth light on and off) and falls back to the world outside its section; the greedy pass on sections without cubes, partial edge sections, unknown palette ids and `leaves_inner` on/off; job size and the work meter; `skirt_speed` in the mesh cap; off-screen batches; skirt tiles (one merged top face just below the surface, plants skipped, step sides from the lower neighbour's surface, the window top cutting a pillar, nothing in range, tint × light and light code of the cell above, `SurfaceRange`); the skirt planner (tiles for pending columns, no repeats while building, kept while their surface is pending, dropped when it is on screen even with sections pending deep below, re-keyed on a shift, dropped outside the region or the box, no builds while a job runs). |
+| Unity 6000.0.84f1 batch compile | 0 errors; warnings in `Assets/` only the existing CS0618 (`overlayType`) and CS0414 (`BlockEntityRenderer._fullScan`). |
+| `Editor/ShaderCheck` | 160 variants, 0 errors (no shader changed). |
+| `Editor/BatchMeshCheck.RunRenderer` | 11/11 PASS: the ten existing steps (with deferred drops and the off-screen wait) plus "skirt while gliding east": a one-section shift with the view moving shows skirt tiles for the new columns (up to 6, on screen in 2 frames) and none once everything is meshed and uploaded, and what is on screen then equals the meshed model. Fixed on the way: a section meshed again after it was dropped (KeepScope) was re-meshed at the next snapshot. |
+| `TabletopBatch.BuildApk` | Build succeeded in 1:38 (IL2CPP ARM64; not installed). |
+
+### Mesher output and cost per section (`Tests~ --profile-mesh DIR --jar 26.3.jar [--hash OUT]`, one thread)
+
+Four saved snapshots with light and biomes: a dark forest (0, 32, -128) and a meadow (384, 48, 448) and old-growth taiga (192, 32, 64), each 192×160×192, and the 288×128×288 area at 0,0 from the batching measurements. Every one of the 6,912 sections hashes the same (vertices, UVs, colours, light codes, the three index lists, in order) as master's mesher with the pack, with `leaves_inner` off, with flat light, without light and without a pack (stable flat colours: `BlockRules.FlatColor` hashes unknown names with .NET's per-process string hash).
+
+| snapshot | before: ms/section | after | air sections | all-stone sections | sections with faces |
+|---|---|---|---|---|---|
+| forest | 0.549 | 0.167 (3.3×) | 0.321 → 0.019 | 0.597 → 0.109 | 0.764 → 0.328 |
+| meadow | 0.487 | 0.134 (3.6×) | 0.327 → 0.019 | 0.577 → 0.105 | 0.692 → 0.321 |
+| taiga | 0.475 | 0.124 (3.8×) | 0.320 → 0.018 | 0.566 → 0.105 | 0.670 → 0.291 |
+| 0,0 (288 wide) | 0.534 | 0.157 (3.4×) | 0.335 → 0.019 | 0.603 → 0.115 | 0.775 → 0.342 |
+
+- Where the time went: two string-keyed dictionary lookups per cell and direction in the greedy pass (`BlockRules.Shape(state)` for the cell and its neighbour, then `Face(state, dir)`), about 50,000 per section whatever it holds, so an all-air section cost 0.32 ms; then about 20 bounds-checked world reads per lit face. Now: one padded copy of the section and its border per section, lookups per palette id, a light cache per section; the rest is the faces themselves (the greedy merge, emitting, `SectionMesh.From`).
+- On the headset (IL2CPP, ARM) the string hashing and the small-method calls removed were relatively dearer, so the gain may be larger there; it is unmeasured.
+
+### Gliding (`Tests~ --live-glide ws://… --jar 26.3.jar --widths 128,192,256 --glide-seconds 12 [--mesh-slowdown 4]`)
+
+The harness now meshes exactly like the renderer (Build + BuildSpecials + `SectionMesh.From`, the jar's models and textures prewarmed on the main thread like the atlas; it used to call `BlockRules.FlatColor` per face, string work the app never does, which made sections cost 0.9-2.7 ms there) and tracks the batches (rebuilds and MB re-uploaded per second). "4× slower" now spins the worker for 3× the section's own time (`Thread.Sleep` rounded sub-millisecond waits to 0 or 1 ms). "Before" is master's mesher, fixed jobs of 4 and 0.4.0's batch rules (`--per-job-max 4 --old-batch-rules`); "after" this branch, skirt off; "skirt" this branch with the skirt and `skirt_speed` 2. Glides start at the meadow (384, 48, 448) and go +x then -x. Asked speed (stick, 3× ramp): 81 blocks/s at 128, 121 at 192, 162 at 256. Table cm/s at the table-fitted block size (4.45 / 2.97 / 2.23 mm). "Holes" = frames (of about 890) in which a visible column's surface sections weren't on screen (dirty, being meshed, or batch not uploaded); with the skirt: not covered by a skirt tile either.
+
+| width (asked) | before | after | after + skirt | before, 4× slower | after, 4× slower | after + skirt, 4× slower |
+|---|---|---|---|---|---|---|
+| 128 (81) | 76.1-76.3 (33.9-34.0) | 76.2-76.3 (33.9-34.0) | 76.1-76.3 (33.9-34.0) | 76.2-76.3 (33.9-34.0) | 76.1-76.3 (33.9-34.0) | 76.2-76.3 (33.9-34.0) |
+| 192 (121) | 65.6-68.1 (19.5-20.2) | 110.7-111.5 (32.9-33.1) | 111.0-111.8 (33.0-33.2) | 62.2-64.1 (18.5-19.0) | 110.5-112.1 (32.8-33.3) | 111.4 (33.1) |
+| 256 (162) | 52.8-56.1 (11.8-12.5) | 145.8-146.3 (32.5-32.6) | 145.5-149.4 (32.4-33.3) | 47.6-49.5 (10.6-11.0) | 117.5-118.9 (26.2-26.5) | 140.9-144.1 (31.4-32.1) |
+
+Blocks/s (table cm/s), both directions. At 256:
+
+| | before | after | after + skirt | before, 4× | after, 4× | after + skirt, 4× |
+|---|---|---|---|---|---|---|
+| mesh rate (sections/s) | 907-913 | 7,493-7,983 | 7,238-7,549 | 792-806 | 2,071-2,334 | 2,396-2,553 |
+| mesh cap (blocks/s) | 53-56 | 430-445 | 860-865 | 48-50 | 121-127 | 247-252 |
+| worker ms per section (real) | 0.60-0.65 | 0.12-0.13 | 0.13 | 0.57-0.60 | 0.14 | 0.14 |
+| job size | 4 | 58-64 | 47-64 | 4 | 6-20 | 8-18 |
+| surface holes (frames of ~890) | 60-175 | 8-18 | 3-6, uncovered 0-4 | 47-97 | 148-168 | 475-677, uncovered 25-55 |
+| batch rebuilds/s (MB/s) | 50-51 (18-24) | 102-119 (40-47) | 108-109 (43) | 48-49 (17-19) | 92-94 (40-42) | 98-104 (43-44) |
+| skirt tiles/s (ms each, real) | | | 166-168 (0.16-0.17) | | | 167-177 (0.12-0.14) |
+
+- Before, meshing was capped at about 900 sections/s whatever a section cost: jobs of a fixed 4 sections were handed out once per frame (12 per frame at 72 Hz). The faster mesher alone gave nothing until jobs took ~1.5 frames of work (`per_job`): now the measured rate is 8× at full speed and 2.6-3× with the 4× slowdown, and at 256 the stream cap (about 130-200 blocks/s here) and the asked speed limit the glide on the PC. 192 and 256 now reach about the same table speed as 128 (33 cm/s) at 1×; with the slowdown 256 reaches 26 cm/s, or 31-32 cm/s with the skirt.
+- The skirt keeps the view's surface covered: with the slowdown and `skirt_speed` 2 at 256, detail was still missing somewhere on screen in 54-77% of frames, but a skirt tile covered it in all but 25-55 frames (3-6%), usually a column or two at the leading edge for a frame. Without the slowdown the skirt is rarely needed (mesh cap 860 blocks/s, holes in under 1% of frames). These harness skirt counts are conservative: it dropped tiles whose build a new snapshot overtook instead of planning them again, as the app now does.
+- Batch uploads: each block of travel at 256 re-uploads 0.28-0.32 MB instead of 0.34-0.43 (about 40% of the rebuilds are now empty trailing batches with nothing to upload). At 146 blocks/s that is 40-47 MB/s on the headset's main thread (within the 3 ms per-frame upload budget, at least one batch per frame); at the headset's likely speeds a third to a half of that.
+- 128 is at the asked speed in every run (as before).
+
+### Not verified (needs the headset)
+
+What a section costs on the Quest (`GLIDE ... mesh_ms=` is the worker time per section, `per_job=` the job size, `mesh_rate_s=`), the speed at 192 and 256 with and without the skirt (`"surface_skirt": false`, `"skirt_speed": 1`), how the skirt looks while gliding (tiles at the leading edge, replaced by detail within moments; no z-fighting, no seams with the detail, water and leaves as opaque stand-ins), frame times (PERF) while gliding: the skirt adds a pending-grid pass over the active box per frame while moving, a few pooled tile uploads (about 10-30 KB each) per frame and one small worker job; `MESH workers=... cores=...` at start (what the Quest reports), and whether a 4th worker (`"mesh_workers": 4`) helps or costs frames.
+
+### Known gaps
+
+- The skirt is a stand-in: top faces only plus steps, flat-lit (no AO), no grass side overlays, water and leaves opaque, nothing for overhangs or caves seen through the cut sides (the caps show those). It covers only what the region snapshot has (the margin ahead); beyond the region there is nothing to show until the next delta.
+- With `skirt_speed` 2 and slow meshing, detail can trail far behind (the skirt covers the window's surface, and detail fills in when the glide slows or stops).
+- Dropped sections' geometry stays on the GPU until their batch is rebuilt (at most 4 s, hidden by the clip box).

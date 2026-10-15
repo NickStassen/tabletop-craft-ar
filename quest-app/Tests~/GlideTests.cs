@@ -61,7 +61,7 @@ static class GlideTests
         readonly SkirtPlanner _planner = new SkirtPlanner();
         readonly SkirtPlanner.Pending _pend = new SkirtPlanner.Pending();
         readonly HashSet<Vector3Int> _fresh = new HashSet<Vector3Int>();   // meshed, batch not rebuilt yet
-        readonly ConcurrentQueue<(Vector2Int c, int snap, int minTop, int maxTop)> _skirtDone = new ConcurrentQueue<(Vector2Int, int, int, int)>();
+        readonly ConcurrentQueue<(Vector3Int corner, bool built, int minTop, int maxTop)> _skirtDone = new ConcurrentQueue<(Vector3Int, bool, int, int)>();
         readonly List<Vector2Int> _skirtBuild = new List<Vector2Int>();
         volatile bool _skirtBusy;
         public long TilesBuilt, SkirtTicks;
@@ -105,7 +105,14 @@ static class GlideTests
 
         void UpdateSkirt()
         {
-            while (_skirtDone.TryDequeue(out var r)) if (r.snap == W.SnapshotId) _planner.Built(r.c, r.minTop, r.maxTop);
+            while (_skirtDone.TryDequeue(out var r))   // as TabletopRenderer.ApplySkirtTile: keys from the world corner
+            {
+                int S = WorldModel.Section, ox = r.corner.x - W.Origin.x, oz = r.corner.z - W.Origin.z, dy = r.corner.y - W.Origin.y;
+                if (ox % S != 0 || oz % S != 0 || dy % S != 0) continue;
+                var key = new Vector2Int(FloorDiv(ox, S), FloorDiv(oz, S));
+                if (!r.built) { if (_planner.Tiles.TryGetValue(key, out var stale) && !stale.Built) _planner.Tiles.Remove(key); continue; }
+                _planner.Built(key, r.minTop < 0 ? -1 : r.minTop + dy, r.maxTop < 0 ? -1 : r.maxTop + dy);
+            }
             if (!Skirt || Scope.Equals(SectionBox.All)) return;
             if (_planner.Tiles.Count == 0 && Motion.sqrMagnitude < 0.01f) return;
             _pend.Reset(Scope, W.SectionCount);   // as TabletopRenderer: the active box
@@ -115,22 +122,23 @@ static class GlideTests
             _planner.Frame(_pend, _skirtBusy ? 0 : 32, _skirtBuild);
             _planner.Dropped.Clear();
             if (_skirtBuild.Count == 0) return;
-            var w = W; var faces = Faces; int snap = W.SnapshotId; var list = _skirtBuild.ToList();
+            var w = W; var faces = Faces; int snap = W.SnapshotId; var o = W.Origin;
+            var list = _skirtBuild.Select(c => (c, corner: new Vector3Int(o.x + c.x * WorldModel.Section, o.y, o.z + c.y * WorldModel.Section))).ToList();
             int top = Math.Min(SkirtTop, w.Dims.y), bottom = Math.Max(SkirtBottom, 0); float slow = Slowdown;
             _skirtBusy = true;
             Task.Run(() =>
             {
                 var md = new MeshData();
-                foreach (var c in list)
+                foreach (var (c, corner) in list)
                 {
                     long t0 = Stopwatch.GetTimestamp();
-                    int minTop = -1, maxTop = -1;
-                    try { if (w.SnapshotId == snap) { SurfaceSkirt.Build(w, c.x, c.y, bottom, top, faces, md, out minTop, out maxTop); SectionMesh.From(md, new Vector3Int(c.x, 0, c.y)); } }
+                    int minTop = -1, maxTop = -1; bool built = false;
+                    try { if (w.SnapshotId == snap) { SurfaceSkirt.Build(w, c.x, c.y, bottom, top, faces, md, out minTop, out maxTop); SectionMesh.From(md, new Vector3Int(c.x, 0, c.y)); built = true; } }
                     catch (Exception) { }
                     long took = Stopwatch.GetTimestamp() - t0;
                     Interlocked.Add(ref SkirtTicks, took); Interlocked.Increment(ref TilesBuilt);
                     if (slow > 1f) { long until = Stopwatch.GetTimestamp() + (long)(took * (slow - 1f)); while (Stopwatch.GetTimestamp() < until) Thread.SpinWait(20); }
-                    _skirtDone.Enqueue((c, snap, minTop, maxTop));
+                    _skirtDone.Enqueue((corner, built, minTop, maxTop));
                 }
                 _skirtBusy = false;
             });
