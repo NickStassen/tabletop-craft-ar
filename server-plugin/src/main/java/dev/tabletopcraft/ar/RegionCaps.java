@@ -9,8 +9,10 @@ import com.google.gson.JsonObject;
  */
 public record RegionCaps(int maxX, int maxY, int maxZ, long maxBlocks, long maxBytes, int maxViewWidth) {
     public static final int DEFAULT_VIEW_WIDTH = 256;
-    /** Sized for a 256-wide window plus the headset's 16-block margin on each side (288). */
-    public static final RegionCaps DEFAULT = new RegionCaps(288, 384, 288, 1L << 24, 32L * 1024 * 1024, DEFAULT_VIEW_WIDTH);
+    /** [nav] Sized for a 256-wide window plus the headset's 48-block glide margin on each side (352), up to 203 high. */
+    public static final RegionCaps DEFAULT = new RegionCaps(352, 384, 352, 24L << 20, 32L * 1024 * 1024, DEFAULT_VIEW_WIDTH);
+    /** The 0.3.0 defaults: a config.yml still holding them is raised to DEFAULT (TabletopPlugin.start). */
+    static final RegionCaps OLD_DEFAULT = new RegionCaps(288, 384, 288, 1L << 24, 32L * 1024 * 1024, DEFAULT_VIEW_WIDTH);
 
     public RegionCaps(int maxX, int maxY, int maxZ, long maxBlocks, long maxBytes) { this(maxX, maxY, maxZ, maxBlocks, maxBytes, DEFAULT_VIEW_WIDTH); }
 

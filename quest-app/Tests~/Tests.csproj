@@ -14,6 +14,8 @@
     <Compile Include="../Assets/Scripts/World/NavState.cs;../Assets/Scripts/World/SectionPlan.cs;../Assets/Scripts/World/SnapshotAssembler.cs;../Assets/Scripts/World/CapMesher.cs;../Assets/Scripts/Net/SectionedSnapshot.cs" />
     <!-- [area] width presets and mesh batching -->
     <Compile Include="../Assets/Scripts/World/AreaSizing.cs;../Assets/Scripts/World/SectionBatches.cs" />
+    <!-- [nav] which sections are meshed: near the visible window only -->
+    <Compile Include="../Assets/Scripts/World/MeshScope.cs" />
     <Compile Include="../Assets/Scripts/World/BlockShading.cs;../Assets/Scripts/World/BiomeColors.cs" />
     <!-- [living] time of day, weather, leads, gear, displays (PROTOCOL.md "World state", "Living entities") -->
     <Compile Include="../Assets/Scripts/World/DayLight.cs;../Assets/Scripts/World/Precipitation.cs;../Assets/Scripts/World/LightningBolt.cs;../Assets/Scripts/World/Leash.cs;../Assets/Scripts/World/LivingLooks.cs" />
@@ -29,5 +31,7 @@
     <Compile Include="../Assets/Scripts/Net/ControlProtocol.cs;../Assets/Scripts/World/ChatLog.cs;../Assets/Scripts/World/ConsoleModel.cs;../Assets/Scripts/World/OperatorPanelModel.cs" />
     <!-- [comfort] keyboard, prefs.json, LAN discovery, session helpers -->
     <Compile Include="../Assets/Scripts/World/KeyboardModel.cs;../Assets/Scripts/World/AppPrefs.cs;../Assets/Scripts/World/SessionState.cs;../Assets/Scripts/Net/LanDiscovery.cs" />
+    <!-- [blocks] block entities: catalog, baked models, block_entities data (PROTOCOL.md 4.29) -->
+    <Compile Include="../Assets/Scripts/World/BlockEntityCatalog.cs;../Assets/Scripts/World/BlockEntityModels.cs;../Assets/Scripts/Net/BlockEntityProtocol.cs;../Assets/Scripts/World/SignText.cs;../Assets/Scripts/World/BlockEntityExtras.cs" />
   </ItemGroup>
 </Project>

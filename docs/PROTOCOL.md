@@ -1,4 +1,4 @@
-# PROTOCOL.md — Tabletop link protocol, v0.3.1
+# PROTOCOL.md — Tabletop link protocol, v0.4.0
 
 The project version (repo `VERSION` file) versions the plugin, the Quest app and this protocol together. Before 1.0 there is no backwards compatibility: plugin, app and tools of the same version go together. The wire field `v` stays `1`.
 
@@ -68,6 +68,7 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 | `server_status` | S→C | TPS, MSPT, memory, players, worlds, every 2 s (§4.28, needs `status_v1`) |
 | `world_query` / `world_info` | C→S / S→C | a world's time, weather, difficulty, tick state and game rules (§4.28) |
 | `players_query` / `players_info` | C→S / S→C | every online player with health, food, game mode, ping (§4.28) |
+| `block_entities` | S→C | sign text, banner patterns, head skins, pot sherds, spawner mobs, beacon tiers, campfire/shelf/vault items, active conduits, as deltas (§4.29, needs `block_entities_v1`) |
 
 ### 4.1 `hello` (C→S)
 
@@ -82,7 +83,7 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 - `client`: free string, e.g. `quest-app` or `fake-quest`.
 - `protocols`: protocol versions the client speaks. The server picks the highest one it also supports.
 - `token`: shared secret from the plugin `config.yml` (`auth.token`). If it's empty in config, auth is disabled (LAN dev only). A wrong token gets `error` `auth_failed` and then close code 4003.
-- `caps`: capability strings. v1 defines `rle_palette_v1` (required) and `avatar` (client will send poses). Optional extras: `light_v1` and `biomes_v1` (§4.5.1), `edit_v1` (§4.20), `entities_v1` (§4.21), `actions_v1` (§4.22), `chat_v1`, `command_v1` and `status_v1` (§4.26–4.28); unknown caps are ignored.
+- `caps`: capability strings. v1 defines `rle_palette_v1` (required) and `avatar` (client will send poses). Optional extras: `light_v1` and `biomes_v1` (§4.5.1), `edit_v1` (§4.20), `entities_v1` (§4.21), `actions_v1` (§4.22), `chat_v1`, `command_v1` and `status_v1` (§4.26–4.28), `block_entities_v1` (§4.29); unknown caps are ignored.
 - `operator_name` (optional string): the name the headset wants in game chat (§4.26). The server keeps `[A-Za-z0-9_]`, at most 16 characters.
 - The client MUST NOT send anything else before it gets `welcome`. The server closes with 4002 if `hello` doesn't arrive within 5 s.
 
@@ -366,11 +367,13 @@ So the headset can find a server without typing its address (QUEST_SETUP.md Part
 - **v1, light and biomes (2026-10-13, additive):** optional per-block light and 4x4x4 biomes in `chunk_snapshot`, light changes in `block_update`, opted into with the `light_v1` / `biomes_v1` caps and echoed in `welcome.caps` (§4.5.1). Peers without the caps are unaffected.
 - **v1, block editing (2026-10-13, additive):** `block_edit` (C→S) breaks or places one block inside the region, opted into with the `edit_v1` cap; error codes `edit_denied`, `out_of_region`, `bad_state`; an error about an edit carries its `op` and `pos` (§4.20). Peers without the cap are unaffected.
 - **v0.2.0: block menu (2026-10-14, required, not backwards compatible):** the server sends `block_registry` (§4.24) to every client right after `welcome`, and a `block_edit` `place` must name a registry block or variant (else `bad_state`, §4.20). No cap: plugin, Quest app and tools must match.
-- **next version: chat, commands and server status (§4.26–4.28).** New caps `chat_v1`, `command_v1` (needs `auth.token` by default) and `status_v1`; messages `chat`, `chat_send`, `command`, `command_result`, `command_output`, `command_complete`, `command_suggestions`, `server_status`, `world_query`, `world_info`, `players_query`, `players_info`; `hello.operator_name`; `welcome.chat` and `welcome.commands`; errors `chat_denied`, `command_denied`. Fixtures `hello_control.json`, `welcome_control.json`, `chat*.json`, `command*.json`, `error_command_denied.json`, `server_status.json`, `world_query.json`, `world_info.json`, `players_query.json`, `players_info.json`.
 - **v0.3.0: visible width presets (§4.25).** `limits.max_view_width` (required in `welcome.limits`, `region_info.limits` and `region_too_large`); a `region_request` whose visible width is over it is narrowed around its centre instead of refused; `sections_v1` deltas may change `dims` (a section-aligned resize, §4.18). Fixtures `chunk_snapshot_grow.json`, `chunk_snapshot_shrink.json`, `region_request_resize.json`.
 - **v0.3.1: sessions and discovery.** `region_changed` carries `limits` like `region_info` (with the new world's `build_height`, §4.13); LAN discovery over UDP (§7); `player_positions` filters on Y and leaves out spectators, invisible and vanished players (§4.6); clients drop a link after 6 s of silence (§4.10) and don't retry after 4001/4003 (§5). Fixtures `region_changed.json` (now with `limits`), `discovery_probe.json`, `discovery_reply.json`.
 - **v0.3.1: building like vanilla (§4.20).** No new fields. `block_edit` `pos` may be the clicked block itself when it is replaceable; the server places doors, beds and tall plants with both halves (and removes both on a break), checks vanilla replaceability and survival, refuses blocks with a collision box in a player or mob and edits outside the world border, makes placed leaves persistent, sets `waterlogged` from the cell, computes connection properties from the neighbours, and names blocks readably in refusals ("stone is in the way"; fixture `error_edit_denied.json`).
 - **v0.3.1: armour stands (§4.21).** `entities` entries carry `arms`, `base_plate` and `stand_pose` for armour stands; fixture `entities_armor_stand.json` (Java `EntityDeltaTest`, Python, C# `EntityTests`).
+- **v0.4.0: faster gliding (§4.17, §4.25), no field changes.** A glide `region_request` may move the origin by several whole sections at once; the default `max_region` is 352×384×352 and 25,165,824 blocks (a config still holding the 0.3.0 defaults is raised on start); a server reads only the sections of a moved or resized region that weren't in the old one (the delta lists exactly those). Fixture `region_changed.json` carries the new default limits.
+- **v0.4.0: chat, commands and server status (§4.26–4.28).** New caps `chat_v1`, `command_v1` (needs `auth.token` by default) and `status_v1`; messages `chat`, `chat_send`, `command`, `command_result`, `command_output`, `command_complete`, `command_suggestions`, `server_status`, `world_query`, `world_info`, `players_query`, `players_info`; `hello.operator_name`; `welcome.chat` and `welcome.commands`; errors `chat_denied`, `command_denied`. Fixtures `hello_control.json`, `welcome_control.json`, `chat*.json`, `command*.json`, `error_command_denied.json`, `server_status.json`, `world_query.json`, `world_info.json`, `players_query.json`, `players_info.json`.
+- **v0.4.0: block entities (§4.29).** New cap `block_entities_v1` and message `block_entities`: sign text, banner patterns, player head profiles, pot sherds, spawner mobs, beacon tiers, campfire, shelf and vault items and active conduits, as per-chunk deltas with `removed`, and `reset` on a session's first region and after a world change; config.yml `block-entities`. Fixtures `block_entities.json`, `block_entities_reset.json`.
 
 ## 4.13–4.16 Runtime region control (v1, additive)
 
@@ -398,7 +401,7 @@ These let a headset glide across the world while the miniature stays a box on th
 {"v":1,"type":"region_request","seq":51,"t":1760370002500,"world":"world","origin":[16,60,0],"dims":[32,16,16],"view_margin":[8,0,0]}
 ```
 
-Navigation (Quest app, docs/QUEST_SETUP.md "Moving around"): when the window has moved more than a few blocks past the region centre in the direction of motion, the client sends `region_request` with the same `dims` and `view_margin` and the `origin` moved by 16 blocks (one section) on that axis. Origins always move by whole 16-block sections, so the client can keep its section meshes and the server can send a delta (4.18). One request is in flight at a time. The region is shared (4.13), so other headsets follow; the last writer wins.
+Navigation (Quest app, docs/QUEST_SETUP.md "Moving around"): when the window has moved more than a few blocks past the region centre in the direction of motion, the client sends `region_request` with the same `dims` and `view_margin` and the `origin` moved by 16 blocks (one section) on that axis; while it moves steadily one way it may move the origin by several sections at once, so that the margin ahead of the window is runway (next version; QUEST_SETUP.md Part H). Origins always move by whole 16-block sections, so the client can keep its section meshes and the server can send a delta (4.18). One request is in flight at a time. The region is shared (4.13), so other headsets follow; the last writer wins.
 
 ### 4.18 `chunk_snapshot` encoding `sections_v1` (cap `sections_v1`)
 
@@ -596,7 +599,7 @@ Fixture: `tools/fixtures/block_registry.json`. Java `BlockRegistryTest` (filteri
 
 The headset changes how wide the visible window is (x and z: 64, 96, 128, 192 or 256 blocks, docs/QUEST_SETUP.md Part K) without reconnecting. A resize is an ordinary `region_request` (§4.13, origin form with `view_margin`, §4.17) whose window is centred where the headset looks now and whose `origin` differs from the current one by whole 16-block sections on every axis. The server answers with `region_changed` and a `sections_v1` delta (§4.18) that only lists the sections that weren't fully inside the old region: the new ring when growing, nothing (or a few changed sections) when shrinking. The height stays the same.
 
-**`limits.max_view_width`** (int, required in `welcome.limits`, `region_info.limits` and the `region_too_large` error, from config.yml `max_region.view_width`, default 256): the widest visible window a client may ask for, i.e. `dims − 2·view_margin` on x and on z. The region with its margins must still fit `max_dims` and `max_blocks`; the defaults (`max_dims` 288×384×288, 16,777,216 blocks) fit a 256-wide window with the headset's 16-block margin and up to 192 blocks of height.
+**`limits.max_view_width`** (int, required in `welcome.limits`, `region_info.limits` and the `region_too_large` error, from config.yml `max_region.view_width`, default 256): the widest visible window a client may ask for, i.e. `dims − 2·view_margin` on x and on z. The region with its margins must still fit `max_dims` and `max_blocks`; the defaults (next version: `max_dims` 352×384×352, 25,165,824 blocks; were 288×384×288, 16,777,216) fit a 256-wide window with the headset's 48-block glide margin on x and z, 16 on y, and up to 171 blocks of window height. A headset grows its margin with the width (16 up to 96, 32 at 128–192, 48 at 256) within these limits; on a server with smaller limits it uses a smaller margin, never a smaller width.
 
 **Clamping.** A `region_request` whose visible width on x or z is over `max_view_width` is not refused: on that axis the server narrows `dims` to `max_view_width + 2·view_margin` (the margin is first clamped as in §4.17), and moves `origin` by half the cut **rounded to whole sections**, so the window stays centred to within 8 blocks and the reply can still be a delta. The checks of §4.13 (`max_dims`, `max_blocks`, `max_bytes`) then apply to the narrowed region as before. The reply (`region_changed`, then the snapshot) carries the accepted `origin`, `dims` and `view_margin`; clients take the accepted width from it.
 
@@ -744,3 +747,42 @@ Client guidance (non-normative; the Quest's operator panel): the World and Playe
 
 - Fixtures: `hello_control.json` (the caps and `operator_name`), `welcome_control.json` (`chat`, `commands`), `chat.json`, `chat_death.json`, `chat_operator.json`, `chat_send.json`, `command.json`, `command_result.json`, `command_output.json`, `command_complete.json`, `command_suggestions.json`, `error_command_denied.json`, `server_status.json`, `world_query.json`, `world_info.json`, `players_query.json`, `players_info.json`. Java `ControlFixtureTest` builds them with the plugin's builders (`CommandPolicyTest`, `ChatTextTest` cover the policy and the text rules), Python `test_tabletop_protocol.py` validates them, C# `Tests~/ControlTests.cs` parses them.
 - Live: `tools/control_check.py` (a headset plus a mineflayer Java player: caps, results, syntax errors, denied roots, the `at` pointer, completion, status, the chat round trip, the bubble, rate limits) and `Tests~ --live-control URL TOKEN` (the app's own classes).
+
+## 4.29 Block entities (next version; cap `block_entities_v1`)
+
+What a block state doesn't say about a block entity: sign text, banner patterns, player head profiles, pot sherds, the mob in a spawner, a beacon's tier, the items on a campfire, shelf or vault, and whether a conduit is active. Everything else is drawn from the block state alone: chests (ender, trapped and copper ones too), shulker boxes, bells, mob heads, plain banners, end portals and gateways, copper golem statues, the books of lecterns (`has_book`) and enchanting tables. Granted when config.yml `block-entities.enabled` (default true) and the client lists the cap; echoed in `welcome.caps`. Clients without it never get `block_entities`. Docs: ARCHITECTURE.md §3.10 and §4 (Block entities).
+
+**`block_entities` (S→C)**:
+
+```json
+{"v":1,"type":"block_entities","seq":14,"t":1760370001200,
+ "entities":[
+  {"pos":[106,64,-35],"kind":"sign","front":{"lines":["","Shop","",""],"color":"light_blue","glowing":true},"back":{"lines":["Closed","","",""],"color":"red","glowing":false}},
+  {"pos":[107,65,-35],"kind":"banner","patterns":[{"pattern":"minecraft:stripe_bottom","color":"red"},{"pattern":"minecraft:creeper","color":"black"}]}],
+ "removed":[[100,64,-35]]}
+```
+
+- `entities`: new or changed entries, each complete: it replaces whatever the client holds at its `pos` (integer world block coordinates).
+- `removed`: world positions whose entry is gone (the block was broken, or has nothing to send any more, such as a sign whose text was erased).
+- `reset` (optional, `true`): forget every entry held, then apply the lists. The server sends it, even with both lists empty, in the first `block_entities` of a session and in the first after the session's region moves to another world. Fixture `block_entities_reset.json`.
+
+Entries by `kind`. An entry exists only when it has something to say:
+
+| `kind` | blocks | fields |
+|---|---|---|
+| `sign` | standing, wall and hanging signs | `front`, `back`: `lines` (4 strings of plain text; styles, click events and per-line colours are dropped), `color` (the dye, default `black`), `glowing`. Not sent when both sides are empty. |
+| `banner` | standing and wall banners | `patterns`: the layers in order (at most 16), each `{pattern, color}` with `pattern` a banner pattern registry key. Not sent without patterns (the base colour is in the block id). |
+| `skull` | player heads (standing and wall) | the profile: `skin` (a textures.minecraft.net URL), `name`, `uuid`, each optional. For a head placed with only a name or UUID the server looks the skin up off the main thread (at most 4 at a time) and adds `skin` once it has it. Other heads send nothing. |
+| `decorated_pot` | decorated pots | `sherds`: 4 item keys for the back, left, right and front sides, `minecraft:brick` for a plain side. Not sent when all four are brick. |
+| `spawner`, `trial_spawner` | spawners, trial spawners | `entity` (entity type key), `size` (optional [width, height] of that mob in blocks, for scaling big mobs down as vanilla does), `ominous` (trial spawners only). Not sent when nothing is set to spawn. |
+| `beacon` | beacons | `tier` 0..4, the pyramid levels; 0 draws no beam. Always sent. |
+| `campfire` | campfires, soul campfires | `items`: 4 slots, each an item key or null. Not sent when empty. |
+| `shelf` | shelves | `items`: 3 slots, each an item key or null. Not sent when empty. |
+| `vault` | vaults | `item`: the item the vault shows. Not sent when it shows none. |
+| `conduit` | conduits | `active: true`. An inactive conduit sends nothing: it is the closed shell. |
+
+**Sending.** The server reads block entities on the main thread, chunk by chunk, within `block-entities.budget-ms` (default 0.3 ms) per tick: first the chunks new to a region and the chunks with block changes, sign edits or right clicks, then a round robin. Chunks with campfires, shelves, vaults, beacons, spawners or conduits are read every `block-entities.rescan-ticks` (40); the others every 8× as long, which still catches `/data` edits. Each session gets the difference between a chunk's entries and what it already holds, at most one message per tick. When the region moves within the same world, the entries outside the new region are dropped by both sides without `removed`: the client drops them when it applies the new region's snapshot. A message may arrive before or after the snapshot of a new region, so clients keep entries by world position, outside the current region too until that snapshot.
+
+Client guidance (non-normative; Quest `World/BlockEntityRenderer.cs`): the terrain mesher leaves out the blocks vanilla draws entirely in code (chests, shulker boxes, heads, banners, bell bodies, pots, conduits, statues, end portals and gateways), and the block entity renderer draws them from the block state plus these entries, with the entity model layers in the user's `entity_models.json` (QUEST_SETUP.md Part E) and the pack's textures. Without that file it draws plain boxes.
+
+Fixtures and tests: `block_entities.json` (one entry of each kind and a removal), `block_entities_reset.json`. Java `BlockEntityJsonTest` and `FixtureTest` build them with the plugin's builders (plus per-chunk deltas and pruning), Python `test_tabletop_protocol.py` validates and mirrors them (`BlockEntityMirror`), C# `Tests~/BlockEntityTests.cs` applies them. Live: `tools/block_entities_check.py`.

@@ -6,9 +6,9 @@ A live block world from a **Minecraft: Java Edition** server, shown as a miniatu
 
 > Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft. This project ships no Mojang assets: textures come from a resource pack you supply.
 
-![On the monitor, a Java player sees the headset user as a giant head peering into their hut; next to it, the same world as a live miniature on the desk](docs/media/tabletop-giant-peek.gif)
+![Turning and scaling the miniature in a real room: it shrinks to a block on the floor, tumbles as it is turned, then grows until the viewer is standing in the terrain](docs/media/tabletop-scale-move.gif)
 
-*On the monitor, a Java player in their hut sees the headset user as a giant head (wearing their skin) peering in through the doorway. Next to it is the same world as a live miniature on the desk, seen through the Quest 3.*
+*Grabbing, turning and scaling the miniature from the headset (Quest 3 passthrough). The world shrinks to a block on the floor, is turned, then scaled back up until you are standing in the terrain. A short pause in the middle is cut. Below: building from the block menu, and a Java player seen from the headset, plus the other direction.*
 
 Related: the idea write-up [VR-7 in NickStassen/ideas](https://github.com/NickStassen/ideas/blob/master/vr/07-minecraft-ar-tabletop.md) and the sister project [ironman-quest3-hud](https://github.com/NickStassen/ironman-quest3-hud), which has the Unity 6000.0.84f1 + Meta XR setup this project reuses.
 
@@ -32,7 +32,7 @@ Java players (LAN) ──game protocol──▶ Paper 26.3 + tabletop plugin ◀
 |---|---|
 | Plugin: snapshot, block updates, players, subscribe, errors, timeouts | Tested end to end on a headless Paper 26.3 server (and earlier on 1.21.11); see [TESTING](docs/TESTING.md) |
 | Giant avatar following poses | Floating head + hands (default): positions and head rotation match the poses exactly on a 26.3 test server, and a mineflayer player receives the three displays (TESTING section 7); not yet seen by eye. Mannequin modes: on the first headset session a Java client on an online-mode server saw the giant follow the headset wearing the user's skin (exact placement); ground placement was tried and replaced as the default |
-| Java players on the table (skinned, animated figures) | Geometry, UVs, animation and skin rules unit-tested; skin download checked in the Unity Editor; not yet seen on a headset |
+| Java players on the table (skinned, animated figures) | Working on a Quest 3 headset: a Java player's figure shows up on the miniature (see the "Both sides of the same world" clip below). Geometry, UVs, animation and skin rules are unit-tested, and skin download was checked in the Unity Editor |
 | Quest C# protocol/mesher code | Compiled and unit-tested with .NET 8 outside Unity, plus a live session against the plugin |
 | Block editing from the headset (break, place, pick) | Verified on a Quest 3 (the screenshots below), and tested live against Paper 26.3 (unit tests, `Tests~ --live-edit`, `tools/edit_check.py`). See [TESTING](docs/TESTING.md) "Block editing" and [QUEST_SETUP](docs/QUEST_SETUP.md) Part I |
 | Quest app in Unity | Compiles and builds an APK on Linux, headless (Unity 6000.0.84f1, Meta XR 85.0.0); see [TESTING](docs/TESTING.md) section 5 |
@@ -50,9 +50,24 @@ Gliding into the terrain: a lush cave with glow berries and a lava fall. It's li
 
 | | | |
 |---|---|---|
-| ![A stone hut built on the water from the headset](docs/media/tabletop-building.jpg) | ![The giant head peering into the hut on the Java client, with the miniature next to it](docs/media/tabletop-giant-peek.jpg) | ![A lush cave and lava fall inside the miniature](docs/media/tabletop-cave.jpg) |
+| ![A stone hut built on the water from the headset](docs/media/tabletop-building.jpg) | ![A lush cave and lava fall inside the miniature](docs/media/tabletop-cave.jpg) | ![The forest world floating in a room, seen through the Quest 3](docs/media/tabletop-forest-floating.jpg) |
+| ![A Java player's avatar standing in a hut on the miniature, seen from the headset](docs/media/tabletop-avatar-in-house.jpg) | ![The headset user as a giant head in the sky, seen from the Java client](docs/media/tabletop-giant-java.jpg) | |
 
-The player name labels in these recordings are blurred, and the shots are cropped so that no screens show anything personal.
+### Both sides of the same world
+
+Picking a block from the block menu on the headset (the menu floats by the left hand, and the ray selects the block), then a Java player placing doors in the hut, with the changes showing up live on the miniature:
+
+![Opening the block menu and picking an oak door on the headset, then a Java player placing doors in a hut that updates live on the miniature](docs/media/tabletop-build-select.gif)
+
+A Java player on the miniature, seen from the headset: the player's figure stands on the mountain next to a real terrarium, and a cat has come to look at the world.
+
+![The miniature in a room with a cat sitting on a terrarium next to it, and the Java player's figure on the mountain](docs/media/tabletop-cat-terrarium.gif)
+
+The other direction: the headset user appears to Java players as a giant head that follows the headset, here floating outside and looking in through a window of the hut.
+
+![The headset user as a giant head floating in the sky and peering in through a window, seen from the Java client](docs/media/tabletop-giant-java.gif)
+
+The player name labels in these recordings are blurred.
 
 ## Quick start (server)
 

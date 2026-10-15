@@ -886,3 +886,110 @@ The panel's look and reach beside the left hand, X tap/hold and the ≡/X switch
 - Late `command_output` (async plugin commands) and plugin `BroadcastMessageEvent`s are covered by code review only: no command on the test server answers late, and nothing there broadcasts.
 - `ok` is "ran without red feedback": a vanilla command that succeeds without feedback shows "(done)"; a plugin that reports failure in another colour counts as ok.
 - The pointer for commands is block editing's target, so it needs `edit_v1` on the server.
+
+## Block entities (`block_entities_v1`, PROTOCOL §4.29; Paper 26.3, 2026-10-15, no headset)
+
+Chests, shulker boxes, heads, banners, bells, decorated pots, conduits, copper golem statues, lectern and enchanting books, end portals and gateways, sign text, beacon beams, spawner mobs and campfire/shelf/vault items, drawn like vanilla 26.3's block entity renderers (ARCHITECTURE.md §3.10 and "Block entities" under §4).
+
+### Tests
+
+| Suite | Result |
+|---|---|
+| Plugin JUnit (`./gradlew build`) | 123 tests after merging the chat work, 0 failures. `BlockEntityJsonTest` 6 (both fixtures from the builders, defaults left out, `BlockPos`-style position keys for negative coordinates, per-chunk deltas add, change and remove, pruning on a region change) and `FixtureTest` (both fixtures). |
+| Python (`pytest -q`, `ruff check .`) | 131 passed, ruff clean: both fixtures validate, `BlockEntityMirror` applies, prunes and resets, 7 malformed entries are refused. |
+| Tests~ (`dotnet run -- --jar 26.3.jar --entity-models entity_models.json`) | ALL PASS, 943 checks; 67 in `BlockEntityTests.cs`: kind by block id, which blocks are code-drawn, the vanilla transforms (chest, shulker box, floor and wall skulls, banner, pot, statue, sign text on wall, standing and hanging signs, campfire and shelf item slots, spawner mob; `--be-probe` prints them, and they were compared once with the matrices the 26.3 client's renderer code computes), parts and textures per state (double chest halves, ender, trapped and copper chests, dyed shulker boxes, player head skins, mob heads with the dragon jaw, banner flags, pot sherds, statue poses, lectern book, conduit), both fixtures through `BlockEntityStore`, banner compositing, beacon beam sections (stained glass averaging, blocked beams), the section scan, model bounds baked from the generated layers (chest, double chest, shulker, skulls, dragon head, banners, bell body, pot, statue, lectern book), the pack's sign font (2,412 glyphs, widths, wrapping, colours, glowing outline) and the terrain baker leaving code-drawn blocks out while previews keep a box. The model tests SKIP with an `entity_models.json` from before this work. |
+| Unity 6000.0.84f1 headless compile, `ShaderCheck` | clean; 120 shader variants (with `BlockEntityFx` and `EndPortal`), 0 errors. `BatchMeshCheck.RunRenderer`: all PASS. |
+| `TABLETOP_PACK=26.3.jar TABLETOP_ENTITY_MODELS=entity_models.json Unity … -executeMethod TabletopCraft.EditorTools.BlockEntityCheck.Run` | 11/11 PASS: the real `BlockEntityRenderer` on a scene of 35 block entities finds them all (75 ms), 39 instances in 37 groups (42 draw calls, 978 triangles), 80 sign text quads, 9 end portal and gateway faces, a 16-quad beacon beam, the spawner's mob figure, a chest kept in place by a 16-block re-key, and a broken chest removed. |
+
+### Live server (own Paper 26.3, seed 12345, ports 25612/8812)
+
+`SERVER_FIFO=run/blocks/stdin.fifo TABLETOP_URL=ws://127.0.0.1:8812/tabletop python tools/block_entities_check.py 200 150 200`: **17/17 PASS**, again after merging the chat work. A sign (both sides, colour, glowing), a hanging sign, a banner with two patterns, a player head with a profile, a pot with sherds, a spawner (zombie, size 0.6×1.95), a beacon on an iron base (tier 1 after 1.0–1.6 s), a campfire and a shelf with items all arrive within 0.15–1.0 s of placing them; a chest sends nothing; a sign changed with `/data` (no event) arrives with the round robin in 0.15–0.45 s; a removed banner is removed in 0.2–0.45 s; the first message carries `reset`, and so does the one after subscribing the same box in `world_nether` (0.35 s, nothing left). A head placed with only a name (`jeb_`) gets its skin 3.0 s after placing on a freshly started server (offline mode: Paper's lookup gives no textures, so the name goes through the public profile API first, as for the giant's `skin_player`), 0.1 s once cached; the check prints this as INFO since it needs internet. About 10 messages, 3.4 KB for the whole run.
+
+Server main thread (`BLOCK_ENTITIES` log line, a 288×64×288 region that includes a stress box of 2,752 block entities, 840 of them with data): steady average 0.083 ms per tick, max 1.96 ms (the slowest single chunk read 1.9 ms: a chunk with 256 player heads). The first 30 s after start peaked once at about 18 ms (the first `createEntity` for a spawner's mob size and cold chunks). The initial burst for the 840 entries is 115 KB.
+
+### Faces and draw calls (`Tests~ --jar 26.3.jar --entity-models entity_models.json --measure-blocks DIR`, saved snapshots)
+
+| Snapshot | Block entities | Terrain faces with boxes → without | Instanced groups / draw calls | Block entity triangles |
+|---|---|---|---|---|
+| Stress box 32×16×32 (1,088 chests, 512 banners, 512 skulls, 256 signs, 256 shulker boxes, 64 bells, 64 pots) | 2,752 | 22,686 → 3,840 | 15 / 18 | 75,008 |
+| Village 128×48×128 | 2 bells | 106,917 → 106,893 | 1 / 1 | 48 |
+| 256×64×256 | 2 bells, 1 spawner | 519,150 → 519,126 | 1 / 1 | 48 |
+
+Draw calls count chunks of 256 instances; with single-pass stereo each instance is drawn twice in the same call.
+
+### Offline look check
+
+`Tests~ dotnet run -- --jar 26.3.jar --entity-models entity_models.json --be-scene scene.json` places one of each kind as `BlockEntityRenderer` does, and `tools/render_mesh.py scene.json 26.3.jar out.png --view se|nw` renders it. Checked by eye: every kind shows its model with the jar's textures, in place and facing the right way (chests, double chest halves, ender and copper chests, dyed shulker boxes, skulls and the dragon, piglin and player heads, banners on the pole and on the wall bar, the bell body, pots with sherds, the conduit, copper golem statues in their poses, the open book, campfire items). The scene uses untinted banner flags and base skins. The images contain Mojang textures and aren't committed. (A Unity offscreen render in batch mode didn't draw the custom shaders, so it isn't used.)
+
+### Not verified (needs the headset)
+
+The look of every kind at table scale, lighting at night and in caves, the end portal starfield, sign text legibility, beacon beam colours, the spawner mob spin, the enchanting book bob, clipping at the window edges while gliding, re-keying on a glide or resize, edits adding and removing block entities, the hand preview and placement ghost boxes, and FPS and draw calls in a village (`RenderMeshInstanced` under single-pass instanced stereo).
+
+### Known gaps
+
+- Maps in item frames (`map_data`) and the item in a brushable block aren't drawn.
+- The enchanting book stays closed and idle (vanilla opens it toward a nearby player); banner flags don't sway; the conduit's wind isn't animated.
+- Sign text is plain: styles and per-line colours from commands are dropped.
+- A player head placed with only a name gets its skin after a lookup (about 3 s the first time); a server without internet access sends no skin, and the head shows the default one.
+
+## Faster gliding at wide areas (0.4.0 nav; Paper 26.3, seed 12345, 2026-10-14/15, no headset)
+
+The headset at 256 wide (region 288×160×288, 16-block margin) glided at 4–9 blocks/s (1–2 cm/s on the table): the stream cap allowed 12 blocks of runway per round trip, and the round trip (until every new section was meshed) was 1–1.5 s. Measured on an own Paper 26.3 server (2 GB heap, own ports, seed 12345, chunks generated, every client with `sections_v1` + `light_v1` + `biomes_v1`), on an x86 PC (Ryzen 7 9800X3D). "Before" is master 9f0e1ab (plugin and app logic), built from the same sources.
+
+### Tests
+
+| Suite | Result |
+|---|---|
+| Plugin (JUnit) | 125 tests, 0 failures. New: `RegionMergeTest` (9: a one-section shift of 288×160×288 reads one column of 180 sections and 18 chunks; the merged grid equals a full read for shifts on every axis, two sections, grow, shrink, an unaligned move and partial edge sections, light included; the sections read are exactly what a delta lists; shrinking reads nothing; when a base is usable; base biome lookup; section size estimates; mapped section encoding; biomes weigh only on part 0), the default caps fit 256 + 2 × 48. |
+| Tools (pytest + ruff) | 120 passed, ruff clean. `nav_e2e.py` gained `--fresh` (the v1 client reads every region itself with a private `subscribe`), `--churn` (setblock and falling sand near the centre while the region moves), `--margin-y`, and the time until the last part arrived. |
+| Quest scripts (`Tests~`, .NET 8, `--jar` + `--entity-models`) | 908/908 PASS. New in `NavTests.FastGlideTests` (32): margins by width and presets on 352 and 288 servers; the margin grown on the first push (whole sections, window and view kept); runway and caps; a simulated glide (72 Hz, answers after 0.3 s) at the cap without stalls, well above it with stalls; stopping and jitter ask for nothing; reversing turns the region round once; wiggling 6 blocks never ping-pongs; diagonal; vertical lookahead stops at the build height top and bottom; a resize doesn't count as glide latency; `MeshScope` boxes, lead ahead, order, no margin; the mesh cap and rate meter. |
+| Unity 6000.0.84f1 batch compile | 0 errors; the only warning in `Assets/` is the existing CS0618 (`overlayType`). |
+| `Editor/ShaderCheck` | 80 variants, 0 errors (no shader changed). |
+| `Editor/BatchMeshCheck.RunRenderer` | 10/10 PASS: the eight existing steps with jobs of 4 sections, plus meshes outside `KeepScope` dropped and meshed again when the scope comes back. |
+| Live: `nav_e2e.py --fresh --churn --light` | `ok`: 6 and 8 one-section shifts at 128 wide (margins 16 and 32), each delta-assembled region equal, blocks and light, to an independent full read; 41 block changes during the run. |
+| Live: `area_e2e.py --light --widths 64,96,128,192,256,64,256,96` | `ok`: every resize (now read incrementally) equals a fresh client's full snapshot. |
+| Live: `Tests~ --live`, `--live-resize` | all PASS (`--live-resize` 64 → 256 now loads the 352-wide region: 4,480 sections in 2.1 s; the full resends match). |
+
+### Server: one-section shift (`nav_e2e.py --no-v1 --light`, REGION_SET / SNAPSHOT log lines)
+
+| | before, 288×160×288 | after, 288×160×288 | after, 352×160×352 (256 + 48 margins) |
+|---|---|---|---|
+| sections read | 3,240 (all) | 180 | 220 |
+| chunks captured, main thread | 361 in 2–3 ticks, 3.0–3.5 ms | 18 in 1 tick, 0.16–0.27 ms | 22 in 1 tick, 0.2–0.5 ms |
+| walk (async) | 212–227 ms | 20–31 ms (copy 3–10 ms) | 22–42 ms (copy 7–21 ms) |
+| remap / encode (outbound) | 16–18 / 19–25 ms | 1–5 / 2–10 ms | 1–6 / 2–8 ms |
+| REGION_SET total | 300–350 ms | 45–51 ms | 50 ms (one 100 ms) |
+| until the last part arrived (client) | about 400 ms | 68–151 ms | 158–236 ms |
+| delta size | 0.44–0.89 MB | the same | 0.5–1.2 MB, 1–2 parts |
+
+- The total is now one tick: the walk used to wait for Bukkit's async heartbeat (up to 50 ms) and the load step for the next tick; both are gone when the chunks are loaded, which `stream.ticket-ring: 1` arranges for the next shift.
+- Resizes read only the ring too: 192 → 256 reads 1,024 of 2,592 sections (walk 68 ms, was 186 ms); shrinking reads nothing.
+- **Fixed on the way:** at 352 wide every section went in its own part (220 parts, 6.8 MB for a one-section shift) because the biome estimate (4 bytes per cell, 1.24 MB) counted on every part; it is now the RLE size, on part 0 only.
+- The `region_request` size estimate of an incremental move scales the previous estimate to the kept volume and adds the new sections in `sections_v1` form, which is 15–40% above the old one-message estimate; it drifts up a little while gliding (12 MB at 352 wide with light, cap 32 MiB).
+- **Memory:** `max_region` is now 352×384×352 and 25,165,824 blocks (`blocks` was 16,777,216). One copy of 352×160×352 is 79 MB of ids and 20 MB of light on the server (a moving region holds two or three copies: the session's last grid, the move being read, a diff), and 59 MB (ushort + light) on the headset, which holds two while a delta decodes.
+
+### Pan speed per preset (`Tests~ dotnet run -c Release -- --live-glide ws://… --widths 64,96,128,192,256 --glide-seconds 15`)
+
+Full stick for 15 s along +x and back along −x, block size fitted to a 0.8 × 0.6 m table (2.23 mm at 256), 72 Hz frames running `NavState` and the renderer's meshing schedule (3 jobs, flat colours with light). "Asked" is 0.12 m/s × 3 (the ramp) / block size. "4× slower meshing" holds each worker 4× as long per section (`--mesh-slowdown 4`, 3.2 ms per section instead of 0.8), a stand-in for the Quest until it is measured there.
+
+| width (margin after) | asked, blocks/s | before: blocks/s (cm/s) | server change only | after (cm/s) | after, 4× slower meshing (cm/s) |
+|---|---|---|---|---|---|
+| 64 (16) | 40 | 21–22 (18–20) | 24 (21) | 38.5 (34.3) | 38.5 (34.3) |
+| 96 (16) | 61 | – | – | 57.9 (34.4) | 57.9 (34.4) |
+| 128 (32) | 81 | 14 (6.1–6.3) | 16 (7.1–7.3) | 77.2 (34.4) | 53–54 (23.4–23.9) |
+| 192 (32) | 121 | 9.2–9.4 (2.7–2.8) | 11.3–11.8 (3.3–3.5) | 66–68 (19.5–20.1) | 40.5–41 (12.0–12.2) |
+| 256 (48) | 162 | 5.8–18 (1.3–4.1) | 8.7–9.6 (1.9–2.1) | 52–54 (11.5–12.0) | 33.5–34 (7.5) |
+
+- Before, the cap used the latency until every new section was meshed (0.5–1.5 s at 256) and 12 blocks of runway; the server change alone cut the round trip from about 450 to 130 ms but not the meshing.
+- After, at 256: round trip 152–158 ms (stream cap 156–184 blocks/s), so meshing is the limit: about 900 sections/s here (560–650 with the slowdown), mesh cap 52–54 (34). Up to 128 wide the asked speed is reached: the same 34 cm/s of table at every scale, as the stick curve intends. At 192 and 256 the table speed is lower (12–20 cm/s here) because every block of travel brings more sections into view.
+- Frames with sections on screen not meshed yet: under 1.5% up to 192, 2.5–8% at 256 (4–9% with the slowdown), at the far edge of the window. With 80% of the measured rate instead of 65% it was 20–40% at 256 for 15% more speed.
+
+### Not verified (needs the headset)
+
+The real mesh rate and the speed it allows at 192 and 256 (read `GLIDE ... mesh_rate_s=... blocks_s=... holes_s=...`), frame times while gliding with jobs of 4 sections (`mesh_sections_per_job`), sections popping in at the far edge, the lookahead's feel when stopping and turning round, and GC pauses from the new grid each delta allocates (59 MB at 352×160×352).
+
+### Known gaps
+
+- When a delta lands, sections that were being meshed are meshed again (their job is dropped as stale): up to about 5% of the meshing at 256.
+- The headset still copies the whole grid per delta; reusing buffers would remove that allocation.
+- The mesh cap is unknown until meshing has been saturated for 0.5 s; until then only the stream cap applies.

@@ -39,6 +39,8 @@ public final class Session {
     public volatile Set<String> caps = Set.of();
     /** Region that lastGrid describes (what the client has), for delta snapshots. Main thread. */
     public RegionSpec gridRegion;
+    /** [nav] System.nanoTime() when the oldest data in lastGrid was captured (RegionData.capturedNs). Main thread. */
+    public long lastGridNs;
     /** Recent snapshot id -> region, so a pose is mapped with the origin the client used (pose.snapshot_id). Main thread. */
     private final Map<Integer, RegionSpec> recentRegions = new java.util.LinkedHashMap<>() {
         @Override protected boolean removeEldestEntry(Map.Entry<Integer, RegionSpec> e) { return size() > 8; }
@@ -70,6 +72,12 @@ public final class Session {
     public long worldStateTick;
     /** Granted edit_v1 in welcome.caps (block_edit, PROTOCOL.md 4.20); its rate limit, set together with it. */
     public volatile boolean canEdit;
+    // [blocks] Block entity data (PROTOCOL.md 4.29, block_entities_v1): what this client holds per world chunk (position
+    // key -> entry JSON) and the region it was sent for (main thread), and bytes sent.
+    public volatile boolean wantsBlockEntities;
+    public final Map<Long, Map<Long, String>> blockEntitiesSent = new HashMap<>();
+    public RegionSpec blockEntitiesRegion;
+    public final java.util.concurrent.atomic.AtomicLong blockEntityBytes = new java.util.concurrent.atomic.AtomicLong();
     public volatile EditLimiter editLimiter;
     // [talk] Chat, commands and status (PROTOCOL.md 4.26-4.28), set at hello. operatorName: the sanitised name Java
     // players see in chat (hello.operator_name, else config chat.default-name).

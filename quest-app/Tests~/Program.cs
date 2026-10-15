@@ -138,11 +138,41 @@ static class Program
         if (args.Contains("--no-leaves-inner")) GreedyMesher.LeavesInner = false;   // measure the leaves option (tabletop.json "leaves_inner")
         fails += NavTests.Run(Fixture);   // navigation, streaming, clip caps (Tests~/NavTests.cs)
         AreaTests.Run(Check, Fixture);    // [area] width presets, resize re-keying, mesh batching (Tests~/AreaTests.cs)
+        if (args.Contains("--be-probe")) { BlockEntityTests.PrintProbes(); return 0; }   // [blocks] the transforms, to compare with the client's own
+        int beSceneIdx = Array.IndexOf(args, "--be-scene");
+        if (beSceneIdx >= 0 && JarPath(args) != null)
+        {
+            int mi = Array.IndexOf(args, "--entity-models");
+            if (mi >= 0) EntityModels.LoadFile(args[mi + 1]);
+            BlockEntityTests.Scene(JarPath(args), args[beSceneIdx + 1]);   // [blocks] for tools/render_mesh.py
+            return 0;
+        }
+        int beMeasIdx = Array.IndexOf(args, "--measure-blocks");
+        if (beMeasIdx >= 0 && JarPath(args) != null)
+        {
+            int mi = Array.IndexOf(args, "--entity-models");
+            if (mi >= 0) EntityModels.LoadFile(args[mi + 1]);
+            BlockEntityTests.Measure(args[beMeasIdx + 1], JarPath(args));   // [blocks] faces and draw calls before/after
+            return 0;
+        }
         int batchMeasIdx = Array.IndexOf(args, "--measure-batches");
         if (batchMeasIdx >= 0) { AreaTests.MeasureBatches(args[batchMeasIdx + 1], JarPath(args)); return fails == 0 ? 0 : 1; }
         int liveResizeIdx = Array.IndexOf(args, "--live-resize");
         if (liveResizeIdx >= 0) { AreaTests.LiveResize(args[liveResizeIdx + 1], Check); Console.WriteLine(fails == 0 ? "ALL PASS" : $"{fails} FAILED"); return fails == 0 ? 0 : 1; }
 
+        int glideIdx = Array.IndexOf(args, "--live-glide");   // [nav] sustainable pan speed per width preset (GlideTests.cs)
+        if (glideIdx >= 0)
+        {
+            int wi = Array.IndexOf(args, "--widths"), si = Array.IndexOf(args, "--glide-seconds"), sl = Array.IndexOf(args, "--mesh-slowdown");
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            var widths = wi >= 0 ? args[wi + 1].Split(',').Select(int.Parse).ToArray() : new[] { 64, 128, 256 };
+            int ui = Array.IndexOf(args, "--mesh-utilisation");
+            if (ui >= 0) MeshScope.Utilisation = float.Parse(args[ui + 1], inv);
+            GlideTests.LiveGlide(args[glideIdx + 1], widths, si >= 0 ? float.Parse(args[si + 1], inv) : 8f,
+                                 !args.Contains("--no-mesh"), sl >= 0 ? float.Parse(args[sl + 1], inv) : 1f, Check);
+            Console.WriteLine(fails == 0 ? "ALL PASS" : $"{fails} FAILED");
+            return fails == 0 ? 0 : 1;
+        }
         int navMeasIdx = Array.IndexOf(args, "--measure-nav");
         if (navMeasIdx >= 0) { NavTests.MeasureNav(args[navMeasIdx + 1]); return 0; }
         PlayerTests.Run(Check, Fixture);
@@ -151,6 +181,7 @@ static class Program
         int modelsIdx = Array.IndexOf(args, "--entity-models");
         string modelsPath = modelsIdx >= 0 && modelsIdx + 1 < args.Length ? args[modelsIdx + 1] : Environment.GetEnvironmentVariable("TABLETOP_ENTITY_MODELS");
         EntityTests.Run(Check, Fixture, JarPath(args), string.IsNullOrEmpty(modelsPath) ? null : modelsPath);
+        BlockEntityTests.Run(Check, Fixture, JarPath(args));   // [blocks] block entities (BlockEntityTests.cs)
         int entSceneIdx = Array.IndexOf(args, "--entity-scene");
         if (entSceneIdx >= 0 && JarPath(args) != null && EntityModels.Loaded) EntityScene.Run(JarPath(args), args[entSceneIdx + 1]);
         else if (entSceneIdx >= 0) Console.WriteLine("SKIP --entity-scene: needs --jar and --entity-models");

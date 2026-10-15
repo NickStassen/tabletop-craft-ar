@@ -48,7 +48,7 @@ Phases 0-3 were built and checked on Paper 1.21.11 / Java 21. The server pin has
   - Phase 6: `block_edit` from the headset (break, place, pick). It was done as an additive v1 message (`edit_v1`), not a v2 bump, and the plugin applies edits itself rather than as the avatar entity.
 - **Also done (not in the original phases):**
   - The floating giant: a head and hands at the exact headset poses.
-  - Skinned and animated player figures.
+  - Skinned and animated player figures (now seen working on a Quest 3 headset).
   - The eye-in-fluid effects: underwater fog and tint, the surface seen from below, lava and powder snow.
 - **In progress:** entities (vehicles, mobs, dropped items, held items) and player actions (arm swing, digging cracks, break particles, hurt flash).
 - **Built, waiting for headset measurements (2026-10-14):** area width presets 64–256 without reconnecting (resize deltas, re-keyed meshes, footprint kept) and mesh batching (roadmap item 7).
@@ -64,7 +64,8 @@ Ordered by how much each adds to the feeling of a living world on the table that
 - Day/night and weather from the server: sky light scaled by time, rain and snow particles, lightning flashes.
 - Clouds at cloud height above the table.
 - Particles: torches, lava, splashes, explosions.
-- Block entities: sign text, banner patterns, item frames, chests opening.
+- (Done, not yet tried on the headset) Block entities like vanilla (PROTOCOL.md 4.29): chests, shulker boxes, heads, banners with patterns, bells, pots with sherds, conduits, statues, lectern and enchanting books, end portals and gateways, sign text, beacon beams, spawner mobs, campfire, shelf and vault items.
+- Block entities still open: chests and shulker boxes opening (block events), the enchanting book opening toward players, banners swaying, maps in item frames.
 
 **3. Presence in AR.**
 - Hand tracking: pinch to break or place, fist to grab.
@@ -95,7 +96,9 @@ Ordered by how much each adds to the feeling of a living world on the table that
 **7. Scale.**
 - (Done, not yet measured on the headset) Batch section meshes for 192+ wide areas: world-aligned batches of 2×2 section columns, 100 renderers / 200 draw calls at a 256-wide window instead of 1,223 / about 2,000 (ARCHITECTURE.md "Batching"). The visible width steps through 64/96/128/192/256 with a left stick click (QUEST_SETUP.md Part J, PROTOCOL.md 4.25). Next: the headset FPS per preset; with draw calls gone, the faces (about 700k at 256 with the pack and light) are the likely limit.
 - Spread the main-thread model prewarm over frames (45–53 ms on a new area).
-- A low-detail map skirt around the detailed box.
+- (Done, not yet tried on the headset) Fast gliding at wide areas (0.4.0; TESTING.md "Faster gliding"): the plugin reads only the new sections of a moved region (one tick, about 50 ms instead of 300–350 ms at 288 wide), the glide margin grows with the width (48 at 256), the region is shifted ahead while you glide steadily, and only the part of the margin near the box is meshed. At 256 wide the pan went from 6–18 to 52 blocks/s on a PC (34 with meshing 4× slower); meshing is now the limit.
+- **Next if gliding is still too slow on the headset: a surface skirt streamed ahead.** When the `GLIDE` log shows the mesh cap (not the stream cap) limiting the speed at 192–256, a fly-over can't show full detail faster than the Quest meshes it. Then send, well ahead of the detailed region (for example 2–4 × the margin in the direction of motion, from a new optional message or cap), a low-detail surface: per column the height of the top non-air block and that block's state (a heightmap, 2 bytes + a palette index per column, read from `ChunkSnapshot.getHighestBlockYAt` + one `getBlockData`; about 0.5 MB for 512×512, cheap to send in chunks of 16×16 columns). The headset draws it as one coloured top quad per column (greedy-merged, with the biome tint and no sides except steps), under the detailed sections, and hides each column as soon as its detailed sections are meshed, so a fast fly-over shows the surface at once and detail fills in behind. It is also the "map skirt" around the box. Keep it optional (a cap, off by default) and measure faces and frame time at 256 before turning it on. Not built: it isn't needed until the headset numbers say so.
+- A low-detail map skirt around the detailed box (see the item above: the same heightmap data).
 
 **Edge cases to keep covered:**
 - **Area edges:** fluids at the cut edges and the region top.

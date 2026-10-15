@@ -274,6 +274,12 @@ namespace TabletopCraft.XR
             IFaceSource faces = Atlas;
             GreedyMesher.Build(one, Vector3Int.zero, faces, data);
             GreedyMesher.BuildSpecials(one, Vector3Int.zero, faces, data);
+            // [blocks] Chests, banners, heads... are drawn by BlockEntityRenderer, not the terrain mesher: ghost their box.
+            if (Atlas.HasPack && BlockEntityPreview.AddBoxes(one, data, Atlas))
+            {
+                Atlas.Commit();
+                if (Atlas.Array != null) foreach (var m in new[] { _ghostMat, OpaqueMaterial, TransparentMaterial }) if (m) m.SetTexture("_Blocks", Atlas.Array);   // a new layer rebuilds the array
+            }
             // Block space -> Blocks-local (mirror Z, flip winding); every face see-through at GhostAlpha.
             _verts.Clear(); _colors.Clear();
             foreach (var v in data.Verts) _verts.Add(new Vector3(v.x, v.y, -v.z));
@@ -333,6 +339,12 @@ namespace TabletopCraft.XR
             IFaceSource faces = Atlas;
             var data = new MeshData();
             if (faces != null) { GreedyMesher.Build(one, Vector3Int.zero, faces, data); GreedyMesher.BuildSpecials(one, Vector3Int.zero, faces, data); }
+            // [blocks] Chests, banners, heads... are drawn by BlockEntityRenderer, not the terrain mesher: preview their box.
+            if (Atlas != null && Atlas.HasPack && BlockEntityPreview.AddBoxes(one, data, Atlas))
+            {
+                Atlas.Commit();
+                if (Atlas.Array != null) foreach (var m in new[] { OpaqueMaterial, TransparentMaterial }) m.SetTexture("_Blocks", Atlas.Array);
+            }
             // Block space -> Unity (mirror Z, flip winding), centred on the cell.
             _verts.Clear();
             foreach (var v in data.Verts) _verts.Add(new Vector3(v.x - 0.5f, v.y - 0.5f, 0.5f - v.z));

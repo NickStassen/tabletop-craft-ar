@@ -138,6 +138,28 @@ class FixtureTest {
         assertEquals(fx.get("count").getAsInt(), n);
     }
 
+    /** [blocks] PROTOCOL.md 4.29: the block_entities fixture is exactly what BlockEntityJson builds from those values. */
+    @Test void blockEntitiesFixtureMatchesBuilders() throws Exception {
+        JsonObject f = fixture("block_entities");
+        JsonObject m = BlockEntityJson.message(BlockEntityJsonTest.fixtureEntities(), java.util.List.<int[]>of(new int[] { 100, 64, -35 }));
+        assertEquals("block_entities", f.get("type").getAsString());
+        assertEquals(f.getAsJsonArray("entities"), m.getAsJsonArray("entities"));
+        assertEquals(f.getAsJsonArray("removed"), m.getAsJsonArray("removed"));
+        assertEquals(Protocol.CAP_BLOCK_ENTITIES, "block_entities_v1");
+        JsonObject r = fixture("block_entities_reset");
+        assertTrue(r.get("reset").getAsBoolean() && !f.has("reset"), "reset only in the reset fixture");
+        assertEquals(r, withEnvelope(BlockEntityJson.message(java.util.List.of(BlockEntityJson.sign(-12, 70, 40,
+            new BlockEntityJson.Side(java.util.List.of("Nether", "portal", "", ""), "black", false),
+            new BlockEntityJson.Side(java.util.List.of("", "", "", ""), "black", false))), java.util.List.of(), true), r));
+    }
+
+    /** m with the fixture's envelope (seq, t) so the whole message compares. */
+    private static JsonObject withEnvelope(JsonObject m, JsonObject f) {
+        m.add("seq", f.get("seq"));
+        m.add("t", f.get("t"));
+        return m;
+    }
+
     @Test void avatarConfigFixtureParses() throws Exception {
         AvatarConfig c = AvatarConfig.parse(fixture("avatar_config"));
         assertEquals(0.01, c.blockSizeM());

@@ -19,10 +19,13 @@ namespace TabletopCraft.World
         static FaceKey Unresolved(string state) => new FaceKey { Layer = -1, Color = BlockRules.FlatColor(state) };
 
         /// <summary>Main thread only (called from Face for a state seen for the first time).</summary>
+        /// <summary>[blocks] False when BlockEntityRenderer draws the block entities (set before the first Face call).</summary>
+        public bool BlockEntityBoxes = true;
+
         void PrepareModel(string state, FaceKey[] faces)
         {
             if (_zip == null) return;
-            if (_blockModels == null) _blockModels = new BlockModels(this);
+            if (_blockModels == null) _blockModels = new BlockModels(this) { EntityBoxes = BlockEntityBoxes };
             _blockModels.Prepare(state, faces);
         }
 

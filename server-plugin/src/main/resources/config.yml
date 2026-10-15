@@ -42,6 +42,9 @@ stream:
   # region (a 256-wide window plus margins) is 361 chunks, about 3 ms warm and 6 ms right after generation, so it
   # is spread over a few ticks. A READS line every 30 s logs the cost. 0 = all in one tick.
   snapshot-budget-ms: 1.5
+  # [nav] Chunks around the region kept loaded (plugin tickets), so a glide shift's new chunks are ready to read in the
+  # same tick (about 50 ms off each shift). 1 = one chunk on every side; 0 = only the region's own chunks.
+  ticket-ring: 1
 # Non-player entities (boats, minecarts, mobs, dropped items, item frames...) for clients that ask for them in
 # hello.caps (entities_v1, PROTOCOL.md 4.21), sent with player_positions as deltas. Players are always in
 # player_positions; the giant's own entities are never sent.
@@ -55,6 +58,17 @@ entities:
 # place particles, red damage flashes. One message per tick with what happened inside the client's region.
 actions:
   enabled: true
+# [blocks] Block entity data for clients that ask for it (block_entities_v1, PROTOCOL.md 4.29): sign text, banner
+# patterns, player head skins, pot sherds, spawner mobs, beacon tiers, campfire/shelf/vault items, active conduits.
+block-entities:
+  enabled: true
+  # Main-thread time per tick for reading the region's block entities (chunks new to the region and chunks with block
+  # events first, then the rest in turn).
+  budget-ms: 0.3
+  # Chunks with campfires, shelves, vaults, beacons, spawners or conduits (which change by themselves) are read again
+  # this often; the others (signs, banners, heads, pots: block events catch their changes) 8 times less often, which
+  # still picks up /data edits.
+  rescan-ticks: 40
 # Time of day and weather for clients that ask for them (world_v1, PROTOCOL.md "World state"): the headset darkens the
 # miniature at night and in storms like vanilla's lightmap and draws rain, snow and lightning. About 150 bytes a second.
 world-state:
@@ -163,14 +177,17 @@ debug:
   avatar-state: false
   log-poses: false
 # Server caps for region_request / subscribe / setsize (PROTOCOL.md 4.13).
-# Sized for a 256-block visible box plus the headset's 16-block view margin (docs/TESTING.md "Navigation and bigger
-# areas": a 288x160x288 region reads in ~170 ms off the main thread and pans in ~0.4 MB deltas).
+# Sized for a 256-block visible box plus the headset's view margin, which grows with the width so gliding has runway
+# (48 blocks per side at 256: 352; docs/TESTING.md "Faster gliding"). A one-section glide shift reads only the new
+# sections (about 50 ms at 352x160x352) and sends a 0.2-0.9 MB delta. Servers set up with the 0.3.0 defaults
+# (288 / 16777216) are raised to these on start.
 max_region:
-  x: 288
+  x: 352
   y: 384
-  z: 288
-  # Max blocks in one region (dx*dy*dz). 16M ids are 64 MB per copy on the server.
-  blocks: 16777216
+  z: 352
+  # Max blocks in one region (dx*dy*dz). 24M ids are 100 MB as ids plus 25 MB of light per copy on the server (a
+  # moving region holds two or three copies), and 75 MB per copy on the headset. 352x160x352 is 19.8M.
+  blocks: 25165824
   # Max estimated snapshot JSON size in bytes, all parts together. One message is at most 4 MiB, so a client
   # without "sections_v1" gets region_too_large for anything bigger than that.
   bytes: 33554432
@@ -178,5 +195,6 @@ max_region:
   # (PROTOCOL.md 4.25). The headset's width presets are 64/96/128/192/256 (left stick click); a wider request is
   # narrowed to this around its centre (moved by whole 16-block sections, so the reply is still a delta) instead of
   # refused, and the reply carries the accepted size. Keep it a multiple of 32 so a narrowed preset stays exactly
-  # centred, and keep view_width + 2 * 16 (the headset's margin) within x/z above: 256 + 32 = 288.
+  # centred, and keep view_width + 2 * 16 (the headset's smallest margin) within x/z above; with + 2 * 48 the widest
+  # preset also gets the full glide margin: 256 + 96 = 352.
   view_width: 256

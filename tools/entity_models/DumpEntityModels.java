@@ -52,6 +52,14 @@ public class DumpEntityModels {
         "shulker", "armor_stand", "armor_stand_small", "arrow", "trident", "end_crystal", "leash_knot",
         // armour worn by players and humanoid mobs (equipment/humanoid and humanoid_leggings textures)
         "player#helmet", "player#chestplate", "player#leggings", "player#boots",
+        // block entities drawn by code in vanilla (BlockEntityCatalog.cs): chests, shulker boxes, heads and skulls,
+        // banners (pole and bar, flag), bell body, decorated pot, conduit, copper golem statue poses, the book of the
+        // enchanting table and lectern
+        "chest", "double_chest_left", "double_chest_right", "shulker_box",
+        "skeleton_skull", "wither_skeleton_skull", "player_head", "zombie_head", "creeper_head", "dragon_skull", "piglin_head",
+        "standing_banner", "standing_banner#flag", "wall_banner", "wall_banner#flag", "bell",
+        "decorated_pot_base", "decorated_pot_sides", "conduit#shell", "conduit#cage", "conduit#eye", "conduit#wind",
+        "copper_golem_running", "copper_golem_sitting", "copper_golem_star", "book",
         // [living] the rest of the entities (LivingLooks.cs) and what mobs wear: saddles, armour, carpets, harnesses,
         // collars, tropical fish patterns (textures: assets/minecraft/equipment + entity textures of your pack)
         "ender_dragon", "wither", "giant", "evoker_fangs", "shulker_bullet", "wither_skull", "llama_spit", "cushion",
@@ -120,14 +128,15 @@ public class DumpEntityModels {
         sb.append("]]");
     }
 
-    /** DyeColor name -> getTextureDiffuseColor() (sheep wool, tropical fish); "{}" if the enum can't be read. */
-    static String dyes(ClassLoader cl) {
+    /** DyeColor name -> getTextureDiffuseColor() (sheep wool, tropical fish, banners, beacon beams) or, with method
+     *  "getTextColor", the sign text colour; "{}" if the enum can't be read. */
+    static String dyes(ClassLoader cl, String method) {
         try {
             Class<?> dye = Class.forName("net.minecraft.world.item.DyeColor", true, cl);
             StringBuilder sb = new StringBuilder("{");
             for (Object d : (Object[]) dye.getMethod("values").invoke(null)) {
                 if (sb.length() > 1) sb.append(',');
-                sb.append('"').append(dye.getMethod("getName").invoke(d)).append("\":").append((int) dye.getMethod("getTextureDiffuseColor").invoke(d) & 0xFFFFFF);
+                sb.append('"').append(dye.getMethod("getName").invoke(d)).append("\":").append((int) dye.getMethod(method).invoke(d) & 0xFFFFFF);
             }
             return sb.append('}').toString();
         } catch (ReflectiveOperationException | LinkageError e) {
@@ -178,12 +187,12 @@ public class DumpEntityModels {
                 else { bodies.put(body.toString(), name); data.append('"').append(name).append("\":").append(body); models++; }
             }
             data.append('}');
-            // Format (EntityModels.LoadJson): {"format": 1, "minecraft": version, "dyes": {name: rgb},
+            // Format (EntityModels.LoadJson): {"format": 1, "minecraft": version, "dyes": {name: rgb}, "text_dyes": {name: rgb},
             // "models": {name: {"t": [texW, texH], "r": part} | "alias"}};
             // part = [name, [x, y, z, xRot, yRot, zRot(, xScale, yScale, zScale)], [cube...], [child part...]],
             // cube = [u, v, x, y, z, w, h, d(, grow or [gx, gy, gz](, mirror 0/1(, face mask: 1 down 2 up 4 north 8 south 16 west 32 east)))].
             String out = "{\"generator\":\"tabletop-craft-ar tools/entity_models/DumpEntityModels.java\",\"format\":1,\"minecraft\":\"" + ver + "\",\n"
-                + "\"dyes\":" + dyes(cl) + ",\n\"models\":" + data + "}\n";
+                + "\"dyes\":" + dyes(cl, "getTextureDiffuseColor") + ",\n\"text_dyes\":" + dyes(cl, "getTextColor") + ",\n\"models\":" + data + "}\n";
             Files.writeString(Path.of(args[2]), out);
             System.out.println("models " + models + ", aliases " + aliases + ", " + out.length() + " bytes -> " + args[2]);
             for (String w : warnings) System.out.println("WARN " + w);

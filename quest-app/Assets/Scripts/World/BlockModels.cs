@@ -14,6 +14,9 @@ namespace TabletopCraft.World
 
         public BlockModels(IModelAssets assets) { _baker = new BlockModelBaker(assets); }
 
+        /// <summary>[blocks] Bake placeholder boxes for block entities (false: BlockEntityRenderer draws them).</summary>
+        public bool EntityBoxes { get => _baker.EntityBoxes; set => _baker.EntityBoxes = value; }
+
         /// <summary>Any thread. Null until Prepare ran for the state (or when the pack has no blockstate for it).</summary>
         public BakedModel Model(string state) => _models.TryGetValue(state, out var m) ? m : null;
 
