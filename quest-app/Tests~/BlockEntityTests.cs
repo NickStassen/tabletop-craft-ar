@@ -170,6 +170,10 @@ static class BlockEntityTests
               "block_entities: sherds, spawner mob and size, beacon tier, campfire/shelf/vault items, conduit");
         store.Prune(new Vector3Int(100, 0, -40), new Vector3Int(10, 256, 10));
         check(store.All.Count == 5 && store.Get(new Vector3Int(110, 64, -35)) == null, "block_entities: entries outside a new region are dropped");
+        changed.Clear();
+        store.Apply(Json.Parse(File.ReadAllText(fixture("block_entities_reset.json"))) as Dictionary<string, object>, changed);
+        check(store.All.Count == 1 && store.Get(new Vector3Int(-12, 70, 40))?.Front.Lines[0] == "Nether" && changed.Count == 6,
+              "block_entities reset: everything held is forgotten (and redrawn), then the entries apply");
     }
 
     static void Banner(Action<bool, string> check)

@@ -44,6 +44,17 @@ class BlockEntityJsonTest {
         assertEquals(f.get("type").getAsString(), m.get("type").getAsString());
         assertEquals(f.getAsJsonArray("entities"), m.getAsJsonArray("entities"));
         assertEquals(f.getAsJsonArray("removed"), m.getAsJsonArray("removed"));
+        assertFalse(m.has("reset"), "reset is only sent when set");
+    }
+
+    @Test void resetFixtureMatchesBuilders() throws Exception {
+        JsonObject f = JsonParser.parseString(Files.readString(Path.of("..", "tools", "fixtures", "block_entities_reset.json"))).getAsJsonObject();
+        JsonObject m = BlockEntityJson.message(List.of(BlockEntityJson.sign(-12, 70, 40, side("black", false, "Nether", "portal", "", ""),
+            side("black", false, "", "", "", ""))), List.of(), true);
+        assertTrue(m.get("reset").getAsBoolean());
+        assertEquals(f.get("reset"), m.get("reset"));
+        assertEquals(f.getAsJsonArray("entities"), m.getAsJsonArray("entities"));
+        assertEquals(f.getAsJsonArray("removed"), m.getAsJsonArray("removed"));
     }
 
     @Test void defaultsAreNotSent() {

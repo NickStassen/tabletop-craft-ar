@@ -141,8 +141,9 @@ final class BlockEntityStreamer implements Listener {
         updateInterest(sessions);
         Map<Session, List<String>> adds = new HashMap<>();
         Map<Session, List<int[]>> removes = new HashMap<>();
+        Set<Session> resets = new HashSet<>();
         // Sessions whose region changed: forget what's outside, send what the cache already knows for the rest.
-        for (Session s : sessions) if (!s.region.equals(s.blockEntitiesRegion)) regionChanged(s, adds, removes);
+        for (Session s : sessions) if (!s.region.equals(s.blockEntitiesRegion)) regionChanged(s, adds, removes, resets);
         // Read chunks: priority first, then the round robin, within the budget.
         long budget = (long) (budgetMs * 1e6);
         List<long[]> changed = new ArrayList<>();   // [world index into names, chunk key]
@@ -180,8 +181,9 @@ final class BlockEntityStreamer implements Listener {
         for (Session s : sessions) {
             List<String> a = adds.getOrDefault(s, List.of());
             List<int[]> r = removes.getOrDefault(s, List.of());
-            if (a.isEmpty() && r.isEmpty()) continue;
-            plugin.sendCountingLater(s, () -> BlockEntityJson.message(BlockEntityJson.parse(a), r), s.blockEntityBytes, windowBytes);   // JSON parsed off the main thread
+            boolean reset = resets.contains(s);
+            if (a.isEmpty() && r.isEmpty() && !reset) continue;
+            plugin.sendCountingLater(s, () -> BlockEntityJson.message(BlockEntityJson.parse(a), r, reset), s.blockEntityBytes, windowBytes);   // JSON parsed off the main thread
         }
         double ms = (System.nanoTime() - t0) / 1e6;
         ticks++; mainMsSum += ms; mainMsMax = Math.max(mainMsMax, ms);
@@ -227,9 +229,10 @@ final class BlockEntityStreamer implements Listener {
         }
     }
 
-    private void regionChanged(Session s, Map<Session, List<String>> adds, Map<Session, List<int[]>> removes) {
+    private void regionChanged(Session s, Map<Session, List<String>> adds, Map<Session, List<int[]>> removes, Set<Session> resets) {
         RegionSpec r = s.region;
-        if (s.blockEntitiesRegion == null || !s.blockEntitiesRegion.world().equals(r.world())) s.blockEntitiesSent.clear();
+        // A session's first region, or one in another world: the client forgets what it holds (reset), we start afresh.
+        if (s.blockEntitiesRegion == null || !s.blockEntitiesRegion.world().equals(r.world())) { s.blockEntitiesSent.clear(); resets.add(s); }
         BlockEntityJson.prune(s.blockEntitiesSent, k -> r.containsWorld(BlockEntityJson.x(k), BlockEntityJson.y(k), BlockEntityJson.z(k)), ck -> chunkInRegion(r, ck));
         s.blockEntitiesRegion = r;
         var known = cache.get(r.world());

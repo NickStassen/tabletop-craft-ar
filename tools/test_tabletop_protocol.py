@@ -378,6 +378,17 @@ def test_block_entities_fixture_and_mirror():
     assert len(m.entries) == 5
 
 
+def test_block_entities_reset_forgets_what_was_held():
+    msg = json.loads((FIX / "block_entities_reset.json").read_text())
+    validate(msg)
+    m = BlockEntityMirror()
+    m.apply(json.loads((FIX / "block_entities.json").read_text()))
+    m.apply(msg)
+    assert m.resets == 1 and list(m.entries) == [(-12, 70, 40)]
+    with pytest.raises(ValueError):
+        validate(dict(msg, reset="yes"))
+
+
 @pytest.mark.parametrize("bad", [
     {"kind": "chest", "pos": [1, 2, 3]},
     {"kind": "sign", "pos": [1, 2, 3], "front": {"lines": ["a"], "color": "black", "glowing": False}},

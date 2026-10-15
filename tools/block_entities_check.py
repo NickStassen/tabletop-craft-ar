@@ -3,7 +3,8 @@ console places a sign (glowing, coloured), a hanging sign, a banner with pattern
 decorated pot with sherds, a spawner, a beacon on an iron base, a campfire and a shelf with items, and a chest (which
 has no data to send). The mirrored entries must match what was placed; then the sign text is changed with /data (no
 event fires: the round robin must pick it up), the banner is removed, and a block event in the chunk must make an edit
-show quickly. Reports how long each step took and bytes/s.
+show quickly. The first message must carry reset, and so must the one after subscribing to the same box in
+world_nether (which leaves the client with nothing). Reports how long each step took and bytes/s.
 
 Needs a running server with the plugin; the console is driven through the server's stdin FIFO.
   SERVER_FIFO=run/blocks/stdin.fifo TABLETOP_URL=ws://127.0.0.1:8812/tabletop python block_entities_check.py [ox oy oz]
@@ -40,10 +41,12 @@ class Link:
         self.errors: list[str] = []
         self.welcome_caps = None
         self.first_at: float | None = None
+        self.first_reset: bool | None = None
 
     async def run(self, origin, script) -> None:
         env = Envelope()
         async with websockets.connect(URL, max_size=1 << 23) as ws:
+            self.send = lambda t, **f: ws.send(json.dumps(env.wrap(t, **f)))
             caps = ["rle_palette_v1", CAP_BLOCK_ENTITIES]
             await ws.send(json.dumps(env.wrap("hello", client="block-entities-check", protocols=[1], caps=caps)))
             done = asyncio.Event()
@@ -67,6 +70,8 @@ class Link:
                         self.welcome_caps = msg.get("caps")
                         await ws.send(json.dumps(env.wrap("subscribe", world="world", origin=list(origin), dims=list(DIMS))))
                     elif msg["type"] == "block_entities":
+                        if self.first_reset is None:
+                            self.first_reset = msg.get("reset") is True
                         self.mirror.apply(msg)
                         self.msgs += 1
                         self.bytes += len(raw)
@@ -175,10 +180,16 @@ def main() -> int:
         check(took is not None, f"removed banner is removed ({took})")
         results.append(f"banner removal after: {took}")
         await asyncio.sleep(1)
+        # Another world at the same coordinates (above the nether roof: nothing there): the client must forget it all.
+        await link.send("subscribe", world="world_nether", origin=[ox, oy, oz], dims=list(DIMS))
+        took = await wait_for(lambda: link.mirror.resets == 2 and not link.mirror.entries, 5)
+        check(took is not None, f"a region in another world resets what the client holds ({took}; entries {len(link.mirror.entries)})")
+        await asyncio.sleep(0.5)
 
     link = Link()
     asyncio.run(link.run((a.origin[0], a.origin[1], a.origin[2]), script))
     check(link.welcome_caps is not None and CAP_BLOCK_ENTITIES in link.welcome_caps, f"welcome grants {CAP_BLOCK_ENTITIES}")
+    check(link.first_reset is True and link.mirror.resets == 2, f"the first message resets, then only the world change (resets={link.mirror.resets})")
     check(not link.errors, f"every message validates ({link.errors[:3]})")
     print(f"REPORT block_entities messages={link.msgs} bytes={link.bytes} entries={len(link.mirror.entries)} " + "; ".join(results))
     print("ALL PASS" if not fails else f"{len(fails)} FAILED")

@@ -130,8 +130,12 @@ final class BlockEntityJson {
         return o;
     }
 
-    static JsonObject message(List<JsonObject> entities, List<int[]> removed) {
+    static JsonObject message(List<JsonObject> entities, List<int[]> removed) { return message(entities, removed, false); }
+
+    /** reset: the client forgets every entry it holds first (a session's first region, or a region in another world). */
+    static JsonObject message(List<JsonObject> entities, List<int[]> removed, boolean reset) {
         JsonObject m = Protocol.body("block_entities");
+        if (reset) m.addProperty("reset", true);
         JsonArray a = new JsonArray();
         entities.forEach(a::add);
         m.add("entities", a);

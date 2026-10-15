@@ -106,6 +106,13 @@ namespace TabletopCraft.Net
         /// <summary>Applies one message; changed gets every position that was set or removed.</summary>
         public void Apply(Dictionary<string, object> m, List<Vector3Int> changed)
         {
+            // reset: the first message of a session or after a world change; what we hold is stale (another session's
+            // or another world's), so forget it before applying.
+            if (m.B("reset"))
+            {
+                changed?.AddRange(All.Keys);
+                All.Clear();
+            }
             if (m.A("entities") is List<object> list)
                 foreach (var e in list)
                 {

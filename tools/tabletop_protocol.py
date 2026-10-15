@@ -169,7 +169,9 @@ def _int_pos(p) -> bool:
 
 
 def validate_block_entities(msg: dict) -> None:
-    """block_entities (PROTOCOL.md 4.29): entries by kind with integer world positions, removed positions."""
+    """block_entities (PROTOCOL.md 4.29): entries by kind with integer world positions, removed positions, reset."""
+    if "reset" in msg and not isinstance(msg["reset"], bool):
+        raise ValueError("block_entities reset must be a boolean")
     for e in msg["entities"]:
         k = e.get("kind")
         if k not in BLOCK_ENTITY_KINDS:
@@ -638,9 +640,13 @@ class BlockEntityMirror:
     def __init__(self) -> None:
         self.entries: dict[tuple[int, int, int], dict] = {}
         self.messages = 0
+        self.resets = 0
 
     def apply(self, msg: dict) -> None:
         self.messages += 1
+        if msg.get("reset"):
+            self.resets += 1
+            self.entries.clear()
         for e in msg["entities"]:
             self.entries[tuple(e["pos"])] = e
         for p in msg.get("removed") or []:
