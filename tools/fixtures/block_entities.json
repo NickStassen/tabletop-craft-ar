@@ -1,0 +1,16 @@
+{"v":1,"type":"block_entities","seq":14,"t":1760370001200,
+ "entities":[
+  {"pos":[105,64,-35],"kind":"sign","front":{"lines":["Welcome","to the","village",""],"color":"black","glowing":false},"back":{"lines":["","","",""],"color":"black","glowing":false}},
+  {"pos":[106,64,-35],"kind":"sign","front":{"lines":["","Shop","",""],"color":"light_blue","glowing":true},"back":{"lines":["Closed","","",""],"color":"red","glowing":false}},
+  {"pos":[107,65,-35],"kind":"banner","patterns":[{"pattern":"minecraft:stripe_bottom","color":"red"},{"pattern":"minecraft:creeper","color":"black"}]},
+  {"pos":[108,64,-35],"kind":"skull","skin":"http://textures.minecraft.net/texture/0123456789abcdef","name":"Steve","uuid":"00000000-0000-4000-8000-000000000001"},
+  {"pos":[109,64,-35],"kind":"decorated_pot","sherds":["minecraft:brick","minecraft:arms_up_pottery_sherd","minecraft:brick","minecraft:skull_pottery_sherd"]},
+  {"pos":[110,64,-35],"kind":"spawner","entity":"minecraft:zombie","size":[0.6,1.95]},
+  {"pos":[111,64,-35],"kind":"trial_spawner","entity":"minecraft:breeze","size":[0.6,1.77],"ominous":false},
+  {"pos":[112,64,-35],"kind":"beacon","tier":4},
+  {"pos":[113,64,-35],"kind":"campfire","items":["minecraft:beef",null,null,"minecraft:porkchop"]},
+  {"pos":[114,64,-35],"kind":"shelf","items":[null,"minecraft:apple",null]},
+  {"pos":[115,64,-35],"kind":"vault","item":"minecraft:diamond"},
+  {"pos":[116,64,-35],"kind":"conduit","active":true}
+ ],
+ "removed":[[100,64,-35]]}

@@ -55,6 +55,17 @@ entities:
 # place particles, red damage flashes. One message per tick with what happened inside the client's region.
 actions:
   enabled: true
+# [blocks] Block entity data for clients that ask for it (block_entities_v1, PROTOCOL.md 4.29): sign text, banner
+# patterns, player head skins, pot sherds, spawner mobs, beacon tiers, campfire/shelf/vault items, active conduits.
+block-entities:
+  enabled: true
+  # Main-thread time per tick for reading the region's block entities (chunks new to the region and chunks with block
+  # events first, then the rest in turn).
+  budget-ms: 0.3
+  # Chunks with campfires, shelves, vaults, beacons, spawners or conduits (which change by themselves) are read again
+  # this often; the others (signs, banners, heads, pots: block events catch their changes) 8 times less often, which
+  # still picks up /data edits.
+  rescan-ticks: 40
 avatar:
   # Real metres per block on the table; the Quest overrides it with avatar_config.
   block-size-m: 0.01

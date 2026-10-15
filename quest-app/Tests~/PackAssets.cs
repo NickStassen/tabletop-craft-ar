@@ -130,7 +130,7 @@ sealed class PackFaces : IFaceSource, IModelSource
     readonly BlockModels _models;
     readonly Dictionary<string, FaceKey[]> _faces = new Dictionary<string, FaceKey[]>();
 
-    public PackFaces(IModelAssets assets) { _models = new BlockModels(assets); }
+    public PackFaces(IModelAssets assets, bool entityBoxes = true) { _models = new BlockModels(assets) { EntityBoxes = entityBoxes }; }
 
     public FaceKey Face(string state, int dir)
     {

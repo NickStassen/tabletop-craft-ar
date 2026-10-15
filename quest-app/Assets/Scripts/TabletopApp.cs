@@ -87,6 +87,7 @@ namespace TabletopCraft
         ActionEffects _effects;
         EntityTextures _entityTex;
         readonly List<GameAction> _actions = new List<GameAction>();
+        BlockEntityRenderer _blockEntities;   // [blocks] chests, signs, banners, heads... (BlockEntityRenderer.cs)
         // [area] visible-width presets (left stick click; Presets/Current/Request for a menu), tabletop.json "area_width"
         public AreaSizeControl AreaSize { get; private set; }
         int _areaWidth;
@@ -139,6 +140,11 @@ namespace TabletopCraft
             _effects = new GameObject("Effects").AddComponent<ActionEffects>();
             _effects.transform.SetParent(_blocks, false);
             _effects.Model = _world; _effects.Atlas = _atlas; _effects.Textures = _entityTex; _effects.BlocksMaterial = OpaqueMaterial;
+            // [blocks] Block entities drawn like vanilla's block entity renderers; the terrain leaves out their placeholder boxes.
+            _atlas.BlockEntityBoxes = false;
+            _blockEntities = new GameObject("BlockEntities").AddComponent<BlockEntityRenderer>();
+            _blockEntities.transform.SetParent(_blocks, false);
+            _blockEntities.Model = _world; _blockEntities.Textures = _entityTex; _blockEntities.Atlas = _atlas; _blockEntities.Terrain = _renderer;
 
             // Eye in water/lava/powder snow/inside a block: fog, passthrough tint, the water's inside faces (EyeEffects.cs).
             var eye = gameObject.AddComponent<EyeEffects>();
@@ -514,7 +520,7 @@ namespace TabletopCraft
         string StatusText() =>
             $"LINK {(_link.Connected ? "OK" : Away ? "paused (headset off)" : _link.Status)}  RTT {(_link.RttMs < 0 ? "-" : _link.RttMs + "ms")}\n" +
             $"WORLD {(_world.Loaded ? $"{_world.Dims.x}x{_world.Dims.y}x{_world.Dims.z} @ {_world.Origin}" : "-")}  PACK {(_atlas.HasPack ? "yes" : "flat")}  LIGHT {LightStatus()}\n" +
-            $"TABLE {_placement.Status}\nPOSES {(_poses ? _poses.Sent : 0)}  MESH {_renderer.Quads / 1000}k faces  ENTITIES {_entities.Count}{(EntityModels.Loaded ? "" : " (boxes)")}" +
+            $"TABLE {_placement.Status}\nPOSES {(_poses ? _poses.Sent : 0)}  MESH {_renderer.Quads / 1000}k faces  ENTITIES {_entities.Count}{(EntityModels.Loaded ? "" : " (boxes)")}  BLOCK ENTITIES {_blockEntities.Count}" +
             (_renderer.Pending > 0 ? $" ({_renderer.Pending} sections pending)" : "") + $"  {_lastError}\n" +
             _nav.Status + "\n" +   // [nav]
             AreaSize.Status + "\n" +   // [area]
@@ -603,6 +609,7 @@ namespace TabletopCraft
                     _players.Apply(list);
                     break;
                 case "entities": _entities.Apply(m); break;   // [entities] PROTOCOL.md 4.21
+                case "block_entities": _blockEntities.Apply(m); break;   // [blocks] PROTOCOL.md 4.29
                 case "actions":                                  // [entities] PROTOCOL.md 4.22
                     _actions.Clear();
                     GameAction.Parse(m, _actions);
@@ -655,6 +662,7 @@ namespace TabletopCraft
             _world.ApplySnapshot(s);
             _edit.Editor.OnSnapshot(_world, r.Delta ? r.ListedKeys : null);   // block-edit guesses: dropped, or moved along by a delta
             _renderer.OnSnapshot(r.Plan, oldOrigin, s.Origin);
+            _blockEntities.OnSnapshot(r.Plan, oldOrigin, s.Origin);   // [blocks] keep, drop and scan block entities
             if (oldOrigin != s.Origin) _effects.OnRegionChanged();   // [entities] cracks sit at region-local positions
             _caps.ModelVersion = ++_modelVersion;
             int oldWidth = AreaSizing.Current(_nav.State);   // [area]

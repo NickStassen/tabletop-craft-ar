@@ -1,0 +1,5 @@
+{"v":1,"type":"block_entities","seq":3,"t":1760370000400,"reset":true,
+ "entities":[
+  {"pos":[-12,70,40],"kind":"sign","front":{"lines":["Nether","portal","",""],"color":"black","glowing":false},"back":{"lines":["","","",""],"color":"black","glowing":false}}
+ ],
+ "removed":[]}

@@ -21,6 +21,8 @@ namespace TabletopCraft.World
         BlockShape[] _shapes = new BlockShape[0];   // per palette index; swapped whole, read by workers
         volatile int _shapesVersion = -1;           // BlockRules.Version the cache was built for
         public readonly HashSet<Vector3Int> DirtySections = new HashSet<Vector3Int>();
+        /// <summary>[blocks] A cell's block or light changed (block_update, local edits): region-local x, y, z. Main thread.</summary>
+        public System.Action<int, int, int> CellChanged;
         /// <summary>[piston] Cells that are moving_piston right now (cell index -> the state drawn there instead of nothing),
         /// until the cell's final state arrives. Written on the main thread, read by the meshing workers (PistonGhosts).</summary>
         public readonly System.Collections.Concurrent.ConcurrentDictionary<int, string> MovingShown = new System.Collections.Concurrent.ConcurrentDictionary<int, string>();
@@ -80,7 +82,7 @@ namespace TabletopCraft.World
                 if (!InBounds(x, y, z) || p >= Palette.Count) continue;
                 before?.Record(Index(x, y, z), Grid[Index(x, y, z)]);
                 Grid[Index(x, y, z)] = (ushort)p;
-                MarkDirty(x, y, z);
+                MarkDirty(x, y, z); CellChanged?.Invoke(x, y, z);
             }
             before?.Apply(this);
             // Optional light changes (PROTOCOL.md 4.4.1): [x, y, z, sky << 4 | block], also sent without block changes.
@@ -92,7 +94,7 @@ namespace TabletopCraft.World
                     int x = (int)(double)a[0], y = (int)(double)a[1], z = (int)(double)a[2], v = (int)(double)a[3];
                     if (!InBounds(x, y, z) || (uint)Index(x, y, z) >= (uint)light.Length) continue;
                     light[Index(x, y, z)] = (byte)v;
-                    MarkDirty(x, y, z);
+                    MarkDirty(x, y, z); CellChanged?.Invoke(x, y, z);
                 }
             return true;
         }
@@ -103,7 +105,7 @@ namespace TabletopCraft.World
             if (!InBounds(x, y, z) || id >= Palette.Count) return;
             Grid[Index(x, y, z)] = id;
             MovingShown.TryRemove(Index(x, y, z), out _);
-            MarkDirty(x, y, z);
+            MarkDirty(x, y, z); CellChanged?.Invoke(x, y, z);
         }
 
         void MarkDirty(int x, int y, int z)

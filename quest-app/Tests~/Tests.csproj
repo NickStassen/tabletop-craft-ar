@@ -27,5 +27,7 @@
     <Compile Include="../Assets/Scripts/Net/ControlProtocol.cs;../Assets/Scripts/World/ChatLog.cs;../Assets/Scripts/World/ConsoleModel.cs;../Assets/Scripts/World/OperatorPanelModel.cs" />
     <!-- [comfort] keyboard, prefs.json, LAN discovery, session helpers -->
     <Compile Include="../Assets/Scripts/World/KeyboardModel.cs;../Assets/Scripts/World/AppPrefs.cs;../Assets/Scripts/World/SessionState.cs;../Assets/Scripts/Net/LanDiscovery.cs" />
+    <!-- [blocks] block entities: catalog, baked models, block_entities data (PROTOCOL.md 4.29) -->
+    <Compile Include="../Assets/Scripts/World/BlockEntityCatalog.cs;../Assets/Scripts/World/BlockEntityModels.cs;../Assets/Scripts/Net/BlockEntityProtocol.cs;../Assets/Scripts/World/SignText.cs;../Assets/Scripts/World/BlockEntityExtras.cs" />
   </ItemGroup>
 </Project>
