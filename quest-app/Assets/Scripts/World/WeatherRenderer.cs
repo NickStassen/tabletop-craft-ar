@@ -2,7 +2,9 @@
 // world_state (faded by WorldClock's rain level) one static mesh of drops covers the visible window, each drop a column
 // that the TabletopCraft/Weather shader moves from the region top down to the column's surface (Precipitation.cs: rain,
 // snow by biome temperature and height, nothing in deserts and savannas). The mesh is rebuilt when the snapshot changes,
-// the view glides more than 8 blocks, or every 5 seconds (blocks placed under the rain). tabletop.json "weather_fx".
+// the view glides more than 8 blocks, or at most every 5 seconds while blocks change (drops land on new blocks). A rebuild
+// is about a millisecond at 256 wide (cached per-block tests, reused buffers); it used to redo slow string tests for every
+// drop every 5 seconds, a ~150 ms hitch on the headset. tabletop.json "weather_fx".
 // Cost: up to 2,500 small alpha-blended quads, one draw call; nothing at all in clear weather.
 using System.Collections.Generic;
 using UnityEngine;
@@ -27,8 +29,13 @@ namespace TabletopCraft.World
         Mesh _mesh;
         MeshRenderer _renderer;
         Material _mat;
-        int _builtSnapshot = -1;
+        int _builtSnapshot = -1, _builtEdits = -1;
         Vector3 _builtView;
+        readonly List<Drop> _drops = new List<Drop>();
+        readonly List<Vector3> _verts = new List<Vector3>();
+        readonly List<Vector2> _corners = new List<Vector2>();
+        readonly List<Vector4> _data = new List<Vector4>();
+        readonly List<int> _tris = new List<int>();
         float _nextRebuild;
         public int Drops { get; private set; }
 
@@ -58,7 +65,7 @@ namespace TabletopCraft.World
             // The mesh is in region-local blocks (Z mirrored), like Blocks: scale by the block size.
             transform.localScale = Vector3.one * BlockSizeM;
             var view = Nav != null && Nav.Loaded ? Nav.View : Vector3.zero;
-            if (Model.SnapshotId != _builtSnapshot || Time.unscaledTime >= _nextRebuild || (view - _builtView).sqrMagnitude > 64f) Rebuild(view);
+            if (Model.SnapshotId != _builtSnapshot || (Model.Edits != _builtEdits && Time.unscaledTime >= _nextRebuild) || (view - _builtView).sqrMagnitude > 64f) Rebuild(view);
             _mat.SetFloat(StrengthId, clock.Rain);
             _mat.SetFloat(TimeId, Time.timeSinceLevelLoad);
             var l = BlockShading.LightmapLive(15, 0);   // drops are lit like open sky (vanilla: the light at the column)
@@ -70,7 +77,7 @@ namespace TabletopCraft.World
 
         void Rebuild(Vector3 view)
         {
-            _builtSnapshot = Model.SnapshotId;
+            _builtSnapshot = Model.SnapshotId; _builtEdits = Model.Edits;
             _builtView = view;
             _nextRebuild = Time.unscaledTime + 5f;
             // Columns of the visible window and 16 blocks around it (gliding), inside the region.
@@ -83,12 +90,10 @@ namespace TabletopCraft.World
             }
             float area = Nav != null && Nav.Loaded ? Nav.Window.x * Nav.Window.z : (x1 - x0) * (z1 - z0);
             int count = Mathf.Clamp((int)(area * DropsPerBlock), 64, MaxDrops);
-            var drops = Precipitation.Layout(Model, x0, z0, x1, z1, count, Model.Origin.x * 31 + Model.Origin.z * 17 + Model.SnapshotId);
+            var drops = Precipitation.Layout(Model, x0, z0, x1, z1, count, Model.Origin.x * 31 + Model.Origin.z * 17 + Model.SnapshotId, _drops);
             Drops = drops.Count;
-            var verts = new List<Vector3>(drops.Count * 4);
-            var corners = new List<Vector2>(drops.Count * 4);
-            var data = new List<Vector4>(drops.Count * 4);
-            var tris = new List<int>(drops.Count * 6);
+            var verts = _verts; var corners = _corners; var data = _data; var tris = _tris;
+            verts.Clear(); corners.Clear(); data.Clear(); tris.Clear();
             foreach (var d in drops)
             {
                 int s = verts.Count;

@@ -33,7 +33,7 @@ namespace TabletopCraft.World
             "warped_forest", "windswept_savanna", "wooded_badlands",
         };
 
-        static string Path(string key) => key == null ? "" : key.StartsWith("minecraft:") ? key.Substring(10) : key;
+        static string Path(string key) => key == null ? "" : key.StartsWith("minecraft:", StringComparison.Ordinal) ? key.Substring(10) : key;
 
         public static bool HasPrecipitation(string biome) => !Dry.Contains(Path(biome));
 
@@ -56,28 +56,52 @@ namespace TabletopCraft.World
         }
 
         /// <summary>Vanilla's MOTION_BLOCKING heightmap test, by shape: anything solid or liquid stops a drop; air and plants
-        /// without collision (crosses) let it through.</summary>
-        public static bool Blocks(WorldModel w, ushort id)
+        /// without collision (crosses) let it through. Cached per palette index (Stops): the string tests are slow on the
+        /// headset (they used to run for every drop every 5 seconds: a ~150 ms hitch at 256 wide in the rain).</summary>
+        public static bool Blocks(WorldModel w, ushort id) => id < w.Palette.Count && Stops(w)[id] != 0;
+
+        /// <summary>The name test behind Blocks (ordinal comparisons: culture-aware ones cost microseconds each under IL2CPP).</summary>
+        public static bool StopsDrops(BlockShape s, string state)
         {
-            var s = w.ShapeOf(id);
             if (s == BlockShape.Air || s == BlockShape.Cross) return false;
-            string p = BlockRules.Path(w.State(id));
-            return !(p.EndsWith("grass") && p != "grass_block") && !p.EndsWith("fern") && !p.Contains("flower") && !p.EndsWith("torch") && !p.EndsWith("sapling")
-                   && !p.EndsWith("_rail") && p != "rail" && !p.EndsWith("button") && !p.EndsWith("pressure_plate") && !p.EndsWith("sign") && !p.EndsWith("banner")
-                   && p != "redstone_wire" && p != "tripwire" && !p.EndsWith("vine") && !p.EndsWith("_bush") && p != "bush" && p != "dead_bush"
-                   && !p.EndsWith("tulip") && p != "dandelion" && p != "poppy" && p != "allium" && p != "azure_bluet" && p != "oxeye_daisy" && p != "cornflower"
-                   && p != "lily_of_the_valley" && p != "blue_orchid" && p != "wither_rose" && p != "sugar_cane" && p != "snow" && !p.EndsWith("_roots")
-                   && p != "nether_sprouts" && p != "lever" && !p.EndsWith("_carpet") && p != "moss_carpet" && p != "glow_lichen" && p != "sculk_vein";
+            string p = BlockRules.Path(state);
+            bool E(string suffix) => p.EndsWith(suffix, StringComparison.Ordinal);
+            return !(E("grass") && p != "grass_block") && !E("fern") && !p.Contains("flower") && !E("torch") && !E("sapling")
+                   && !E("_rail") && p != "rail" && !E("button") && !E("pressure_plate") && !E("sign") && !E("banner")
+                   && p != "redstone_wire" && p != "tripwire" && !E("vine") && !E("_bush") && p != "bush" && p != "dead_bush"
+                   && !E("tulip") && p != "dandelion" && p != "poppy" && p != "allium" && p != "azure_bluet" && p != "oxeye_daisy" && p != "cornflower"
+                   && p != "lily_of_the_valley" && p != "blue_orchid" && p != "wither_rose" && p != "sugar_cane" && p != "snow" && !E("_roots")
+                   && p != "nether_sprouts" && p != "lever" && !E("_carpet") && p != "moss_carpet" && p != "glow_lichen" && p != "sculk_vein";
+        }
+
+        // Per palette index: 1 = stops drops. Rebuilt when the model, its snapshot, its palette size or the block shapes change
+        // (main thread only, like WeatherRenderer).
+        static WorldModel _stopsFor;
+        static int _stopsSnapshot = int.MinValue, _stopsCount = -1, _stopsVersion = -1;
+        static byte[] _stops = new byte[0];
+
+        static byte[] Stops(WorldModel w)
+        {
+            int n = w.Palette.Count;
+            if (_stopsFor == w && _stopsSnapshot == w.SnapshotId && _stopsCount == n && _stopsVersion == BlockRules.Version) return _stops;
+            var s = new byte[n];
+            for (int i = 0; i < n; i++) s[i] = StopsDrops(w.ShapeOf((ushort)i), w.Palette[i]) ? (byte)1 : (byte)0;
+            _stops = s; _stopsFor = w; _stopsSnapshot = w.SnapshotId; _stopsCount = n; _stopsVersion = BlockRules.Version;
+            return s;
         }
 
         /// <summary>Region-local y where drops of column (x, z) land: one above the highest motion-blocking cell; 0 when the
         /// column is open to the bottom of the region.</summary>
         public static int Ground(WorldModel w, int x, int z)
         {
-            for (int y = w.Dims.y - 1; y >= 0; y--)
+            if (!w.InBounds(x, 0, z)) return 0;
+            var stops = Stops(w);
+            var grid = w.Grid;
+            int layer = w.Dims.x * w.Dims.z;
+            for (int y = w.Dims.y - 1, i = w.Index(x, y, z); y >= 0; y--, i -= layer)
             {
-                ushort id = w.Get(x, y, z);
-                if (id != 0xFFFF && Blocks(w, id)) return y + 1;
+                ushort id = grid[i];
+                if (id < stops.Length && stops[id] != 0) return y + 1;
             }
             return 0;
         }
@@ -86,9 +110,10 @@ namespace TabletopCraft.World
         /// Up to count drops over the columns [x0, x1) x [z0, z1) of the region (fewer where nothing falls), deterministic for
         /// a seed: random columns, each told rain or snow by its biome at the landing height, falling from the region top.
         /// </summary>
-        public static List<Drop> Layout(WorldModel w, int x0, int z0, int x1, int z1, int count, int seed)
+        public static List<Drop> Layout(WorldModel w, int x0, int z0, int x1, int z1, int count, int seed, List<Drop> into = null)
         {
-            var drops = new List<Drop>(count);
+            var drops = into ?? new List<Drop>(count);
+            drops.Clear();
             if (w == null || !w.Loaded || x1 <= x0 || z1 <= z0) return drops;
             var rnd = new System.Random(seed);
             int top = w.Dims.y;
@@ -114,8 +139,22 @@ namespace TabletopCraft.World
             if (g == null) return Precip.Rain;
             int wx = w.Origin.x + x, wy = w.Origin.y + y, wz = w.Origin.z + z;
             int i = g.At(wx, wy, wz);
-            return At(g.Palette[i], g.Climate?[i], wx, wy, wz);
+            if (_biomesFor != g)
+            {
+                // Per biome palette index: base temperature, NaN without precipitation (the string lookups once per snapshot).
+                var t = new float[g.Palette.Length];
+                for (int k = 0; k < t.Length; k++)
+                    t[k] = HasPrecipitation(g.Palette[k]) ? BiomeColors.Info(g.Palette[k], g.Climate?[k]).Temperature : float.NaN;
+                _biomeTemps = t; _biomesFor = g;
+            }
+            if ((uint)i >= (uint)_biomeTemps.Length) return At(g.Palette[i], g.Climate?[i], wx, wy, wz);
+            float bt = _biomeTemps[i];
+            if (float.IsNaN(bt)) return Precip.None;
+            return Temperature(bt, wx, wy, wz) < SnowBelow ? Precip.Snow : Precip.Rain;
         }
+
+        static BiomeGrid _biomesFor;
+        static float[] _biomeTemps = new float[0];
     }
 
     /// <summary>Biome.TEMPERATURE_NOISE: PerlinSimplexNoise(seed 1234, octave 0), one 2D simplex octave like SwampNoise

@@ -156,6 +156,8 @@ static class Program
             BlockEntityTests.Measure(args[beMeasIdx + 1], JarPath(args));   // [blocks] faces and draw calls before/after
             return 0;
         }
+        int weatherMeasIdx = Array.IndexOf(args, "--measure-weather");   // [gpu] rain layout time (WeatherRenderer)
+        if (weatherMeasIdx >= 0) { AreaTests.MeasureWeather(args[weatherMeasIdx + 1]); return 0; }
         int batchMeasIdx = Array.IndexOf(args, "--measure-batches");
         if (batchMeasIdx >= 0) { AreaTests.MeasureBatches(args[batchMeasIdx + 1], JarPath(args)); return fails == 0 ? 0 : 1; }
         int liveResizeIdx = Array.IndexOf(args, "--live-resize");

@@ -332,6 +332,22 @@ static class AreaTests
         return ChunkSnapshot.From((Dictionary<string, object>)j);
     }
 
+    /// <summary>[gpu] Rain layout time per area snapshot (WeatherRenderer.Rebuild's work): 2,500 drops, cold and warm.</summary>
+    public static void MeasureWeather(string dir)
+    {
+        foreach (var f in System.IO.Directory.GetFiles(dir, "*.json").OrderBy(p => int.TryParse(System.IO.Path.GetFileNameWithoutExtension(p), out var v) ? v : 0))
+        {
+            var w = new WorldModel();
+            w.ApplySnapshot(LoadSnapshot(f));
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            int n = Precipitation.Layout(w, 0, 0, w.Dims.x, w.Dims.z, 2500, 1).Count;
+            double cold = sw.Elapsed.TotalMilliseconds;
+            sw.Restart();
+            for (int r = 0; r < 10; r++) Precipitation.Layout(w, 0, 0, w.Dims.x, w.Dims.z, 2500, 2 + r);
+            Console.WriteLine($"MEASURE_WEATHER {System.IO.Path.GetFileName(f)} region={w.Dims.x}x{w.Dims.y}x{w.Dims.z} drops={n} cold_ms={cold:F1} warm_ms={sw.Elapsed.TotalMilliseconds / 10:F2}");
+        }
+    }
+
     public static void MeasureBatches(string dir, string jar)
     {
         using var assets = jar != null ? new ZipAssets(jar) : null;
