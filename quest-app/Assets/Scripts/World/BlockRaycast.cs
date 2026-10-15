@@ -67,8 +67,16 @@ namespace TabletopCraft.World
         public static BlockHit Cast(WorldModel w, Vector3 origin, Vector3 dir, float maxDist) =>
             w == null ? new BlockHit() : Cast(w, origin, dir, maxDist, new Vector3(0, 0, 0), w.Dims);
 
-        /// <summary>Like Cast, limited to the box [boxMin, boxMax] (region-local blocks, e.g. the visible window).</summary>
-        public static BlockHit Cast(WorldModel w, Vector3 origin, Vector3 dir, float maxDist, Vector3 boxMin, Vector3 boxMax)
+        /// <summary>[hands] A still water or lava source: what an empty bucket's ray stops at (vanilla's SOURCE_ONLY clip).</summary>
+        public static bool FluidSource(string state)
+        {
+            string p = BlockRules.Path(state ?? "minecraft:air");
+            return (p == "water" || p == "lava") && FluidRules.IntProp(state, "level") == 0;
+        }
+
+        /// <summary>Like Cast, limited to the box [boxMin, boxMax] (region-local blocks, e.g. the visible window).
+        /// [hands] <paramref name="fluidSources"/>: fluid sources stop the ray too (the empty bucket).</summary>
+        public static BlockHit Cast(WorldModel w, Vector3 origin, Vector3 dir, float maxDist, Vector3 boxMin, Vector3 boxMax, bool fluidSources = false)
         {
             var none = new BlockHit();
             if (w == null || !w.Loaded || maxDist <= 0) return none;
@@ -123,7 +131,9 @@ namespace TabletopCraft.World
             int guard = w.Dims.x + w.Dims.y + w.Dims.z + 3;
             while (guard-- > 0)
             {
-                if (Targetable(w.ShapeOf(w.Grid[w.Index(cell.x, cell.y, cell.z)])))
+                ushort here = w.Grid[w.Index(cell.x, cell.y, cell.z)];
+                var shape = w.ShapeOf(here);
+                if (Targetable(shape) || (fluidSources && shape == BlockShape.Fluid && FluidSource(w.State(here))))
                 {
                     var adj = cell + Normal(face);
                     return new BlockHit { Hit = true, Block = cell, Face = face, Adjacent = adj, Distance = t, Point = origin + d * t,

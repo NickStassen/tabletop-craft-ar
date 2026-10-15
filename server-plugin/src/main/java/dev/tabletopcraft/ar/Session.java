@@ -66,6 +66,10 @@ public final class Session {
     public volatile boolean wantsActions;
     public final java.util.concurrent.atomic.AtomicLong actionBytes = new java.util.concurrent.atomic.AtomicLong();
     public BiomeGrid lastBiomes;           // biomes of the last snapshot (for a resend after bad_snapshot), null without biomes_v1
+    // [living] world_state (world_v1): time of day and weather; what this client got last and when (main thread).
+    public volatile boolean wantsWorld;
+    public WorldState worldStateSent;
+    public long worldStateTick;
     /** Granted edit_v1 in welcome.caps (block_edit, PROTOCOL.md 4.20); its rate limit, set together with it. */
     public volatile boolean canEdit;
     // [blocks] Block entity data (PROTOCOL.md 4.29, block_entities_v1): what this client holds per world chunk (position
@@ -80,6 +84,10 @@ public final class Session {
     public volatile boolean wantsChat, canCommand, wantsStatus;
     public volatile String operatorName = "Tabletop";
     public volatile EditLimiter chatLimiter, commandLimiter, completeLimiter;
+    // [hands] Using blocks, items and mobs (interact_v1, InteractService): granted at hello with its rate limits (interact
+    // and entity_op share one bucket; holds have their own; spawn eggs are counted per minute).
+    public volatile boolean canInteract;
+    public volatile EditLimiter interactLimiter, holdLimiter, spawnLimiter;
 
     /** RegionReader extras this session needs in its snapshots and diffs. */
     public int readExtras() { return (wantsLight ? RegionReader.LIGHT : 0) | (wantsBiomes ? RegionReader.BIOMES : 0); }

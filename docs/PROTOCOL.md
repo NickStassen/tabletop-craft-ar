@@ -69,6 +69,11 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 | `world_query` / `world_info` | C→S / S→C | a world's time, weather, difficulty, tick state and game rules (§4.28) |
 | `players_query` / `players_info` | C→S / S→C | every online player with health, food, game mode, ping (§4.28) |
 | `block_entities` | S→C | sign text, banner patterns, head skins, pot sherds, spawner mobs, beacon tiers, campfire/shelf/vault items, active conduits, as deltas (§4.29, needs `block_entities_v1`) |
+| `interact` | C→S | use a block with an empty hand, or an item on a block's face ("Using blocks and items", needs `interact_v1`) |
+| `item_registry` | S→C | the items the headset may use and the spawn eggs, once after `block_registry` ("Using blocks and items") |
+| `entity_op` | C→S | hit, kill, remove, use an item on, name, move, carry, freeze or light up a mob or player, or ask about it ("Acting on mobs") |
+| `entity_info` | S→C | what the server knows about one entity, the reply to `entity_op` `info` ("Acting on mobs") |
+| `world_state` | S→C | the region's world's time of day, rain and thunder, dimension: on change and about once a second ("World state: time and weather", needs `world_v1`) |
 
 ### 4.1 `hello` (C→S)
 
@@ -83,7 +88,7 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 - `client`: free string, e.g. `quest-app` or `fake-quest`.
 - `protocols`: protocol versions the client speaks. The server picks the highest one it also supports.
 - `token`: shared secret from the plugin `config.yml` (`auth.token`). If it's empty in config, auth is disabled (LAN dev only). A wrong token gets `error` `auth_failed` and then close code 4003.
-- `caps`: capability strings. v1 defines `rle_palette_v1` (required) and `avatar` (client will send poses). Optional extras: `light_v1` and `biomes_v1` (§4.5.1), `edit_v1` (§4.20), `entities_v1` (§4.21), `actions_v1` (§4.22), `chat_v1`, `command_v1` and `status_v1` (§4.26–4.28), `block_entities_v1` (§4.29); unknown caps are ignored.
+- `caps`: capability strings. v1 defines `rle_palette_v1` (required) and `avatar` (client will send poses). Optional extras: `light_v1` and `biomes_v1` (§4.5.1), `edit_v1` (§4.20), `entities_v1` (§4.21), `actions_v1` (§4.22), `chat_v1`, `command_v1` and `status_v1` (§4.26–4.28), `block_entities_v1` (§4.29), `interact_v1` ("Using blocks and items"), `world_v1` ("World state: time and weather"); unknown caps are ignored.
 - `operator_name` (optional string): the name the headset wants in game chat (§4.26). The server keeps `[A-Za-z0-9_]`, at most 16 characters.
 - The client MUST NOT send anything else before it gets `welcome`. The server closes with 4002 if `hello` doesn't arrive within 5 s.
 
@@ -310,10 +315,12 @@ Codes (strings, closed set in v1):
 | `skin_failed` | no | the skin lookup failed; the default skin is in use |
 | `internal` | no | server-side exception |
 | `edit_denied` | no | a `block_edit` was refused: no `edit_v1`, occupied cell, denied state (§4.20) |
-| `out_of_region` | no | a `block_edit` outside the session's region (§4.20) |
+| `out_of_region` | no | a `block_edit`, `interact` or `entity_op` outside the session's region (§4.20, "Using blocks and items") |
 | `bad_state` | no | a `block_edit` state that isn't a placeable block state (§4.20) |
 | `chat_denied` | no | a `chat_send` without `chat_v1`, or `chat.send` is off (§4.26) |
 | `command_denied` | no | a `command` or `command_complete` without `command_v1`, or a command the server's policy refuses (§4.27) |
+| `interact_denied` | no | an `interact` or `entity_op` without `interact_v1`, with a family switched off, or that does nothing there ("Using blocks and items") |
+| `not_found` | no | an `entity_op` whose entity is gone (died, despawned, unloaded) ("Acting on mobs") |
 
 `ref_seq` is the `seq` of the offending message, if any. When `fatal` is true, the sender closes the socket right after.
 
@@ -374,6 +381,8 @@ So the headset can find a server without typing its address (QUEST_SETUP.md Part
 - **v0.4.0: faster gliding (§4.17, §4.25), no field changes.** A glide `region_request` may move the origin by several whole sections at once; the default `max_region` is 352×384×352 and 25,165,824 blocks (a config still holding the 0.3.0 defaults is raised on start); a server reads only the sections of a moved or resized region that weren't in the old one (the delta lists exactly those). Fixture `region_changed.json` carries the new default limits.
 - **v0.4.0: chat, commands and server status (§4.26–4.28).** New caps `chat_v1`, `command_v1` (needs `auth.token` by default) and `status_v1`; messages `chat`, `chat_send`, `command`, `command_result`, `command_output`, `command_complete`, `command_suggestions`, `server_status`, `world_query`, `world_info`, `players_query`, `players_info`; `hello.operator_name`; `welcome.chat` and `welcome.commands`; errors `chat_denied`, `command_denied`. Fixtures `hello_control.json`, `welcome_control.json`, `chat*.json`, `command*.json`, `error_command_denied.json`, `server_status.json`, `world_query.json`, `world_info.json`, `players_query.json`, `players_info.json`.
 - **v0.4.0: block entities (§4.29).** New cap `block_entities_v1` and message `block_entities`: sign text, banner patterns, player head profiles, pot sherds, spawner mobs, beacon tiers, campfire, shelf and vault items and active conduits, as per-chunk deltas with `removed`, and `reset` on a session's first region and after a world change; config.yml `block-entities`. Fixtures `block_entities.json`, `block_entities_reset.json`.
+- **next version: using blocks, items and mobs ("Using blocks and items", "Acting on mobs").** New cap `interact_v1` (config.yml `interact`); messages `interact`, `item_registry` (after `block_registry`, `interact_v1` sessions only), `entity_op`, `entity_info`; `welcome.interact` (the switches); errors `interact_denied`, `not_found`; `out_of_region` also for `interact` and `entity_op`. Errors about an `interact` carry `op: "interact"` and `pos`, errors about an `entity_op` carry `op: "entity_op"`, `entity_op` and `uuid`. Fixtures `hello_interact.json`, `welcome_interact.json`, `interact.json`, `interact_item.json`, `item_registry.json`, `entity_op*.json`, `entity_info.json`, `error_interact_denied.json`, `error_not_found.json`.
+- **next version: a living world ("World state: time and weather", "Living entities").** New cap `world_v1` and message `world_state` (time, day time, rain, thunder, dimension, sky light; on change and about once a second; config.yml `world-state`). `entities` entries gain `leash` (the holder's id), `eye`, `chested`, `name_visible`, `xp`, `owner`, `carried`, `peek`, `attach` and `display` (display entity transformation, billboard, brightness, item context, text); text displays are listed; a snow golem without its pumpkin is `sheared`; a cushion has its `color`. Fixtures `world_state.json`, `entities_living.json`.
 
 ## 4.13–4.16 Runtime region control (v1, additive)
 
@@ -505,7 +514,7 @@ Sent with `player_positions` (10 Hz) to sessions with `entities_v1` whenever som
  ]}
 ```
 
-- **Which entities:** every entity whose bounding box touches the region box grown by `entities.margin` (default 2) blocks on each side, except players (they're in `player_positions`), the giant's own entities (scoreboard tag `tabletop_avatar`), markers, interactions, text displays and area effect clouds. At most `entities.max` (default 256); past that, the ones nearest the region centre win.
+- **Which entities:** every entity whose bounding box touches the region box grown by `entities.margin` (default 2) blocks on each side, except players (they're in `player_positions`), the giant's own entities (scoreboard tag `tabletop_avatar`), markers, interactions and area effect clouds (text displays are sent since the next version, "Living entities"). At most `entities.max` (default 256); past that, the ones nearest the region centre win.
 - **Deltas:** the server remembers what it sent each session. An entry for an `id` the client doesn't hold yet is a **full entry** (every field that applies; false/null/empty ones are left out). An entry for a known `id` lists only what changed: `pos` when it moved by at least 0.01 block on an axis, angles when they turned by at least 1°, any other field when it differs. A field that went away is sent as `false`, `null` or `[]`. `removed` lists ids that left the region or despawned. With `full: true` the list replaces the client's whole set: entities it doesn't name are gone, and its entries are full entries. The server sends one after every region change. A client that gets a delta for an `id` it doesn't hold ignores it.
 - **Fields** (all optional except `id`; a full entry always has `type` and `pos`):
   - `id` (int): the server's entity id, unique while the entity exists. `uuid` (string, full entries).
@@ -514,7 +523,7 @@ Sent with `player_positions` (10 Hz) to sessions with `entities_v1` whenever som
   - `yaw`, `pitch`: degrees, §3 convention. For living entities they are the **head**'s, and `body_yaw` is the body's. Other entities have no `body_yaw` (their yaw is the body's).
   - `on_ground` (bool), `vehicle` (id of what it rides), `passengers` (ids in seat order, players included; see `player_positions[].id`).
   - `size`: `[width, height]` of the bounding box in blocks. Clients draw a box of this size for types they don't know, and slimes scale with it.
-  - Looks: `baby`, `small` (armour stands), `sheared`, `tamed`, `angry`, `invisible` (bools). `variant`: the registry key path for vanilla ids (`temperate`, `pale`, `calico`, `desert`, `kebab`), `namespace:path` otherwise; enum values in lower case (horse colour `dark_brown`, rabbit `salt_and_pepper`, panda gene, axolotl, parrot, fox, llama colour, salmon size, pufferfish `small`/`medium`/`big`, tropical fish pattern). `color`: a dye colour (sheep wool, shulker, tropical fish body, a tamed wolf's or cat's collar). `markings`: horse markings (`white`, `whitefield`, `white_dots`, `black_dots`) or the tropical fish pattern colour. `profession`: villagers and zombie villagers; missing for none. `pose`: as for players, plus `sitting`; missing = standing. `name`: the custom name as plain text.
+  - Looks: `baby`, `small` (armour stands), `sheared`, `tamed`, `angry`, `invisible` (bools). `variant`: the registry key path for vanilla ids (`temperate`, `pale`, `calico`, `desert`, `kebab`), `namespace:path` otherwise; enum values in lower case (horse colour `dark_brown`, rabbit `salt_and_pepper`, panda gene, axolotl, parrot, fox, llama colour, salmon size, pufferfish `small`/`medium`/`big`, tropical fish pattern). `color`: a dye colour (sheep wool, shulker, tropical fish body, a tamed wolf's or cat's collar, a cushion). `markings`: horse markings (`white`, `whitefield`, `white_dots`, `black_dots`) or the tropical fish pattern colour. `profession`: villagers and zombie villagers; missing for none. `pose`: as for players, plus `sitting`; missing = standing. `name`: the custom name as plain text.
   - Armour stands: `arms` and `base_plate` (bools, like the other looks: left out when false) say whether the stand shows its arms and its base plate (a stand placed in survival has a base plate and no arms). `stand_pose`: the stand's pose in degrees, `{"head": [x, y, z], "body": [...], "left_arm": [...], "right_arm": [...], "left_leg": [...], "right_leg": [...]}` (0.1° steps, the game's `Rotations`); left out when every part has the game's default pose (head and body 0, left arm −10/0/−10, right arm −15/0/10, left leg −1/0/−1, right leg 1/0/1). The whole object is resent when any angle changes, and `null` clears it. Fixture `tools/fixtures/entities_armor_stand.json`.
   - Items and blocks: `item` (item key of a dropped item, an item frame's item or an item display's item), `count` (dropped stacks over 1), `block` (block state of a falling block or a block display), `facing` (`north`, `south`... of item frames, paintings and leash knots), `rotation` (an item frame's item rotation, 0–7).
   - `equipment`: as for players, plus `body` (horse or wolf armour, llama carpet) and `saddle`. The whole object is resent when any slot changes.
@@ -786,3 +795,191 @@ Entries by `kind`. An entry exists only when it has something to say:
 Client guidance (non-normative; Quest `World/BlockEntityRenderer.cs`): the terrain mesher leaves out the blocks vanilla draws entirely in code (chests, shulker boxes, heads, banners, bell bodies, pots, conduits, statues, end portals and gateways), and the block entity renderer draws them from the block state plus these entries, with the entity model layers in the user's `entity_models.json` (QUEST_SETUP.md Part E) and the pack's textures. Without that file it draws plain boxes.
 
 Fixtures and tests: `block_entities.json` (one entry of each kind and a removal), `block_entities_reset.json`. Java `BlockEntityJsonTest` and `FixtureTest` build them with the plugin's builders (plus per-chunk deltas and pruning), Python `test_tabletop_protocol.py` validates and mirrors them (`BlockEntityMirror`), C# `Tests~/BlockEntityTests.cs` applies them. Live: `tools/block_entities_check.py`.
+
+## Using blocks and items (next version; cap `interact_v1`)
+
+The headset uses blocks and items like a creative player's right click: it opens doors, flips levers, presses buttons, tunes note blocks, uses bone meal, buckets, flint and steel, axes, hoes, shovels, shears, spawn eggs and a lightning wand. Granted when config.yml `interact.enabled` (default true) and, with `interact.require-token`, `auth.token` is set; echoed in `welcome.caps`. `welcome` then carries the switches the client needs to colour its outline and fill its menus:
+
+```json
+"interact":{"iron_doors":true,"fire":true,"tnt":true,"fluids":true,"lightning":"real","entities":true,"harm_players":false,"attack_damage":5.0,"max_spawns_per_minute":60}
+```
+
+`lightning`: `real`, `effect` (flash and sound only) or `off`. The others are the config switches of the same names. Docs: QUEST_SETUP.md Part M (the controls), ARCHITECTURE.md §3.11.
+
+### `interact` (C→S)
+
+```json
+{"v":1,"type":"interact","seq":90,"t":1760370004000,"pos":[105,64,-35],"face":"north","hit":[0.5,0.7,0.0],"item":null,"sneak":false,"dir":[0.1,-0.5,0.86]}
+{"v":1,"type":"interact","seq":91,"t":1760370004100,"pos":[105,63,-35],"face":"up","item":"minecraft:bone_meal","sneak":false,"dir":[0.0,-0.9,0.44]}
+```
+
+| field | type | req | meaning |
+|---|---|---|---|
+| `pos` | int[3] | yes | the clicked block, world coordinates; must be inside the session's region (`out_of_region`) |
+| `face` | string | yes | the clicked face (`west`, `east`, `down`, `up`, `north`, `south`) |
+| `item` | string or null | no | null or missing: an empty hand uses the block. An item id: that item is used on the face; it must be in `item_registry` (any axe, hoe or shovel stands for its tool class) |
+| `hit` | number[3] | no | where the ray met the block, 0..1 inside it |
+| `sneak` | bool | no | informational: the client chose sneak (it then sends `item` or a `block_edit` instead of an empty-hand use) |
+| `dir` | number[3] | no | the ray direction, world axes (a fence gate swings away from it; a pumpkin carved from above faces back along it) |
+
+There is no acknowledgement and nothing is guessed on the client: results arrive as `block_update`, `entities` and `actions` (typically 100–200 ms). At most `interact.max-per-second` (10) `interact` and `entity_op` together per session; more get `rate_limited`. Protection plugins are not consulted, as for `block_edit`; changes outside the region are refused, but fire and lava can spread beyond it.
+
+**Empty hand** (the server's `InteractRules`, families by block id; the client mirrors them to colour its outline):
+
+| block | what happens |
+|---|---|
+| doors, trapdoors, fence gates | open or close, both halves of a door; iron doors and trapdoors only with `interact.iron-doors` (default true); a gate opened from the side it faces turns to swing away; the door's own sound (wooden, cherry, bamboo, nether wood, copper, iron) |
+| lever | flips; the block it hangs on also updates its neighbours, so redstone behind a wall sees the power (vanilla does this; see ARCHITECTURE.md §3.11) |
+| buttons | pressed, and released by the block's own tick after 20 ticks (stone, polished blackstone) or 30 (wood) |
+| note block, repeater, comparator, daylight detector | next note (and the note plays when the block above is air), next delay, compare/subtract (then the comparator refreshes its output), inverted |
+| bell, cake, candle cake, composter, jukebox | rings; one bite (the last one removes it); a lit candle cake goes out, an unlit one is eaten (cake with one bite, the candle drops); a full composter (level 8) empties and drops bone meal; a jukebox with a disc ejects it |
+| lit candles and campfires | go out |
+| chests, trapped chests, barrels, shulker boxes, hoppers, dispensers, droppers, furnaces, smokers, blast furnaces, brewing stands, crafters, copper chests; signs | a hook for the container view and the sign editor of a later version: refused for now (`interact_denied`) |
+| anything else | `interact_denied` ("nothing to use on stone"); the client places a block there instead |
+
+**Items** (`item`):
+
+| item | what happens |
+|---|---|
+| `minecraft:bone_meal` | vanilla bone meal (`Block#applyBoneMeal`): crops, saplings, grass, flowers, seagrass...; `interact_denied` when it does nothing |
+| `minecraft:flint_and_steel`, `minecraft:fire_charge` | TNT becomes a primed TNT (fuse 80 ticks; `interact.tnt`); an unlit candle, candle cake or campfire that isn't under water lights; otherwise fire (soul fire on soul sand or soil) in the face cell if it is air and fire can stay there (`interact.fire`) |
+| `minecraft:bucket` | picks up a water or lava source, powder snow, or a waterlogged block's water (`interact.fluids`). Clients aim it at fluid sources (vanilla's source-only ray) |
+| `minecraft:water_bucket`, `minecraft:lava_bucket`, `minecraft:powder_snow_bucket` | water waterlogs the clicked block when it can, else the fluid (or powder snow) goes into the face cell if that is air, a fluid or replaceable; water evaporates in an ultra-warm dimension (`interact.fluids`) |
+| any axe | strips a log, wood, stem, hyphae or bamboo block; scrapes copper one weathering stage back; unwaxes waxed copper (properties kept) |
+| `minecraft:honeycomb` | waxes copper |
+| any hoe | grass, dirt and paths to farmland, coarse dirt to dirt (air above, not from below); rooted dirt to dirt (drops hanging roots) |
+| any shovel | puts out a lit campfire; grass, dirt, podzol, coarse dirt, mycelium, rooted dirt to a path (air above) |
+| `minecraft:shears` | a pumpkin is carved (facing the clicked side, from above facing the headset; 4 seeds drop); kelp, weeping, twisting and cave vines stop growing |
+| a spawn egg | a spawner takes that mob; anywhere else the mob spawns in the clicked cell when it has no collision box (grass), else in the face cell; at most `interact.max-spawns-per-minute` (60) per session |
+| `tabletop:lightning` | a lightning bolt (`real`) or only its flash (`effect`) at the face cell (`interact.lightning`) |
+| name tag, lead, wheat, carrots, seeds | only on mobs (`entity_op`); on a block `interact_denied` |
+
+Refusals are `error` with `ref_seq`, `op: "interact"` and `pos`, the message readable as it is ("the axe does nothing to stone", "fire is off on this server (interact.fire)"). Fixture `error_interact_denied.json`.
+
+### `item_registry` (S→C)
+
+Sent once to `interact_v1` sessions, after `block_registry` and before the first `chunk_snapshot`:
+
+```json
+{"v":1,"type":"item_registry","seq":2,"t":1760370000014,"count":21,
+ "categories":[
+  {"id":"use","label":"Use","items":["minecraft:flint_and_steel","minecraft:fire_charge","minecraft:bone_meal","minecraft:bucket","minecraft:water_bucket","minecraft:lava_bucket","minecraft:powder_snow_bucket","minecraft:iron_axe","minecraft:honeycomb","minecraft:iron_hoe","minecraft:iron_shovel","minecraft:shears","minecraft:name_tag","minecraft:lead","minecraft:wheat","minecraft:carrot","minecraft:wheat_seeds","tabletop:lightning"]},
+  {"id":"spawn_eggs","label":"Spawn Eggs","items":["minecraft:cow_spawn_egg","minecraft:pig_spawn_egg","minecraft:sheep_spawn_egg"]}]}
+```
+
+- `use`: one item per tool class the server implements, in menu order, without the families that are switched off (fire and TNT: flint and steel and fire charges; fluids: the buckets; entities: name tag, lead, foods; lightning: the wand). `tabletop:lightning` is a virtual item (clients draw it with the lightning rod's icon).
+- `spawn_eggs`: the eggs of every spawnable entity type the region's world enables (feature flags), minus `interact.deny-spawn` (default the wither and the ender dragon), sorted by id. 86 on Paper 26.3.
+- `count`: items in both lists.
+
+### Acting on mobs: `entity_op` (C→S) and `entity_info` (S→C)
+
+With `interact.entities` (default true) the headset acts on the entities it sees in `entities` and `player_positions`, named by their `uuid`:
+
+```json
+{"v":1,"type":"entity_op","seq":95,"t":1760370005000,"uuid":"3c1e5f7a-2b4d-4e6f-8a9b-0c1d2e3f4a5b","op":"attack","dir":[0.1,-0.4,0.9]}
+{"v":1,"type":"entity_op","seq":96,"t":1760370005100,"uuid":"3c1e…","op":"move","to":[110.5,64.0,-30.5],"yaw":90.0}
+{"v":1,"type":"entity_op","seq":97,"t":1760370005200,"uuid":"3c1e…","op":"use","item":"minecraft:shears"}
+{"v":1,"type":"entity_op","seq":98,"t":1760370005300,"uuid":"3c1e…","op":"name","text":"Rex"}
+```
+
+The entity must exist (else `not_found`) and stand inside the region grown by `entities.margin` (else `out_of_region`); a `to` must be inside the region. The giant's own entities are never found.
+
+| `op` | fields | what happens |
+|---|---|---|
+| `attack` | `dir` (optional, the ray) | `interact.attack-damage` (5) generic damage and a knockback along `dir`; the red flash comes back as an `actions` `hurt`. Players only with `interact.harm-players` (default false) |
+| `kill` | | a living entity dies (`/kill`'s damage type); boats, minecarts, items and frames are removed. Players only with `harm-players` |
+| `remove` | | the entity is removed without dying (not players) |
+| `use` | `item` | shears shear a sheep, mooshroom, snow golem...; a food the animal breeds with puts it in love (a baby grows up faster); a spawn egg of the same mob spawns a baby, of another mob that mob; a lead ties the mob to the nearest fence within 7 blocks (a knot), or unties it; `tabletop:lightning` strikes it |
+| `name` | `text` | the mob's name (formatting codes and control characters removed, at most 64 characters; empty removes it); a named mob no longer despawns. Not players |
+| `move` | `to`, `yaw` (optional) | teleport there (players by `PLUGIN` cause); it leaves its vehicle, passengers come along |
+| `hold` | `to` | carried: gravity and AI off, teleported to `to` (about 10 a second while the headset carries it). Restored on `drop`, when the session closes, after 3 s without a `hold` or `drop`, and when the plugin stops. Not players |
+| `drop` | `to` (optional) | put down at `to` (or where it hangs) with gravity and AI back |
+| `freeze`, `unfreeze` | | `Mob#setAware`: it stands still and doesn't react. It is saved with the mob, so the plugin lists frozen mobs in `plugins/TabletopCraftAR/frozen.txt` and `/tabletop unfreeze-all` wakes them (unloaded ones when their chunk loads) |
+| `glow` | | toggles the glowing outline |
+| `info` | | answered with `entity_info` |
+
+Refusals are `error` with `ref_seq`, `op: "entity_op"`, `entity_op` (the op) and `uuid`. `hold` and `drop` have a rate limit of their own (20 a second); the other ops share the `interact` limit.
+
+**`entity_info` (S→C)**:
+
+```json
+{"v":1,"type":"entity_info","seq":120,"t":1760370005310,"ref_seq":99,"uuid":"3c1e…","id":104,"entity_type":"minecraft:wolf","name":"Rex",
+ "pos":[108.7,64.0,-28.0],"health":[14.0,20.0],"owner":"Alex","age":-2400,"baby":true,"ai":true,"frozen":false,"glowing":false}
+```
+
+`entity_type` (not `type`: that is the envelope's), `id` (as in `entities`), `pos` (feet, world), `name` (a player's name or the custom name), `health` ([current, max], living entities), `owner` (tamed animals), `age` (ageable mobs: negative = ticks until grown up), `baby`, `ai` (false while held or with NoAI), `frozen` (mobs: not aware), `glowing`, and when true `held`, `leashed`, `player`; `vehicle` (the type it rides) and `passengers` (count) when there are any.
+
+**Client guidance** (non-normative; the Quest's `World/UseRules.cs`, `World/EntityRaycast.cs`, `XR/BlockEditMode.cs`, `XR/EntityCard.cs`): the left trigger follows vanilla's right-click order: a mob the ray hits first (an item is used on it, else `info` opens a card), a block the empty hand can use, the selected item on the face, else a `block_edit` place; holding the left grip (sneak) skips the first two. The ray hits mobs and players as their eased boxes (at least half a block, players 0.6 × 1.8 or 1.5 sneaking), and the nearer of a mob and a block wins. Containers and signs call the client's container-view and sign-editor hooks, which a later version fills. Nothing is guessed locally; refusals become toasts.
+
+### Fixtures and tests
+
+Fixtures `hello_interact.json`, `welcome_interact.json`, `interact.json`, `interact_item.json`, `item_registry.json`, `entity_op.json`, `entity_op_move.json`, `entity_op_use.json`, `entity_op_name.json`, `entity_info.json`, `error_interact_denied.json`, `error_not_found.json`. Java `InteractRulesTest` (the whole table on state strings) and `InteractFixtureTest` (parsers and builders against the fixtures), Python `test_tabletop_protocol.py` (`validate_interact`), C# `Tests~/InteractTests.cs` (parsing, the right-click order, the entity ray, the menu tabs, the info card). Live: `tools/interact_check.py` (41 checks on a flat world) and `Tests~ --live-interact URL` (the app's own classes).
+
+## World state: time and weather (next version; cap `world_v1`)
+
+So the headset can light the miniature like the game does at night, in rain and in thunderstorms, and draw rain, snow and lightning. A client lists `world_v1` in `hello.caps`; the server grants it unless config.yml `world-state.enabled` is false and lists it in `welcome.caps`.
+
+```json
+{"v":1,"type":"world_state","seq":7,"t":1760370001000,"world":"world","dimension":"overworld","skylight":true,
+ "time":114000,"day_time":18000,"rain":1,"thunder":1}
+```
+
+| field | type | meaning |
+|---|---|---|
+| `world` | string | the world of the session's region |
+| `dimension` | string | `overworld`, `the_nether`, `the_end` or `custom` (`World#getEnvironment`) |
+| `skylight` | bool | the dimension has sky light |
+| `time` | int | total ticks of the world's clock (`World#getFullTime`): the day count and the moon phase |
+| `day_time` | int | 0–23999 (`World#getTime`): what the game's day timeline is keyed on (6000 noon, 18000 midnight) |
+| `rain`, `thunder` | 0 or 1 | it rains (or snows), a thunderstorm; `thunder` only while `rain` |
+| `fixed_time` | bool, optional | the clock doesn't run (the Nether and the End); missing = false |
+| `ticking` | bool, optional | false while the clock is stopped (the daylight cycle game rule is off, or the server's tick is frozen); missing = true |
+
+**When.** Right after the session's region is known, whenever the world, the dimension, the weather or the clock mode changes or the clock jumps (`/time set`: more than 40 ticks off what the client predicts), and otherwise about once a second (every 20 ticks). Between messages the client runs the clock at 20 ticks a second unless `fixed_time` or `ticking: false`. About 150 bytes a second.
+
+Client guidance (non-normative; Quest `World/DayLight.cs`, `World/WorldLight.cs`, `World/WeatherRenderer.cs`): the light follows 26.3's lightmap inputs: the overworld's `sky_light_factor` and `sky_light_color` timeline (data/minecraft/timeline/day.json: factor 1 from tick 730 to 11270, 0.24 from 13140 to 22860, linear between; colour white to #7a7aff), the weather layers (rain moves the factor 31.25% and thunder 52.7% of the way to 0.24 and the colour toward #7a7aff), a lightning flash (factor 1 for 2 ticks), and the dimension's ambient colour and sky factor (Nether #302821 and 0, End #3f473f and 0); rain and thunder fade by 0.01 a tick like the game's rain levels. Rain or snow falls per column by the biome at the surface (none in biomes without precipitation; snow below 0.15 of the height-adjusted temperature), down to the highest block that blocks motion. The `lightning_bolt` entity (§4.21) is drawn with the game's bolt geometry and flashes the sky.
+
+Fixture `world_state.json`. Java `LivingTest` (message and send rule), Python `test_world_state_fixture_and_rules`, C# `Tests~/LivingTests.cs` (world clock, lightmap). Live: `tools/living_check.py`.
+
+## Living entities: leads, gear, displays (next version; `entities_v1`)
+
+More fields of `entities` entries (§4.21), with the same delta rules (left out when not set in full entries; a field that went away is sent as `null`, `false` or 0):
+
+| field | type | meaning |
+|---|---|---|
+| `leash` | int | the entity id of whoever holds this entity's lead: a player (`player_positions[].id`), a leash knot, a mob, a happy ghast holding a boat |
+| `eye` | number | eye height in blocks, living entities (the game's lead offsets and rope hold points use it); 2 decimals |
+| `chested` | bool | a donkey, mule or llama carries a chest |
+| `name_visible` | bool | the custom `name` shows over the entity all the time (CustomNameVisible) |
+| `xp` | int | an experience orb's value (its icon) |
+| `owner` | int | a fishing bobber's player (the line goes to their rod hand) |
+| `carried` | string | the block state an enderman carries |
+| `peek` | number | how far a shulker's lid is open, 0..1; resent when it moved by 0.05 or opened or closed fully |
+| `attach` | string | the face a shulker sticks to, when not `down` (`up`, `north`...) |
+| `display` | object | display entities, below; the whole object is resent when anything in it changes |
+
+- Gear stays in `equipment`: `body` (horse, wolf and nautilus armour, a llama's carpet, a happy ghast's harness) and `saddle`. A tamed wolf's or cat's `color` is its collar.
+- A snow golem without its pumpkin is `sheared`. A cushion has its `color`.
+- Text displays are listed now (they weren't before); `marker`, `interaction` and `area_effect_cloud` still aren't.
+
+**`display`** (block, item and text displays), from `Display#getTransformation` and the display's state:
+
+```json
+"display":{"translation":[0.0,0.5,0.0],"left_rotation":[0.0,0.0,0.3827,0.9239],"scale":[2.0,2.0,2.0],
+           "right_rotation":[0.0,0.0,0.0,1.0],"billboard":"fixed","brightness":[15,15],"item_transform":"fixed"}
+```
+
+| field | meaning |
+|---|---|
+| `translation`, `scale` | 3 numbers (3 decimals), game frame |
+| `left_rotation`, `right_rotation` | quaternions `[x, y, z, w]` (4 decimals), game frame; the transformation is translation × left × scale × right |
+| `billboard` | `fixed`, `vertical`, `horizontal` or `center` |
+| `brightness` | `[block, sky]` light override, missing = the world's light at the entity |
+| `item_transform` | item displays: `none`, `thirdperson_lefthand`, `thirdperson_righthand`, `firstperson_lefthand`, `firstperson_righthand`, `head`, `gui`, `ground`, `fixed` |
+| `text`, `line_width`, `background`, `text_opacity`, `align` | text displays: plain text (lines split by `\n`), the line width in font pixels, the ARGB background colour, opacity 0–255, `center`/`left`/`right`; `shadow`, `see_through`, `default_background` when set |
+
+The block display's block is its `block`, the item display's item its `item`, as before.
+
+Client guidance (non-normative; Quest `World/LivingLooks.cs`, `EntityFigure.Living.cs`, `LeashRenderer.cs`): draw a lead as the game's LeashFeatureRenderer does (24 steps, two crossed ribbons, alternating browns, sagging) from the entity's leash offset to the holder's rope hold point every frame; gear as the game's equipment layers with the 26.x `assets/minecraft/equipment/*.json` textures; displays with orientation (billboard) × translation × left rotation × scale × right rotation, no bob or spin, a block display's block with its corner at the entity, an item display's item turned 180° about Y.
+
+Fixture `entities_living.json` (a leashed wolf and its knot, a horse in armour with a saddle, a chested llama with a carpet, an orb, a bobber, an enderman with a block, a shulker on a wall, text, item and block displays, a lightning bolt, a snow golem without its pumpkin, a villager with a visible name). Java `LivingTest`, Python `test_entities_living_fields`, C# `Tests~/LivingEntityTests.cs`. Live: `tools/living_check.py`.

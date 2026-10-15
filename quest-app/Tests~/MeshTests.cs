@@ -4,8 +4,8 @@
 // TabletopRenderer worker does (GreedyMesher.Build + BuildSpecials + SectionMesh.From) on one thread and prints the
 // time per stage and per section kind. With --jar the faces and models come from the client jar (PackFaces, as on the
 // headset with pack.zip), else from a cached flat-colour table (like the atlas without a pack: one lookup per state).
-// --hash writes one line per section with a hash of the mesher output (vertices, UVs, colours and the three index
-// lists, in order), so two builds of the mesher can be compared section by section (identical output).
+// --hash writes one line per section with a hash of the mesher output (vertices, UVs, colours, the three index lists
+// and the light codes, in order), so two builds of the mesher can be compared section by section (identical output).
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -56,6 +56,7 @@ static class MeshTests
         Add((uint)m.Opaque.Count); foreach (var i in m.Opaque) Add((uint)i);
         Add((uint)m.Transparent.Count); foreach (var i in m.Transparent) Add((uint)i);
         Add((uint)m.WaterBack.Count); foreach (var i in m.WaterBack) Add((uint)i);
+        Add((uint)m.Light.Count); foreach (var l in m.Light) Add(l);   // [living] light codes
         return h;
     }
 

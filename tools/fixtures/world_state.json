@@ -1,0 +1,13 @@
+{
+ "v": 1,
+ "type": "world_state",
+ "seq": 7,
+ "t": 1760370001000,
+ "world": "world",
+ "dimension": "overworld",
+ "skylight": true,
+ "time": 114000,
+ "day_time": 18000,
+ "rain": 1,
+ "thunder": 1
+}

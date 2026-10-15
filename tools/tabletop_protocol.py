@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -86,6 +87,27 @@ REQUIRED.update(CONTROL_REQUIRED)
 ERROR_CODES |= {"chat_denied", "command_denied"}
 WEATHERS = ("clear", "rain", "thunder")
 
+# [hands] Using blocks, items and mobs (PROTOCOL.md "Using blocks and items", "Acting on mobs"; cap interact_v1).
+CAP_INTERACT = "interact_v1"
+ENTITY_OPS = ("attack", "kill", "remove", "use", "name", "move", "hold", "drop", "freeze", "unfreeze", "glow", "info")
+ITEM_CATEGORIES = ("use", "spawn_eggs")
+LIGHTNING_ITEM = "tabletop:lightning"
+INTERACT_REQUIRED = {
+    "interact": ["pos", "face"],
+    "item_registry": ["count", "categories"],
+    "entity_op": ["uuid", "op"],
+    "entity_info": ["uuid", "id", "entity_type", "pos"],
+}
+REQUIRED.update(INTERACT_REQUIRED)
+ERROR_CODES |= {"interact_denied", "not_found"}
+_ID = re.compile(r"^[a-z0-9_.\-]+:[a-z0-9_./\-]+$")
+
+# [living] Time of day and weather (PROTOCOL.md "World state: time and weather"), display entities.
+CAP_WORLD = "world_v1"
+REQUIRED["world_state"] = ["world", "dimension", "skylight", "time", "day_time", "rain", "thunder"]
+DIMENSIONS = ("overworld", "the_nether", "the_end", "custom")
+BILLBOARDS = ("fixed", "vertical", "horizontal", "center")
+
 
 def validate(msg: dict) -> None:
     t = msg.get("type")
@@ -137,6 +159,7 @@ def validate(msg: dict) -> None:
                 raise ValueError(f"entities entry {e['id']} pos must have 3 numbers")
             _check_equipment(e.get("equipment"))
             _check_stand_pose(e.get("stand_pose"))
+            _check_living(e)   # [living]
         if not all(isinstance(i, int) for i in msg.get("removed") or []):
             raise ValueError("entities removed must be a list of ids")
     if t == "actions":
@@ -162,6 +185,83 @@ def validate(msg: dict) -> None:
         validate_block_entities(msg)
     if t in CONTROL_REQUIRED:
         validate_control(msg)   # [talk]
+    if t in INTERACT_REQUIRED:
+        validate_interact(msg)   # [hands]
+    if t == "welcome" and "interact" in msg and not isinstance(msg["interact"], dict):
+        raise ValueError("welcome interact must be an object")
+    if t == "world_state":
+        validate_world_state(msg)   # [living]
+
+
+def _vec(v) -> bool:
+    return isinstance(v, list) and len(v) == 3 and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in v)
+
+
+def validate_interact(msg: dict) -> None:
+    """[hands] interact, item_registry, entity_op and entity_info."""
+    t = msg["type"]
+    if t == "interact":
+        if not _ints(msg["pos"], 3):
+            raise ValueError("interact pos must be [x, y, z] integers")
+        if msg["face"] not in FACES:
+            raise ValueError(f"interact face must be one of {FACES}")
+        item = msg.get("item")
+        if item is not None and not (isinstance(item, str) and _ID.match(item)):
+            raise ValueError(f"interact item must be a namespaced item id, got {item!r}")
+        hit = msg.get("hit")
+        if hit is not None and not (_vec(hit) and all(-0.01 <= v <= 1.01 for v in hit)):
+            raise ValueError("interact hit must be [x, y, z] inside the block")
+        if msg.get("dir") is not None and not _vec(msg["dir"]):
+            raise ValueError("interact dir must be [x, y, z]")
+    elif t == "item_registry":
+        cats = msg["categories"]
+        if [c.get("id") for c in cats] != list(ITEM_CATEGORIES):
+            raise ValueError(f"item_registry categories must be {ITEM_CATEGORIES}")
+        seen: set[str] = set()
+        for c in cats:
+            if not _strings(c.get("items")) or not all(_ID.match(i) for i in c["items"]):
+                raise ValueError(f"item_registry {c['id']} needs a list of item ids")
+            for i in c["items"]:
+                if i in seen:
+                    raise ValueError(f"item_registry lists {i} twice")
+                seen.add(i)
+        if not all(i.endswith("_spawn_egg") for i in cats[1]["items"]):
+            raise ValueError("item_registry spawn_eggs must only list spawn eggs")
+        if msg["count"] != len(seen):
+            raise ValueError(f"item_registry count {msg['count']} but {len(seen)} items listed")
+    elif t == "entity_op":
+        if not isinstance(msg["uuid"], str) or len(msg["uuid"]) != 36:
+            raise ValueError("entity_op uuid must be a UUID string")
+        op = msg["op"]
+        if op not in ENTITY_OPS:
+            raise ValueError(f"entity_op op must be one of {ENTITY_OPS}")
+        if op in ("move", "hold") and not _vec(msg.get("to")):
+            raise ValueError(f"entity_op {op} needs to [x, y, z]")
+        if op == "name" and not isinstance(msg.get("text"), str):
+            raise ValueError("entity_op name needs text")
+        if msg.get("item") is not None and not (isinstance(msg["item"], str) and _ID.match(msg["item"])):
+            raise ValueError("entity_op item must be a namespaced item id")
+    elif t == "entity_info":
+        if not _vec(msg["pos"]) or not isinstance(msg["entity_type"], str):
+            raise ValueError("entity_info needs entity_type and pos [x, y, z]")
+        h = msg.get("health")
+        if h is not None and not (isinstance(h, list) and len(h) == 2):
+            raise ValueError("entity_info health must be [health, max]")
+
+
+def interact(pos, face: str, item: str | None = None, sneak: bool = False, hit=None, dir=None) -> dict:
+    """[hands] interact payload; wrap it with Envelope.wrap("interact", **payload)."""
+    d: dict = {"pos": [int(v) for v in pos], "face": face, "item": item, "sneak": sneak}
+    if hit is not None:
+        d["hit"] = [float(v) for v in hit]
+    if dir is not None:
+        d["dir"] = [float(v) for v in dir]
+    return d
+
+
+def entity_op(uuid: str, op: str, **fields) -> dict:
+    """[hands] entity_op payload (to, yaw, dir, item, text as keyword fields)."""
+    return {"uuid": uuid, "op": op, **fields}
 
 
 def _int_pos(p) -> bool:
@@ -329,6 +429,48 @@ def _check_stand_pose(pose: dict | None) -> None:
 def _check_equipment(eq: dict | None) -> None:
     if eq is not None and not set(eq) <= EQUIPMENT_SLOTS:
         raise ValueError(f"unknown equipment slots {sorted(set(eq) - EQUIPMENT_SLOTS)}")
+
+
+def _numbers(v, n: int) -> bool:
+    return isinstance(v, list) and len(v) == n and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in v)
+
+
+def _check_living(e: dict) -> None:
+    """[living] Leads, gear and looks of an entities entry (PROTOCOL.md "Living entities")."""
+    for k in ("leash", "owner"):
+        if e.get(k) is not None and not (isinstance(e[k], int) and not isinstance(e[k], bool)):
+            raise ValueError(f"entities {k} must be an entity id, got {e[k]}")
+    if "peek" in e and not 0 <= e["peek"] <= 1:
+        raise ValueError(f"shulker peek must be 0..1, got {e['peek']}")
+    if e.get("attach") is not None and e["attach"] not in FACES:
+        raise ValueError(f"shulker attach must be one of {FACES}, got {e['attach']}")
+    if "xp" in e and not (isinstance(e["xp"], int) and e["xp"] >= 0):
+        raise ValueError(f"experience orb xp must be a non-negative int, got {e['xp']}")
+    d = e.get("display")
+    if d is None:
+        return
+    for k, n in (("translation", 3), ("left_rotation", 4), ("scale", 3), ("right_rotation", 4)):
+        if not _numbers(d.get(k), n):
+            raise ValueError(f"display {k} needs {n} numbers, got {d.get(k)}")
+    if d.get("billboard") not in BILLBOARDS:
+        raise ValueError(f"display billboard must be one of {BILLBOARDS}, got {d.get('billboard')}")
+    if "brightness" in d and not (_ints(d["brightness"], 2) and all(0 <= v <= 15 for v in d["brightness"])):
+        raise ValueError(f"display brightness must be [block, sky] 0..15, got {d['brightness']}")
+    if "text" in d:
+        if not isinstance(d["text"], str) or d.get("align") not in ("center", "left", "right"):
+            raise ValueError("text display needs text and align center|left|right")
+        if not (isinstance(d.get("line_width"), int) and isinstance(d.get("background"), int) and 0 <= d.get("text_opacity", -1) <= 255):
+            raise ValueError("text display needs line_width, background (ARGB) and text_opacity 0..255")
+
+
+def validate_world_state(msg: dict) -> None:
+    """[living] world_state (PROTOCOL.md "World state: time and weather")."""
+    if msg["dimension"] not in DIMENSIONS:
+        raise ValueError(f"world_state dimension must be one of {DIMENSIONS}, got {msg['dimension']}")
+    if not (isinstance(msg["day_time"], int) and 0 <= msg["day_time"] < 24000 and isinstance(msg["time"], int)):
+        raise ValueError("world_state time must be an int and day_time 0..23999")
+    if msg["rain"] not in (0, 1) or msg["thunder"] not in (0, 1) or (msg["thunder"] and not msg["rain"]):
+        raise ValueError("world_state rain and thunder are 0 or 1, and thunder only while it rains")
 
 
 def validate_block_edit(msg: dict) -> None:

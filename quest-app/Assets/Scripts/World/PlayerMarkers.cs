@@ -35,6 +35,23 @@ namespace TabletopCraft.World
             public bool Sneaking;
             public string SkinUrl;                 // URL the figure wears (or is downloading)
             public readonly PlayerExtras Extras = new PlayerExtras();   // [entities]
+            public string Name;                    // [hands] for the aim label
+            public float BodyYaw;                                         // [living] as shown (leads and fishing lines)
+        }
+
+        /// <summary>[living] Where a player (by entity id) holds a lead (Player.getRopeHoldPosition) or, with rod, the
+        /// fishing rod's line (FishingHookRenderer.getPlayerHandPos), in world coordinates; false if not on the table.</summary>
+        public bool Hold(int id, bool rod, out Vector3 world)
+        {
+            world = default;
+            if (id < 0) return false;
+            foreach (var m in _markers.Values)
+            {
+                if (m.Extras.Id != id) continue;
+                world = rod ? Leash.RodHand(m.Shown, m.BodyYaw, m.Sneaking) : Leash.PlayerHold(m.Shown, m.BodyYaw, m.Sneaking);
+                return true;
+            }
+            return false;
         }
 
         readonly Dictionary<string, Marker> _markers = new Dictionary<string, Marker>();
@@ -68,7 +85,7 @@ namespace TabletopCraft.World
                     m.Fig = new PlayerFigure(transform, p.Name, SkinMaterial, tex, slim);
                     _markers[p.Uuid] = m;
                 }
-                m.Target = p.Pos; m.TargetYaw = p.Yaw; m.TargetPitch = p.Pitch; m.Sneaking = p.Sneaking;
+                m.Target = p.Pos; m.TargetYaw = p.Yaw; m.TargetPitch = p.Pitch; m.Sneaking = p.Sneaking; m.Name = p.Name;
                 m.Extras.Update(p, m.Fig, Textures);   // [entities] vehicle, pose, held items, armour
                 if (_skinInfo.TryGetValue(p.Uuid, out var s) && s.url != m.SkinUrl && !string.IsNullOrEmpty(s.url))
                 {
@@ -88,6 +105,17 @@ namespace TabletopCraft.World
         {
             foreach (var m in _markers.Values) if (m.Extras.Id == a.Id && a.Id >= 0) { m.Extras.Act(a); return true; }
             return false;
+        }
+
+        /// <summary>[hands] The players as drawn (eased feet positions; 0.6 x 1.8 blocks, 1.5 sneaking), for aiming at them.</summary>
+        public void Targets(List<EntityTarget> into)
+        {
+            foreach (var kv in _markers)
+            {
+                var m = kv.Value;
+                into.Add(new EntityTarget { Uuid = kv.Key, Id = m.Extras.Id, Player = true, Name = m.Name, Type = "minecraft:player", Pos = m.Shown,
+                                            Width = EntityRaycast.PlayerWidth, Height = m.Sneaking ? EntityRaycast.SneakHeight : EntityRaycast.PlayerHeight });
+            }
         }
 
         /// <summary>[talk] A player's name label (chat bubbles sit above it), or null when the figure isn't on the table.</summary>
@@ -119,6 +147,7 @@ namespace TabletopCraft.World
                 if ((m.Target - m.Shown).sqrMagnitude > 16f * 16f) { m.Shown = m.Target; d = Vector3.zero; }
                 var pose = m.Anim.Step(dt, d.x, d.z, m.Yaw, m.Pitch, m.Sneaking);
                 m.Extras.AdjustPose(ref pose, dt, m.Pitch);   // [entities] riding/holding arms, swing
+                m.BodyYaw = pose.BodyYaw;   // [living]
                 var root = m.Fig.Root.transform;
                 root.localPosition = ToLocal(m.Shown);
                 // Minecraft yaw 0 faces +Z (south) = Unity -Z after the mirror (Euler Y 180); yaw 90 faces west = Unity -X.

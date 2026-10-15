@@ -18,7 +18,8 @@ namespace TabletopCraft.Net
                 ["type"] = "hello", ["client"] = ClientName, ["client_version"] = ClientVersion,
                 ["protocols"] = new List<object> { Version }, ["token"] = token ?? "",
                 ["caps"] = new List<object> { "rle_palette_v1", "avatar", CapLight, CapBiomes, SectionedSnapshot.Cap, CapEdit, CapEntities, CapActions,
-                                              ControlProtocol.CapChat, ControlProtocol.CapCommand, ControlProtocol.CapStatus, CapBlockEntities },   // [talk], [blocks]
+                                              ControlProtocol.CapChat, ControlProtocol.CapCommand, ControlProtocol.CapStatus, CapBlockEntities,   // [talk], [blocks]
+                                              InteractProtocol.Cap, CapWorld },   // [hands], [living]
             };
             if (!string.IsNullOrEmpty(OperatorName)) d["operator_name"] = OperatorName;   // [talk] the name in chat (PROTOCOL.md 4.26)
             return d;
@@ -26,6 +27,9 @@ namespace TabletopCraft.Net
 
         /// <summary>[talk] tabletop.json operator_name, else skin_player: the name Java players see in chat (the server sanitises it).</summary>
         public static string OperatorName;
+
+        /// <summary>[living] Time of day and weather (world_state, PROTOCOL.md "World state: time and weather"; World/DayLight.cs).</summary>
+        public const string CapWorld = "world_v1";
 
         /// <summary>Optional snapshot extras (PROTOCOL.md 4.4.1): per-block light and 4x4x4 biomes.</summary>
         public const string CapLight = "light_v1", CapBiomes = "biomes_v1";

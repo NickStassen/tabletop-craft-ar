@@ -195,9 +195,12 @@ static class Program
         int entSceneIdx = Array.IndexOf(args, "--entity-scene");
         if (entSceneIdx >= 0 && JarPath(args) != null && EntityModels.Loaded) EntityScene.Run(JarPath(args), args[entSceneIdx + 1]);
         else if (entSceneIdx >= 0) Console.WriteLine("SKIP --entity-scene: needs --jar and --entity-models");
+        int livingSceneIdx = Array.IndexOf(args, "--living-scene");   // [living] gear and the new entity types
+        if (livingSceneIdx >= 0 && JarPath(args) != null && EntityModels.Loaded) EntityScene.RunLiving(JarPath(args), args[livingSceneIdx + 1]);
         EditTests.Run(Check, Fixture);  // block editing: DDA targeting, Z mirror, optimistic edits (EditTests.cs)
         MenuTests.Run(Check, Fixture, JarPath(args), args);   // [menu] block registry, menu model, hotbar, HUD toasts, icons (MenuTests.cs)
         ControlTests.Run(Check, Fixture);   // [talk] chat, console, operator panel, status (ControlTests.cs)
+        InteractTests.Run(Check, Fixture);  // [hands] using blocks, items and mobs (InteractTests.cs)
         EyeTests.Run(Check);            // eye in water/lava/powder snow/blocks, water inside faces (EyeTests.cs)
         ComfortTests.Run(Check, Fixture, args);   // [comfort] keyboard, Info tab, prefs.json, discovery, link health (ComfortTests.cs)
 
@@ -206,6 +209,7 @@ static class Program
         if (jar != null) ModelTests(jar);
         else Console.WriteLine("SKIP block model tests: set MC_CLIENT_JAR or pass --jar PATH (a client jar or resource pack zip)");
         RenderTests.Run(Check, jar);   // 0.3.1 vanilla look: randomness, offsets, random UV tables (RenderTests.cs)
+        LivingTests.Run(Check, Fixture, jar);   // [living] time of day, weather, leads, bolts, rain, displays, gear (LivingTests.cs)
 
         int sceneIdx = Array.IndexOf(args, "--scene");
         if (sceneIdx >= 0 && jar != null) SceneDump.Run(jar, args[sceneIdx + 1], args);
@@ -228,6 +232,8 @@ static class Program
         if (liveIdx >= 0) Live(args[liveIdx + 1]);
         int liveEditIdx = Array.IndexOf(args, "--live-edit");
         if (liveEditIdx >= 0) EditTests.Live(args[liveEditIdx + 1], Check);
+        int liveInteractIdx = Array.IndexOf(args, "--live-interact");   // [hands] --live-interact URL (a flat world)
+        if (liveInteractIdx >= 0) InteractTests.Live(args[liveInteractIdx + 1], Check);
         int liveControlIdx = Array.IndexOf(args, "--live-control");   // [talk] --live-control URL TOKEN
         if (liveControlIdx >= 0) ControlTests.Live(args[liveControlIdx + 1], liveControlIdx + 2 < args.Length ? args[liveControlIdx + 2] : "", Check);
         Console.WriteLine(fails == 0 ? "ALL PASS" : $"{fails} FAILED");

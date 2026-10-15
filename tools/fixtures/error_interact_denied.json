@@ -1,0 +1,16 @@
+{
+ "v": 1,
+ "type": "error",
+ "seq": 121,
+ "t": 1760370004120,
+ "code": "interact_denied",
+ "message": "the axe does nothing to stone",
+ "ref_seq": 91,
+ "fatal": false,
+ "op": "interact",
+ "pos": [
+  105,
+  63,
+  -35
+ ]
+}

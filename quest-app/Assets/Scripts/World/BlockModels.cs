@@ -203,7 +203,7 @@ namespace TabletopCraft.World
             int s = m.Verts.Count;
             m.Verts.Add(o + q.P0); m.Verts.Add(o + q.P1); m.Verts.Add(o + q.P2); m.Verts.Add(o + q.P3);
             m.Uvs.Add(q.T0); m.Uvs.Add(q.T1); m.Uvs.Add(q.T2); m.Uvs.Add(q.T3);
-            m.Colors.Add(col.C0); m.Colors.Add(col.C1); m.Colors.Add(col.C2); m.Colors.Add(col.C3);
+            m.AddColors(col);   // [living] colours and light codes
             var t = q.Translucent ? m.Transparent : m.Opaque;
             t.Add(s); t.Add(s + 1); t.Add(s + 2); t.Add(s); t.Add(s + 2); t.Add(s + 3);
         }

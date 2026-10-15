@@ -27,6 +27,13 @@ namespace TabletopCraft.Net
         public string Variant, Color, Markings, Profession, Pose, Name, Item, Block, Facing;
         public int Count = 1, Rotation;
         public Dictionary<string, string> Equipment;
+        // [living] PROTOCOL.md "Living entities": the lead holder's id (-1 = none), eye height, chests, a name shown always,
+        // experience orb value, bobber owner (-1), enderman block, shulker lid and attach face, display entity state.
+        public int Leash = -1, Owner = -1, Xp;
+        public float Eye, Peek;
+        public bool Chested, NameVisible;
+        public string Carried, Attach;
+        public EntityDisplay Display;
         /// <summary>Bumped when anything other than position/rotation changes: the visual is rebuilt.</summary>
         public int LooksVersion;
 
@@ -90,6 +97,7 @@ namespace TabletopCraft.Net
             e.StandPose = null;
             e.Variant = e.Color = e.Markings = e.Profession = e.Pose = e.Name = e.Item = e.Block = e.Facing = null;
             e.Count = 1; e.Rotation = 0; e.Equipment = null;
+            e.Leash = e.Owner = -1; e.Xp = 0; e.Eye = e.Peek = 0; e.Chested = e.NameVisible = false; e.Carried = e.Attach = null; e.Display = null;   // [living]
             e.LooksVersion = v + 1;
         }
 
@@ -132,6 +140,17 @@ namespace TabletopCraft.Net
                     case "count": e.Count = v is double c ? (int)c : 1; looks = true; break;
                     case "rotation": e.Rotation = v is double r ? (int)r : 0; looks = true; break;
                     case "equipment": e.Equipment = Equipment(v as Dictionary<string, object>); looks = true; break;
+                    // [living] leads and lines follow every frame (no rebuild); the rest changes the look
+                    case "leash": e.Leash = v is double ld ? (int)ld : -1; break;
+                    case "owner": e.Owner = v is double od ? (int)od : -1; break;
+                    case "eye": e.Eye = v is double ed ? (float)ed : 0; break;
+                    case "peek": e.Peek = v is double pd ? (float)pd : 0; break;
+                    case "display": e.Display = EntityDisplay.From(v as Dictionary<string, object>); if (e.Display == null || e.Display.Text != null) looks = true; break;
+                    case "chested": e.Chested = Flag(v); looks = true; break;
+                    case "name_visible": e.NameVisible = Flag(v); looks = true; break;
+                    case "xp": e.Xp = v is double xd ? (int)xd : 0; looks = true; break;
+                    case "carried": e.Carried = v as string; looks = true; break;
+                    case "attach": e.Attach = v as string; looks = true; break;
                 }
             }
             if (looks) e.LooksVersion++;
@@ -158,6 +177,41 @@ namespace TabletopCraft.Net
             foreach (var kv in o) if (kv.Value is string s) r[kv.Key] = s;
             return r;
         }
+    }
+
+    /// <summary>[living] A display entity's render state (PROTOCOL.md "Display entities"): Display#getTransformation as
+    /// translation, left rotation, scale and right rotation (game frame, quaternions x, y, z, w), the billboard, a light
+    /// override, the item display transform and the text display's text and look.</summary>
+    public sealed class EntityDisplay
+    {
+        public Vector3 Translation, Scale = new Vector3(1, 1, 1);
+        public float[] Left = { 0, 0, 0, 1 }, Right = { 0, 0, 0, 1 };
+        public string Billboard = "fixed", ItemTransform = "none", Text, Align = "center";
+        public int BlockLight = -1, SkyLight = -1;   // -1 = the world's light
+        public int LineWidth = 200, Background = 0x40000000, TextOpacity = 255;
+        public bool Shadow, SeeThrough, DefaultBackground;
+
+        public static EntityDisplay From(Dictionary<string, object> o)
+        {
+            if (o == null) return null;
+            var d = new EntityDisplay();
+            if (o.A("translation") is List<object> t && t.Count == 3) d.Translation = new Vector3(F(t[0]), F(t[1]), F(t[2]));
+            if (o.A("scale") is List<object> s && s.Count == 3) d.Scale = new Vector3(F(s[0]), F(s[1]), F(s[2]));
+            if (o.A("left_rotation") is List<object> l && l.Count == 4) d.Left = new[] { F(l[0]), F(l[1]), F(l[2]), F(l[3]) };
+            if (o.A("right_rotation") is List<object> r && r.Count == 4) d.Right = new[] { F(r[0]), F(r[1]), F(r[2]), F(r[3]) };
+            d.Billboard = o.S("billboard") ?? "fixed";
+            if (o.A("brightness") is List<object> b && b.Count == 2) { d.BlockLight = (int)F(b[0]); d.SkyLight = (int)F(b[1]); }
+            d.ItemTransform = o.S("item_transform") ?? "none";
+            d.Text = o.S("text");
+            d.LineWidth = o.I("line_width", 200);
+            d.Background = o.TryGetValue("background", out var bg) && bg is double bd ? unchecked((int)(long)bd) : 0x40000000;
+            d.TextOpacity = o.I("text_opacity", 255);
+            d.Shadow = o.B("shadow"); d.SeeThrough = o.B("see_through"); d.DefaultBackground = o.B("default_background");
+            d.Align = o.S("align") ?? "center";
+            return d;
+        }
+
+        static float F(object v) => v is double x ? (float)x : 0f;
     }
 
     public enum ActionKind { Swing, Dig, Break, Place, Hurt }

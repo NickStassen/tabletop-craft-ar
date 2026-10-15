@@ -1,0 +1,369 @@
+{
+ "v": 1,
+ "type": "entities",
+ "seq": 20,
+ "t": 1760370003050,
+ "full": true,
+ "entities": [
+  {
+   "id": 301,
+   "type": "minecraft:wolf",
+   "uuid": "3c1e7f0a-0000-4000-8000-000000000301",
+   "pos": [
+    100.5,
+    64.0,
+    -20.5
+   ],
+   "yaw": 30.0,
+   "pitch": 0.0,
+   "body_yaw": 30.0,
+   "on_ground": true,
+   "size": [
+    0.6,
+    0.85
+   ],
+   "tamed": true,
+   "variant": "pale",
+   "color": "red",
+   "equipment": {
+    "body": "minecraft:wolf_armor"
+   },
+   "leash": 7,
+   "eye": 0.68
+  },
+  {
+   "id": 302,
+   "type": "minecraft:leash_knot",
+   "uuid": "3c1e7f0a-0000-4000-8000-000000000302",
+   "pos": [
+    103.5,
+    64.5,
+    -20.5
+   ],
+   "yaw": 0.0,
+   "pitch": 0.0,
+   "size": [
+    0.38,
+    0.5
+   ]
+  },
+  {
+   "id": 303,
+   "type": "minecraft:horse",
+   "uuid": "3c1e7f0a-0000-4000-8000-000000000303",
+   "pos": [
+    104.5,
+    64.0,
+    -18.5
+   ],
+   "yaw": -90.0,
+   "pitch": 0.0,
+   "body_yaw": -90.0,
+   "on_ground": true,
+   "size": [
+    1.4,
+    1.6
+   ],
+   "variant": "chestnut",
+   "equipment": {
+    "body": "minecraft:iron_horse_armor",
+    "saddle": "minecraft:saddle"
+   },
+   "leash": 302,
+   "eye": 1.52
+  },
+  {
+   "id": 304,
+   "type": "minecraft:llama",
+   "uuid": "3c1e7f0a-0000-4000-8000-000000000304",
+   "pos": [
+    107.5,
+    64.0,
+    -18.5
+   ],
+   "yaw": 180.0,
+   "pitch": 0.0,
+   "body_yaw": 180.0,
+   "on_ground": true,
+   "size": [
+    0.9,
+    1.87
+   ],
+   "variant": "creamy",
+   "equipment": {
+    "body": "minecraft:red_carpet"
+   },
+   "eye": 1.7,
+   "chested": true
+  },
+  {
+   "id": 305,
+   "type": "minecraft:experience_orb",
+   "uuid": "3c1e7f0a-0000-4000-8000-000000000305",
+   "pos": [
+    101.2,
+    64.0,
+    -16.8
+   ],
+   "yaw": 0.0,
+   "pitch": 0.0,
+   "on_ground": true,
+   "size": [
+    0.5,
+    0.5
+   ],
+   "xp": 17
+  },
+  {
+   "id": 306,
+   "type": "minecraft:fishing_bobber",
+   "uuid": "3c1e7f0a-0000-4000-8000-000000000306",
+   "pos": [
+    98.5,
+    62.9,
+    -14.5
+   ],
+   "yaw": 0.0,
+   "pitch": 0.0,
+   "size": [
+    0.25,
+    0.25
+   ],
+   "owner": 7
+  },
+  {
+   "id": 307,
+   "type": "minecraft:enderman",
+   "uuid": "3c1e7f0a-0000-4000-8000-000000000307",
+   "pos": [
+    110.5,
+    64.0,
+    -22.5
+   ],
+   "yaw": 45.0,
+   "pitch": 0.0,
+   "body_yaw": 45.0,
+   "on_ground": true,
+   "size": [
+    0.6,
+    2.9
+   ],
+   "eye": 2.55,
+   "carried": "minecraft:grass_block[snowy=false]"
+  },
+  {
+   "id": 308,
+   "type": "minecraft:shulker",
+   "uuid": "3c1e7f0a-0000-4000-8000-000000000308",
+   "pos": [
+    112.5,
+    65.0,
+    -22.5
+   ],
+   "yaw": 0.0,
+   "pitch": 0.0,
+   "body_yaw": 0.0,
+   "size": [
+    1.0,
+    1.5
+   ],
+   "eye": 0.5,
+   "peek": 0.5,
+   "attach": "north"
+  },
+  {
+   "id": 309,
+   "type": "minecraft:text_display",
+   "uuid": "3c1e7f0a-0000-4000-8000-000000000309",
+   "pos": [
+    100.5,
+    66.0,
+    -24.5
+   ],
+   "yaw": 0.0,
+   "pitch": 0.0,
+   "size": [
+    0.0,
+    0.0
+   ],
+   "display": {
+    "translation": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "left_rotation": [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ],
+    "right_rotation": [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    "billboard": "center",
+    "text": "Welcome\nto the farm",
+    "line_width": 200,
+    "background": 1073741824,
+    "text_opacity": 255,
+    "shadow": true,
+    "align": "center"
+   }
+  },
+  {
+   "id": 310,
+   "type": "minecraft:item_display",
+   "uuid": "3c1e7f0a-0000-4000-8000-000000000310",
+   "pos": [
+    102.5,
+    66.0,
+    -24.5
+   ],
+   "yaw": 90.0,
+   "pitch": 0.0,
+   "size": [
+    0.0,
+    0.0
+   ],
+   "item": "minecraft:diamond_sword",
+   "display": {
+    "translation": [
+     0.0,
+     0.5,
+     0.0
+    ],
+    "left_rotation": [
+     0.0,
+     0.0,
+     0.3827,
+     0.9239
+    ],
+    "scale": [
+     2.0,
+     2.0,
+     2.0
+    ],
+    "right_rotation": [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    "billboard": "fixed",
+    "brightness": [
+     15,
+     15
+    ],
+    "item_transform": "fixed"
+   }
+  },
+  {
+   "id": 311,
+   "type": "minecraft:block_display",
+   "uuid": "3c1e7f0a-0000-4000-8000-000000000311",
+   "pos": [
+    104.0,
+    66.0,
+    -25.0
+   ],
+   "yaw": 0.0,
+   "pitch": 0.0,
+   "size": [
+    0.0,
+    0.0
+   ],
+   "block": "minecraft:oak_stairs[facing=east,half=bottom,shape=straight,waterlogged=false]",
+   "display": {
+    "translation": [
+     -0.25,
+     0.0,
+     -0.25
+    ],
+    "left_rotation": [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    "scale": [
+     0.5,
+     0.5,
+     0.5
+    ],
+    "right_rotation": [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    "billboard": "fixed"
+   }
+  },
+  {
+   "id": 312,
+   "type": "minecraft:lightning_bolt",
+   "uuid": "3c1e7f0a-0000-4000-8000-000000000312",
+   "pos": [
+    108.5,
+    64.0,
+    -14.5
+   ],
+   "yaw": 0.0,
+   "pitch": 0.0,
+   "size": [
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "id": 313,
+   "type": "minecraft:snow_golem",
+   "uuid": "3c1e7f0a-0000-4000-8000-000000000313",
+   "pos": [
+    106.5,
+    64.0,
+    -26.5
+   ],
+   "yaw": 0.0,
+   "pitch": 0.0,
+   "body_yaw": 0.0,
+   "on_ground": true,
+   "size": [
+    0.7,
+    1.9
+   ],
+   "sheared": true,
+   "eye": 1.7
+  },
+  {
+   "id": 314,
+   "type": "minecraft:villager",
+   "uuid": "3c1e7f0a-0000-4000-8000-000000000314",
+   "pos": [
+    99.5,
+    64.0,
+    -26.5
+   ],
+   "yaw": 0.0,
+   "pitch": 0.0,
+   "body_yaw": 0.0,
+   "on_ground": true,
+   "size": [
+    0.6,
+    1.95
+   ],
+   "variant": "plains",
+   "name": "Bob",
+   "eye": 1.62,
+   "name_visible": true
+  }
+ ]
+}

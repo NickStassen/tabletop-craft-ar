@@ -35,7 +35,8 @@ namespace TabletopCraft.World
         public byte OverlayUvMap;
         public byte Random;      // [random] per-block texture rotation table (RandomUv in BlockModels.cs), 0 = none
         public byte Shade;       // BakedModel.Shade: 0 smooth light + AO, 1 flat (no AO), 2 full bright (magma)
-        public bool Equals(in FaceKey o) => Layer == o.Layer && Color.r == o.Color.r && Color.g == o.Color.g && Color.b == o.Color.b && Color.a == o.Color.a && Transparent == o.Transparent && Tint == o.Tint && UvMap == o.UvMap && Random == o.Random && Shade == o.Shade
+        public byte Light;       // [living] fluids: the LightCode folded into the key with the lit colour (FluidMesher), 0 elsewhere
+        public bool Equals(in FaceKey o) => Layer == o.Layer && Color.r == o.Color.r && Color.g == o.Color.g && Color.b == o.Color.b && Color.a == o.Color.a && Transparent == o.Transparent && Tint == o.Tint && UvMap == o.UvMap && Random == o.Random && Shade == o.Shade && Light == o.Light
             && Overlay == o.Overlay && (Overlay == 0 || (OverlayTint == o.OverlayTint && OverlayUvMap == o.OverlayUvMap && OverlayColor.r == o.OverlayColor.r && OverlayColor.g == o.OverlayColor.g && OverlayColor.b == o.OverlayColor.b && OverlayColor.a == o.OverlayColor.a));
 
         /// <summary>The overlay layer as a face key of its own (for colours and UVs), or default when there is none.</summary>
@@ -57,7 +58,24 @@ namespace TabletopCraft.World
         public readonly List<int> Transparent = new List<int>();
         /// <summary>Water faces seen from inside the water (FluidMesher): drawn only while the eye is under water (EyeEffects).</summary>
         public readonly List<int> WaterBack = new List<int>();
-        public void Clear() { Verts.Clear(); Uvs.Clear(); Colors.Clear(); Opaque.Clear(); Transparent.Clear(); WaterBack.Clear(); }
+        /// <summary>[living] Per vertex, the LightCode it was lit with (parallel to Colors when the mesher filled it; the
+        /// batch vertex carries it in the normal's w for the time-of-day shading, DayLight.cs). Use AddColors.</summary>
+        public readonly List<byte> Light = new List<byte>();
+        public void Clear() { Verts.Clear(); Uvs.Clear(); Colors.Clear(); Opaque.Clear(); Transparent.Clear(); WaterBack.Clear(); Light.Clear(); }
+
+        /// <summary>The 4 colours and light codes of a quad (every block-mesh emitter goes through this).</summary>
+        public void AddColors(in Quad4 q)
+        {
+            Colors.Add(q.C0); Colors.Add(q.C1); Colors.Add(q.C2); Colors.Add(q.C3);
+            Light.Add(q.L0); Light.Add(q.L1); Light.Add(q.L2); Light.Add(q.L3);
+        }
+
+        /// <summary>Copies vertex i's colour and light (a face's back copy).</summary>
+        public void CopyColor(int i)
+        {
+            Colors.Add(Colors[i]);
+            Light.Add(i < Light.Count ? Light[i] : LightCode.OpenSky);
+        }
     }
 
     public static class GreedyMesher
@@ -164,10 +182,12 @@ namespace TabletopCraft.World
                                 var ocol = ocorners[k];
                                 bool ov = key.Overlay != 0;
                                 int wdt = 1;
-                                if (Eq(col.C0, col.C1) && Eq(col.C3, col.C2) && (!ov || (Eq(ocol.C0, ocol.C1) && Eq(ocol.C3, ocol.C2))))
+                                // [living] colours and light codes both (Quad4.Same): a sunlit face and a torch-lit one look the
+                                // same at noon but not at night.
+                                if (col.Same(0, 1) && col.Same(3, 2) && (!ov || (ocol.Same(0, 1) && ocol.Same(3, 2))))
                                     while (u + wdt < size[ua] && has[k + wdt] && mask[k + wdt].Equals(key) && Same(corners[k + wdt], col) && (!ov || Same(ocorners[k + wdt], ocol))) wdt++;
                                 int hgt = 1;
-                                bool ok = Eq(col.C0, col.C3) && Eq(col.C1, col.C2) && (!ov || (Eq(ocol.C0, ocol.C3) && Eq(ocol.C1, ocol.C2)));
+                                bool ok = col.Same(0, 3) && col.Same(1, 2) && (!ov || (ocol.Same(0, 3) && ocol.Same(1, 2)));
                                 while (v + hgt < size[va] && ok)
                                 {
                                     for (int i = 0; i < wdt; i++)
@@ -242,7 +262,8 @@ namespace TabletopCraft.World
         }
 
         static bool Eq(Color32 a, Color32 b) => a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
-        static bool Same(Quad4 a, Quad4 b) => Eq(a.C0, b.C0) && Eq(a.C1, b.C1) && Eq(a.C2, b.C2) && Eq(a.C3, b.C3);
+        static bool Same(Quad4 a, Quad4 b) => Eq(a.C0, b.C0) && Eq(a.C1, b.C1) && Eq(a.C2, b.C2) && Eq(a.C3, b.C3)
+                                              && a.L0 == b.L0 && a.L1 == b.L1 && a.L2 == b.L2 && a.L3 == b.L3;
         static int Luma(Color32 c) => c.r * 2 + c.g * 5 + c.b;
 
         static void EmitQuad(MeshData m, Vector3Int b0, int axis, int ua, int va, int dir, int d, int u, int v, int w, int h, FaceKey key, Quad4 col, Quad4 ocol)
@@ -257,7 +278,7 @@ namespace TabletopCraft.World
             m.Verts.Add(Corner(u, v)); m.Verts.Add(Corner(u + w, v)); m.Verts.Add(Corner(u + w, v + h)); m.Verts.Add(Corner(u, v + h));
             // Vanilla face orientation (grass fringe up on every side, logs on their side rotated), tiled per block.
             for (int i = start; i < start + 4; i++) m.Uvs.Add(CubeUv.Greedy(dir, m.Verts[i] - (Vector3)b0, key));
-            m.Colors.Add(col.C0); m.Colors.Add(col.C1); m.Colors.Add(col.C2); m.Colors.Add(col.C3);
+            m.AddColors(col);
             Tris(tris, start, positive, flip);
             if (key.Overlay == 0) return;
             // The overlay layer (grass side): the same corners, its own UVs and tinted colours, right after the base quad
@@ -266,7 +287,7 @@ namespace TabletopCraft.World
             int o = m.Verts.Count;
             for (int i = 0; i < 4; i++) m.Verts.Add(m.Verts[start + i]);
             for (int i = o; i < o + 4; i++) m.Uvs.Add(CubeUv.Greedy(dir, m.Verts[i] - (Vector3)b0, over));
-            m.Colors.Add(ocol.C0); m.Colors.Add(ocol.C1); m.Colors.Add(ocol.C2); m.Colors.Add(ocol.C3);
+            m.AddColors(ocol);
             Tris(tris, o, positive, flip);
         }
 
@@ -319,7 +340,8 @@ namespace TabletopCraft.World
         static void Cross(MeshData m, WorldModel w, int x, int y, int z, FaceKey key)
         {
             key.Transparent = true;
-            var c = new Quad4(BlockShading.Flat(w, key, new Vector3Int(x, y, z)));
+            var flat = BlockShading.Flat(w, key, new Vector3Int(x, y, z), out byte code);
+            var c = new Quad4(flat, code);
             AddQuad(m, new Vector3(x, y, z), new Vector3(x + 1, y, z + 1), new Vector3(x + 1, y + 1, z + 1), new Vector3(x, y + 1, z), key, true, c);
             AddQuad(m, new Vector3(x + 1, y, z), new Vector3(x, y, z + 1), new Vector3(x, y + 1, z + 1), new Vector3(x + 1, y + 1, z), key, true, c);
         }
@@ -344,7 +366,7 @@ namespace TabletopCraft.World
             m.Verts.Add(p0); m.Verts.Add(p1); m.Verts.Add(p2); m.Verts.Add(p3);
             float l = key.Layer;
             m.Uvs.Add(new Vector3(0, 0, l)); m.Uvs.Add(new Vector3(1, 0, l)); m.Uvs.Add(new Vector3(1, 1, l)); m.Uvs.Add(new Vector3(0, 1, l));
-            m.Colors.Add(col.C0); m.Colors.Add(col.C1); m.Colors.Add(col.C2); m.Colors.Add(col.C3);
+            m.AddColors(col);
             var t = key.Transparent ? m.Transparent : m.Opaque;
             t.Add(s); t.Add(s + 1); t.Add(s + 2); t.Add(s); t.Add(s + 2); t.Add(s + 3);
             if (doubleSided) { t.Add(s); t.Add(s + 2); t.Add(s + 1); t.Add(s); t.Add(s + 3); t.Add(s + 2); }

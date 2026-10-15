@@ -270,6 +270,7 @@ namespace TabletopCraft.World
             var plan = new PlacePlan();
             if (w == null || !w.Loaded || !h.Hit) { plan.Why = ""; return plan; }
             string sel = Selected;
+            if (InteractProtocol.IsItem(sel)) { plan.Why = ""; return plan; }   // [hands] an item is used, not placed
             if (!CanPlace(sel)) { plan.Why = "can't place " + BlockEditRules.Label(sel); return plan; }   // [menu]
             sel = Base(sel);
             string hitState = w.State(w.Get(h.Block.x, h.Block.y, h.Block.z));
@@ -345,6 +346,20 @@ namespace TabletopCraft.World
             return Protocol.BlockEdit("place", world, p.State, BlockRaycast.FaceNames[h.Face]);
         }
 
+        /// <summary>
+        /// [hands] interact (PROTOCOL.md "Using blocks and items") for the hit block: the empty hand (item null) or an item
+        /// used on the hit face, with the hit point inside the block and the ray direction. Nothing changes locally: the
+        /// result comes back as block_update (or entities, actions), a refusal as an error with op "interact".
+        /// </summary>
+        public Dictionary<string, object> Interact(WorldModel w, BlockHit h, string item, bool sneak, Vector3 rayDir)
+        {
+            if (w == null || !w.Loaded || !h.Hit) return null;
+            string label = BlockEditRules.Label(w.State(w.Get(h.Block.x, h.Block.y, h.Block.z)));
+            Sent++;
+            Result = item == null ? "used " + label : "used " + BlockRules.Path(item).Replace('_', ' ') + " on " + label;
+            return InteractProtocol.Interact(w.Origin + h.Block, BlockRaycast.FaceNames[h.Face], h.Point - (Vector3)h.Block, item, sneak, rayDir);
+        }
+
         /// <summary>Pick block (middle click): the hit block becomes the selection, as its item would place it: the
         /// registry's default state (a wall torch picks the torch, a door's top half the door, crops at age 0).</summary>
         public bool Pick(WorldModel w, BlockHit h)
@@ -412,6 +427,7 @@ namespace TabletopCraft.World
                 Result = "the server has no block editing (update the plugin)";
                 return;
             }
+            if (m.S("op") == "interact" || m.S("op") == "entity_op") { Result = m.S("message") ?? ""; return; }   // [hands] nothing to undo (the app toasts it)
             if (!(m.A("pos") is List<object> p) || p.Count != 3) return;
             var c = new Vector3Int((int)(double)p[0] - w.Origin.x, (int)(double)p[1] - w.Origin.y, (int)(double)p[2] - w.Origin.z);
             string guess = w.InBounds(c.x, c.y, c.z) ? w.State(w.Get(c.x, c.y, c.z)) : null;

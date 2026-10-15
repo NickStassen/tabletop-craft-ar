@@ -1,0 +1,42 @@
+{
+ "v": 1,
+ "type": "item_registry",
+ "seq": 2,
+ "t": 1760370000014,
+ "count": 21,
+ "categories": [
+  {
+   "id": "use",
+   "label": "Use",
+   "items": [
+    "minecraft:flint_and_steel",
+    "minecraft:fire_charge",
+    "minecraft:bone_meal",
+    "minecraft:bucket",
+    "minecraft:water_bucket",
+    "minecraft:lava_bucket",
+    "minecraft:powder_snow_bucket",
+    "minecraft:iron_axe",
+    "minecraft:honeycomb",
+    "minecraft:iron_hoe",
+    "minecraft:iron_shovel",
+    "minecraft:shears",
+    "minecraft:name_tag",
+    "minecraft:lead",
+    "minecraft:wheat",
+    "minecraft:carrot",
+    "minecraft:wheat_seeds",
+    "tabletop:lightning"
+   ]
+  },
+  {
+   "id": "spawn_eggs",
+   "label": "Spawn Eggs",
+   "items": [
+    "minecraft:cow_spawn_egg",
+    "minecraft:pig_spawn_egg",
+    "minecraft:sheep_spawn_egg"
+   ]
+  }
+ ]
+}

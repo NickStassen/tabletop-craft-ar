@@ -12,10 +12,14 @@ from tabletop_protocol import (
     CAP_COMMAND,
     CAP_EDIT,
     CAP_ENTITIES,
+    CAP_INTERACT,
     CAP_LIGHT,
     CAP_STATUS,
     CHAT_KINDS,
     DISCOVERY_PORT,
+    ENTITY_OPS,
+    ITEM_CATEGORIES,
+    LIGHTNING_ITEM,
     REGISTRY_CATEGORIES,
     BlockEntityMirror,
     EntityMirror,
@@ -24,6 +28,8 @@ from tabletop_protocol import (
     block_edit,
     decode_light,
     decode_rle,
+    entity_op,
+    interact,
     parse_region,
     registry_id,
     registry_states,
@@ -500,3 +506,113 @@ def test_region_changed_carries_the_new_worlds_build_height():
     msg["limits"]["build_height"] = [320, -64]
     with pytest.raises(ValueError):
         validate(msg)
+
+
+# [hands] using blocks, items and mobs (PROTOCOL.md "Using blocks and items", "Acting on mobs")
+INTERACT_FIXTURES = ("hello_interact", "welcome_interact", "interact", "interact_item", "item_registry", "entity_op", "entity_op_move",
+                     "entity_op_use", "entity_op_name", "entity_info", "error_interact_denied", "error_not_found")
+
+
+def test_interact_fixtures_exist_and_validate():
+    for name in INTERACT_FIXTURES:
+        validate(json.loads((FIX / f"{name}.json").read_text()))
+
+
+def test_interact_caps_welcome_and_registry():
+    hello = json.loads((FIX / "hello_interact.json").read_text())
+    welcome = json.loads((FIX / "welcome_interact.json").read_text())
+    reg = json.loads((FIX / "item_registry.json").read_text())
+    assert CAP_INTERACT in hello["caps"] and CAP_INTERACT in welcome["caps"]
+    assert welcome["interact"]["harm_players"] is False and welcome["interact"]["lightning"] in ("real", "effect", "off")
+    assert [c["id"] for c in reg["categories"]] == list(ITEM_CATEGORIES)
+    assert LIGHTNING_ITEM in reg["categories"][0]["items"] and "minecraft:bucket" in reg["categories"][0]["items"]
+
+
+def test_interact_and_entity_op_builders_match_the_fixtures():
+    env = Envelope()
+    door = json.loads((FIX / "interact.json").read_text())
+    built = env.wrap("interact", **interact((105, 64, -35), "north", hit=(0.5, 0.7, 0.0), dir=(0.1, -0.5, 0.86)))
+    validate(built)
+    keys = ("pos", "face", "item", "sneak", "hit", "dir")
+    assert {k: built[k] for k in keys} == {k: door[k] for k in keys}
+    move = json.loads((FIX / "entity_op_move.json").read_text())
+    built = env.wrap("entity_op", **entity_op(move["uuid"], "move", to=[110.5, 64.0, -30.5], yaw=90.0))
+    validate(built)
+    assert {k: built[k] for k in ("uuid", "op", "to", "yaw")} == {k: move[k] for k in ("uuid", "op", "to", "yaw")}
+    info = json.loads((FIX / "entity_info.json").read_text())
+    assert info["uuid"] == move["uuid"] and info["entity_type"] == "minecraft:wolf"
+    err = json.loads((FIX / "error_not_found.json").read_text())
+    assert err["op"] == "entity_op" and err["uuid"] == move["uuid"]
+    denied = json.loads((FIX / "error_interact_denied.json").read_text())
+    assert denied["pos"] == json.loads((FIX / "interact_item.json").read_text())["pos"]
+
+
+@pytest.mark.parametrize("name,patch", [
+    ("interact", {"face": "sideways"}),
+    ("interact", {"pos": [1, 2.5, 3]}),
+    ("interact", {"item": "Bone Meal"}),
+    ("interact", {"hit": [0.5, 3, 0.5]}),
+    ("interact", {"dir": [1, 2]}),
+    ("item_registry", {"count": 3}),
+    ("item_registry", {"categories": [{"id": "use", "items": []}]}),
+    ("entity_op", {"op": "explode"}),
+    ("entity_op", {"uuid": "pig"}),
+    ("entity_op_move", {"to": None}),
+    ("entity_op_name", {"text": None}),
+    ("entity_info", {"pos": [1, 2]}),
+])
+def test_interact_validation_rejects(name, patch):
+    msg = json.loads((FIX / f"{name}.json").read_text())
+    msg.update(patch)
+    if name == "entity_op_name" and msg.get("text") is None:
+        del msg["text"]
+    with pytest.raises(ValueError):
+        validate(msg)
+
+
+def test_interact_error_codes():
+    for code in ("interact_denied", "not_found"):
+        validate({"v": 1, "type": "error", "seq": 0, "t": 0, "code": code, "message": "x"})
+    for op in ENTITY_OPS:
+        extra = {"to": [1.5, 64, 2.5]} if op in ("move", "hold") else {"text": ""} if op == "name" else {}
+        validate(Envelope().wrap("entity_op", **entity_op("3c1e5f7a-2b4d-4e6f-8a9b-0c1d2e3f4a5b", op, **extra)))
+
+
+def test_world_state_fixture_and_rules():
+    """[living] world_state (PROTOCOL.md "World state: time and weather"): a stormy midnight in the overworld."""
+    msg = json.loads((FIX / "world_state.json").read_text())
+    validate(msg)
+    assert msg["day_time"] == 18000 and msg["rain"] == 1 and msg["thunder"] == 1 and msg["dimension"] == "overworld"
+    for patch in ({"dimension": "nether"}, {"day_time": 24000}, {"rain": 0}, {"rain": 0.5}):
+        bad = dict(msg, **patch)
+        with pytest.raises(ValueError):
+            validate(bad)
+
+
+def test_entities_living_fields():
+    """[living] leads, chests, orbs, bobbers, carried blocks, shulker lids, display entities and visible names."""
+    msg = json.loads((FIX / "entities_living.json").read_text())
+    validate(msg)
+    m = EntityMirror()
+    m.apply(msg)
+    e = m.entities
+    assert e[301]["leash"] == 7 and e[303]["leash"] == 302 and e[302]["type"] == "minecraft:leash_knot"
+    assert e[304]["chested"] and e[304]["equipment"]["body"] == "minecraft:red_carpet"
+    assert e[305]["xp"] == 17 and e[306]["owner"] == 7 and e[307]["carried"].startswith("minecraft:grass_block")
+    assert e[308]["peek"] == 0.5 and e[308]["attach"] == "north" and e[313]["sheared"] and e[314]["name_visible"]
+    text, item, block = e[309]["display"], e[310]["display"], e[311]["display"]
+    assert text["billboard"] == "center" and text["text"].split("\n") == ["Welcome", "to the farm"] and text["background"] == 0x40000000
+    assert item["item_transform"] == "fixed" and item["brightness"] == [15, 15]
+    assert math.isclose(sum(q * q for q in item["left_rotation"]), 1, abs_tol=1e-3)
+    assert block["scale"] == [0.5, 0.5, 0.5] and "text" not in block
+    m.apply({"full": False, "entities": [{"id": 301, "leash": None}, {"id": 309, "display": None}]})
+    assert e[301]["leash"] is None and e[309]["display"] is None
+    for patch in ({"billboard": "sideways"}, {"left_rotation": [0, 0, 1]}, {"brightness": [16, 0]}):
+        bad = json.loads((FIX / "entities_living.json").read_text())
+        bad["entities"][9]["display"].update(patch)
+        with pytest.raises(ValueError):
+            validate(bad)
+    bad = json.loads((FIX / "entities_living.json").read_text())
+    bad["entities"][7]["attach"] = "sideways"
+    with pytest.raises(ValueError):
+        validate(bad)

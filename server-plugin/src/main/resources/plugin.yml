@@ -6,7 +6,7 @@ description: Streams a tabletop region to an AR headset and drives a giant avata
 commands:
   tabletop:
     description: Tabletop AR controls
-    usage: /tabletop <status|setorigin [x y z]|setsize dx dy dz|avatar <spawn|remove|status|placement|skin|blocksize>|entities|reload|tell <message>>
+    usage: /tabletop <status|setorigin [x y z]|setsize dx dy dz|avatar <spawn|remove|status|placement|skin|blocksize>|entities|reload|tell <message>|unfreeze-all>
 # Every /tabletop subcommand needs tabletop.admin except "tell" (tabletop.tell): the plugin checks per subcommand.
 permissions:
   tabletop.admin:

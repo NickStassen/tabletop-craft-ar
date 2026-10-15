@@ -22,6 +22,9 @@ namespace TabletopCraft.World
 
         public readonly EntityStore Store = new EntityStore();
         public int Count => _shown.Count;
+        /// <summary>[living] Lightning flashes the sky (WorldLight); the weather renderer is told about bolts too.</summary>
+        public WorldLight Light;
+        public WeatherRenderer Weather;
 
         sealed class Shown
         {
@@ -52,6 +55,7 @@ namespace TabletopCraft.World
                 {
                     s = new Shown { Info = e, Target = e.Pos, Pos = e.Pos, Yaw = e.Yaw, Body = e.BodyYaw, Pitch = e.Pitch, Age = (e.Id * 7) % 100 };
                     _shown[e.Id] = s;
+                    if (e.Path == "lightning_bolt") Light?.Flash();   // [living] ClientLevel.setSkyFlashTime(2)
                 }
                 s.Info = e;
                 s.Target = e.Pos;
@@ -92,6 +96,17 @@ namespace TabletopCraft.World
             return true;
         }
 
+        /// <summary>[hands] The entities as drawn (eased world positions, sizes), for aiming at them (World/EntityRaycast.cs).</summary>
+        public void Targets(List<EntityTarget> into)
+        {
+            foreach (var s in _shown.Values)
+            {
+                var e = s.Info;
+                if (s.Fig == null || string.IsNullOrEmpty(e.Uuid)) continue;
+                into.Add(new EntityTarget { Uuid = e.Uuid, Id = e.Id, Type = e.Type, Name = e.Name, Pos = s.Pos, Width = e.Width, Height = e.Height });
+            }
+        }
+
         /// <summary>Where a rider sits: the vehicle's shown position plus the rider's offset in the latest samples.
         /// riderTarget is the rider's latest world position; returns false when the vehicle isn't shown.</summary>
         public bool Seat(int vehicle, Vector3 riderTarget, out Vector3 shown, out float vehicleYaw)
@@ -103,7 +118,31 @@ namespace TabletopCraft.World
             return true;
         }
 
-        Vector3 ToLocal(Vector3 world)
+        /// <summary>[living] Where an entity is shown this frame (world coordinates), its shown body yaw and its info;
+        /// false if it isn't on the table (leads and lines look up their ends here).</summary>
+        public bool Pose(int id, out Vector3 pos, out float bodyYaw, out EntityInfo info)
+        {
+            pos = default; bodyYaw = 0; info = null;
+            if (id < 0 || !_shown.TryGetValue(id, out var s) || s.Fig == null) return false;
+            pos = s.Pos; bodyYaw = s.Info.HasBodyYaw ? s.Body : s.Yaw; info = s.Info;
+            return true;
+        }
+
+        /// <summary>[living] Every entity on the table (LeashRenderer walks them for leads and fishing lines).</summary>
+        public IEnumerable<EntityInfo> ShownInfos { get { foreach (var s in _shown.Values) if (s.Fig != null) yield return s.Info; } }
+
+        /// <summary>[living] Sky and block light at a world position (15, 0 without light data or outside the region).</summary>
+        public void LightLevels(Vector3 world, out int sky, out int block)
+        {
+            sky = 15; block = 0;
+            if (Model == null || Model.Light == null) return;
+            int x = Mathf.FloorToInt(world.x) - Model.Origin.x, y = Mathf.FloorToInt(world.y) - Model.Origin.y, z = Mathf.FloorToInt(world.z) - Model.Origin.z;
+            if (!Model.InBounds(x, y, z)) return;
+            byte v = Model.Light[Model.Index(x, y, z)];
+            sky = v >> 4; block = v & 15;
+        }
+
+        public Vector3 ToLocal(Vector3 world)
         {
             if (Model == null) return Vector3.zero;
             Vector3 l = world - (Vector3)Model.Origin;
@@ -165,21 +204,36 @@ namespace TabletopCraft.World
                     : Quaternion.Euler(0, look.Kind == EntityKind.Model ? EntityCatalog.RootTurn(look.Root, yaw) : 180f + yaw, 0);
                 root.localScale = Vector3.one * (scale * look.Scale);
 
-                if (now >= s.NextLight) { s.Light = LightAt(s.Pos, look.Kind == EntityKind.Model ? e.Height * 0.5f : 0.25f); s.NextLight = now + 0.25f; }
+                if (now >= s.NextLight) { s.Light = LivingLight(e, look, s.Pos); s.NextLight = now + 0.25f; }
                 s.Fig.SetColors(s.Light, now < s.HurtUntil ? HurtOverlay : new Color(1, 0, 0, 0));
                 if (s.Fig.Label != null && cam != null) s.Fig.Label.transform.rotation = Quaternion.LookRotation(s.Fig.Label.transform.position - cam.transform.position);
+                if (cam != null) s.Fig.FaceCamera(cam.transform);   // [living] sprites and display billboards
             }
         }
 
-        /// <summary>The lightmap colour at a world position (the block the entity's middle is in); white without light data.</summary>
-        public Color LightAt(Vector3 world, float lift)
+        /// <summary>The lightmap colour at a world position (the block the entity's middle is in); [living] in the current
+        /// time of day and weather (BlockShading.LightmapLive); white without light data.</summary>
+        public Color LightAt(Vector3 world, float lift, int blockBoost = 0)
         {
-            if (Model == null || Model.Light == null) return Color.white;
+            if (Model == null || Model.Light == null) { var o = BlockShading.LightmapLive(15, 0); return new Color(o.x, o.y, o.z, 1); }   // white at noon, as before
             int x = Mathf.FloorToInt(world.x) - Model.Origin.x, y = Mathf.FloorToInt(world.y + lift) - Model.Origin.y, z = Mathf.FloorToInt(world.z) - Model.Origin.z;
-            if (!Model.InBounds(x, y, z)) return Color.white;
-            byte v = Model.Light[Model.Index(x, y, z)];
-            var l = BlockShading.Lightmap(v >> 4, v & 15);
+            int sky = 15, block = 0;
+            if (Model.InBounds(x, y, z)) { byte v = Model.Light[Model.Index(x, y, z)]; sky = v >> 4; block = v & 15; }
+            var l = BlockShading.LightmapLive(sky, Mathf.Min(15, block + blockBoost));
             return new Color(l.x, l.y, l.z, 1);
+        }
+
+        /// <summary>[living] An entity's light: displays may override it (brightness), experience orbs glow 7 levels
+        /// brighter, lightning isn't lit.</summary>
+        Color LivingLight(EntityInfo e, EntityLook look, Vector3 pos)
+        {
+            if (look.Kind == EntityKind.Display && e.Display != null && e.Display.BlockLight >= 0)
+            {
+                var o = BlockShading.LightmapLive(e.Display.SkyLight, e.Display.BlockLight);
+                return new Color(o.x, o.y, o.z, 1);
+            }
+            if (look.Kind == EntityKind.Orb) return LightAt(pos, 0.25f, 7);
+            return LightAt(pos, look.Kind == EntityKind.Model ? e.Height * 0.5f : 0.25f);
         }
 
         void OnDestroy() => Clear();

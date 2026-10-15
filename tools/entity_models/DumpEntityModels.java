@@ -60,6 +60,14 @@ public class DumpEntityModels {
         "standing_banner", "standing_banner#flag", "wall_banner", "wall_banner#flag", "bell",
         "decorated_pot_base", "decorated_pot_sides", "conduit#shell", "conduit#cage", "conduit#eye", "conduit#wind",
         "copper_golem_running", "copper_golem_sitting", "copper_golem_star", "book",
+        // [living] the rest of the entities (LivingLooks.cs) and what mobs wear: saddles, armour, carpets, harnesses,
+        // collars, tropical fish patterns (textures: assets/minecraft/equipment + entity textures of your pack)
+        "ender_dragon", "wither", "giant", "evoker_fangs", "shulker_bullet", "wither_skull", "llama_spit", "cushion",
+        "sulfur_cube", "sulfur_cube#inner", "sulfur_cube_small", "sulfur_cube_small#inner",
+        "pig#saddle", "strider#saddle", "horse#saddle", "donkey#saddle", "mule#saddle", "skeleton_horse#saddle", "zombie_horse#saddle",
+        "camel#saddle", "camel_husk#saddle", "nautilus#saddle",
+        "horse_armor", "undead_horse_armor", "wolf_armor", "nautilus_armor", "happy_ghast_harness", "happy_ghast_baby_harness",
+        "llama#decor", "llama_baby#decor", "cat#collar", "cat_baby#collar", "tropical_fish_small#pattern", "tropical_fish_large#pattern",
     };
 
     static Object f(Object o, String name) throws Exception {
