@@ -1,0 +1,21 @@
+{
+ "v": 1,
+ "type": "hello",
+ "seq": 0,
+ "t": 1760370000000,
+ "client": "quest-app",
+ "client_version": "0.4.0",
+ "protocols": [
+  1
+ ],
+ "token": "changeme",
+ "operator_name": "Nick",
+ "caps": [
+  "rle_palette_v1",
+  "avatar",
+  "edit_v1",
+  "chat_v1",
+  "command_v1",
+  "status_v1"
+ ]
+}

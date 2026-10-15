@@ -1,0 +1,32 @@
+{
+ "v": 1,
+ "type": "world_info",
+ "seq": 99,
+ "t": 1760370008110,
+ "ref_seq": 84,
+ "world": "world",
+ "env": "normal",
+ "time": 6000,
+ "day": 12,
+ "weather": "rain",
+ "difficulty": "normal",
+ "spawn": [
+  0,
+  64,
+  0
+ ],
+ "tick": {
+  "rate": 20.0,
+  "frozen": true,
+  "stepping": false,
+  "sprinting": false
+ },
+ "gamerules": {
+  "advance_time": true,
+  "advance_weather": true,
+  "keep_inventory": false,
+  "max_entity_cramming": 24,
+  "mob_griefing": true,
+  "random_tick_speed": 3
+ }
+}

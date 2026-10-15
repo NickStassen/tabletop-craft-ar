@@ -7,9 +7,13 @@ import pytest
 from tabletop_protocol import (
     CAP_ACTIONS,
     CAP_BIOMES,
+    CAP_CHAT,
+    CAP_COMMAND,
     CAP_EDIT,
     CAP_ENTITIES,
     CAP_LIGHT,
+    CAP_STATUS,
+    CHAT_KINDS,
     DISCOVERY_PORT,
     REGISTRY_CATEGORIES,
     EntityMirror,
@@ -22,6 +26,7 @@ from tabletop_protocol import (
     registry_id,
     registry_states,
     scripted_pose,
+    suggestion_apply,
     validate,
 )
 
@@ -354,6 +359,76 @@ def test_block_registry_rejects_bad_fields(patch):
     msg.update(patch)
     with pytest.raises(ValueError):
         validate(msg)
+
+
+# ---------- [talk] chat, commands, status (PROTOCOL.md 4.26-4.28) ----------
+CONTROL_FIXTURES = ("chat", "chat_death", "chat_operator", "chat_send", "command", "command_result", "command_output", "command_complete",
+                    "command_suggestions", "server_status", "world_query", "world_info", "players_query", "players_info",
+                    "error_command_denied", "hello_control", "welcome_control")
+
+
+def test_control_fixtures_exist_and_validate():
+    for name in CONTROL_FIXTURES:
+        validate(json.loads((FIX / f"{name}.json").read_text()))
+
+
+def test_control_caps_and_welcome_objects():
+    hello = json.loads((FIX / "hello_control.json").read_text())
+    welcome = json.loads((FIX / "welcome_control.json").read_text())
+    assert {CAP_CHAT, CAP_COMMAND, CAP_STATUS} <= set(hello["caps"]) and hello["operator_name"] == "Nick"
+    assert {CAP_CHAT, CAP_COMMAND, CAP_STATUS} <= set(welcome["caps"])
+    assert welcome["chat"] == {"send": True, "name": "Nick", "max_len": 256}
+    assert welcome["commands"]["max_len"] == 256 and "time set day" in welcome["commands"]["quick"]
+
+
+def test_chat_kinds_and_from():
+    for name in ("chat", "chat_death", "chat_operator"):
+        m = json.loads((FIX / f"{name}.json").read_text())
+        assert m["kind"] in CHAT_KINDS
+    op = json.loads((FIX / "chat_operator.json").read_text())
+    assert op["line"].endswith(op["text"]) and op["from"]["session"] == "6f1c"
+
+
+def test_suggestions_replace_from_start():
+    complete = json.loads((FIX / "command_complete.json").read_text())
+    sug = json.loads((FIX / "command_suggestions.json").read_text())
+    assert sug["ref_seq"] == complete["seq"]
+    assert suggestion_apply(complete["line"], sug["start"], sug["items"][0]) == "gamerule advance_time"
+
+
+def test_command_result_refers_to_the_command():
+    cmd = json.loads((FIX / "command.json").read_text())
+    res = json.loads((FIX / "command_result.json").read_text())
+    assert res["ref_seq"] == cmd["seq"] and res["ok"] is True and cmd["at"]["pos"] == [105, 64, -35]
+
+
+@pytest.mark.parametrize("name,patch", [
+    ("chat", {"kind": "shout"}),
+    ("chat", {"from": {"uuid": "x"}}),
+    ("chat_send", {"text": ""}),
+    ("chat_send", {"text": "x" * 257}),
+    ("command", {"line": "time set day\nstop"}),
+    ("command", {"line": " / "}),
+    ("command", {"at": {"pos": [1, 2]}}),
+    ("command_result", {"ok": "yes"}),
+    ("command_result", {"lines": [1]}),
+    ("command_suggestions", {"start": -1}),
+    ("command_suggestions", {"items": ["x"] * 51}),
+    ("server_status", {"tps": [20.0]}),
+    ("world_info", {"weather": "snow"}),
+    ("world_info", {"gamerules": {"x": [1]}}),
+    ("players_info", {"players": [{"name": "A"}]}),
+])
+def test_control_validation_rejects(name, patch):
+    msg = json.loads((FIX / f"{name}.json").read_text())
+    msg.update(patch)
+    with pytest.raises(ValueError):
+        validate(msg)
+
+
+def test_control_error_codes():
+    for code in ("chat_denied", "command_denied"):
+        validate({"v": 1, "type": "error", "seq": 0, "t": 0, "code": code, "message": "x"})
 
 
 def test_discovery_probe_and_reply_fixtures():

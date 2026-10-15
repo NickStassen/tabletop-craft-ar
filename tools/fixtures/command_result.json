@@ -1,0 +1,12 @@
+{
+ "v": 1,
+ "type": "command_result",
+ "seq": 90,
+ "t": 1760370006010,
+ "ref_seq": 80,
+ "ok": true,
+ "ms": 0.42,
+ "lines": [
+  "Summoned new Lightning Bolt"
+ ]
+}

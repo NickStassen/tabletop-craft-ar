@@ -14,6 +14,7 @@ import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.Mannequin;
+import org.bukkit.entity.TextDisplay;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.MainHand;
 import org.bukkit.util.Transformation;
@@ -72,6 +73,10 @@ public final class GiantAvatar {
 
     private Mannequin body;
     private ItemDisplay head, left, right;
+    // [talk] The operator's last chat line above the head for chat.bubble-seconds (PROTOCOL.md 4.26), tagged TAG so
+    // EntitySampler/ActionListener skip it (text displays are hidden from the entity stream anyway).
+    private TextDisplay bubble;
+    private long bubbleUntilMs;
     private double scale = 1;
     private GiantPlacement.FloatingSizes sizes;
     private String handBlock;
@@ -230,7 +235,7 @@ public final class GiantAvatar {
 
     public void remove() {
         for (Entity e : entities()) e.remove();
-        body = null; head = left = right = null;
+        body = null; head = left = right = null; bubble = null;   // [talk]
         eye = null; settling = false;
     }
 
@@ -240,7 +245,57 @@ public final class GiantAvatar {
         if (head != null && head.isValid()) l.add(head);
         if (left != null && left.isValid()) l.add(left);
         if (right != null && right.isValid()) l.add(right);
+        if (bubble != null && bubble.isValid()) l.add(bubble);   // [talk]
         return l;
+    }
+
+    // ---------- [talk] speech bubble ----------
+    /** Shows text above the giant's head for the given seconds (replacing the previous line). Main thread. */
+    public void say(String text, int seconds) {
+        Entity main = body != null && body.isValid() ? body : head != null && head.isValid() ? head : null;
+        if (main == null || seconds <= 0) return;
+        bubbleUntilMs = System.currentTimeMillis() + seconds * 1000L;
+        Location at = bubbleLocation(main.getWorld());
+        if (bubble == null || !bubble.isValid()) {
+            bubble = main.getWorld().spawn(at, TextDisplay.class, d -> {
+                d.setPersistent(false);
+                d.addScoreboardTag(TAG);
+                d.setBillboard(Display.Billboard.CENTER);
+                d.setViewRange(VIEW_RANGE);
+                d.setBrightness(new Display.Brightness(15, 15));
+                d.setLineWidth(200);
+                d.setTeleportDuration(Math.max(0, Math.min(59, interpolationTicks)));
+            });
+        }
+        float k = (float) bubbleScale();
+        bubble.setTransformation(new Transformation(new Vector3f(), new Quaternionf(), new Vector3f(k, k, k), new Quaternionf()));
+        bubble.text(Component.text(text));
+        bubble.teleport(at);
+    }
+
+    /** Called every tick: the bubble follows the head and goes away when its time is up. */
+    public void tickBubble() {
+        if (bubble == null) return;
+        if (!bubble.isValid() || System.currentTimeMillis() >= bubbleUntilMs || !spawned()) { if (bubble.isValid()) bubble.remove(); bubble = null; return; }
+        if (eye != null) bubble.teleport(bubbleLocation(bubble.getWorld()));
+    }
+
+    /** Text scale: about a fifth of the head's size in blocks (a 25-block head gets 5x text), at least 1. */
+    private double bubbleScale() {
+        double headBlocks = head != null && sizes != null ? sizes.headBlocks() : GiantPlacement.PLAYER_HEAD_BLOCKS * scale;
+        return Math.max(1, headBlocks / 5);
+    }
+
+    /** Just above the top of the head (floating head or Mannequin), where the eye was last placed. */
+    private Location bubbleLocation(World w) {
+        double headBlocks = head != null && sizes != null ? sizes.headBlocks() : GiantPlacement.PLAYER_HEAD_BLOCKS * scale;
+        double[] e = eye;
+        if (e == null) {
+            Entity main = body != null ? body : head;
+            Location l = main.getLocation();
+            e = new double[] { l.getX(), l.getY() + (body != null ? EYE_HEIGHT * scale : 0), l.getZ() };
+        }
+        return new Location(w, e[0], e[1] + headBlocks * 0.75 + 0.25 * bubbleScale(), e[2]);
     }
 
     /**

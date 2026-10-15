@@ -1,0 +1,43 @@
+{
+ "v": 1,
+ "type": "players_info",
+ "seq": 100,
+ "t": 1760370008210,
+ "ref_seq": 85,
+ "players": [
+  {
+   "name": "Alex",
+   "uuid": "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+   "id": 7,
+   "world": "world",
+   "pos": [
+    112.5,
+    64.0,
+    -30.25
+   ],
+   "gamemode": "survival",
+   "health": 18.5,
+   "max_health": 20.0,
+   "food": 17,
+   "ping": 23,
+   "op": false
+  },
+  {
+   "name": "Steve",
+   "uuid": "1a2b3c4d-5e6f-4a1b-9c2d-3e4f5a6b7c8d",
+   "id": 9,
+   "world": "world_nether",
+   "pos": [
+    -8.3,
+    70.0,
+    4.75
+   ],
+   "gamemode": "creative",
+   "health": 20.0,
+   "max_health": 20.0,
+   "food": 20,
+   "ping": 41,
+   "op": true
+  }
+ ]
+}
