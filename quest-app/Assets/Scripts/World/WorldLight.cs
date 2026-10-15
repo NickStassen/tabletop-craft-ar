@@ -34,8 +34,15 @@ namespace TabletopCraft.World
             Shader.SetGlobalFloat(OnId, 0f);
         }
 
-        /// <summary>A world_state message.</summary>
-        public void Apply(Dictionary<string, object> m) => Clock.Apply(m);
+        /// <summary>A world_state message (logged when the weather, the world or the clock mode changes).</summary>
+        public void Apply(Dictionary<string, object> m)
+        {
+            string before = Clock.Known ? $"{Clock.World} {Clock.RainTarget} {Clock.ThunderTarget} {Clock.FixedTime}" : null;
+            Clock.Apply(m);
+            string after = $"{Clock.World} {Clock.RainTarget} {Clock.ThunderTarget} {Clock.FixedTime}";
+            if (before != after)
+                Debug.Log($"[Tabletop] WORLD_STATE {Clock.World} {Clock.Dimension} day_time {(int)Clock.DayTime} rain {Clock.RainTarget} thunder {Clock.ThunderTarget}{(Clock.FixedTime ? " fixed" : "")}");
+        }
 
         /// <summary>A lightning bolt appeared: the sky flashes (vanilla's 2 ticks).</summary>
         public void Flash() => Clock.Flash();

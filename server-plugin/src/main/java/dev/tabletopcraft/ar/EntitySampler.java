@@ -201,6 +201,7 @@ public final class EntitySampler {
         else if (e instanceof TropicalFish tf) { s.variant = key(tf.getPattern()); s.color = dye(tf.getBodyColor()); s.markings = dye(tf.getPatternColor()); }
         else if (e instanceof Painting pt) s.variant = key(pt.getArt());
         else if (e instanceof Bee b) s.angry = b.getAnger() > 0;
+        else if (e instanceof Cushion cu) s.color = dye(cu.getColor());   // [living] the cushion's dye
     }
 
     /** player_positions additions (PROTOCOL.md 4.6): entity id, vehicle, pose and equipment. */

@@ -62,7 +62,7 @@ static class EntityScene
         if (model == null) return parts;
         float yaw = e.HasBodyYaw ? e.BodyYaw : e.Yaw;
         var root = Mul(T(x, y, -z), Mul(RY(EntityCatalog.RootTurn(look.Root, yaw)), S(look.Scale / 16f, look.Scale / 16f, look.Scale / 16f)));
-        float[] mr = ModelRoot(look.Root, e.Pitch);
+        float[] mr = Mul(T(0, look.RootLift, 0), ModelRoot(look.Root, e.Pitch));   // [living] RootLift
         var rot = anim?.Invoke(model) ?? new float[model.Parts.Count * 3];
         var world = new float[model.Parts.Count][];
         int layer = o.Layer(look.Texture);
@@ -73,6 +73,7 @@ static class EntityScene
             world[p.Index] = Mul(p.Parent == null ? Mul(root, mr) : world[p.Parent.Index], local);
             if (!string.IsNullOrEmpty(p.Name) && !parts.ContainsKey(p.Name)) parts[p.Name] = world[p.Index];
             if (look.HideArms && (p.Name == "right_arm" || p.Name == "left_arm")) continue;
+            if (look.Hidden != null && look.Hidden.Contains(p.Name)) continue;   // [living] chests
             var fm = new FigureMesh();
             EntityModels.BuildPart(model, p, fm);
             Emit(o, world[p.Index], fm, layer, look.Tint);
@@ -91,7 +92,95 @@ static class EntityScene
                 Emit(o, Mul(world[hp.Index], fix), fm, el, look.ExtraTint);
             }
         }
+        // [living] gear layers as EntityFigure.AttachLayer: parts the model has take its transforms, the rest their own.
+        foreach (var g in look.Layers ?? new List<GearLayer>())
+        {
+            var gm = EntityModels.Get(g.Model);
+            if (gm == null) continue;
+            int gl = o.Layer(g.Texture);
+            var gw = new float[gm.Parts.Count][];
+            foreach (var p in gm.Parts)
+            {
+                var hp = p.Parent == null ? model.Root : model.Find(p.Name);
+                if (hp != null && (p.Parent == null) == (hp.Parent == null))
+                {
+                    gw[p.Index] = world[hp.Index];
+                    var fix = p.Parent != null ? Mul(Inverse(Rot(hp.Rx, hp.Ry, hp.Rz)), Rot(p.Rx, p.Ry, p.Rz)) : I();
+                    var fm = new FigureMesh();
+                    EntityModels.BuildPart(gm, p, fm);
+                    Emit(o, Mul(world[hp.Index], fix), fm, gl, g.Tint);
+                }
+                else
+                {
+                    EntityModels.Pivot(p, out float px, out float py, out float pz);
+                    gw[p.Index] = Mul(gw[p.Parent.Index] ?? world[0], Mul(T(px, py, pz), Mul(Rot(p.Rx, p.Ry, p.Rz), S(p.Sx, p.Sy, p.Sz))));
+                    var fm = new FigureMesh();
+                    EntityModels.BuildPart(gm, p, fm);
+                    Emit(o, gw[p.Index], fm, gl, g.Tint);
+                }
+            }
+        }
         return parts;
+    }
+
+    /// <summary>[living] Mobs in their gear and the entity types 0.4 added, for an offline look check
+    /// (--living-scene OUT.json, rendered with tools/render_mesh.py like --entity-scene).</summary>
+    public static void RunLiving(string jar, string outPath)
+    {
+        var o = new Out();
+        var grass = new FigureMesh();
+        grass.Pos.AddRange(new[] { 0f, 0, 0, 14, 0, 0, 14, 0, -10, 0, 0, -10 });
+        grass.Normal.AddRange(new[] { 0f, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0 });
+        grass.Uv.AddRange(new[] { 0f, 0, 14, 0, 14, 10, 0, 10 });
+        grass.Tris.AddRange(new[] { 0, 1, 2, 0, 2, 3 });
+        Emit(o, I(), grass, o.Layer("block/grass_block_top"), new Color32(124, 189, 107, 255));
+        EntityInfo E(string type, float yaw = 0, Action<EntityInfo> more = null)
+        {
+            var e = new EntityInfo { Type = "minecraft:" + type, Yaw = yaw, BodyYaw = yaw, HasBodyYaw = true, Width = 1, Height = 1 };
+            more?.Invoke(e);
+            return e;
+        }
+        Dictionary<string, string> Eq(string body, string saddle = null)
+        {
+            var d = new Dictionary<string, string>();
+            if (body != null) d["body"] = body;
+            if (saddle != null) d["saddle"] = saddle;
+            return d;
+        }
+        // Row 1 (z 1.5): horse in iron armour with a saddle, a chested llama with a red carpet, a donkey without a chest,
+        // a mule with one, a saddled pig, a strider.
+        Figure(o, E("horse", -30, e => { e.Variant = "chestnut"; e.Equipment = Eq("minecraft:iron_horse_armor", "minecraft:saddle"); }), 2f, 0, 1.5f);
+        Figure(o, E("llama", -30, e => { e.Variant = "white"; e.Chested = true; e.Equipment = Eq("minecraft:red_carpet"); }), 4.5f, 0, 1.5f);
+        Figure(o, E("donkey", -30), 6.5f, 0, 1.5f);
+        Figure(o, E("mule", -30, e => { e.Chested = true; e.Equipment = Eq(null, "minecraft:saddle"); }), 8.5f, 0, 1.5f);
+        Figure(o, E("pig", -30, e => e.Equipment = Eq(null, "minecraft:saddle")), 10.5f, 0, 1.5f);
+        Figure(o, E("strider", -30, e => e.Equipment = Eq(null, "minecraft:saddle")), 12.5f, 0, 1.5f);
+        // Row 2 (z 4): a wolf in armour with a red collar, a cat with a blue collar, a trader llama, a tropical fish,
+        // a camel with a saddle, a skeleton horse in diamond armour.
+        Figure(o, E("wolf", -30, e => { e.Variant = "pale"; e.Tamed = true; e.Color = "red"; e.Equipment = Eq("minecraft:wolf_armor"); }), 1.5f, 0, 4f);
+        Figure(o, E("cat", -30, e => { e.Variant = "calico"; e.Tamed = true; e.Color = "blue"; }), 3f, 0, 4f);
+        Figure(o, E("trader_llama", -30, e => e.Variant = "brown"), 5f, 0, 4f);
+        Figure(o, E("tropical_fish", 90, e => { e.Variant = "glitter"; e.Color = "orange"; e.Markings = "blue"; }), 7f, 0.4f, 4f);
+        Figure(o, E("camel", -30, e => e.Equipment = Eq(null, "minecraft:saddle")), 9.5f, 0, 4f);
+        Figure(o, E("skeleton_horse", -30, e => e.Equipment = Eq("minecraft:diamond_horse_armor")), 12.5f, 0, 4f);
+        // Row 3 (z 7): evoker fangs, a wither skull, llama spit, a shulker bullet, a cushion, a sulfur cube, a wither,
+        // a happy ghast in a harness behind.
+        Figure(o, E("evoker_fangs", 45), 1.5f, 0, 7f);
+        Figure(o, E("wither_skull", 30), 3f, 0.5f, 7f);
+        Figure(o, E("llama_spit", 30), 4.5f, 0.5f, 7f);
+        Figure(o, E("shulker_bullet"), 6f, 0.5f, 7f);
+        Figure(o, E("cushion", 0, e => e.Color = "lime"), 7.5f, 0, 7f);
+        Figure(o, E("sulfur_cube", 0, e => e.Width = 0.52f), 9f, 0, 7f);
+        Figure(o, E("wither", -20), 11.5f, 0, 7f);
+        Figure(o, E("happy_ghast", -20, e => e.Equipment = Eq("minecraft:light_blue_harness")), 6f, 1f, 12f);
+        var inv = CultureInfo.InvariantCulture;
+        var sb = new StringBuilder();
+        sb.Append("{\"layers\":[").Append(string.Join(",", o.Layers.Select(x => "\"" + x + "\""))).Append("],\"verts\":[");
+        sb.Append(string.Join(",", o.Verts.Select(v => v.ToString("G6", inv)))).Append("],\"uvs\":[");
+        sb.Append(string.Join(",", o.Uvs.Select(v => v.ToString("G6", inv)))).Append("],\"colors\":[");
+        sb.Append(string.Join(",", o.Colors)).Append("],\"opaque\":[").Append(string.Join(",", o.Tris)).Append("],\"transparent\":[]}");
+        File.WriteAllText(outPath, sb.ToString());
+        Console.WriteLine($"living scene: {o.Tris.Count / 6} faces, {o.Layers.Count} textures -> {outPath}");
     }
 
     /// <summary>The figure's model root (EntityCatalog.RootOffset + RootRotation) as a matrix.</summary>

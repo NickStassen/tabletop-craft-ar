@@ -239,6 +239,29 @@ static partial class LivingTests
                 }
         Check(worst.Values.All(w => w < 1e-4f), "dragon, fangs, llama spit, cushion, wither skull and shulker bullet roots match their renderers: " +
                                                     string.Join(", ", worst.Select(kv => $"{kv.Key} {kv.Value:G2}")));
+        // SulfurCubeRenderer.scale runs after LivingEntityRenderer's flip: x0.5, then 0.98 - 1/16 up (baby: x1, 1.24 - 1/16).
+        float cubeWorst = 0;
+        foreach (bool baby in new[] { false, true })
+        {
+            var look = EntityCatalog.Resolve(Info("sulfur_cube", e => e.Baby = baby));
+            float k = baby ? 1f : 0.5f, up = (baby ? 1.24f : 0.98f) - 1f / 16f;
+            var fig = M(EntityScene.RY(EntityCatalog.RootTurn(look.Root, 0)), EntityScene.S(look.Scale / 16, look.Scale / 16, look.Scale / 16),
+                        EntityScene.T(0, look.RootLift, 0), EntityScene.ModelRoot(look.Root, 0));
+            var van = M(EntityScene.S(1, 1, -1), EntityScene.RY(180), EntityScene.S(-1, -1, 1), EntityScene.S(k, k, k), EntityScene.T(0, up, 0), EntityScene.T(0, -1.501f, 0),
+                        EntityScene.S(1 / 16f, 1 / 16f, 1 / 16f));
+            foreach (var p in pts)
+            {
+                var fp = EntityScene.Apply(fig, new Vector3(-p.x, -p.y, -p.z)); var vp = EntityScene.Apply(van, p);
+                cubeWorst = Math.Max(cubeWorst, Math.Max(Math.Abs(fp.x - vp.x), Math.Max(Math.Abs(fp.y - vp.y), Math.Abs(fp.z - vp.z))));
+            }
+        }
+        var bottom = EntityScene.Apply(M(EntityScene.S(0.5f / 16, 0.5f / 16, 0.5f / 16), EntityScene.T(0, EntityCatalog.Resolve(Info("sulfur_cube")).RootLift, 0),
+                                         EntityScene.ModelRoot(RootKind.Living, 0)), new Vector3(0, -9, 0));   // the cube's lowest face (game y +9)
+        Check(cubeWorst < 1e-4f && Math.Abs(bottom.y) < 0.02f, $"sulfur cube: scale and lift of SulfurCubeRenderer (worst {cubeWorst:G2}), resting on the ground ({bottom.y:F3})");
+        LivingLooks.FangsPose(0, out float y0, out float up0, out float lo0);
+        LivingLooks.FangsPose(0.5f, out float y5, out float up5, out float lo5);
+        Check(Near(y0, 24f) && Near(up0, 0.65f * Mathf.PI) && Near(lo0, 1.35f * Mathf.PI) && y5 < 14f && Near(up5, Mathf.PI) && Near(lo5, Mathf.PI),
+              $"evoker fangs: open and underground at the start, out ({24 - y5:F1} px) and shut half way");
     }
 
     /// <summary>EntityFigure's bullet spin at age 0 (rotY(0) rotX(180) rotZ(0) in the game frame), as a figure matrix:

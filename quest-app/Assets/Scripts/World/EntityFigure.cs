@@ -67,7 +67,7 @@ namespace TabletopCraft.World
             _modelRoot.SetParent(Root.transform, false);
             // The game renderer's transforms before the model (EntityCatalog.RootOffset/RootRotation); minecarts and
             // projectiles follow their pitch in Animate.
-            _modelRoot.localPosition = EntityCatalog.RootOffset(Look.Root);
+            _modelRoot.localPosition = EntityCatalog.RootOffset(Look.Root) + new Vector3(0, Look.RootLift, 0);   // [living] RootLift
             _modelRoot.localRotation = RootRotation(Look.Root, 0);
             int n = _model.Parts.Count;
             _parts = new Transform[n];

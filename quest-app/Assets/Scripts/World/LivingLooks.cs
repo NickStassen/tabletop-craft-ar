@@ -70,9 +70,13 @@ namespace TabletopCraft.World
                 case "cushion": return Set(L, "cushion", "entity/cushion/" + (e.Color ?? "white") + "_cushion", RootKind.Cushion);
                 case "sulfur_cube":
                     // AbstractCubeMobRenderer like the slime: the opaque inner cube, the outer shell translucent over it.
+                    // SulfurCubeRenderer.scale (after the flip): x0.5 for adults, then up 0.98 (baby 1.24) - 1/16 blocks,
+                    // which puts the centred cube on the ground.
                     string small = e.Baby ? "_small" : "";
                     Set(L, "sulfur_cube" + small + "#inner", "entity/sulfur_cube/sulfur_cube_inner" + small);
                     L.ExtraModel = "sulfur_cube" + small; L.ExtraTexture = "entity/sulfur_cube/sulfur_cube_outer" + small; L.ExtraTranslucent = true;
+                    L.Scale = e.Baby ? 1f : 0.5f;
+                    L.RootLift = -((e.Baby ? 1.24f : 0.98f) - 1f / 16f) * 16f;
                     return L;
             }
             return null;
@@ -227,6 +231,17 @@ namespace TabletopCraft.World
             large = i < 0;
             if (i < 0) i = Array.IndexOf(big, pattern);
             return i < 0 ? 0 : i + 1;
+        }
+
+        /// <summary>EvokerFangsModel.setupAnim for a bite progress 0..1: the base's pivot height (game model pixels, the
+        /// ground is 24) and the jaws' z rotations (radians), open at 0, shut from 0.5.</summary>
+        public static void FangsPose(float bite, out float baseY, out float upperZ, out float lowerZ)
+        {
+            float f = Mathf.Min(1f, bite * 2f);
+            f = 1f - f * f * f;
+            upperZ = Mathf.PI - f * 0.35f * Mathf.PI;
+            lowerZ = Mathf.PI + f * 0.35f * Mathf.PI;
+            baseY = 24f - (bite + Mathf.Sin(bite * 2.7f)) * 7.2f;
         }
 
         // ---------- experience orbs (ExperienceOrbRenderer, ExperienceOrb.getIcon) ----------

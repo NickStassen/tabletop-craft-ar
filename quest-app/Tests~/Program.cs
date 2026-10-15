@@ -185,6 +185,8 @@ static class Program
         int entSceneIdx = Array.IndexOf(args, "--entity-scene");
         if (entSceneIdx >= 0 && JarPath(args) != null && EntityModels.Loaded) EntityScene.Run(JarPath(args), args[entSceneIdx + 1]);
         else if (entSceneIdx >= 0) Console.WriteLine("SKIP --entity-scene: needs --jar and --entity-models");
+        int livingSceneIdx = Array.IndexOf(args, "--living-scene");   // [living] gear and the new entity types
+        if (livingSceneIdx >= 0 && JarPath(args) != null && EntityModels.Loaded) EntityScene.RunLiving(JarPath(args), args[livingSceneIdx + 1]);
         EditTests.Run(Check, Fixture);  // block editing: DDA targeting, Z mirror, optimistic edits (EditTests.cs)
         MenuTests.Run(Check, Fixture, JarPath(args), args);   // [menu] block registry, menu model, hotbar, HUD toasts, icons (MenuTests.cs)
         ControlTests.Run(Check, Fixture);   // [talk] chat, console, operator panel, status (ControlTests.cs)

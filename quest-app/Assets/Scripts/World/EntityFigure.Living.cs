@@ -299,10 +299,13 @@ namespace TabletopCraft.World
 
         // ---------- per frame ----------
 
+        readonly float _born = Time.time;
+
         void AnimateLiving(in EntityAnimInput a, float pitchDeg)
         {
             if (Look.Kind == EntityKind.Orb) { _boxColor = (Color)LivingLooks.OrbColor(a.AgeTicks); _applied = false; }
             if (_rig == null) return;
+            if (Look.Root == RootKind.Fangs) AnimateFangs(Mathf.Clamp01((Time.time - _born) / 1f));
             if (Look.Root == RootKind.Skull && _model.Find("head") is EModelPart head)
                 _parts[head.Index].localRotation = Rot(pitchDeg * Mathf.Deg2Rad, a.BodyYaw * Mathf.Deg2Rad, 0);   // SkullModel.setupAnim
             if (Look.Root == RootKind.Bullet)
@@ -321,6 +324,19 @@ namespace TabletopCraft.World
                 float yRot = _info.Peek > 0.3f ? g * g * g * g * Mathf.PI * 0.125f : 0f;
                 _parts[lid.Index].localRotation = Rot(lid.Rx, lid.Ry + yRot, lid.Rz);
             }
+        }
+    }
+
+    public sealed partial class EntityFigure
+    {
+        /// <summary>EvokerFangsModel.setupAnim: the fangs rise out of the ground and snap shut over the bite (progress
+        /// 0..1 over 20 ticks from when they appear; the attack starts when the server spawns them).</summary>
+        void AnimateFangs(float bite)
+        {
+            LivingLooks.FangsPose(bite, out float baseY, out float upperZ, out float lowerZ);
+            if (_model.Find("base") is EModelPart b) _parts[b.Index].localPosition = new Vector3(-b.Px, -baseY, -b.Pz);
+            if (_model.Find("upper_jaw") is EModelPart u) _parts[u.Index].localRotation = Rot(u.Rx, u.Ry, upperZ);
+            if (_model.Find("lower_jaw") is EModelPart l) _parts[l.Index].localRotation = Rot(l.Rx, l.Ry, lowerZ);
         }
     }
 

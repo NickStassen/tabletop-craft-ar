@@ -45,6 +45,7 @@ namespace TabletopCraft.World
         public List<BlockAttach> Blocks;
         public int Orb = -1;                       // experience orb icon (LivingLooks.OrbIcon)
         public string State;                       // block display: its block state
+        public float RootLift;                     // pixels added to RootOffset's height (a renderer's extra translate)
         public bool NameShown;                     // name label: CustomNameVisible
 
         /// <summary>Texture cache key: base + overlays + tint.</summary>

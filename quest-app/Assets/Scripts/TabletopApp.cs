@@ -548,7 +548,17 @@ namespace TabletopCraft
             AreaSize.Status + "\n" +   // [area]
             (_area.Active ? _area.Status : (_area.Status.Length > 0 ? _area.Status : "Y (left) = set up area   left stick = move") + "\n" + _edit.Status) +
             $"\nBLOCKS {(_registry != null ? _registry.Count + " placeable" : "-")}  {_icons.Status}" +
-            $"\nTALK {TalkStatus()}";   // [talk]
+            $"\nTALK {TalkStatus()}" +   // [talk]
+            $"\nTIME {LivingStatus()}";   // [living]
+
+        /// <summary>[living] The world's time and weather as the table shows them (WorldLight, WeatherRenderer).</summary>
+        string LivingStatus()
+        {
+            var c = _light != null ? _light.Clock : null;
+            if (c == null || !c.Known) return "- (no world_state: noon)";
+            return $"{(int)c.DayTime} {c.Dimension}  rain {c.Rain:F2} thunder {c.Thunder:F2}  sky {_light.Current.SkyFactor:F2}" +
+                   $"  drops {(_weather != null ? _weather.Drops : 0)}{(WorldLight.WeatherFx ? "" : " (weather_fx off)")}";
+        }
 
         /// <summary>[talk] Chat, commands and status as the server granted them (X opens the operator panel).</summary>
         string TalkStatus()
