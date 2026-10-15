@@ -47,6 +47,7 @@ Shader "TabletopCraft/Blocks"
                 fixed4 c = i.color;
                 if (_HasTex > 0.5 && i.uv.z >= 0) c *= TabletopSampleBlocks(i.uv, i.cellPos, i.randomTable, tbDx, tbDy);   // [random], mips
                 clip(c.a - _Cutoff);
+                c.a = 1;   // [passthrough] a cutout texel that survives the clip is opaque (mips leave alpha below 1)
                 c.rgb = TabletopFog(c.rgb, i.fogPos);   // eye-in-fluid fog
                 return c;
             }

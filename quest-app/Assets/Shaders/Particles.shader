@@ -17,7 +17,7 @@ Shader "TabletopCraft/Particles"
     SubShader
     {
         Tags { "RenderType"="Transparent" "Queue"="Transparent+5" "IgnoreProjector"="True" }
-        Blend SrcAlpha OneMinusSrcAlpha
+        Blend SrcAlpha OneMinusSrcAlpha, One OneMinusSrcAlpha   // [passthrough] alpha "over": translucent pixels never lower the alpha behind them (the room would show through)
         ZWrite Off
         Cull Off
         Pass

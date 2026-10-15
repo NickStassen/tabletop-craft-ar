@@ -19,7 +19,7 @@ Shader "TabletopCraft/Weather"
     SubShader
     {
         Tags { "RenderType"="Transparent" "Queue"="Transparent+10" "IgnoreProjector"="True" }
-        Blend SrcAlpha OneMinusSrcAlpha
+        Blend SrcAlpha OneMinusSrcAlpha, One OneMinusSrcAlpha   // [passthrough] alpha "over": translucent pixels never lower the alpha behind them (the room would show through)
         ZWrite Off
         Cull Off
         Pass

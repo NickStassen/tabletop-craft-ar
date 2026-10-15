@@ -18,7 +18,7 @@ Shader "TabletopCraft/BlockEntityFx"
     {
         Tags { "RenderType"="TransparentCutout" "Queue"="AlphaTest" }
         Cull Off
-        Blend [_SrcBlend] [_DstBlend]
+        Blend [_SrcBlend] [_DstBlend], One OneMinusSrcAlpha   // [passthrough] alpha "over": translucent pixels never lower the alpha behind them (the room would show through)
         ZWrite [_ZWrite]
         Offset [_OffsetFactor], [_OffsetUnits]
         Pass

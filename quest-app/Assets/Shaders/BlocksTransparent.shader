@@ -7,7 +7,7 @@ Shader "TabletopCraft/BlocksTransparent"
     SubShader
     {
         Tags { "RenderType"="Transparent" "Queue"="Transparent" }
-        Blend SrcAlpha OneMinusSrcAlpha ZWrite Off
+        Blend SrcAlpha OneMinusSrcAlpha, One OneMinusSrcAlpha ZWrite Off   // [passthrough] alpha "over": translucent pixels never lower the alpha behind them (the room would show through)
         Pass
         {
             CGPROGRAM
