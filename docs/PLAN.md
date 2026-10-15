@@ -48,7 +48,7 @@ Phases 0-3 were built and checked on Paper 1.21.11 / Java 21. The server pin has
   - Phase 6: `block_edit` from the headset (break, place, pick). It was done as an additive v1 message (`edit_v1`), not a v2 bump, and the plugin applies edits itself rather than as the avatar entity.
 - **Also done (not in the original phases):**
   - The floating giant: a head and hands at the exact headset poses.
-  - Skinned and animated player figures.
+  - Skinned and animated player figures (now seen working on a Quest 3 headset).
   - The eye-in-fluid effects: underwater fog and tint, the surface seen from below, lava and powder snow.
 - **In progress:** entities (vehicles, mobs, dropped items, held items) and player actions (arm swing, digging cracks, break particles, hurt flash).
 - **Built, waiting for headset measurements (2026-10-14):** area width presets 64–256 without reconnecting (resize deltas, re-keyed meshes, footprint kept) and mesh batching (roadmap item 7).
