@@ -29,6 +29,8 @@ namespace TabletopCraft.XR
         public Func<string> InfoText;         // the full status for the Info tab
         public Action<string> SelectedChanged;
         public Action<bool> HudChanged;
+        /// <summary>[sound] The Info tab changed the volume (percent) or muted/unmuted.</summary>
+        public Action<int, bool> VolumeChanged;
         /// <summary>Optional area-size row (null = hidden): the preset sizes in blocks, the current size, and a request
         /// for one of the presets (called with the preset's value). Wired by the app; the menu only draws and forwards.</summary>
         public Func<int[]> AreaPresets;
@@ -204,6 +206,7 @@ namespace TabletopCraft.XR
                 case MenuActionKind.Area: AreaRequest?.Invoke(a.Value); Haptic(0.35f); break;
                 case MenuActionKind.HudToggle: HudChanged?.Invoke(a.Value != 0); Haptic(0.25f); break;
                 case MenuActionKind.ResetView: ResetView?.Invoke(); Haptic(0.35f); break;
+                case MenuActionKind.Volume: VolumeChanged?.Invoke(Model.Volume, Model.SoundOn); Haptic(0.25f); break;   // [sound]
                 case MenuActionKind.ServerEdit: case MenuActionKind.ServerFind: ServerFind?.Invoke(); Haptic(0.2f); break;   // opening the field searches at once
                 case MenuActionKind.ServerConnect: ServerConnect?.Invoke(a.State); Haptic(0.35f); break;
                 case MenuActionKind.Tool: ToolPressed?.Invoke(a.Value); Haptic(0.3f); break;   // [power]
@@ -357,6 +360,7 @@ namespace TabletopCraft.XR
                         break;
                     // [comfort] Info tab buttons: Reset view, the Server button, and the open Server field's buttons
                     case MenuPart.ResetView: case MenuPart.ServerFind: case MenuPart.ServerConnect: case MenuPart.ServerCancel: case MenuPart.FoundServer:
+                    case MenuPart.SoundDown: case MenuPart.SoundToggle: case MenuPart.SoundUp:   // [sound]
                         Box(_b, it.R, hover ? SlotHover : it.Part == MenuPart.ServerConnect ? TabActive : Tab, 0, 0.001f);
                         Label(it.Part + "" + it.Index, Short(it.Label, 34), it.R.CX, it.R.CY, 0.0016f, TextAnchor.MiddleCenter, TextMain);
                         break;

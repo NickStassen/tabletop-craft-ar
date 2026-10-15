@@ -29,6 +29,7 @@ static class SoundTests
         Mixer();
         Pack();
         Assets(fixture);
+        MenuAndPrefs();
         int si = Array.IndexOf(args, "--sounds");
         if (si >= 0 && si + 1 < args.Length) RealSounds(args[si + 1]);
         else Console.WriteLine("SKIP real sounds.json checks: pass --sounds PATH (your sounds.zip from tools/sounds/PackSounds.java)");
@@ -489,6 +490,37 @@ static class SoundTests
                   "assets: asset_denied stops the download; other errors aren't the downloader's");
         }
         finally { try { Directory.Delete(dir, true); } catch (Exception) { } }
+    }
+
+    // ---------- the Info tab's volume row, prefs.json, the own-edit hook ----------
+
+    static void MenuAndPrefs()
+    {
+        var m = new BlockMenuModel();
+        m.Toggle();
+        m.SetTab(m.InfoTab);
+        var L = m.Layout();
+        MenuItem Item(MenuPart p) => m.Layout().Items.First(i => i.Part == p);
+        bool laid = L.Items.Any(i => i.Part == MenuPart.SoundDown) && L.Items.Any(i => i.Part == MenuPart.SoundToggle && i.Label == "Sound 80%") && L.Items.Any(i => i.Part == MenuPart.SoundUp)
+                    && L.Info.H > 0.08f;
+        var up = Item(MenuPart.SoundUp).R;
+        m.Point(BlockMenuModel.HitTest(m.Layout(), up.CX, up.CY), true);
+        var a1 = m.Click();
+        var tg = Item(MenuPart.SoundToggle).R;
+        m.Point(BlockMenuModel.HitTest(m.Layout(), tg.CX, tg.CY), true);
+        var a2 = m.Click();
+        Check(laid && a1.Kind == MenuActionKind.Volume && a1.Value == 90 && a2.Value == -1 && !m.SoundOn && Item(MenuPart.SoundToggle).Label == "Sound off",
+              $"Info tab: [-] [Sound 80%] [+] beside Show HUD and Reset view; + raises 10%, the middle one mutes ({laid} {a1.Kind} {a1.Value} {a2.Value} {L.Info.H})");
+        var p = new AppPrefs { Volume = 0.6f, Sound = false };
+        var back = AppPrefs.Parse(p.ToJson());
+        Check(back.Volume == 0.6f && back.Sound == false && AppPrefs.SharedKeys.Contains("volume") && AppPrefs.SharedKeys.Contains("sound"),
+              "prefs.json remembers volume and mute (tabletop.json \"volume\" and \"sound\" win when edited)");
+        var w = Field();
+        var ed = new BlockEditor { ServerAllows = true };
+        string got = null;
+        ed.Edited = (op, pos, st) => got = op + " " + pos + " " + st;
+        ed.Break(w, new BlockHit { Hit = true, Block = new Vector3Int(3, 0, 3), Face = 3, Point = new Vector3(3.5f, 1f, 3.5f) }, 0);
+        Check(got == "break (103, 60, -37) minecraft:grass_block[snowy=false]", $"own edits: BlockEditor.Edited reports the broken block ({got})");
     }
 
     // ---------- the user's real sounds.zip ----------

@@ -19,7 +19,8 @@ using TabletopCraft.Net;
 namespace TabletopCraft.World
 {
     public enum MenuPart { None, Panel, Tab, Cell, ScrollUp, ScrollDown, Hotbar, Key, AreaStep, HudToggle,
-                           ResetView, ServerField, ServerFind, ServerConnect, ServerCancel, FoundServer, Tool }
+                           ResetView, ServerField, ServerFind, ServerConnect, ServerCancel, FoundServer, Tool,
+                           SoundDown, SoundToggle, SoundUp }   // [sound] Info tab volume row
 
     public struct MenuHit
     {
@@ -42,7 +43,7 @@ namespace TabletopCraft.World
     public struct MenuItem { public MenuPart Part; public int Index; public MenuRect R; public string Label; }
 
     public enum MenuActionKind { None, Select, Tab, Typed, Scrolled, HotbarSlot, Area, HudToggle,
-                                 ResetView, ServerEdit, ServerFind, ServerConnect, ServerCancel, Tool }
+                                 ResetView, ServerEdit, ServerFind, ServerConnect, ServerCancel, Tool, Volume }   // [sound] Volume: the Info tab changed Model.Volume / Model.SoundOn
 
     public struct MenuAction
     {
@@ -149,6 +150,9 @@ namespace TabletopCraft.World
         /// <summary>The right controller's ray is on the open panel: it owns the trigger and the right stick.</summary>
         public bool PointerOnPanel { get; private set; }
         public bool ShowHud;
+        /// <summary>[sound] Master volume in percent (steps of 10) and sound on/off, shown and changed on the Info tab.</summary>
+        public int Volume = 80;
+        public bool SoundOn = true;
         /// <summary>Area size presets in blocks (null = no area row) and the current size, from the app's hooks.</summary>
         public int[] AreaPresets;
         public int AreaCurrent = int.MinValue;
@@ -305,6 +309,11 @@ namespace TabletopCraft.World
                     ShowHud = !ShowHud; Version++;
                     return new MenuAction { Kind = MenuActionKind.HudToggle, Value = ShowHud ? 1 : 0 };
                 case MenuPart.ResetView: return new MenuAction { Kind = MenuActionKind.ResetView };
+                case MenuPart.SoundDown: case MenuPart.SoundUp: case MenuPart.SoundToggle:   // [sound]
+                    if (Hover.Part == MenuPart.SoundToggle) SoundOn = !SoundOn;
+                    else { Volume = Math.Max(0, Math.Min(100, Volume + (Hover.Part == MenuPart.SoundUp ? 10 : -10))); SoundOn = true; }
+                    Version++;
+                    return new MenuAction { Kind = MenuActionKind.Volume, Value = SoundOn ? Volume : -1 };
                 case MenuPart.ServerField:
                     ServerEditing = true; Note = "";
                     ServerKeys.SetText(ServerUrl); ServerKeys.ResetMode();
@@ -569,12 +578,17 @@ namespace TabletopCraft.World
                 if (Tab == InfoTab)
                 {
                     // Status text, then [Show HUD] [Reset view] and the Server button (opens the Server field).
-                    float bh = ButtonH, bw = (inner - Gap) / 2, y1 = y + rows * Cell - 2 * bh - Gap;
+                    // [sound] the first row also holds the volume: [Show HUD] [Reset view] [-] [Sound 80%] [+] (the middle one mutes)
+                    float bh = ButtonH, bw = (inner - 4 * Gap) * 0.27f, pm = (inner - 4 * Gap) * 0.09f, sv = inner - 4 * Gap - 2 * bw - 2 * pm, y1 = y + rows * Cell - 2 * bh - Gap;
                     L.Info = new MenuRect(Margin, y, inner, y1 - Gap - y);
                     L.Items.Add(new MenuItem { Part = MenuPart.HudToggle, Index = 0, R = new MenuRect(Margin, y1, bw, bh), Label = ShowHud ? "Show HUD: on" : "Show HUD: off" });
                     L.Items.Add(new MenuItem { Part = MenuPart.ResetView, Index = 0, R = new MenuRect(Margin + bw + Gap, y1, bw, bh), Label = "Reset view" });
                     L.Items.Add(new MenuItem { Part = MenuPart.ServerField, Index = 0, R = new MenuRect(Margin, y1 + bh + Gap, inner, bh),
                                                Label = "Server: " + (ServerUrl.Length > 0 ? ServerUrl : "-") + "  (change)" });
+                    float xs = Margin + 2 * (bw + Gap);
+                    L.Items.Add(new MenuItem { Part = MenuPart.SoundDown, Index = 0, R = new MenuRect(xs, y1, pm, bh), Label = "-" });
+                    L.Items.Add(new MenuItem { Part = MenuPart.SoundToggle, Index = 0, R = new MenuRect(xs + pm + Gap, y1, sv, bh), Label = SoundOn ? $"Sound {Volume}%" : "Sound off" });
+                    L.Items.Add(new MenuItem { Part = MenuPart.SoundUp, Index = 0, R = new MenuRect(xs + pm + sv + 2 * Gap, y1, pm, bh), Label = "+" });
                 }
                 else
                 {

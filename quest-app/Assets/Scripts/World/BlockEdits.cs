@@ -245,6 +245,8 @@ namespace TabletopCraft.World
         public BlockRegistry Registry;
         /// <summary>[menu] Placement check; defaults to the registry's. Null with no registry: everything goes.</summary>
         public Func<string, bool> Placeable;
+        /// <summary>[sound] A break or place was sent: op, world position, the block (broken or placed).</summary>
+        public Action<string, Vector3Int, string> Edited;
 
         bool CanPlace(string state) => Placeable != null ? Placeable(state) : Registry == null || Registry.IsPlaceable(state);
         bool Known(string id) => Registry == null || Registry.Find(id) != null;
@@ -266,7 +268,7 @@ namespace TabletopCraft.World
             }
             if (!shown) Pending.MarkSent(world, now);   // not shown yet: don't send it again while the trigger is held
             Sent++;
-            Result = "broke " + BlockEditRules.Label(old);
+            Result = "broke " + BlockEditRules.Label(old); Edited?.Invoke("break", world, old);   // [sound]
             return Stamp(Protocol.BlockEdit("break", world, null, BlockRaycast.FaceNames[h.Face]));
         }
 
@@ -352,7 +354,7 @@ namespace TabletopCraft.World
             var world = w.Origin + p.Cell;
             if (!shown) Pending.MarkSent(world, now);   // a block new to the palette: the cell looks empty until the server answers
             Sent++;
-            Result = "placed " + BlockEditRules.Label(p.State);
+            Result = "placed " + BlockEditRules.Label(p.State); Edited?.Invoke("place", world, p.State);   // [sound]
             return Stamp(Protocol.BlockEdit("place", world, p.State, BlockRaycast.FaceNames[h.Face]));
         }
 

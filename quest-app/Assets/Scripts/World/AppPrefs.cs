@@ -54,11 +54,13 @@ namespace TabletopCraft.World
         public const string FileName = "prefs.json";
         public const int Version = 1;
         /// <summary>The tabletop.json keys that prefs.json can override (see the file header).</summary>
-        public static readonly string[] SharedKeys = { "block_size_m", "area_width", "show_hud" };
+        public static readonly string[] SharedKeys = { "block_size_m", "area_width", "show_hud", "volume", "sound" };   // [sound] volume 0..1, sound on/off
 
         public float? BlockSizeM;
         public int AreaWidth;              // visible width the block size was chosen for (0 = unknown)
         public bool? ShowHud;
+        public float? Volume;              // [sound] master volume 0..1 (Info tab)
+        public bool? Sound;                // [sound] sound on (Info tab mute)
         public string MenuTab;             // BlockMenuModel.TabId: a category id, "search" or "info"
         public string[] Hotbar;            // 9 slots, null = empty
         public int HotbarSelected;
@@ -76,6 +78,8 @@ namespace TabletopCraft.World
             if (m.TryGetValue("block_size_m", out var b) && b is double bs && bs > 0) p.BlockSizeM = (float)bs;
             p.AreaWidth = Math.Max(0, m.I("area_width"));
             if (m.TryGetValue("show_hud", out var h) && h is bool sh) p.ShowHud = sh;
+            if (m.TryGetValue("volume", out var vo) && vo is double vd) p.Volume = (float)Math.Max(0, Math.Min(1, vd));   // [sound]
+            if (m.TryGetValue("sound", out var so) && so is bool sb) p.Sound = sb;
             p.MenuTab = m.S("menu_tab");
             var hb = m.A("hotbar");
             if (hb != null) { p.Hotbar = new string[Math.Min(hb.Count, 9)]; for (int i = 0; i < p.Hotbar.Length; i++) p.Hotbar[i] = hb[i] as string; }
@@ -100,6 +104,8 @@ namespace TabletopCraft.World
             if (BlockSizeM.HasValue) d["block_size_m"] = Math.Round(BlockSizeM.Value, 6);
             if (AreaWidth > 0) d["area_width"] = AreaWidth;
             if (ShowHud.HasValue) d["show_hud"] = ShowHud.Value;
+            if (Volume.HasValue) d["volume"] = Math.Round(Volume.Value, 2);   // [sound]
+            if (Sound.HasValue) d["sound"] = Sound.Value;
             if (!string.IsNullOrEmpty(MenuTab)) d["menu_tab"] = MenuTab;
             if (Hotbar != null) d["hotbar"] = new List<object>(Hotbar);
             if (Hotbar != null) d["hotbar_selected"] = HotbarSelected;
