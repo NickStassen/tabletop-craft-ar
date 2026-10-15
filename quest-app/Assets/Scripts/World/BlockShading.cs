@@ -118,11 +118,14 @@ namespace TabletopCraft.World
         /// flash; DayLight), main thread. Entities and players take their light from it (LightmapLive); block faces keep
         /// the noon colours they were meshed with and the shaders scale them by DayLight's ratio table.</summary>
         public static LightEnv Environment { get => _env; set { _env = value; BuildLive(); } }
+        /// <summary>[living] Bumped whenever Environment (or a lightmap setting) changes: CPU-lit things relight.</summary>
+        public static int EnvironmentVersion { get; private set; }
         static LightEnv _env = LightEnv.Noon;
         static readonly float[] LiveR = new float[256], LiveG = new float[256], LiveB = new float[256];
 
         static void BuildLive()
         {
+            EnvironmentVersion++;
             for (int sky = 0; sky < 16; sky++)
                 for (int block = 0; block < 16; block++)
                 {

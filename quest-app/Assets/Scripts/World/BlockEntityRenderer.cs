@@ -304,10 +304,32 @@ namespace TabletopCraft.World
 
         Color LightAt(Vector3Int l)
         {
-            if (Model.Light == null || !Model.InBounds(l.x, l.y, l.z)) return Color.white;
-            byte v = Model.Light[Model.Index(l.x, l.y, l.z)];
-            var c = BlockShading.Lightmap(v >> 4, v & 15);
+            // [living] the lightmap of the current time of day and weather (white at noon, as before)
+            int sky = 15, block = 0;
+            if (Model.Light != null && Model.InBounds(l.x, l.y, l.z)) { byte v = Model.Light[Model.Index(l.x, l.y, l.z)]; sky = v >> 4; block = v & 15; }
+            var c = BlockShading.LightmapLive(sky, block);
             return new Color(c.x, c.y, c.z, 1);
+        }
+
+        int _envVersion = -1;
+        float _nextRelight;
+
+        /// <summary>[living] When the time of day or the weather changed the lightmap, light every block entity again
+        /// (at most 4 times a second; groups whose members changed rebuild their colours).</summary>
+        void RelightLiving()
+        {
+            if (_envVersion == BlockShading.EnvironmentVersion || Time.unscaledTime < _nextRelight) return;
+            _envVersion = BlockShading.EnvironmentVersion;
+            _nextRelight = Time.unscaledTime + 0.25f;
+            foreach (var inst in _insts.Values)
+            {
+                var light = LightAt(inst.World - Model.Origin);
+                if (light == inst.Light) continue;
+                inst.Light = light;
+                foreach (var m in inst.Members) m.Group.Dirty = true;
+                if (IsSign(inst.Kind)) _textDirty = true;
+                if (inst.Mob != null) inst.Mob.SetColors(light, new Color(1, 0, 0, 0));
+            }
         }
 
         // ---------- members ----------
@@ -587,6 +609,7 @@ namespace TabletopCraft.World
                 foreach (var i in _insts.Values) Rebuild(i);
             }
             ScanStep();
+            RelightLiving();   // [living] night, weather, flashes
             if (_dirtyCells.Count > 0)
             {
                 var cells = new List<Vector3Int>(_dirtyCells);
