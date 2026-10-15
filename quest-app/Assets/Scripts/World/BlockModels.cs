@@ -176,10 +176,10 @@ namespace TabletopCraft.World
         {
             ushort nid = w.Get(nx, ny, nz);
             if (nid == 0xFFFF) return false;   // region border: drawn, like the greedy path does
-            string ns = w.State(nid);
-            var shape = BlockRules.Shape(ns);
+            var shape = w.ShapeOf(nid);        // [mesh] from the palette id: no string lookup unless it's a model
             if (shape == BlockShape.Cube) return true;
             if (shape != BlockShape.Model || models == null) return false;
+            string ns = w.State(nid);
             if (model.Quads[quad].Translucent && SameBlock(state, ns)) return true;
             var nm = models.Model(ns);
             return nm != null && nm.Covers(c ^ 1, model.CullCells, quad);

@@ -1,0 +1,13 @@
+{
+ "v": 1,
+ "type": "error",
+ "seq": 152,
+ "t": 1760370007010,
+ "code": "edit_denied",
+ "message": "the box is 40000 blocks, more than 32768 (edit.box-max-blocks)",
+ "ref_seq": 130,
+ "fatal": false,
+ "op": "box_edit",
+ "box_op": "fill",
+ "group": 9
+}

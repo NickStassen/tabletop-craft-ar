@@ -1,0 +1,11 @@
+{
+ "v": 1,
+ "type": "block_edit",
+ "seq": 44,
+ "t": 1760370004200,
+ "op": "place",
+ "pos": [106, 64, -35],
+ "state": "minecraft:stone_bricks",
+ "face": "east",
+ "group": 7
+}

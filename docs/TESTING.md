@@ -1021,12 +1021,41 @@ The outline colours and the yellow mob box at table scale; aiming at small mobs 
 
 ### Known gaps
 
-- Chests, barrels, shulker boxes, other containers and signs only call the hooks (`OnContainerUse`, `OnSignUse` in `XR/BlockEditMode.cs`; the server refuses them with `interact_denied`) until the container view and the sign editor come.
+- Chests, barrels, shulker boxes, other containers and signs call the hooks (`OnContainerUse`, `OnSignUse` in `XR/BlockEditMode.cs`; an `interact` on them is refused with `interact_denied`): since the operator tools they open the container view and the sign editor (section "Operator tools" below).
 - Only the curated table: no anvils, crafting tables, beds, respawn anchors, lecterns, flower pots, cauldrons, beehives, sweet berries, cave vine berries, composting items, candles on cakes, stacking items on blocks (sea pickles, candles), item frames, armour stands' equipment, villager trading, riding, or items such as potions, bows, fireworks, ender pearls and music discs.
 - Sounds and particles are the plugin's own (`World#playSound` with vanilla keys, a few particles), not the game's level events; a door that another plugin protects opens anyway (no events fire, as with `block_edit`).
 - A daylight detector's power follows its new mode within a second (its block entity's tick), not at once.
 - A held mob's AI-off is saved with the mob: if the server crashes while a headset carries it, it stays NoAI (`/data merge entity <uuid> {NoAI:0b}` fixes it).
 - Fire and lava can spread beyond the region; TNT can blow up blocks outside it.
+
+## Undo, box edits and brushes (`power_v1`, PROTOCOL "Undo, box edits and brushes"; Paper 26.3, 2026-10-15, no headset)
+
+### Tests
+
+- Java: `PowerFixtureTest` (6: groups on `block_edit`/`interact`, `box_edit` and `brush` parsing and refusals, `history`/`box_progress`/error builders against the fixtures, welcome limits), `UndoJournalTest` (10: one hold = one group, first-before/latest-after merging, a cell back where it began leaves the group, redo cleared by a new group, groups per world, the depth keeps the newest group whole, brush strokes merging, block entity snapshot cap, position keys), `BoxPlanTest` (5: walk order, the cells of fill/clear/replace/walls/hollow, the clone's quarter turns as bijections, brush shapes (81 cells for a radius-2 sphere, 2553 for 8), smoothing a bump and a hole).
+- Python: `test_tabletop_protocol.py` validates the 15 new fixtures and rejects 17 broken variants (`validate_power`); `ruff` clean.
+- C#: `Tests~/PowerTests.cs`, 72 checks: fixtures, B's tap/hold/repeat and a press carried over from a blocked moment (`TapHoldButton`), groups stamped on `block_edit` and `interact` by `BlockEditor`, the wand's corners, fill/replace/clear refusals (no box, no filter, an item, over the cap), the undo-depth warning, clone paste size, origin and turns, B ending paste, brush cycling, radius limits, stroke throttling and the client's blocks-per-second bucket, undo/redo counts, one job at a time and its timeout, the Tools tab (placement after Use/Eggs, restored from prefs, buttons fit, clicks, removed for a server without `power_v1`). `ALL PASS` with `--jar` and `--entity-models`.
+- Unity: batch compile clean (no `error CS`, no warnings in `Assets/`), `ShaderCheck` 120 variants, 0 errors.
+
+### Live server (own Paper 26.3, flat world, ports 25622/8822, `auth.token` set for `command_v1`)
+
+`python tools/power_check.py --url ws://127.0.0.1:8822/tabletop --token T --log tools/run/power/server.log`: **39/39 PASS** (after merging master with the living and operator branches). It clears its bench with four 32×32×32 boxes, then: three places in one group undone and redone as one (history 3 blocks, then 1 to redo); a break group back; an opened door closed again by undo (both halves), then its placement undone (both halves); a door broken from its top half back whole; a chest with 7 diamonds (`/item replace`) broken and undone with its diamonds (`/data get block`); a box clear over that chest spills nothing (`execute if entity @e[type=item]` fails) and its undo brings the diamonds back; a `container_edit` (5 gold ingots into slot 3) undone (the gold goes, the diamonds stay) and redone; a `sign_edit` ("Hello") undone (the text goes, the sign stays); a cell changed by `/setblock` skipped and reported (`skipped_pos`); a new edit clears redo; fill 500, replace 500 (corners in reverse), clear 500 and its undo; walls 60 (nothing inside); hollow (a stone shell, the gold block inside cleared); clone turned a quarter (east-facing stairs face south, positions as `BoxPlan.rotate`); refusals with readable messages (33600 blocks over the cap, a box outside the region, a command block from `edit.deny`); a 32768-block fill with `box_progress` while running and an undo refused meanwhile ("wait: a fill (80 %) is still running"); brushes (81 moss blocks for a radius-2 sphere, erased, a lone dirt bump smoothed away, strokes over the queue or blocks-per-second refused); a client without `power_v1` refused undo; a fresh session has nothing to undo; every message validates; the neighbour bridge is on.
+
+`Tests~ --live-power ws://127.0.0.1:8822/tabletop TOKEN`: **6/6 PASS** with the app's own `LinkClient`, `SnapshotAssembler`, `BlockEditor` (group stamping) and `PowerTools` (undo of a three-block hold, a wand fill of 32 blocks and its clear).
+
+Main thread (the `POWER` log lines, JIT warm): a 32768-block fill in 21–22 ticks (1.0–1.06 s), 41–44 ms of main thread (fix-up 19 ms), at most 2.06–2.11 ms in a tick with `edit.box-budget-ms: 2`; its undo in 19–21 ticks (0.91–1.0 s), 36–42 ms; a 500-block fill right after start 6 ticks (11 ms, the JIT still cold); a 3-block undo 1.8 ms. One earlier run had a single 3.8 ms tick in the big fill (a GC pause inside the slice).
+
+### Not verified (needs the headset)
+
+B's hold timing (0.6 s, then 0.4 s repeats) and the pick moving to B's release; the Tools tab's layout and readability (eleven tabs, seven button rows, five status lines); the wand's cyan box and the paste's orange box at table scale, cut to the visible window; aiming corners with the left trigger while the right ray aims; the left grip for corner B (the grip is also the glide modifier); brush strokes while sweeping (rate, haptics, the reach box); toasts for finished jobs and refusals; how a 32768-block job looks on the table while the diffs and section snapshots arrive.
+
+### Known gaps
+
+- Undo doesn't bring back entities (spawned mobs, primed TNT, items spilled by a chest broken with the trigger, which therefore duplicate when the break is undone), nor what happened later (sand that fell, water that spread, fire, crops grown): those cells are skipped.
+- `block_edit`/`interact` are journalled from a window around the target (3×3×3, bone meal 7×14×7): a big tree grown with bone meal can reach past it; a lever's redstone further away comes back by itself through the neighbour update.
+- The journal lives with the connection: a reconnect starts with nothing to undo. Cells outside the current area are skipped (glide back to undo them).
+- A brush stroke's cells outside the area are left out silently; strokes send no `box_progress`.
+- Box and brush jobs empty block inventories (chests, barrels, hoppers, jukeboxes, lecterns, pots, chiseled bookshelves...) before replacing them (kept for undo); a campfire's items aren't an inventory in the API and still drop.
 
 ## A living world: time of day, weather, leads, gear, displays (`world_v1`, PROTOCOL "World state" and "Living entities"; Paper 26.3, 2026-10-15, no headset)
 
@@ -1063,3 +1092,103 @@ How night, dusk, rain and thunder look over passthrough (and whether the night o
 - Fishing lines and player-held leads assume a right-handed player (the main arm isn't sent).
 - Text displays are plain text in the app's font (no colours, shadows or see-through); `first person` and `head` item contexts draw untransformed.
 - Sulfur cube size variants other than the default, the wither's armour and invulnerable look, the ender dragon's flight pose and the happy ghast's ropes aren't drawn; the camel's lead offset is approximate.
+
+## Operator tools: follow, marks, containers, signs (PROTOCOL "Operator tools"; Paper 26.3, seed 12345, 2026-10-15, no headset)
+
+Following a player, the Marks tab (worlds, spawn, typed coordinates, shared bookmarks), the container view and editing, and the sign editor.
+
+### Tests
+
+| Suite | Result |
+|---|---|
+| Plugin JUnit (`./gradlew build`) | 168 tests, 0 failures. `OperatorFixtureTest` 8: all 18 operator fixtures through `OperatorMessages`' parsers and builders (bookmarks, worlds, the jump request, containers, edits with "was", sort, the closed view, sign edits), 7 malformed bookmarks, 7 malformed container edits, 4 malformed sign edits, name and line cleaning. `ContainerRulesTest` 5: which blocks open and sort, vanilla titles, slot rules (furnace output and fuel, brewing stand slots, shulker in shulker), sorting (merging per stack size, components kept apart, order), the bookmark store (unique names ignoring case, sort, cap, YAML maps round trip, bad entries skipped). |
+| Python (`pytest -q`, `ruff check .`) | 201 passed, ruff clean; 24 new: the 18 fixtures validate, caps/worlds/marks in welcome and region_info, a jump inside the nether's height, the `bookmark` and `container_edit` builders against the fixtures, 20 malformed variants, `mark_denied`. |
+| Tests~ (`dotnet run -- --jar 26.3.jar --entity-models entity_models.json`) | ALL PASS, 1150 checks; 104 in `OperatorTests.cs`: the fixtures through `Net/OperatorProtocol.cs`; `Jumps.Plan` (dims and margins kept, whole-section origins in the same world, centred within 8 blocks, clamped at bedrock and the top, another world's height, a 384-high region shrunk to the nether's 256); typed coordinates (`x z`, `x, y, z`, `~`, refusals); `JumpFocus`; following against the real `NavState` and a fake server (a player walking 4.3 blocks/s for 20 s stays within 2.5 blocks of the centre by section shifts alone, dead zone, vertical band, a big climb, a far teleport found by `region_query` and jumped to, into the nether within its height, the player leaving, Go to once, a manual stop); the Marks tab (header, world buttons, Spawn, typed jumps, rows, Go, Delete, Add mark with a name, read-only); Players' Follow / Stop / Go to (also without `command_v1`); the container view (grids, slot labels, hotbar items and icons, Take/Put/Clear/Sort messages with "was", a view-only server, a refused edit, the server closing the view, a tab click and closing the panel sending `container_close`, a double chest's other half); the sign editor (filled from `block_entities`, typing, next line, colour, glow, sides, Save sends only changed sides, a veto, an empty hanging sign); every new layout inside the panel, without overlaps, at most 40 cm. |
+| Unity 6000.0.84f1 headless compile, `ShaderCheck` | clean (no errors, no warnings in `Assets/`); 120 shader variants, 0 errors (no shader changed) |
+
+### Live server (own Paper 26.3, seed 12345, ports 25623/8823, `auth.token` set, ViaVersion/ViaBackwards 5.12.0 for the bot)
+
+`python tools/operator_check.py --url ws://127.0.0.1:8823/tabletop --token T --mc-port 25623 --data-dir tools/run/operator/plugins/TabletopCraftAR`: **35/35 PASS** (the last two runs; earlier runs found two test bugs: setup commands over the 2/s command limit, and blocks left from a previous run). Worlds: `world` (normal, −64..320, spawn 96 145 −32), `world_nether` (0..256, spawn 0 65 4), `world_the_end` (0..256, spawn 0 65 0); `bookmarks` arrives after `item_registry` and before the first snapshot; `region_info` carries the spawn and the worlds; a spawn jump lands where asked with its margin (105–594 ms); a bookmark added by one headset reaches a second one and `bookmarks.yml`, a remove in another case reaches both, an unknown name and a headset without `marks_v1` get `mark_denied`; the Java player (mineflayer) is found by `region_query` and listed in `player_positions` of the region around them, again after a 500-block teleport (210–881 ms) and in the nether (151 ms; `region_changed.limits.build_height` [0, 256]); a double chest is one view of 54 slots with the other half named; 16 torches put arrive by themselves (93 ms); 64 ender pearls are clamped to 16; a stale "was" is refused; an emerald put into the other half by command arrives live; sort merges 3 + 5 diamonds; taking 6 leaves 2; a shulker box refuses a shulker box; a furnace refuses stone as fuel and takes coal; a barrel's `open` property is true while viewed and false after `container_close`; breaking the chest ends the view ("the container is gone"); outside the region `out_of_region`; without `interact_v1` `interact_denied`; a sign edited on both sides (lines, light blue glowing front, red back) shows in `block_entities`; a waxed sign and a block without a sign are refused.
+
+`Tests~ --live-operator ws://127.0.0.1:8823/tabletop T FollowMe` with a mineflayer player online: **10/10 PASS** (three runs in a row) with the app's own `LinkClient`, `NavState`, `FollowState`, `JumpFocus` and `OperatorPanelModel`: the player is teleported 3 blocks east twice a second for 10 s and the view glides 60 blocks after them by 4 region shifts and no jump (ending 0.7 blocks behind); a 1000-block teleport is followed by one jump with the view on the player; a teleport into the nether is followed into it with a region inside 0..256; a bookmark round trip. (A survival bot that is teleported about can get kicked for `invalid_player_movement`; the test makes it creative first.)
+
+Main thread (the `CONTAINER`/`SIGN` log lines): 0.04–0.25 ms per container view or edit, 0.06–0.22 ms per sign edit (with the `SignChangeEvent`).
+
+### Not verified (needs the headset)
+
+The Marks tab's readability and the keyboard for coordinates and names; the world buttons into the nether and the end at table scale (a new world loads in full); the view landing on the target after a jump; following a walking, riding and flying Java player for minutes (smoothness, the vertical band, the moment it jumps), following through a portal and a death; that the stick stops following at once; the container view beside the left hand with item icons from the pack (icons of items that aren't blocks, enchanted items show as their plain item), counts and slot labels, selecting with the right ray, Take/Put/Clear/Sort; Java players seeing a chest's or shulker box's lid open while the headset looks (`Lidded#open`; the barrel's property was checked live) and close again; the sign editor's swatches (dye colours from `entity_models.json`, else wool colours), typing four lines, and the sign on the table updating after Save; a protection plugin vetoing a sign edit (no such plugin on the test server).
+
+### Known gaps
+
+- Container and sign edits are journalled for undo since the power tools merged (`PowerService.journalledTiles`); an undo puts the whole block entity back, so another player's change to the same chest in between is overwritten.
+- Items are shown and set by id and count only: names, enchantments, potion contents, shulker box contents and other components aren't shown, and Put creates a plain stack (the same item already in the slot keeps its components). No drag between slots, no taking items into a hotbar (the headset has no inventory).
+- Lecterns, chiseled bookshelves, decorated pots, jukeboxes, campfires, ender chests, crafting tables and furnace minecarts don't open a view.
+- The sign editor sets plain text (no per-line colours or formatting) and can't edit waxed signs; vanilla's line width isn't enforced (40 characters on the headset, 90 on the server).
+- `SignChangeEvent` has no player: plugins that need one log an error and don't block the edit. Container edits fire no inventory events (protection plugins aren't asked).
+- Following is client-side: two headsets following different players fight over the shared region (the last request wins, as for gliding).
+- Jumps to typed `x z` keep the view's height, which may be underground or in the air at the target.
+
+## Faster meshing and the surface skirt (mesh; Paper 26.3, seed 12345, 2026-10-15, no headset)
+
+At 256 wide every block of travel brings about 16 new sections into the active box, so meshing limited gliding (TESTING "Faster gliding": 52-54 blocks/s on a PC, 34 with meshing 4× slower; the headset with 0.3.0 did 4-9). Measured on an x86 PC (Ryzen 7 9800X3D), own Paper 26.3 server (ports 25624/8824, 2 GB heap, plugin 0.4.0, chunks generated), clients with `sections_v1` + `light_v1` + `biomes_v1`, the 26.3 client jar as the pack.
+
+### Tests
+
+| Suite | Result |
+|---|---|
+| Quest scripts (`Tests~`, .NET 8, `--jar` + `--entity-models`) | 1,354/1,354 PASS (master 0.5.0: 1,326). New in `MeshTests.cs` (28): `ShadeCache` lights 7,200 random faces exactly like the world (random shapes and light, a 37×21×29 region, every section border and region edge, cubic and inner faces, light floors, flat and full-bright shades, smooth light on and off) and falls back to the world outside its section; the greedy pass on sections without cubes, partial edge sections, unknown palette ids and `leaves_inner` on/off; job size and the work meter; `skirt_speed` in the mesh cap; off-screen batches; skirt tiles (one merged top face just below the surface, plants skipped, step sides from the lower neighbour's surface, the window top cutting a pillar, nothing in range, tint × light and light code of the cell above, `SurfaceRange`); the skirt planner (tiles for pending columns, no repeats while building, kept while their surface is pending, dropped when it is on screen even with sections pending deep below, re-keyed on a shift, dropped outside the region or the box, no builds while a job runs). |
+| Unity 6000.0.84f1 batch compile | 0 errors; warnings in `Assets/` only the existing CS0618 (`overlayType`) and CS0414 (`BlockEntityRenderer._fullScan`). |
+| `Editor/ShaderCheck` | 160 variants, 0 errors (no shader changed). |
+| `Editor/BatchMeshCheck.RunRenderer` | 11/11 PASS: the ten existing steps (with deferred drops and the off-screen wait) plus "skirt while gliding east": a one-section shift with the view moving shows skirt tiles for the new columns (up to 6, on screen in 2 frames) and none once everything is meshed and uploaded, and what is on screen then equals the meshed model. Fixed on the way: a section meshed again after it was dropped (KeepScope) was re-meshed at the next snapshot. |
+| `TabletopBatch.BuildApk` | Build succeeded in 1:38 (IL2CPP ARM64; not installed). |
+
+### Mesher output and cost per section (`Tests~ --profile-mesh DIR --jar 26.3.jar [--hash OUT]`, one thread)
+
+Four saved snapshots with light and biomes: a dark forest (0, 32, -128) and a meadow (384, 48, 448) and old-growth taiga (192, 32, 64), each 192×160×192, and the 288×128×288 area at 0,0 from the batching measurements. Every one of the 6,912 sections hashes the same (vertices, UVs, colours, light codes, the three index lists, in order) as master's mesher with the pack, with `leaves_inner` off, with flat light, without light and without a pack (stable flat colours: `BlockRules.FlatColor` hashes unknown names with .NET's per-process string hash).
+
+| snapshot | before: ms/section | after | air sections | all-stone sections | sections with faces |
+|---|---|---|---|---|---|
+| forest | 0.549 | 0.167 (3.3×) | 0.321 → 0.019 | 0.597 → 0.109 | 0.764 → 0.328 |
+| meadow | 0.487 | 0.134 (3.6×) | 0.327 → 0.019 | 0.577 → 0.105 | 0.692 → 0.321 |
+| taiga | 0.475 | 0.124 (3.8×) | 0.320 → 0.018 | 0.566 → 0.105 | 0.670 → 0.291 |
+| 0,0 (288 wide) | 0.534 | 0.157 (3.4×) | 0.335 → 0.019 | 0.603 → 0.115 | 0.775 → 0.342 |
+
+- Where the time went: two string-keyed dictionary lookups per cell and direction in the greedy pass (`BlockRules.Shape(state)` for the cell and its neighbour, then `Face(state, dir)`), about 50,000 per section whatever it holds, so an all-air section cost 0.32 ms; then about 20 bounds-checked world reads per lit face. Now: one padded copy of the section and its border per section, lookups per palette id, a light cache per section; the rest is the faces themselves (the greedy merge, emitting, `SectionMesh.From`).
+- On the headset (IL2CPP, ARM) the string hashing and the small-method calls removed were relatively dearer, so the gain may be larger there; it is unmeasured.
+
+### Gliding (`Tests~ --live-glide ws://… --jar 26.3.jar --widths 128,192,256 --glide-seconds 12 [--mesh-slowdown 4]`)
+
+The harness now meshes exactly like the renderer (Build + BuildSpecials + `SectionMesh.From`, the jar's models and textures prewarmed on the main thread like the atlas; it used to call `BlockRules.FlatColor` per face, string work the app never does, which made sections cost 0.9-2.7 ms there) and tracks the batches (rebuilds and MB re-uploaded per second). "4× slower" now spins the worker for 3× the section's own time (`Thread.Sleep` rounded sub-millisecond waits to 0 or 1 ms). "Before" is master's mesher, fixed jobs of 4 and 0.4.0's batch rules (`--per-job-max 4 --old-batch-rules`); "after" this branch, skirt off; "skirt" this branch with the skirt and `skirt_speed` 2. Glides start at the meadow (384, 48, 448) and go +x then -x. Asked speed (stick, 3× ramp): 81 blocks/s at 128, 121 at 192, 162 at 256. Table cm/s at the table-fitted block size (4.45 / 2.97 / 2.23 mm). "Holes" = frames (of about 890) in which a visible column's surface sections weren't on screen (dirty, being meshed, or batch not uploaded); with the skirt: not covered by a skirt tile either.
+
+| width (asked) | before | after | after + skirt | before, 4× slower | after, 4× slower | after + skirt, 4× slower |
+|---|---|---|---|---|---|---|
+| 128 (81) | 76.1-76.3 (33.9-34.0) | 76.2-76.3 (33.9-34.0) | 76.1-76.3 (33.9-34.0) | 76.2-76.3 (33.9-34.0) | 76.1-76.3 (33.9-34.0) | 76.2-76.3 (33.9-34.0) |
+| 192 (121) | 65.6-68.1 (19.5-20.2) | 110.7-111.5 (32.9-33.1) | 111.0-111.8 (33.0-33.2) | 62.2-64.1 (18.5-19.0) | 110.5-112.1 (32.8-33.3) | 111.4 (33.1) |
+| 256 (162) | 52.8-56.1 (11.8-12.5) | 145.8-146.3 (32.5-32.6) | 145.5-149.4 (32.4-33.3) | 47.6-49.5 (10.6-11.0) | 117.5-118.9 (26.2-26.5) | 140.9-144.1 (31.4-32.1) |
+
+Blocks/s (table cm/s), both directions. At 256:
+
+| | before | after | after + skirt | before, 4× | after, 4× | after + skirt, 4× |
+|---|---|---|---|---|---|---|
+| mesh rate (sections/s) | 907-913 | 7,493-7,983 | 7,238-7,549 | 792-806 | 2,071-2,334 | 2,396-2,553 |
+| mesh cap (blocks/s) | 53-56 | 430-445 | 860-865 | 48-50 | 121-127 | 247-252 |
+| worker ms per section (real) | 0.60-0.65 | 0.12-0.13 | 0.13 | 0.57-0.60 | 0.14 | 0.14 |
+| job size | 4 | 58-64 | 47-64 | 4 | 6-20 | 8-18 |
+| surface holes (frames of ~890) | 60-175 | 8-18 | 3-6, uncovered 0-4 | 47-97 | 148-168 | 475-677, uncovered 25-55 |
+| batch rebuilds/s (MB/s) | 50-51 (18-24) | 102-119 (40-47) | 108-109 (43) | 48-49 (17-19) | 92-94 (40-42) | 98-104 (43-44) |
+| skirt tiles/s (ms each, real) | | | 166-168 (0.16-0.17) | | | 167-177 (0.12-0.14) |
+
+- Before, meshing was capped at about 900 sections/s whatever a section cost: jobs of a fixed 4 sections were handed out once per frame (12 per frame at 72 Hz). The faster mesher alone gave nothing until jobs took ~1.5 frames of work (`per_job`): now the measured rate is 8× at full speed and 2.6-3× with the 4× slowdown, and at 256 the stream cap (about 130-200 blocks/s here) and the asked speed limit the glide on the PC. 192 and 256 now reach about the same table speed as 128 (33 cm/s) at 1×; with the slowdown 256 reaches 26 cm/s, or 31-32 cm/s with the skirt.
+- The skirt keeps the view's surface covered: with the slowdown and `skirt_speed` 2 at 256, detail was still missing somewhere on screen in 54-77% of frames, but a skirt tile covered it in all but 25-55 frames (3-6%), usually a column or two at the leading edge for a frame. Without the slowdown the skirt is rarely needed (mesh cap 860 blocks/s, holes in under 1% of frames). These harness skirt counts are conservative: it dropped tiles whose build a new snapshot overtook instead of planning them again, as the app now does.
+- Batch uploads: each block of travel at 256 re-uploads 0.28-0.32 MB instead of 0.34-0.43 (about 40% of the rebuilds are now empty trailing batches with nothing to upload). At 146 blocks/s that is 40-47 MB/s on the headset's main thread (within the 3 ms per-frame upload budget, at least one batch per frame); at the headset's likely speeds a third to a half of that.
+- 128 is at the asked speed in every run (as before).
+
+### Not verified (needs the headset)
+
+What a section costs on the Quest (`GLIDE ... mesh_ms=` is the worker time per section, `per_job=` the job size, `mesh_rate_s=`), the speed at 192 and 256 with and without the skirt (`"surface_skirt": false`, `"skirt_speed": 1`), how the skirt looks while gliding (tiles at the leading edge, replaced by detail within moments; no z-fighting, no seams with the detail, water and leaves as opaque stand-ins), frame times (PERF) while gliding: the skirt adds a pending-grid pass over the active box per frame while moving, a few pooled tile uploads (about 10-30 KB each) per frame and one small worker job; `MESH workers=... cores=...` at start (what the Quest reports), and whether a 4th worker (`"mesh_workers": 4`) helps or costs frames.
+
+### Known gaps
+
+- The skirt is a stand-in: top faces only plus steps, flat-lit (no AO), no grass side overlays, water and leaves opaque, nothing for overhangs or caves seen through the cut sides (the caps show those). It covers only what the region snapshot has (the margin ahead); beyond the region there is nothing to show until the next delta.
+- With `skirt_speed` 2 and slow meshing, detail can trail far behind (the skirt covers the window's surface, and detail fills in when the glide slows or stops).
+- Dropped sections' geometry stays on the GPU until their batch is rebuilt (at most 4 s, hidden by the clip box).

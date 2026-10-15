@@ -1,0 +1,12 @@
+{
+ "v": 1,
+ "type": "brush",
+ "seq": 160,
+ "t": 1760370008000,
+ "op": "paint",
+ "shape": "sphere",
+ "center": [105, 63, -35],
+ "radius": 3,
+ "state": "minecraft:moss_block",
+ "group": 12
+}

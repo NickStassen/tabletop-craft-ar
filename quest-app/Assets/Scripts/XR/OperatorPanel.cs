@@ -11,6 +11,10 @@
 //
 // "@ pointer" and the Here/Bolt buttons use the block the right controller last aimed at (BlockEditMode's target,
 // remembered while the ray is on the panel). Commands go out with LinkClient.SendTracked so their results match.
+// [operator] The Marks tab (worlds, spawn, typed coordinates, bookmarks), Follow / Go to on Players, and the container view
+// and sign editor (opened by BlockEditMode's left-trigger hooks through OpenContainer / OpenSign) are drawn here too; slot
+// icons come from the block menu's icon atlas. Jumps and follow requests go to the app (JumpTo, Follow); bookmark,
+// container and sign messages the model queues in its Outbox are sent each frame.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -30,6 +34,14 @@ namespace TabletopCraft.XR
         public Func<string> WorldName;                      // the region's world (for "at")
         public Func<Vector3Int?> AimedBlock;                // world coordinates of BlockEditMode's target this frame, or null
         public Action<string, ToastKind> Toast;
+        // [operator] jumps (world, target) and follow requests ("follow" / "goto" / "stop", name, uuid) go to the app
+        public Action<string, Vector3> JumpTo;
+        public Action<string, string, string> Follow;
+        public BlockIconAtlas Icons;                        // container slot icons (the block menu's atlas)
+        public NavState Nav;                                // where the view is (the Marks tab's header, Add mark, ~ coordinates)
+        public FollowState Following;                       // who is followed (Players' Follow / Stop, Marks' Stop follow)
+        public Func<string> Selection;                      // the hotbar's selected block or item (the container view's Put)
+        public Func<BlockRegistry> Registry;                // block -> item for Put, icons of block items
         public float MaxRayM = 1.5f;
         /// <summary>How long the last aimed block stays the pointer after the ray left the terrain.</summary>
         public float PointerSeconds = 60f;
@@ -48,8 +60,9 @@ namespace TabletopCraft.XR
             TextOk = new Color(0.75f, 1f, 0.8f), TextCmd = new Color(0.65f, 0.85f, 1f), TextNote = new Color(1f, 0.85f, 0.5f);
 
         Transform _panel;
-        Mesh _bg, _over;
-        Material _bgMat, _overMat, _textMat;
+        Mesh _bg, _over, _icon;
+        Material _bgMat, _overMat, _textMat, _iconMat;
+        readonly PanelMesh _ic = new PanelMesh();   // [operator] slot icons
         Font _font;
         LineRenderer _laser;
         PanelLayout _layout;
@@ -73,6 +86,9 @@ namespace TabletopCraft.XR
             _overMat = PanelMesh.SpriteMat(3013);
             _panel = new GameObject("OperatorPanel").transform;
             _bg = PanelMesh.Child(_panel, "Background", _bgMat);
+            _iconMat = PanelMesh.SpriteMat(3011);   // [operator] slot icons between the boxes and the text
+            if (Icons != null) _iconMat.mainTexture = Icons.Texture;
+            _icon = PanelMesh.Child(_panel, "Icons", _iconMat);
             _over = PanelMesh.Child(_panel, "Overlay", _overMat);
             _panel.gameObject.SetActive(false);
             var lgo = new GameObject("OperatorLaser");
@@ -126,14 +142,52 @@ namespace TabletopCraft.XR
                 case "server_status": Model.OnStatus(ServerStatus.From(m)); return true;
                 case "world_info": Model.OnWorld(WorldInfo.From(m)); return true;
                 case "players_info": Model.OnPlayers(PlayersInfo.From(m)); return true;
+                // [operator] the shared bookmarks; a container view's contents (or its end)
+                case "bookmarks": Model.Marks.OnBookmarks(BookmarkList.From(m)); return true;
+                case "container":
+                {
+                    var v = ContainerView.From(m);
+                    bool wasOpen = Model.Mode == PanelMode.Container;
+                    if (!Model.OnContainer(v) && !v.Closed) Send(OperatorProtocol.ContainerClose(v.Pos));   // a stale view: tell the server we're not looking
+                    if (wasOpen && Model.Mode != PanelMode.Container) Toast?.Invoke(Model.Note, ToastKind.Info);
+                    return true;
+                }
             }
             return false;
+        }
+
+        /// <summary>[operator] The left trigger on a container (BlockEditMode.OnContainerUse): the panel opens on its view.</summary>
+        public void OpenContainer(Vector3Int pos)
+        {
+            Model.OpenContainer(pos);
+            _placed = false;
+            Debug.Log($"[Tabletop] CONTAINER open {pos.x},{pos.y},{pos.z}");
+        }
+
+        /// <summary>[operator] The left trigger on a sign (BlockEditMode.OnSignUse): the panel opens on the sign editor.</summary>
+        public void OpenSign(Vector3Int pos, string state, BlockEntityData data)
+        {
+            Model.OpenSign(pos, state, data);
+            _placed = false;
+            Debug.Log($"[Tabletop] SIGN edit {pos.x},{pos.y},{pos.z} {(data != null ? "with text" : "empty")}");
         }
 
         /// <summary>An error that answers one of the panel's messages; true when it was ours (no toast needed).</summary>
         public bool OnError(Dictionary<string, object> m)
         {
             long refSeq = (long)m.D("ref_seq", -1);
+            // [operator] bookmark, container and sign refusals carry their op (and pos): the note line says them
+            string op = m.S("op");
+            if (op == "bookmark" || op == "container_query" || op == "container_edit" || op == "sign_edit")
+            {
+                var p = m.A("pos");
+                bool wasOpen = Model.Mode == PanelMode.Container;
+                if (Model.OnOperatorError(op, p != null && p.Count == 3 ? OperatorProtocol.V3(p) : (Vector3Int?)null, m.S("message")))
+                {
+                    if (!Model.Open || (wasOpen && Model.Mode != PanelMode.Container)) Toast?.Invoke("Can't: " + m.S("message"), ToastKind.Warn);
+                    return true;
+                }
+            }
             if (Model.Console.OnError(refSeq, m.S("code"), m.S("message"))) { if (Model.Tab != OpTab.Console) Model.Note = m.S("message"); return true; }
             // Our chat_send, completion or query: the note line says it (no toast; "rate_limited" there means edits).
             if (_queries.TryGetValue(refSeq, out var what)) { _queries.Remove(refSeq); Model.Note = (what == "chat" ? "chat: " : "") + m.S("message"); return true; }
@@ -147,6 +201,11 @@ namespace TabletopCraft.XR
             if (_hapticOff >= 0 && now >= _hapticOff) { _hapticOff = -1; OVRInput.SetControllerVibration(0, 0, OVRInput.Controller.RTouch); }
             Model.Connected = Online?.Invoke() ?? false;
             TrackPointer(now);
+            // [operator] what the Marks tab, Follow and the container view need from the rest of the app
+            if (Nav != null) { Model.Marks.Loaded = Nav.Loaded; Model.Marks.World = Nav.World; Model.Marks.View = Nav.View; }
+            if (Following != null) { Model.Marks.FollowName = Following.Active && !Following.Once ? Following.Name : null; Model.Marks.FollowLine = Following.Active ? Following.Describe() : ""; }
+            Model.HotbarSelection = Selection?.Invoke();
+            Model.Registry = Registry?.Invoke();
             bool blocked = Blocked?.Invoke() ?? false;
             if (blocked) { if (Model.Open) Model.SetOpen(false); }
             else
@@ -178,6 +237,16 @@ namespace TabletopCraft.XR
             _laser.gameObject.SetActive(Model.CapturesRight);
             if (Model.Open) Draw();
             SaveHistory();
+            FlushOutbox();   // [operator]
+        }
+
+        /// <summary>[operator] Sends what the Marks tab, the container view and the sign editor queued (dropped while offline).</summary>
+        void FlushOutbox()
+        {
+            if (Model.Outbox.Count == 0) return;
+            foreach (var m in Model.Outbox)
+                if (Send(m) < 0 && (string)m["type"] != "container_close") { Model.Note = "not connected"; break; }
+            Model.Outbox.Clear();
         }
 
         /// <summary>The last aimed block is the pointer for a while, so aiming and then pointing at the panel works.</summary>
@@ -231,6 +300,10 @@ namespace TabletopCraft.XR
                 }
                 case PanelActionKind.Refused: Haptic(0.08f); break;
                 case PanelActionKind.None: break;
+                // [operator] jumps and follow requests are the app's (NavController), bookmark/container/sign messages are in the Outbox
+                case PanelActionKind.Jump: JumpTo?.Invoke(a.Line, a.Pos); Haptic(0.35f); break;
+                case PanelActionKind.Follow: Follow?.Invoke(a.Line, a.Name, a.Uuid); Haptic(0.3f); break;
+                case PanelActionKind.Sent: Haptic(0.3f); break;
                 default: Haptic(0.15f); break;
             }
         }
@@ -294,7 +367,8 @@ namespace TabletopCraft.XR
 
         void Draw()
         {
-            _b.Clear(); _o.Clear(); _used.Clear();
+            _b.Clear(); _o.Clear(); _ic.Clear(); _used.Clear();
+            if (Icons != null && _iconMat.mainTexture != Icons.Texture) _iconMat.mainTexture = Icons.Texture;
             var Lo = _layout;
             Box(_b, new MenuRect(0, 0, Lo.Width, Lo.Height), PanelBg, 0.0004f);
             foreach (var it in Lo.Items)
@@ -321,10 +395,27 @@ namespace TabletopCraft.XR
                         Label("key" + it.Index, it.Label, it.R.CX, it.R.CY, it.Label.Length > 1 ? 0.0016f : 0.0021f, TextAnchor.MiddleCenter, TextMain);
                         break;
                     }
+                    // [operator] the Marks field, container slots (icon + count), the sign's dye swatches
+                    case PanelPart.Field:
+                        Box(_b, it.R, hover && !it.Active ? Hover : Field, 0, 0.0006f);
+                        if (it.Active) Box(_b, new MenuRect(it.R.X, it.R.Y + it.R.H - 0.0012f, it.R.W, 0.0012f), Active, -0.0002f);
+                        Label(key, Short(it.Label, 64), it.R.X + 0.003f, it.R.CY, 0.0014f, TextAnchor.MiddleLeft, it.Active ? TextMain : TextDim);
+                        break;
+                    case PanelPart.Slot:
+                        Box(_b, it.R, it.Active ? Selected : hover ? Hover : Slot, 0, 0.0012f);
+                        SlotIcon(it.Index, it.R);
+                        if (it.Label.Length > 0) Label(key, it.Label, it.R.X + it.R.W - 0.0025f, it.R.Y + it.R.H - 0.002f, 0.0012f, TextAnchor.LowerRight, TextMain);
+                        break;
+                    case PanelPart.Swatch:
+                        Box(_b, it.R, it.Active ? Cursor : hover ? Hover : Slot, 0, 0.0004f);
+                        Box(_b, it.R, EntityCatalog.DyeColor(it.Label, BlockRules.FlatColor("minecraft:" + it.Label + "_wool")), -0.0002f, it.Active ? 0.0026f : 0.0016f);
+                        break;
                     case PanelPart.PlayerRow:
                     case PanelPart.Rule:
+                    case PanelPart.MarkRow:    // [operator]
+                    case PanelPart.SignLine:   // [operator]
                     {
-                        var c = it.Active ? (it.Part == PanelPart.Rule ? Active : Selected) : hover && it.Enabled ? Hover : it.Label.Length > 0 ? Slot : Disabled;
+                        var c = it.Active ? (it.Part == PanelPart.Rule ? Active : Selected) : hover && it.Enabled ? Hover : it.Label.Length > 0 || it.Part == PanelPart.SignLine ? Slot : Disabled;
                         if (it.Part == PanelPart.Rule && it.Label.Length > 0 && !it.Enabled) c = it.Active ? new Color32(36, 70, 90, 220) : Disabled;
                         Box(_b, it.R, c, 0, 0.0008f);
                         if (it.Label.Length > 0)
@@ -362,15 +453,21 @@ namespace TabletopCraft.XR
                 float cx = _hitLocal.x + _layout.Width / 2, cy = _layout.Height / 2 - _hitLocal.y, s = 0.0025f;
                 Box(_o, new MenuRect(cx - s, cy - s, 2 * s, 2 * s), Cursor, -0.002f);
             }
-            _b.Apply(_bg); _o.Apply(_over);
+            _b.Apply(_bg); _o.Apply(_over); _ic.Apply(_icon);
             foreach (var kv in _texts) if (!_used.Contains(kv.Key) && kv.Value.gameObject.activeSelf) kv.Value.gameObject.SetActive(false);
         }
 
         string HintLine()
         {
             string ptr = Model.PointerLabel ?? "no block aimed";
+            // [operator] the container view, the sign editor, the Marks tab
+            if (Model.Mode == PanelMode.Container)
+                return !Model.Container.CanEdit ? (Model.Container.View == null ? "waiting for the server..." : "view only (interact.containers: view)")
+                     : "select a slot; Put adds " + Model.Container.Count + " " + ContainerModel.Label(ContainerModel.ItemOf(Model.HotbarSelection, Model.Registry)) + " (hotbar)";
+            if (Model.Mode == PanelMode.Sign) return "pick a line and type (enter = next line), then Save; Front / Back switch sides";
             switch (Model.Tab)
             {
+                case OpTab.Marks: return !Model.Marks.Welcome.Marks ? "jumps work; bookmarks need marks_v1 on the server" : "a world, Spawn, a bookmark or typed x z: the view jumps there (same width)";
                 case OpTab.Chat: return Model.ChatOn ? $"as {Model.Welcome.ChatName} (Java players see [Giant] {Model.Welcome.ChatName})" : "chat: " + (Model.Connected ? "read-only" : "not connected");
                 case OpTab.Console: return Model.CommandsOn ? $"stick click = tab   pointer {ptr}" : "commands " + Model.CommandsOffWhy;
                 case OpTab.Players: return Model.CommandsOn ? $"pointer {ptr}" : "buttons need auth.token on the server";
@@ -379,8 +476,37 @@ namespace TabletopCraft.XR
             }
         }
 
+        /// <summary>[operator] A container slot's item icon (from the block menu's atlas), or a flat placeholder while it renders.</summary>
+        void SlotIcon(int slot, MenuRect r)
+        {
+            var v = Model.Container.View;
+            if (v == null) return;
+            var (item, _) = v.Slot(slot);
+            float inset = r.W * 0.14f;
+            if (item == null)
+            {
+                string what = ContainerModel.SlotLabel(v.Block, slot);
+                if (what != null) Label("slotlbl" + slot, what, r.CX, r.CY, 0.0009f, TextAnchor.MiddleCenter, TextDim);
+                return;
+            }
+            var (state, model) = ContainerModel.IconOf(item, Model.Registry);
+            if (Icons != null && Icons.Get(state, model, 0, out var uv))
+                _ic.QuadUV(L(r.X + inset, r.Y + inset, -0.0004f), L(r.X + r.W - inset, r.Y + inset, -0.0004f), L(r.X + r.W - inset, r.Y + r.H - inset, -0.0004f), L(r.X + inset, r.Y + r.H - inset, -0.0004f), uv);
+            else Box(_b, new MenuRect(r.X + inset * 1.6f, r.Y + inset * 1.6f, r.W - inset * 3.2f, r.H - inset * 3.2f), BlockRules.FlatColor(state), -0.0003f);
+        }
+
         void DrawTab(PanelLayout Lo)
         {
+            if (Model.Mode != PanelMode.Tabs || Model.Tab == OpTab.Marks)   // [operator] the header line; waiting / empty notes
+            {
+                Label("modehdr", Short(Model.ModeHeader(), 110), Lo.Header.X + 0.002f, Lo.Header.CY, 0.00125f, TextAnchor.MiddleLeft, TextMain);
+                if (Model.Mode == PanelMode.Container && Model.Container.View == null)
+                    Label("empty", Model.Container.Waiting ? "opening..." : "closed", Lo.Text.CX, Lo.Text.CY, 0.0015f, TextAnchor.MiddleCenter, TextDim);
+                if (Model.Mode == PanelMode.Tabs && Model.Marks.Bookmarks.Marks.Count == 0)
+                    Label("empty", Model.Marks.Welcome.Marks ? "no bookmarks yet: Add mark saves where the view is" : "the server has no shared bookmarks (marks_v1)",
+                          Lo.Text.CX, Lo.Text.CY, 0.0013f, TextAnchor.MiddleCenter, TextDim);
+                return;
+            }
             switch (Model.Tab)
             {
                 case OpTab.Chat:

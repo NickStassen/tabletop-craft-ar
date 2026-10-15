@@ -1,0 +1,14 @@
+{
+ "v": 1,
+ "type": "bookmark",
+ "seq": 70,
+ "t": 1760370007000,
+ "op": "add",
+ "name": "Village",
+ "world": "world",
+ "pos": [
+  120,
+  64,
+  -300
+ ]
+}

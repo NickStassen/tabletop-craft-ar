@@ -96,6 +96,8 @@ public final class Session {
     final java.util.concurrent.atomic.AtomicInteger assetsInFlight = new java.util.concurrent.atomic.AtomicInteger();
     long assetsNextNs;
     final Map<String, Long> assetsStartNs = new java.util.concurrent.ConcurrentHashMap<>();
+    // [operator] Shared bookmarks (marks_v1, OperatorService), granted at hello.
+    public volatile boolean wantsMarks;
 
     /** RegionReader extras this session needs in its snapshots and diffs. */
     public int readExtras() { return (wantsLight ? RegionReader.LIGHT : 0) | (wantsBiomes ? RegionReader.BIOMES : 0); }

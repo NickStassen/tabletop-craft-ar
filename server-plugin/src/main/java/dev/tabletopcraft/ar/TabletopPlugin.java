@@ -84,6 +84,10 @@ public final class TabletopPlugin extends JavaPlugin {
     final ControlService control = new ControlService(this);
     // [hands] using blocks, items and mobs from the headset (interact_v1, config section interact)
     final InteractService interact = new InteractService(this);
+    // [power] undo/redo, box edits and brushes from the headset (power_v1, config section edit)
+    final PowerService power = new PowerService(this);
+    // [operator] worlds and spawn, shared bookmarks, container view and editing, sign editing
+    final OperatorService operator = new OperatorService(this);
     // [comfort] LAN discovery (PROTOCOL.md 7, config.yml discovery): answers the headset's UDP probe on its own thread.
     private LanBeacon beacon;
     private volatile int onlinePlayers;
@@ -101,6 +105,7 @@ public final class TabletopPlugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(blockEntities, this);   // [blocks] sign edits, interactions
         getServer().getPluginManager().registerEvents(control, this);   // [talk]
         interact.init(editWorld);                                        // [hands]
+        power.init(editWorld);                                           // [power]
         getServer().getPluginManager().registerEvents(interact, this);   // [hands] unfreeze-all for mobs in chunks loading later
         start();
     }
@@ -153,6 +158,8 @@ public final class TabletopPlugin extends JavaPlugin {
         buildBlockRegistry();   // [menu]
         control.configure(c);   // [talk]
         interact.configure(c);  // [hands]
+        power.configure(c);     // [power]
+        operator.configure(c);  // [operator]
         World iw = Bukkit.getWorld(defaultRegion().world());
         interact.buildItemRegistry(iw != null ? iw : Bukkit.getWorlds().isEmpty() ? null : Bukkit.getWorlds().get(0));
         soundEnabled = c.getBoolean("sound.enabled", true);   // [sound]
@@ -190,6 +197,8 @@ public final class TabletopPlugin extends JavaPlugin {
         if (tickTask != null) tickTask.cancel();
         assets.stop();   // [sound]
         interact.shutdown();   // [hands] held mobs get their gravity and AI back
+        power.shutdown();      // [power] running box edits stop (their sessions close)
+        operator.shutdown();   // [operator] container lids close
         if (beacon != null) { beacon.stop(); beacon = null; }
         if (configSaveAt >= 0) { configSaveAt = -1; saveConfig(); }
         movesInFlight = 0; moveTargets.clear();   // [nav]
@@ -254,6 +263,7 @@ public final class TabletopPlugin extends JavaPlugin {
         while ((r = queue.poll()) != null) {
             try { r.run(); } catch (RuntimeException e) { getLogger().warning("command failed: " + e); }
         }
+        power.tick();   // [power] box edits, undo, redo and brush strokes within edit.box-budget-ms; history
         applyPose();
         int safety = Math.max(1, getConfig().getInt("stream.safety-diff-ticks", 20));
         // Big regions take longer to re-read: stretch the safety-net period (events still trigger a diff right away).
@@ -271,6 +281,7 @@ public final class TabletopPlugin extends JavaPlugin {
         worldState.tick(ready());   // [living] time of day and weather, on change and about once a second
         control.tick(tickCount);  // [talk] late command output, server_status
         interact.tick();          // [hands] held mobs that got no update for 3 s are let go
+        operator.tick(tickCount); // [operator] open container views: changes re-sent, gone ones closed
         avatar.tickBubble();      // [talk] the giant's speech bubble follows the head and expires
         if (tickCount % 20 == 0) { timeouts(); onlinePlayers = Bukkit.getOnlinePlayers().size(); }
         // [nav] A move read that never finished (a chunk load failed) must not hold diffs back forever.
@@ -310,6 +321,7 @@ public final class TabletopPlugin extends JavaPlugin {
         JsonObject lim = new JsonObject();
         caps.addTo(lim);
         addBuildHeight(lim, r.world());
+        power.limits(s, lim);   // [power] undo_depth, box_max_blocks, brush limits
         lim.addProperty("pose_hz_max", 60);
         lim.addProperty("player_hz", 20 / Math.max(1, getConfig().getInt("stream.players-every-ticks", 2)));
         w.add("limits", lim);
@@ -334,13 +346,17 @@ public final class TabletopPlugin extends JavaPlugin {
         if (s.canInteract) sc.add(InteractMessages.CAP);   // [hands]
         if (s.wantsSound) sc.add(Protocol.CAP_SOUND);      // [sound]
         if (s.canAssets) sc.add(AssetService.CAP);
+        if (power.granted(s)) sc.add(PowerMessages.CAP);   // [power]
+        if (s.wantsMarks) sc.add(OperatorMessages.CAP_MARKS);   // [operator]
         w.add("caps", sc);
         control.welcome(s, w);
         interact.welcome(s, w);   // [hands] welcome.interact: the switches
+        operator.welcome(s, w);   // [operator] welcome.worlds, welcome.marks, welcome.interact containers/signs
         send(s, w);
         send(s, blockRegistry.message());   // [menu] every placeable block, once per connection (PROTOCOL.md 4.24)
         if (s.canInteract) send(s, interact.itemRegistryMessage());   // [hands] usable items and spawn eggs
         if (s.wantsSound) send(s, soundGroups.message());   // [sound] each block's break/step/place/hit/fall sounds
+        if (s.wantsMarks) send(s, operator.bookmarksMessage());       // [operator] the shared bookmarks
         subscribe(s, r, null);
         assets.offer(s);   // [sound] the operator's own files, when asset delivery is on and hashed (else when it is)
     }
@@ -390,7 +406,8 @@ public final class TabletopPlugin extends JavaPlugin {
         int y0 = Math.max(origin[1], w.getMinHeight());
         int y1 = Math.min(origin[1] + dims[1], w.getMaxHeight());
         if (y1 <= y0) { send(s, Protocol.error("region_too_large", "region is outside the build height", refSeq, false)); return; }
-        if (follow) send(s, Protocol.error("unsupported", "follow is not implemented in v0.1", refSeq, false));
+        // [operator] Following a player is the headset's job (it glides and jumps with region_request; PROTOCOL.md "Following a player").
+        if (follow) send(s, Protocol.error("unsupported", "subscribe.follow is not supported: headsets follow players themselves (region_request)", refSeq, false));
         subscribe(s, new RegionSpec(wn, origin[0], y0, origin[2], dims[0], y1 - y0, dims[2]), refSeq);
     }
 
@@ -702,6 +719,8 @@ public final class TabletopPlugin extends JavaPlugin {
     void onSessionClosed(Session s) {
         if (s == avatarOwner) avatarOwnerGoneMs = System.currentTimeMillis();
         interact.onSessionClosed(s);   // [hands] let go of what it held
+        power.onSessionClosed(s);      // [power] its journal and jobs go
+        operator.onSessionClosed(s);   // [operator] its container view ends (the lid closes)
         updateTickets();
     }
 
@@ -859,6 +878,7 @@ public final class TabletopPlugin extends JavaPlugin {
         caps.addTo(lim);
         addBuildHeight(lim, r.world());
         o.add("limits", lim);
+        operator.regionInfo(o, r.world());   // [operator] the region world's spawn and every world
         if (refSeq != null) o.addProperty("ref_seq", refSeq);
         send(s, o);
     }
@@ -867,6 +887,16 @@ public final class TabletopPlugin extends JavaPlugin {
     /** edit_v1 is granted when edit.enabled and, with edit.require-token, the server has an auth.token (so every headset had to present it). */
     boolean editAllowed() { return editEnabled && (!editRequireToken || editTokenSet); }
     int editRate() { return editRate; }
+
+    /** [power] Why a box edit or brush may not place this block id (edit.deny, or not in block_registry); null if it may. */
+    String refusePlace(String id) {
+        if (editDeny.contains(id)) return EditRules.label(id) + " can't be placed from the headset (edit.deny)";
+        if (!blockRegistry.placeable(id)) return EditRules.label(id) + " is not a placeable block (not in block_registry)";
+        return null;
+    }
+
+    /** [power] A block id from edit.deny (a clone leaves those out). */
+    boolean denied(String id) { return editDeny.contains(id); }
 
     /**
      * Applies one block_edit on the main thread: only inside the session's region and the world border, only blocks
@@ -1144,6 +1174,8 @@ public final class TabletopPlugin extends JavaPlugin {
                     soundGroups.blocks(), soundGroups.size(), aw != null ? "off (" + aw + ")"
                         : assets.ready() ? "serving " + assets.files().keySet() + String.format(", sent %d files %.1f MB, refused %d", assets.sentFiles, assets.sentBytes / 1e6, assets.refused)
                         : "hashing..."));
+                sender.sendMessage("[tabletop] " + power.stats());      // [power]
+                sender.sendMessage("[tabletop] " + operator.stats());   // [operator]
             }
             case "unfreeze-all" -> {   // [hands] every mob a headset froze (frozen.txt), also ones in chunks loaded later
                 int[] r = interact.unfreezeAll();

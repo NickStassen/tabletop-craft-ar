@@ -175,45 +175,98 @@ namespace TabletopCraft.World
         /// cubic: the face lies on the block boundary (full cube faces); false for faces inside the block (a slab top),
         /// which vanilla lights from the block's own layer.
         /// </summary>
-        public static Quad4 FaceCorners(WorldModel w, FaceKey key, int x, int y, int z, int dir, bool cubic = true, int floor = 0)
+        public static Quad4 FaceCorners(WorldModel w, FaceKey key, int x, int y, int z, int dir, bool cubic = true, int floor = 0) =>
+            FaceCorners(null, w, key, x, y, z, dir, cubic, floor);
+
+        /// <summary>[mesh] As above, reading light and shapes from a section's ShadeCache when it covers (x, y, z) (the
+        /// meshers bind one per section): the same values without WorldModel's bounds checks and palette lookups for the
+        /// up to 21 cells a face reads. cache null = straight from the world.</summary>
+        public static Quad4 FaceCorners(ShadeCache cache, WorldModel w, FaceKey key, int x, int y, int z, int dir, bool cubic = true, int floor = 0)
         {
             Color32 tint = Tint(w, key, x, y, z);
             var light = w.Light;
             if (light == null) return new Quad4(tint);
             // Emissive rendering (magma, an active sculk sensor): LightCoordsUtil.FULL_BRIGHT, no AO.
             if (key.Shade == BakedModel.ShadeFullBright) return new Quad4(Shade(tint, Lightmap(15, 15), 1f), LightCode.FullBright);
-            var n = Dir[dir];
-            var p = new Vector3Int(x, y, z);
-            var f = cubic ? p + n : p;
-            if (!w.InBounds(f.x, f.y, f.z)) return new Quad4(Shade(tint, Lightmap(15, floor), 1f), LightCode.Of(15, floor)); // cut face at the region edge
+            if (cache != null && cache.Covers(w, x, y, z)) { var cc = new CachedCells(cache); return Corners(ref cc, tint, key, x, y, z, dir, cubic, floor); }
+            var wc = new WorldCells(w, light);
+            return Corners(ref wc, tint, key, x, y, z, dir, cubic, floor);
+        }
+
+        // Cell flags for Corners: inside the region (WorldModel.InBounds), an AO occluder (AoOccluder), opaque (!Permeable).
+        const int InRegion = 1, Occluder = 2, OpaqueCell = 4;
+        static readonly int[] DX = { -1, 1, 0, 0, 0, 0 }, DY = { 0, 0, -1, 1, 0, 0 }, DZ = { 0, 0, 0, 0, -1, 1 };
+
+        internal static int CellFlags(BlockShape s) => InRegion | (AoOccluder(s) ? Occluder : 0) | (Permeable(s) ? 0 : OpaqueCell);
+
+        interface ICells
+        {
+            /// <summary>Light and flags of a region-local cell; outside the region open sky-lit air (sky 15, flags 0).</summary>
+            void Cell(int x, int y, int z, out int sky, out int block, out int flags);
+        }
+
+        struct WorldCells : ICells
+        {
+            readonly WorldModel _w; readonly byte[] _light; readonly ushort[] _grid; readonly Vector3Int _d;
+            public WorldCells(WorldModel w, byte[] light) { _w = w; _light = light; _grid = w.Grid; _d = w.Dims; }
+            public void Cell(int x, int y, int z, out int sky, out int block, out int flags)
+            {
+                if (x < 0 || y < 0 || z < 0 || x >= _d.x || y >= _d.y || z >= _d.z) { sky = 15; block = 0; flags = 0; return; }
+                int i = (y * _d.z + z) * _d.x + x;
+                if ((uint)i >= (uint)_light.Length || (uint)i >= (uint)_grid.Length) { sky = 15; block = 0; flags = InRegion; return; }
+                int v = _light[i];
+                sky = v >> 4; block = v & 15;
+                flags = CellFlags(_w.ShapeOf(_grid[i]));
+            }
+        }
+
+        struct CachedCells : ICells
+        {
+            readonly byte[] _light, _flags; readonly int _x0, _y0, _z0;
+            public CachedCells(ShadeCache c) { _light = c.LightCells; _flags = c.FlagCells; _x0 = c.X0; _y0 = c.Y0; _z0 = c.Z0; }
+            public void Cell(int x, int y, int z, out int sky, out int block, out int flags)
+            {
+                int i = ((y - _y0) * ShadeCache.N + (z - _z0)) * ShadeCache.N + (x - _x0);
+                int v = _light[i];
+                sky = v >> 4; block = v & 15; flags = _flags[i];
+            }
+        }
+
+        /// <summary>FaceCorners after the tint, no-light and full-bright cases, over either cell source (one code path).</summary>
+        static Quad4 Corners<T>(ref T cells, Color32 tint, FaceKey key, int x, int y, int z, int dir, bool cubic, int floor) where T : struct, ICells
+        {
+            int nx = DX[dir], ny = DY[dir], nz = DZ[dir];
+            int fx = x, fy = y, fz = z;
+            if (cubic) { fx += nx; fy += ny; fz += nz; }
+            cells.Cell(fx, fy, fz, out int cSky, out int cBlk, out int cFl);
+            if ((cFl & InRegion) == 0) return new Quad4(Shade(tint, Lightmap(15, floor), 1f), LightCode.Of(15, floor)); // cut face at the region edge
             int axis = dir >> 1, ua = (axis + 1) % 3, va = (axis + 2) % 3;
-            var u = new Vector3Int(); u[ua] = 1;
-            var v = new Vector3Int(); v[va] = 1;
-            Cell(w, light, f, out int cSky, out int cBlk, out var cShape);
+            int ux = ua == 0 ? 1 : 0, uy = ua == 1 ? 1 : 0, uz = ua == 2 ? 1 : 0;
+            int vx = va == 0 ? 1 : 0, vy = va == 1 ? 1 : 0, vz = va == 2 ? 1 : 0;
             // "ambientocclusion": false (BlockModelLighter.prepareQuadFlat): one light, the cell in front for a face on
             // the block's side, else the block's own; no AO. floor: the face's light_emission (lightCoordsWithEmission).
             if (key.Shade == BakedModel.ShadeFlat) return Lit(tint, Mathf.Max(cSky, floor), Mathf.Max(cBlk, floor));
             if (!cubic)
             {
                 // Vanilla: a face inside the block takes the light of the cell in front unless that cell is opaque.
-                var front = p + n;
-                Cell(w, light, front, out int fs, out int fb, out var fShape);
-                if (w.InBounds(front.x, front.y, front.z) && Permeable(fShape)) { cSky = fs; cBlk = fb; }
+                cells.Cell(x + nx, y + ny, z + nz, out int fs, out int fb, out int fFl);
+                if ((fFl & InRegion) != 0 && (fFl & OpaqueCell) == 0) { cSky = fs; cBlk = fb; }
             }
             if (!SmoothLighting) return Lit(tint, Mathf.Max(cSky, floor), Mathf.Max(cBlk, floor));
-            float cAo = AoOccluder(cShape) ? 0.2f : 1f;
+            float cAo = (cFl & Occluder) != 0 ? 0.2f : 1f;
             var q = new Quad4();
             for (int c = 0; c < 4; c++)
             {
                 int su = c == 1 || c == 2 ? 1 : -1, sv = c >= 2 ? 1 : -1;
-                var a = f + u * su; var b = f + v * sv;
-                Cell(w, light, a, out int aSky, out int aBlk, out var aShape);
-                Cell(w, light, b, out int bSky, out int bBlk, out var bShape);
-                Cell(w, light, a + n, out _, out _, out var aOut);
-                Cell(w, light, b + n, out _, out _, out var bOut);
-                int kSky = aSky, kBlk = aBlk; var kShape = aShape;
-                if (Permeable(aOut) || Permeable(bOut)) Cell(w, light, a + v * sv, out kSky, out kBlk, out kShape);
-                float ao = ((AoOccluder(aShape) ? 0.2f : 1f) + (AoOccluder(bShape) ? 0.2f : 1f) + (AoOccluder(kShape) ? 0.2f : 1f) + cAo) * 0.25f;
+                int ax = fx + ux * su, ay = fy + uy * su, az = fz + uz * su;
+                int bx = fx + vx * sv, by = fy + vy * sv, bz = fz + vz * sv;
+                cells.Cell(ax, ay, az, out int aSky, out int aBlk, out int aFl);
+                cells.Cell(bx, by, bz, out int bSky, out int bBlk, out int bFl);
+                cells.Cell(ax + nx, ay + ny, az + nz, out _, out _, out int aOut);
+                cells.Cell(bx + nx, by + ny, bz + nz, out _, out _, out int bOut);
+                int kSky = aSky, kBlk = aBlk, kFl = aFl;
+                if ((aOut & OpaqueCell) == 0 || (bOut & OpaqueCell) == 0) cells.Cell(ax + vx * sv, ay + vy * sv, az + vz * sv, out kSky, out kBlk, out kFl);
+                float ao = (((aFl & Occluder) != 0 ? 0.2f : 1f) + ((bFl & Occluder) != 0 ? 0.2f : 1f) + ((kFl & Occluder) != 0 ? 0.2f : 1f) + cAo) * 0.25f;
                 SmoothBlend(aSky, aBlk, bSky, bBlk, kSky, kBlk, cSky, cBlk, out float sky, out float blk);
                 sky = Mathf.Max(sky, floor); blk = Mathf.Max(blk, floor);
                 var col = Shade(tint, Lightmap(sky, blk), ao);
@@ -341,6 +394,68 @@ namespace TabletopCraft.World
             float w0 = (1 - fu) * (1 - fv), w1 = fu * (1 - fv), w2 = fu * fv, w3 = (1 - fu) * fv;
             return new Color32(ToByte(c.C0.r * w0 + c.C1.r * w1 + c.C2.r * w2 + c.C3.r * w3), ToByte(c.C0.g * w0 + c.C1.g * w1 + c.C2.g * w2 + c.C3.g * w3),
                                ToByte(c.C0.b * w0 + c.C1.b * w1 + c.C2.b * w2 + c.C3.b * w3), c.C0.a);
+        }
+    }
+
+    /// <summary>
+    /// [mesh] Light and shape flags of one 16^3 section and a two-cell border (smooth lighting reads up to two cells past
+    /// a face), copied from the world the first time a face of the section is lit and then read by index. A mesher
+    /// binds one per section build (Bind) and passes it to BlockShading.FaceCorners/Quad; the colours are exactly those
+    /// read from the world (Tests~ MeshTests). Not thread-safe: one per worker thread.
+    /// </summary>
+    public sealed class ShadeCache
+    {
+        public const int Border = 2, N = WorldModel.Section + 2 * Border;
+        internal readonly byte[] LightCells = new byte[N * N * N];   // sky << 4 | block; outside the region 15 << 4
+        internal readonly byte[] FlagCells = new byte[N * N * N];    // BlockShading's InRegion / Occluder / OpaqueCell
+        internal int X0, Y0, Z0;                                     // region-local cell of index 0
+        WorldModel _w;
+        bool _filled;
+
+        /// <summary>Starts a section: nothing is read until a face needs it.</summary>
+        public void Bind(WorldModel w, Vector3Int sectionOrigin)
+        {
+            _w = w; _filled = false;
+            X0 = sectionOrigin.x - Border; Y0 = sectionOrigin.y - Border; Z0 = sectionOrigin.z - Border;
+        }
+
+        public void Unbind() { _w = null; _filled = false; }
+
+        /// <summary>True (and filled) when a face of cell (x, y, z) of world w can be lit from the cache: the cell is in
+        /// the bound section, so every cell its corners read is in the border.</summary>
+        internal bool Covers(WorldModel w, int x, int y, int z)
+        {
+            if (w != _w || w == null) return false;
+            const int lo = Border, hi = N - Border;
+            if (x - X0 < lo || y - Y0 < lo || z - Z0 < lo || x - X0 >= hi || y - Y0 >= hi || z - Z0 >= hi) return false;
+            if (!_filled) Fill();
+            return true;
+        }
+
+        void Fill()
+        {
+            _filled = true;
+            var w = _w; var d = w.Dims; var light = w.Light; var grid = w.Grid;
+            int i = 0;
+            for (int py = 0; py < N; py++)
+            {
+                int y = Y0 + py;
+                for (int pz = 0; pz < N; pz++)
+                {
+                    int z = Z0 + pz;
+                    bool rowIn = y >= 0 && y < d.y && z >= 0 && z < d.z;
+                    int row = (y * d.z + z) * d.x;
+                    for (int px = 0; px < N; px++, i++)
+                    {
+                        int x = X0 + px;
+                        if (!rowIn || x < 0 || x >= d.x) { LightCells[i] = 15 << 4; FlagCells[i] = 0; continue; }
+                        int j = row + x;
+                        if ((uint)j >= (uint)light.Length || (uint)j >= (uint)grid.Length) { LightCells[i] = 15 << 4; FlagCells[i] = 1; continue; }
+                        LightCells[i] = light[j];
+                        FlagCells[i] = (byte)BlockShading.CellFlags(w.ShapeOf(grid[j]));
+                    }
+                }
+            }
         }
     }
 }

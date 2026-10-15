@@ -46,6 +46,17 @@ namespace UnityEngine
         public override int GetHashCode() => x * 73856093 ^ y * 19349663 ^ z * 83492791;
         public override string ToString() => $"({x}, {y}, {z})";
     }
+    // [mesh] SurfaceSkirt tile keys
+    public struct Vector2Int
+    {
+        public int x, y;
+        public Vector2Int(int x, int y) { this.x = x; this.y = y; }
+        public static bool operator ==(Vector2Int a, Vector2Int b) => a.x == b.x && a.y == b.y;
+        public static bool operator !=(Vector2Int a, Vector2Int b) => !(a == b);
+        public override bool Equals(object o) => o is Vector2Int v && v == this;
+        public override int GetHashCode() => x * 73856093 ^ y * 19349663;
+        public override string ToString() => $"({x}, {y})";
+    }
     public struct Quaternion
     {
         public float x, y, z, w;
