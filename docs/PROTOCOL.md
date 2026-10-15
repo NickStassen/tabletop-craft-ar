@@ -1,4 +1,4 @@
-# PROTOCOL.md — Tabletop link protocol, v0.6.0
+# PROTOCOL.md — Tabletop link protocol, v0.7.0
 
 The project version (repo `VERSION` file) versions the plugin, the Quest app and this protocol together. Before 1.0 there is no backwards compatibility: plugin, app and tools of the same version go together. The wire field `v` stays `1`.
 
@@ -7,7 +7,7 @@ Status: **v1, normative.** The server plugin (`server-plugin/`), the Quest app (
 ## 1. Transport
 
 - WebSocket (RFC 6455), plaintext `ws://` on LAN. Default endpoint: `ws://<server-host>:8765/tabletop` (port and path configurable in the plugin's `config.yml`).
-- Every message is **one UTF-8 JSON text frame** holding one JSON object, with one exception: the server answers `asset_get` with a **binary frame** (an asset chunk, "Asset delivery"; next version). Clients send no binary frames; a server that gets one replies with `error` code `unsupported` and ignores it, and a client ignores binary frames it didn't ask for.
+- Every message is **one UTF-8 JSON text frame** holding one JSON object, with one exception: the server answers `asset_get` with a **binary frame** (an asset chunk, "Asset delivery"; v0.6.0). Clients send no binary frames; a server that gets one replies with `error` code `unsupported` and ignores it, and a client ignores binary frames it didn't ask for.
 - Why JSON and not binary in v1: a 32x32x64 band is only tens of KB once run-length encoded (see §6.3), pose traffic at 30 Hz is about 10 KB/s, and JSON is easy to debug with `websocat` or the fake client. A binary chunk encoding is planned only if measurements show it's needed (PLAN.md, Phase 5).
 - Permessage-deflate is optional. The server MAY offer it, and the client MAY decline. Nothing in this spec depends on compression.
 - Max frame size the server accepts: 64 KiB. Max frame the server sends: 4 MiB.
@@ -130,7 +130,7 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 
 - `origin`: int[3], world block coords of the region's min corner.
 - `dims`: int[3] `[dx,dy,dz]`, each ≥ 1 and ≤ `limits.max_dims`. Y is clamped to the world's min/max build height; a clamp sends back the actual values in the next `chunk_snapshot`.
-- Optional `follow`: player name string. The server answers `error` `unsupported`: headsets follow a player themselves with `region_query` and `region_request` ("Following a player"; next version, the field was never implemented).
+- Optional `follow`: player name string. The server answers `error` `unsupported`: headsets follow a player themselves with `region_query` and `region_request` ("Following a player"; v0.5.0, the field was never implemented).
 - The server replies with `chunk_snapshot`. From then on `block_update` and `player_positions` only cover this region (the previous subscription is replaced).
 
 ### 4.4 `chunk_snapshot` (S→C)
@@ -365,7 +365,7 @@ A client SHOULD NOT reconnect by itself after 4001 or 4003: nothing changes unti
 3. **Size check:** a typical 32x64x32 band (65,536 blocks), mostly air above and stone below, has about 500–3,000 runs, so 5–30 KB of JSON. A worst-case noisy 32x384x32 region (393,216 blocks, all runs of 1) is about 2.5 MB of JSON, which is still under the 4 MiB cap. See RESEARCH.md §2.
 4. **Conformance:** `tools/` ships golden JSON fixtures for every message type. Both the Java unit tests and the fake client round-trip them.
 
-## 7. LAN discovery (UDP, outside the WebSocket; next version)
+## 7. LAN discovery (UDP, outside the WebSocket; v0.3.1)
 
 So the headset can find a server without typing its address (QUEST_SETUP.md Part D, "Find servers"). It is a probe and a reply, each one UDP datagram holding one UTF-8 JSON object. There is no envelope (`seq`, `t`).
 
@@ -400,6 +400,7 @@ So the headset can find a server without typing its address (QUEST_SETUP.md Part
 - **v0.5.0: a living world ("World state: time and weather", "Living entities").** New cap `world_v1` and message `world_state` (time, day time, rain, thunder, dimension, sky light; on change and about once a second; config.yml `world-state`). `entities` entries gain `leash` (the holder's id), `eye`, `chested`, `name_visible`, `xp`, `owner`, `carried`, `peek`, `attach` and `display` (display entity transformation, billboard, brightness, item context, text); text displays are listed; a snow golem without its pumpkin is `sheared`; a cushion has its `color`. Fixtures `world_state.json`, `entities_living.json`.
 - **v0.5.1: no protocol change.** Faster section meshing (same output), adaptive mesh jobs and the optional surface skirt are client-side (QUEST_SETUP.md Part H: `surface_skirt`, `skirt_speed`, `mesh_workers`).
 - **v0.6.0: sound and asset delivery ("Sound", "Asset delivery").** New cap `sound_v1` (config.yml `sound.enabled`): message `sound_groups` (every block's sound group, once after the registries) and the `actions` kinds `sound` and `sound_stop` (only to `sound_v1` sessions). New cap `assets_v1` (config.yml `assets`, off by default, needs `auth.token`, LAN addresses only): messages `assets` and `asset_get`, the first binary frame of the protocol (an asset chunk, §1), error `asset_denied` (`not_found` and errors about an `asset_get` carry `op: "asset_get"` and `name`). Fixtures `hello_sound.json`, `welcome_sound.json`, `sound_groups.json`, `actions_sound.json`, `assets.json`, `asset_get.json`, `error_asset_denied.json`, `asset_chunk.bin`.
+- **v0.7.0: block animations ("Block animations").** The `actions` kinds `lid` (a container lid opens or closes), `bell` (a bell rung, with the side) and `explode` (an explosion's point and power) for `actions_v1` sessions; `entities` entries gain `fuse` (primed TNT, ticks left) and `swell` (a creeper, 0..1), and the poses `dying`, `sitting` and `sleeping` are now drawn. No new cap. Fixtures `actions_motion.json`, `entities_motion.json` (Java `MotionTest`, Python `test_motion_messages`, C# `MotionTests`). Client-only: flowing fluids and ambient particles (QUEST_SETUP.md Part E, tabletop.json `particles`).
 
 ## 4.13–4.16 Runtime region control (v1, additive)
 
@@ -427,7 +428,7 @@ These let a headset glide across the world while the miniature stays a box on th
 {"v":1,"type":"region_request","seq":51,"t":1760370002500,"world":"world","origin":[16,60,0],"dims":[32,16,16],"view_margin":[8,0,0]}
 ```
 
-Navigation (Quest app, docs/QUEST_SETUP.md "Moving around"): when the window has moved more than a few blocks past the region centre in the direction of motion, the client sends `region_request` with the same `dims` and `view_margin` and the `origin` moved by 16 blocks (one section) on that axis; while it moves steadily one way it may move the origin by several sections at once, so that the margin ahead of the window is runway (next version; QUEST_SETUP.md Part H). Origins always move by whole 16-block sections, so the client can keep its section meshes and the server can send a delta (4.18). One request is in flight at a time. The region is shared (4.13), so other headsets follow; the last writer wins.
+Navigation (Quest app, docs/QUEST_SETUP.md "Moving around"): when the window has moved more than a few blocks past the region centre in the direction of motion, the client sends `region_request` with the same `dims` and `view_margin` and the `origin` moved by 16 blocks (one section) on that axis; while it moves steadily one way it may move the origin by several sections at once, so that the margin ahead of the window is runway (v0.4.0; QUEST_SETUP.md Part H). Origins always move by whole 16-block sections, so the client can keep its section meshes and the server can send a delta (4.18). One request is in flight at a time. The region is shared (4.13), so other headsets follow; the last writer wins.
 
 ### 4.18 `chunk_snapshot` encoding `sections_v1` (cap `sections_v1`)
 
@@ -531,7 +532,7 @@ Sent with `player_positions` (10 Hz) to sessions with `entities_v1` whenever som
  ]}
 ```
 
-- **Which entities:** every entity whose bounding box touches the region box grown by `entities.margin` (default 2) blocks on each side, except players (they're in `player_positions`), the giant's own entities (scoreboard tag `tabletop_avatar`), markers, interactions and area effect clouds (text displays are sent since the next version, "Living entities"). At most `entities.max` (default 256); past that, the ones nearest the region centre win.
+- **Which entities:** every entity whose bounding box touches the region box grown by `entities.margin` (default 2) blocks on each side, except players (they're in `player_positions`), the giant's own entities (scoreboard tag `tabletop_avatar`), markers, interactions and area effect clouds (text displays are sent since v0.5.0, "Living entities"). At most `entities.max` (default 256); past that, the ones nearest the region centre win.
 - **Deltas:** the server remembers what it sent each session. An entry for an `id` the client doesn't hold yet is a **full entry** (every field that applies; false/null/empty ones are left out). An entry for a known `id` lists only what changed: `pos` when it moved by at least 0.01 block on an axis, angles when they turned by at least 1°, any other field when it differs. A field that went away is sent as `false`, `null` or `[]`. `removed` lists ids that left the region or despawned. With `full: true` the list replaces the client's whole set: entities it doesn't name are gone, and its entries are full entries. The server sends one after every region change. A client that gets a delta for an `id` it doesn't hold ignores it.
 - **Fields** (all optional except `id`; a full entry always has `type` and `pos`):
   - `id` (int): the server's entity id, unique while the entity exists. `uuid` (string, full entries).
@@ -567,7 +568,7 @@ At most one per tick, to sessions with `actions_v1`, with what happened inside t
 - `break`: the block state `block` at `pos` was broken by a player (`id`) or an explosion (no `id`; at most 48 blocks per explosion). The block itself goes away through `block_update` as usual; this is for the break particles.
 - `place`: the block state `block` was placed at `pos` by player `id` (a small puff; the arm swing comes as its own `swing`).
 - `hurt`: entity or player `id` took damage (the red flash); `crit` marks a critical hit.
-- `lid`, `bell`, `explode` (next version): container lids, bells and explosions, "Block animations"; `sound`, `sound_stop`: "Sound".
+- `lid`, `bell`, `explode` (v0.7.0): container lids, bells and explosions, "Block animations"; `sound`, `sound_stop`: "Sound".
 - Repeats within a tick collapse: the latest `dig` per block, one `swing` per entity and hand, one `hurt` per entity. At most 128 actions per tick. Blocks count when they are inside the region; players up to 16 blocks out horizontally and other entities up to 2, like `player_positions` and `entities`.
 
 ### 4.23 Fixtures, tests, changelog
@@ -626,7 +627,7 @@ Fixture: `tools/fixtures/block_registry.json`. Java `BlockRegistryTest` (filteri
 
 The headset changes how wide the visible window is (x and z: 64, 96, 128, 192 or 256 blocks, docs/QUEST_SETUP.md Part K) without reconnecting. A resize is an ordinary `region_request` (§4.13, origin form with `view_margin`, §4.17) whose window is centred where the headset looks now and whose `origin` differs from the current one by whole 16-block sections on every axis. The server answers with `region_changed` and a `sections_v1` delta (§4.18) that only lists the sections that weren't fully inside the old region: the new ring when growing, nothing (or a few changed sections) when shrinking. The height stays the same.
 
-**`limits.max_view_width`** (int, required in `welcome.limits`, `region_info.limits` and the `region_too_large` error, from config.yml `max_region.view_width`, default 256): the widest visible window a client may ask for, i.e. `dims − 2·view_margin` on x and on z. The region with its margins must still fit `max_dims` and `max_blocks`; the defaults (next version: `max_dims` 352×384×352, 25,165,824 blocks; were 288×384×288, 16,777,216) fit a 256-wide window with the headset's 48-block glide margin on x and z, 16 on y, and up to 171 blocks of window height. A headset grows its margin with the width (16 up to 96, 32 at 128–192, 48 at 256) within these limits; on a server with smaller limits it uses a smaller margin, never a smaller width.
+**`limits.max_view_width`** (int, required in `welcome.limits`, `region_info.limits` and the `region_too_large` error, from config.yml `max_region.view_width`, default 256): the widest visible window a client may ask for, i.e. `dims − 2·view_margin` on x and on z. The region with its margins must still fit `max_dims` and `max_blocks`; the defaults (v0.4.0: `max_dims` 352×384×352, 25,165,824 blocks; were 288×384×288, 16,777,216) fit a 256-wide window with the headset's 48-block glide margin on x and z, 16 on y, and up to 171 blocks of window height. A headset grows its margin with the width (16 up to 96, 32 at 128–192, 48 at 256) within these limits; on a server with smaller limits it uses a smaller margin, never a smaller width.
 
 **Clamping.** A `region_request` whose visible width on x or z is over `max_view_width` is not refused: on that axis the server narrows `dims` to `max_view_width + 2·view_margin` (the margin is first clamped as in §4.17), and moves `origin` by half the cut **rounded to whole sections**, so the window stays centred to within 8 blocks and the reply can still be a delta. The checks of §4.13 (`max_dims`, `max_blocks`, `max_bytes`) then apply to the narrowed region as before. The reply (`region_changed`, then the snapshot) carries the accepted `origin`, `dims` and `view_margin`; clients take the accepted width from it.
 
@@ -643,7 +644,7 @@ Client guidance (non-normative; Quest `World/AreaSizing.cs`, `World/SectionPlan.
 
 Fixtures and tests: `chunk_snapshot_grow.json`, `chunk_snapshot_shrink.json`, `region_request_resize.json`, and `max_view_width` in `welcome.json`, `region_info.json`, `error_region_too_large.json`. Java `SectionCodecTest` (resize deltas, fixtures rebuilt from snapshot 8) and `RegionRequestTest.viewWidthIsClampedAroundTheCentre`, Python `test_resize_deltas_grow_and_shrink` / `test_limits_carry_max_view_width`, C# `Tests~/AreaTests.cs`. Live: `tools/area_e2e.py` (each resize compared block by block, light included, with a fresh client's full snapshot) and `Tests~ --live-resize ws://…`.
 
-## 4.26–4.28 Chat, commands and server status (next version; caps `chat_v1`, `command_v1`, `status_v1`)
+## 4.26–4.28 Chat, commands and server status (v0.4.0; caps `chat_v1`, `command_v1`, `status_v1`)
 
 The headset user is the server's operator without a game account: these let them talk with Java players, run server commands and watch the server. Each is a cap the client lists in `hello.caps`; the server grants it from config.yml (sections `chat`, `commands`, `status`) and echoes it in `welcome.caps`. Clients without a cap never get its messages. Docs: QUEST_SETUP.md Part L (the operator panel), ARCHITECTURE.md §3.9.
 
@@ -775,7 +776,7 @@ Client guidance (non-normative; the Quest's operator panel): the World and Playe
 - Fixtures: `hello_control.json` (the caps and `operator_name`), `welcome_control.json` (`chat`, `commands`), `chat.json`, `chat_death.json`, `chat_operator.json`, `chat_send.json`, `command.json`, `command_result.json`, `command_output.json`, `command_complete.json`, `command_suggestions.json`, `error_command_denied.json`, `server_status.json`, `world_query.json`, `world_info.json`, `players_query.json`, `players_info.json`. Java `ControlFixtureTest` builds them with the plugin's builders (`CommandPolicyTest`, `ChatTextTest` cover the policy and the text rules), Python `test_tabletop_protocol.py` validates them, C# `Tests~/ControlTests.cs` parses them.
 - Live: `tools/control_check.py` (a headset plus a mineflayer Java player: caps, results, syntax errors, denied roots, the `at` pointer, completion, status, the chat round trip, the bubble, rate limits) and `Tests~ --live-control URL TOKEN` (the app's own classes).
 
-## 4.29 Block entities (next version; cap `block_entities_v1`)
+## 4.29 Block entities (v0.4.0; cap `block_entities_v1`)
 
 What a block state doesn't say about a block entity: sign text, banner patterns, player head profiles, pot sherds, the mob in a spawner, a beacon's tier, the items on a campfire, shelf or vault, and whether a conduit is active. Everything else is drawn from the block state alone: chests (ender, trapped and copper ones too), shulker boxes, bells, mob heads, plain banners, end portals and gateways, copper golem statues, the books of lecterns (`has_book`) and enchanting tables. Granted when config.yml `block-entities.enabled` (default true) and the client lists the cap; echoed in `welcome.caps`. Clients without it never get `block_entities`. Docs: ARCHITECTURE.md §3.10 and §4 (Block entities).
 
@@ -814,7 +815,7 @@ Client guidance (non-normative; Quest `World/BlockEntityRenderer.cs`): the terra
 
 Fixtures and tests: `block_entities.json` (one entry of each kind and a removal), `block_entities_reset.json`. Java `BlockEntityJsonTest` and `FixtureTest` build them with the plugin's builders (plus per-chunk deltas and pruning), Python `test_tabletop_protocol.py` validates and mirrors them (`BlockEntityMirror`), C# `Tests~/BlockEntityTests.cs` applies them. Live: `tools/block_entities_check.py`.
 
-## Using blocks and items (next version; cap `interact_v1`)
+## Using blocks and items (v0.5.0; cap `interact_v1`)
 
 The headset uses blocks and items like a creative player's right click: it opens doors, flips levers, presses buttons, tunes note blocks, uses bone meal, buckets, flint and steel, axes, hoes, shovels, shears, spawn eggs and a lightning wand. Granted when config.yml `interact.enabled` (default true) and, with `interact.require-token`, `auth.token` is set; echoed in `welcome.caps`. `welcome` then carries the switches the client needs to colour its outline and fill its menus:
 
@@ -933,7 +934,7 @@ Refusals are `error` with `ref_seq`, `op: "entity_op"`, `entity_op` (the op) and
 
 Fixtures `hello_interact.json`, `welcome_interact.json`, `interact.json`, `interact_item.json`, `item_registry.json`, `entity_op.json`, `entity_op_move.json`, `entity_op_use.json`, `entity_op_name.json`, `entity_info.json`, `error_interact_denied.json`, `error_not_found.json`. Java `InteractRulesTest` (the whole table on state strings) and `InteractFixtureTest` (parsers and builders against the fixtures), Python `test_tabletop_protocol.py` (`validate_interact`), C# `Tests~/InteractTests.cs` (parsing, the right-click order, the entity ray, the menu tabs, the info card). Live: `tools/interact_check.py` (41 checks on a flat world) and `Tests~ --live-interact URL` (the app's own classes).
 
-## Undo, box edits and brushes (next version; cap `power_v1`)
+## Undo, box edits and brushes (v0.5.0; cap `power_v1`)
 
 Power tools for the headset operator: undo and redo of its own edits, box edits like vanilla's `/fill` and `/clone`, and sphere or cylinder brushes. Granted to sessions that ask for `power_v1` in `hello.caps` and got `edit_v1`, when config.yml `edit.power` is on (default) and, with `edit.power-require-token`, `auth.token` is set; echoed in `welcome.caps`. `welcome.limits` then also carries:
 
@@ -1017,7 +1018,7 @@ One stroke; the client sends them while its trigger is held (the Quest at most e
 
 Fixtures `hello_power.json`, `welcome_power.json`, `block_edit_group.json`, `interact_group.json`, `undo.json`, `redo.json`, `history.json`, `box_edit_fill.json`, `box_edit_replace.json`, `box_edit_clone.json`, `box_progress.json`, `box_progress_done.json`, `brush.json`, `brush_replace.json`, `error_box_denied.json`. Java `PowerFixtureTest` (parsers and builders against the fixtures), `UndoJournalTest` (groups, merging, depth, redo, block entity caps), `BoxPlanTest` (the cells of each op, the clone's turn, brush shapes and smoothing); Python `test_tabletop_protocol.py` (`validate_power`); C# `Tests~/PowerTests.cs` (parsing, B's tap and hold, groups on `block_edit` and `interact`, the wand, paste, brushes, the Tools tab). Live: `tools/power_check.py` (39 checks on a flat world) and `Tests~ --live-power URL [TOKEN]` (the app's own classes).
 
-## World state: time and weather (next version; cap `world_v1`)
+## World state: time and weather (v0.5.0; cap `world_v1`)
 
 So the headset can light the miniature like the game does at night, in rain and in thunderstorms, and draw rain, snow and lightning. A client lists `world_v1` in `hello.caps`; the server grants it unless config.yml `world-state.enabled` is false and lists it in `welcome.caps`.
 
@@ -1043,7 +1044,7 @@ Client guidance (non-normative; Quest `World/DayLight.cs`, `World/WorldLight.cs`
 
 Fixture `world_state.json`. Java `LivingTest` (message and send rule), Python `test_world_state_fixture_and_rules`, C# `Tests~/LivingTests.cs` (world clock, lightmap). Live: `tools/living_check.py`.
 
-## Living entities: leads, gear, displays (next version; `entities_v1`)
+## Living entities: leads, gear, displays (v0.5.0; `entities_v1`)
 
 More fields of `entities` entries (§4.21), with the same delta rules (left out when not set in full entries; a field that went away is sent as `null`, `false` or 0):
 
@@ -1086,7 +1087,7 @@ Client guidance (non-normative; Quest `World/LivingLooks.cs`, `EntityFigure.Livi
 
 Fixture `entities_living.json` (a leashed wolf and its knot, a horse in armour with a saddle, a chested llama with a carpet, an orb, a bobber, an enderman with a block, a shulker on a wall, text, item and block displays, a lightning bolt, a snow golem without its pumpkin, a villager with a visible name). Java `LivingTest`, Python `test_entities_living_fields`, C# `Tests~/LivingEntityTests.cs`. Live: `tools/living_check.py`.
 
-## Operator tools: following, marks, containers, signs (next version; caps `marks_v1`, `interact_v1`)
+## Operator tools: following, marks, containers, signs (v0.5.0; caps `marks_v1`, `interact_v1`)
 
 Navigation powers and block-entity editing for the headset operator. Jumps and following need no message of their own: they are `region_request`s (§4.13, origin form with `view_margin`, §4.17) on the shared region (last writer wins: every headset on the server moves along). Docs: QUEST_SETUP.md Part N, ARCHITECTURE.md §3.12.
 
@@ -1198,9 +1199,8 @@ The headset's container view: chests (a double chest as one view), trapped and c
 ### Fixtures and tests
 
 Fixtures `hello_operator.json`, `welcome_operator.json` (`worlds`, `marks`, `interact.containers`/`signs`), `region_info_worlds.json`, `region_request_jump.json`, `bookmark.json`, `bookmark_remove.json`, `bookmarks.json`, `error_mark_denied.json`, `container_query.json`, `container.json` (a double chest), `container_furnace.json` (view only), `container_closed.json`, `container_edit.json`, `container_edit_put.json`, `container_edit_sort.json`, `container_close.json`, `error_container_denied.json`, `sign_edit.json`. Java `OperatorFixtureTest` (parsers and builders) and `ContainerRulesTest` (slot rules, sorting, titles, the bookmark store), Python `test_tabletop_protocol.py` (`validate_operator`, `validate_worlds`), C# `Tests~/OperatorTests.cs` (parsing, jump plans, following against `NavState`, the Marks tab, the container view, the sign editor). Live: `tools/operator_check.py` (35 checks with a mineflayer player) and `Tests~ --live-operator URL TOKEN PLAYER` (following with the app's own classes).
-- **next version: block animations ("Block animations").** The `actions` kinds `lid` (a container lid opens or closes), `bell` (a bell rung, with the side) and `explode` (an explosion's point and power) for `actions_v1` sessions; `entities` entries gain `fuse` (primed TNT, ticks left) and `swell` (a creeper, 0..1), and the poses `dying`, `sitting` and `sleeping` are now drawn. No new cap. Fixtures `actions_motion.json`, `entities_motion.json` (Java `MotionTest`, Python `test_motion_messages`, C# `MotionTests`). Client-only: flowing fluids and ambient particles (QUEST_SETUP.md Part E, tabletop.json `particles`).
 
-## Sound (next version; cap `sound_v1`)
+## Sound (v0.6.0; cap `sound_v1`)
 
 The headset plays the game's sounds on the table from the user's own `sounds.zip` (made by `tools/sounds/PackSounds.java` from their own launcher install, QUEST_SETUP.md Part E; nothing of the game ships with the project). It works out most sounds itself from what it already gets (below); the server adds what only it knows. A client lists `sound_v1` in `hello.caps`; the server grants it unless config.yml `sound.enabled` is false and lists it in `welcome.caps`.
 
@@ -1244,7 +1244,7 @@ Client guidance (non-normative; Quest `World/SoundDirector.cs`, `SoundRules.cs`,
 
 Fixtures `hello_sound.json`, `welcome_sound.json`, `sound_groups.json`, `actions_sound.json`. Java `SoundTest`, Python `test_sound_fixtures_and_rules`, C# `Tests~/SoundTests.cs`. Live: `tools/sound_check.py`.
 
-## Asset delivery (next version; cap `assets_v1`)
+## Asset delivery (v0.6.0; cap `assets_v1`)
 
 Optional and off by default: a server operator who wants to skip `adb` can let their own server hand their own headsets the files the app reads from its files folder: `pack.zip`, `entity_models.json`, `sounds.zip`. **The project ships no Mojang assets**: these are the operator's own copies, made from their own Minecraft install (QUEST_SETUP.md Part E), and only for their own devices.
 
@@ -1274,7 +1274,7 @@ Optional and off by default: a server operator who wants to skip `adb` can let t
 
 Fixtures `assets.json`, `asset_get.json`, `error_asset_denied.json`, `asset_chunk.bin` (one frame). Java `SoundTest` (frame byte for byte, LAN check), Python `test_asset_messages_and_frame`, C# `Tests~/SoundTests.cs` (offer, frame, a download against an in-memory server with resume and a checksum mismatch). Live: `tools/sound_check.py --assets-dir DIR`, `Tests~ --live-assets URL TOKEN` (the app's own classes; dummy files).
 
-## Block animations (next version; `actions_v1`, `entities_v1`)
+## Block animations (v0.7.0; `actions_v1`, `entities_v1`)
 
 What moves on the table besides blocks changing: container lids, bells, explosions, and a few entity states. No new cap: `actions_v1` sessions get the three action kinds (in the per-tick `actions` message, §4.22) and `entities_v1` sessions the two entity fields.
 
