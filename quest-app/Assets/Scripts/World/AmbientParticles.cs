@@ -433,8 +433,11 @@ namespace TabletopCraft.World
                 var e = emitters[i];
                 if (keep < 1f && Hash01(e.Pos) >= keep) continue;
                 int k = Slots(e.Rate * density, e.Kind.Life, out float period, out float chance);
+                // Seeds from the emitter itself (not its index), so a rescan that adds or drops other emitters leaves the
+                // particles in flight where they are.
+                float kindSalt = (int)e.Kind.Motion * 0.0131f + e.Kind.Sprite * 0.0071f;
                 for (int s = 0; s < k && slots.Count < cap; s++)
-                    slots.Add(new ParticleSlot { Emitter = i, Period = period, Chance = chance, Seed = Hash01(e.Pos + new Vector3(s * 0.371f, s * 0.137f, i * 0.0013f)) });
+                    slots.Add(new ParticleSlot { Emitter = i, Period = period, Chance = chance, Seed = Hash01(e.Pos + new Vector3(s * 0.371f + kindSalt, s * 0.137f, kindSalt)) });
             }
             return slots;
         }
