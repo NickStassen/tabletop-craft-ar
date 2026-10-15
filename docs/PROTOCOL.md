@@ -1,4 +1,4 @@
-# PROTOCOL.md — Tabletop link protocol, v0.7.0
+# PROTOCOL.md — Tabletop link protocol, v0.8.0
 
 The project version (repo `VERSION` file) versions the plugin, the Quest app and this protocol together. Before 1.0 there is no backwards compatibility: plugin, app and tools of the same version go together. The wire field `v` stays `1`.
 
@@ -401,6 +401,7 @@ So the headset can find a server without typing its address (QUEST_SETUP.md Part
 - **v0.5.1: no protocol change.** Faster section meshing (same output), adaptive mesh jobs and the optional surface skirt are client-side (QUEST_SETUP.md Part H: `surface_skirt`, `skirt_speed`, `mesh_workers`).
 - **v0.6.0: sound and asset delivery ("Sound", "Asset delivery").** New cap `sound_v1` (config.yml `sound.enabled`): message `sound_groups` (every block's sound group, once after the registries) and the `actions` kinds `sound` and `sound_stop` (only to `sound_v1` sessions). New cap `assets_v1` (config.yml `assets`, off by default, needs `auth.token`, LAN addresses only): messages `assets` and `asset_get`, the first binary frame of the protocol (an asset chunk, §1), error `asset_denied` (`not_found` and errors about an `asset_get` carry `op: "asset_get"` and `name`). Fixtures `hello_sound.json`, `welcome_sound.json`, `sound_groups.json`, `actions_sound.json`, `assets.json`, `asset_get.json`, `error_asset_denied.json`, `asset_chunk.bin`.
 - **v0.7.0: block animations ("Block animations").** The `actions` kinds `lid` (a container lid opens or closes), `bell` (a bell rung, with the side) and `explode` (an explosion's point and power) for `actions_v1` sessions; `entities` entries gain `fuse` (primed TNT, ticks left) and `swell` (a creeper, 0..1), and the poses `dying`, `sitting` and `sleeping` are now drawn. No new cap. Fixtures `actions_motion.json`, `entities_motion.json` (Java `MotionTest`, Python `test_motion_messages`, C# `MotionTests`). Client-only: flowing fluids and ambient particles (QUEST_SETUP.md Part E, tabletop.json `particles`).
+- **v0.8.0: no message changes.** Bedrock players joining through Geyser/Floodgate are ordinary players here (names may start with `.`); the plugin now re-sends a player's `skin` when it changes, as §4.6 always said (Floodgate applies Bedrock skins after the join).
 
 ## 4.13–4.16 Runtime region control (v1, additive)
 
