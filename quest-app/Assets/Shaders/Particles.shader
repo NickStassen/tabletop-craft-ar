@@ -54,6 +54,7 @@ Shader "TabletopCraft/Particles"
                 float sprite0 = v.d.x, sprites = max(v.d.y, 1.0), code = v.d.z;
                 float tc = _ParticleTime / period + seed;
                 float cycle = floor(tc), age = frac(tc) * period;
+                if (motion > 9.5) { cycle = 0; age = _ParticleTime - v.b.x; chance = 1; }   // one-shot: uv1.x is its start time
                 float4 r = Hash4(float2(seed * 4096.0 + 0.5, cycle));      // spawn chance, spawn offset
                 float4 q = Hash4(float2(seed * 4096.0 + 17.25, cycle));    // lifetime, velocities, sprite
                 float4 h = Hash4(float2(seed * 4096.0 + 41.75, cycle));    // more
@@ -143,6 +144,19 @@ Shader "TabletopCraft/Particles"
                     float ang = age * 4.0 + h.x * 6.28;
                     p += float3(cos(ang) * 0.25, -0.6 * age, sin(ang) * 0.25);
                 }
+                else if (m == 10)  // HugeExplosionParticle: 6-9 ticks, its 16 frames by age, grey 0.4-1, 2-4 blocks wide
+                {
+                    L = (6.0 + floor(q.x * 4.0)) / 20.0;
+                    float s = saturate(age / L);
+                    idx = min(floor(s * sprites), sprites - 1.0);
+                    sz *= 1.0 - q.y * 0.5;
+                    col.rgb *= q.z * 0.6 + 0.4;
+                }
+                else if (m == 11)  // the flash: a white glow that fades in 0.15 s
+                {
+                    L = life;
+                    alpha = saturate(1.0 - age / L);
+                }
                 else               // DripParticle: hangs under the ceiling for 2 s, then falls to the floor (drip_hang, drip_fall)
                 {
                     float hang = 2.0, g = 8.0, fallT = sqrt(2.0 * max(reach, 0.05) / g);
@@ -152,7 +166,7 @@ Shader "TabletopCraft/Particles"
                     idx = age < hang ? 0.0 : 1.0;
                     sz *= age < hang ? 0.5 + 0.5 * saturate(age / hang) : 1.0;
                 }
-                if (r.x >= chance || age >= L) sz = 0;   // this slot didn't spawn in this cycle, or its particle is gone
+                if (r.x >= chance || age >= L || age < 0) sz = 0;   // this slot didn't spawn in this cycle, or its particle is gone
 
                 float3 c = float3(p.x, p.y, -p.z);   // region-local blocks, Z mirrored like the blocks
                 float2 k = v.a.xy, cs = float2(cos(spin), sin(spin));

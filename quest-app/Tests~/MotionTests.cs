@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using TabletopCraft.Net;
 using TabletopCraft.World;
 using UnityEngine;
 
@@ -28,9 +29,64 @@ static class MotionTests
     static bool Near(Vector3 a, Vector3 b) => Math.Abs(a.x - b.x) < 1e-4 && Math.Abs(a.y - b.y) < 1e-4 && Math.Abs(a.z - b.z) < 1e-4;
     static bool Near(float a, float b, float eps = 1e-3f) => Math.Abs(a - b) < eps;
 
-    public static void Run(Action<bool, string> check)
+    public static void Run(Action<bool, string> check, Func<string, string> fixture)
     {
         Particles(check);
+        Curves(check);
+        Protocol(check, fixture);
+    }
+
+    // Animation curves against vanilla 26.3's numbers (MotionCurves.cs names the classes).
+    static void Curves(Action<bool, string> check)
+    {
+        // ChestLidController: 0.1 a tick, so 10 ticks to open; ChestRenderer eases 1 - (1 - o)^3; the lid turns -pi/2 at most.
+        float o = 0; for (int i = 0; i < 10; i++) o = MotionCurves.StepLid(o, true, 1);
+        check(Near(o, 1f) && MotionCurves.StepLid(1, true, 1) == 1 && Near(MotionCurves.StepLid(1, false, 3), 0.7f) && MotionCurves.StepLid(0.05f, false, 1) == 0,
+            "lid: 0.1 a tick toward open or closed, clamped");
+        check(Near(MotionCurves.ChestLidRad(0), 0) && Near(MotionCurves.ChestLidRad(1), -Mathf.PI / 2) && Near(MotionCurves.ChestLidRad(0.5f), -0.875f * Mathf.PI / 2),
+            "chest lid: -(1 - (1 - o)^3) * pi/2 (half open = 87.5% of the turn)");
+        MotionCurves.ShulkerLid(1, out float y, out float yr);
+        MotionCurves.ShulkerLid(0, out float y0, out float yr0);
+        check(Near(y, 16) && Near(yr, 1.5f * Mathf.PI) && Near(y0, 24) && yr0 == 0, "shulker box lid: rises 8 px and turns 270 degrees");
+        check(MotionCurves.BellSwing(0) == 0 && Near(MotionCurves.BellSwing(5), Mathf.Sin(5 / Mathf.PI) / (4 + 5 / 3f)) && MotionCurves.BellSwing(50) == 0 && MotionCurves.BellSwing(-1) == 0,
+            "bell: sin(t / pi) / (4 + t / 3) for 50 ticks");
+        MotionCurves.BellAxes("north", 0.2f, out float bx, out float bz);
+        MotionCurves.BellAxes("west", 0.2f, out float wx, out float wz);
+        check(bx == -0.2f && bz == 0 && wx == 0 && wz == 0.2f, "bell: north and south swing about x, east and west about z");
+        check(MotionCurves.DeathTiltDeg(0) == 0 && MotionCurves.DeathTiltDeg(1) == 0 && Near(MotionCurves.DeathTiltDeg(6), Mathf.Sqrt(5f / 20f * 1.6f) * 90f) &&
+              MotionCurves.DeathTiltDeg(14) == 90 && MotionCurves.DeathTiltDeg(20, 180) == 180, "death: sqrt((t - 1) / 20 * 1.6) of 90 degrees (spiders 180), flat after 13.5 ticks");
+        check(MotionCurves.TntScale(40) == 1 && MotionCurves.TntScale(10) == 1 && Near(MotionCurves.TntScale(0), 1.3f) && Near(MotionCurves.TntScale(5), 1 + 0.0625f * 0.3f),
+            "tnt: swells 30% over the last 10 ticks ((1 - fuse / 10)^4)");
+        check(MotionCurves.TntWhite(80) && !MotionCurves.TntWhite(77) && MotionCurves.TntWhite(72) && !MotionCurves.TntWhite(5) && MotionCurves.TntWhite(3), "tnt: white while fuse / 5 is even");
+        MotionCurves.CreeperScale(0, out float c0, out float u0);
+        MotionCurves.CreeperScale(1, out float c1, out float u1);
+        float h = 1 + Mathf.Sin(100) * 0.01f;
+        check(c0 == 1 && u0 == 1 && Near(c1, 1.4f * h) && Near(u1, 1.1f / h) && MotionCurves.CreeperWhite(0.05f) == 0 && MotionCurves.CreeperWhite(0.15f) == 0.5f && MotionCurves.CreeperWhite(0.95f) == 0.95f,
+            "creeper: (1 + g 0.4) h wide, (1 + g 0.1) / h high, white every other tenth of the swell");
+        check(MotionCurves.BedFacing("minecraft:red_bed[facing=east,occupied=true,part=head]", out int fx, out int fz) && fx == 1 && fz == 0 && !MotionCurves.BedFacing("minecraft:stone", out _, out _),
+            "sleeping: the bed's facing");
+        // Quantised pose keys and the poses they bake (BlockEntityCatalog.Pose).
+        var lid = BlockEntityCatalog.Pose(MotionCurves.ChestPoseKey(1));
+        var bell = BlockEntityCatalog.Pose(MotionCurves.BellPoseKey("east", 5));
+        var shk = BlockEntityCatalog.Pose(MotionCurves.ShulkerPoseKey(0.5f));
+        check(MotionCurves.ChestPoseKey(0.01f) == null && lid != null && lid.Length == 2 && lid[0].Part == "lid" && lid[1].Part == "lock" && Near(lid[0].Value, -Mathf.PI / 2) &&
+              bell != null && bell[0].Part == "bell_body" && bell[0].Value == 0 && Near(bell[1].Value, -Mathf.Round(MotionCurves.BellSwing(5) * 100) / 100f) &&
+              shk != null && Near(shk[0].Value, 20) && Near(shk[1].Value, 0.75f * Mathf.PI) && MotionCurves.BellPoseKey("east", 60) == null,
+            "poses: lid and lock, the bell body, the shulker lid, nothing at rest");
+    }
+
+    static void Protocol(Action<bool, string> check, Func<string, string> fixture)
+    {
+        var acts = new List<TabletopCraft.Net.GameAction>();
+        TabletopCraft.Net.GameAction.Parse(Json.Parse(System.IO.File.ReadAllText(fixture("actions_motion.json"))) as Dictionary<string, object>, acts);
+        check(acts.Count == 4 && acts[0].Kind == TabletopCraft.Net.ActionKind.Lid && acts[0].Open && !acts[1].Open && acts[0].Pos == new Vector3Int(107, 64, -35) &&
+              acts[2].Kind == TabletopCraft.Net.ActionKind.Bell && acts[2].Dir == "east" && acts[3].Kind == TabletopCraft.Net.ActionKind.Explode && acts[3].Power == 4 && Near(acts[3].At.x, 110.2f),
+            "actions_motion: lid open/close, bell from the east, explode with power 4");
+        var store = new TabletopCraft.Net.EntityStore();
+        store.Apply(Json.Parse(System.IO.File.ReadAllText(fixture("entities_motion.json"))) as Dictionary<string, object>, null);
+        var e = store.All;
+        check(e[401].Fuse == 37 && Near(e[402].Swell, 0.5f) && e[403].Pose == "dying" && e[404].Pose == "sitting" && e[405].Pose == "sleeping" && e[403].Fuse == 0,
+            "entities_motion: tnt fuse, creeper swell, dying, sitting and sleeping poses");
     }
 
     static void Particles(Action<bool, string> check)

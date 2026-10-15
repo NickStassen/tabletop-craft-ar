@@ -15,13 +15,15 @@ using UnityEngine;
 namespace TabletopCraft.World
 {
     /// <summary>How the shader moves a particle (TabletopCraft/Particles: one branch per motion).</summary>
-    public enum ParticleMotion : byte { Flame = 0, Smoke = 1, Campfire = 2, LavaPop = 3, Portal = 4, Leaf = 5, Firefly = 6, BubbleUp = 7, BubbleDown = 8, Drip = 9 }
+    public enum ParticleMotion : byte { Flame = 0, Smoke = 1, Campfire = 2, LavaPop = 3, Portal = 4, Leaf = 5, Firefly = 6, BubbleUp = 7, BubbleDown = 8, Drip = 9,
+        Explosion = 10, Flash = 11 }   // one-shot (the explode action): they start at a time instead of looping
 
     /// <summary>Layers of the particle texture array, loaded from the pack's textures/particle/*.png in this order.</summary>
     public static class ParticleSprites
     {
         public const int Flame = 0, SoulFlame = 1, CopperFlame = 2, Generic = 3, BigSmoke = 11, Lava = 23, Bubble = 24, Firefly = 25,
-            Leaf = 26, Cherry = 38, PaleOak = 50, RedPoplar = 62, OrangePoplar = 66, YellowPoplar = 70, DripHang = 74, DripFall = 75, Count = 76;
+            Leaf = 26, Cherry = 38, PaleOak = 50, RedPoplar = 62, OrangePoplar = 66, YellowPoplar = 70, DripHang = 74, DripFall = 75,
+            Explosion = 76, Flash = 92, Count = 93;
 
         /// <summary>Texture names (textures/particle/NAME.png) per layer. Generic runs generic_7..generic_0, the order of
         /// vanilla's smoke.json, so a sprite picked by age (index = age * (n - 1) / lifetime) starts at generic_7.</summary>
@@ -35,6 +37,8 @@ namespace TabletopCraft.World
             for (int i = 0; i < 12; i++) { n[BigSmoke + i] = "big_smoke_" + i; n[Leaf + i] = "leaf_" + i; n[Cherry + i] = "cherry_" + i; n[PaleOak + i] = "pale_oak_" + i; }
             for (int i = 0; i < 4; i++) { n[RedPoplar + i] = "red_poplar_" + (i + 1); n[OrangePoplar + i] = "orange_poplar_" + (i + 1); n[YellowPoplar + i] = "yellow_poplar_" + (i + 1); }
             n[Lava] = "lava"; n[Bubble] = "bubble"; n[Firefly] = "firefly"; n[DripHang] = "drip_hang"; n[DripFall] = "drip_fall";
+            for (int i = 0; i < 16; i++) n[Explosion + i] = "explosion_" + i;
+            n[Flash] = "flash";
             return n;
         }
     }
@@ -73,6 +77,17 @@ namespace TabletopCraft.World
             DripLava = new ParticleKind { Motion = ParticleMotion.Drip, Sprite = ParticleSprites.DripHang, Sprites = 2, Life = 4.6f, Size = 0.12f, Color = new Color32(255, 73, 21, 255), Bright = true };
 
         static Color32 W => new Color32(255, 255, 255, 255);
+
+        /// <summary>[motion] The explode action: HugeExplosionParticle (6-9 ticks, 16 frames by age, 2-4 blocks wide, grey
+        /// 0.4-1, full bright) and a white flash.</summary>
+        public static readonly ParticleKind
+            Explosion = new ParticleKind { Motion = ParticleMotion.Explosion, Sprite = ParticleSprites.Explosion, Sprites = 16, Life = 0.45f, Size = 4f, Color = W, Bright = true },
+            Flash = new ParticleKind { Motion = ParticleMotion.Flash, Sprite = ParticleSprites.Flash, Sprites = 1, Life = 0.15f, Size = 6f, Color = W, Bright = true };
+
+        /// <summary>[motion] Particles of one explosion of this power: vanilla's emitter (power 2 and up) spawns 6 a tick
+        /// for 8 ticks within 4 blocks (here scaled with the power), a weaker one a single cloud; plus one flash.</summary>
+        public static int ExplosionClouds(float power) => power >= 2f ? 48 : 1;
+        public static float ExplosionSpread(float power) => power >= 2f ? 4f * Mathf.Clamp(power / 4f, 0.5f, 1.75f) : 0f;
 
         public static ParticleKind WithSprites(ParticleKind k, int first, int count) { k.Sprite = (byte)first; k.Sprites = (byte)count; return k; }
     }

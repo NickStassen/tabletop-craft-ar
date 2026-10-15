@@ -31,6 +31,9 @@ namespace TabletopCraft.Net
         // experience orb value, bobber owner (-1), enderman block, shulker lid and attach face, display entity state.
         public int Leash = -1, Owner = -1, Xp;
         public float Eye, Peek;
+        // [motion] primed TNT: fuse ticks left when last sent (the renderer counts down from there); creeper: swelling 0..1
+        public int Fuse;
+        public float Swell;
         public bool Chested, NameVisible;
         public string Carried, Attach;
         public EntityDisplay Display;
@@ -98,6 +101,7 @@ namespace TabletopCraft.Net
             e.Variant = e.Color = e.Markings = e.Profession = e.Pose = e.Name = e.Item = e.Block = e.Facing = null;
             e.Count = 1; e.Rotation = 0; e.Equipment = null;
             e.Leash = e.Owner = -1; e.Xp = 0; e.Eye = e.Peek = 0; e.Chested = e.NameVisible = false; e.Carried = e.Attach = null; e.Display = null;   // [living]
+            e.Fuse = 0; e.Swell = 0;   // [motion]
             e.LooksVersion = v + 1;
         }
 
@@ -145,6 +149,8 @@ namespace TabletopCraft.Net
                     case "owner": e.Owner = v is double od ? (int)od : -1; break;
                     case "eye": e.Eye = v is double ed ? (float)ed : 0; break;
                     case "peek": e.Peek = v is double pd ? (float)pd : 0; break;
+                    case "fuse": e.Fuse = v is double fd ? (int)fd : 0; break;          // [motion]
+                    case "swell": e.Swell = v is double sd ? (float)sd : 0; break;
                     case "display": e.Display = EntityDisplay.From(v as Dictionary<string, object>); if (e.Display == null || e.Display.Text != null) looks = true; break;
                     case "chested": e.Chested = Flag(v); looks = true; break;
                     case "name_visible": e.NameVisible = Flag(v); looks = true; break;
@@ -214,7 +220,7 @@ namespace TabletopCraft.Net
         static float F(object v) => v is double x ? (float)x : 0f;
     }
 
-    public enum ActionKind { Swing, Dig, Break, Place, Hurt, Sound, SoundStop }
+    public enum ActionKind { Swing, Dig, Break, Place, Hurt, Sound, SoundStop, Lid, Bell, Explode }
 
     /// <summary>One entry of an "actions" message (PROTOCOL.md 4.22; [sound] sound and sound_stop, "Sound").</summary>
     public struct GameAction
@@ -230,6 +236,10 @@ namespace TabletopCraft.Net
         public Vector3 At;
         public float Volume, Pitch;
         public bool Stream;
+        // [motion] lid: opening or closing; bell: the side it was rung from; explode: the explosion's power (at At)
+        public bool Open;
+        public string Dir;
+        public float Power;
 
         /// <summary>Parses the actions of a message into list (unknown kinds are skipped).</summary>
         public static void Parse(Dictionary<string, object> m, List<GameAction> list)
@@ -259,6 +269,9 @@ namespace TabletopCraft.Net
                         if (g.Sound == null) continue;
                         break;
                     case "sound_stop": g.Kind = ActionKind.SoundStop; break;
+                    case "lid": g.Kind = ActionKind.Lid; g.Open = d.B("open"); break;   // [motion] PROTOCOL.md "Block animations"
+                    case "bell": g.Kind = ActionKind.Bell; g.Dir = d.S("dir"); if (g.Dir == null) continue; break;
+                    case "explode": g.Kind = ActionKind.Explode; g.Power = (float)d.D("power", 4); break;
                     default: continue;
                 }
                 list.Add(g);

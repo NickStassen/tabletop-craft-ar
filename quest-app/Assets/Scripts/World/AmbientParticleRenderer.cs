@@ -62,6 +62,7 @@ namespace TabletopCraft.World
             // Fireflies need the bush's light at most 13 (FireflyBushBlock): dusk and night.
             float sky = Light != null && Light.Clock.Known ? Light.Current.SkyFactor : 1f;
             _mat.SetFloat(FirefliesId, Mathf.Clamp01((0.88f - sky) * 8f));
+            UpdateBursts();   // [motion] explosions
 
             if (_scan != null && _scan.IsCompleted)
             {
@@ -111,38 +112,107 @@ namespace TabletopCraft.World
             var slots = AmbientRules.Plan(emitters, AmbientRules.Density(_scanWidth, DensityScale), MaxParticles);
             Emitters = emitters.Count;
             Particles = slots.Count;
-            int n = slots.Count * 4;
-            var verts = new List<Vector3>(n);
-            var a = new List<Vector4>(n); var b = new List<Vector4>(n); var c = new List<Vector4>(n); var d = new List<Vector4>(n);
-            var colors = new List<Color32>(n);
-            var tris = new List<int>(slots.Count * 6);
-            Vector3 lo = Vector3.one * float.MaxValue, hi = Vector3.one * float.MinValue;
+            var q = new Quads(slots.Count);
             foreach (var s in slots)
             {
                 var e = emitters[s.Emitter];
                 var k = e.Kind;
-                int v0 = verts.Count;
-                var ub = new Vector4(s.Period, s.Chance, k.Life, k.Size);
-                var uc = new Vector4(e.Spread.x, e.Spread.y, e.Spread.z, e.Reach);
-                var ud = new Vector4(k.Sprite, k.Sprites, e.Light, k.Bright ? 1 : 0);
+                q.Add(e.Pos, k.Motion, s.Seed, new Vector4(s.Period, s.Chance, k.Life, k.Size), new Vector4(e.Spread.x, e.Spread.y, e.Spread.z, e.Reach),
+                      new Vector4(k.Sprite, k.Sprites, e.Light, k.Bright ? 1 : 0), e.Color);
+            }
+            // The shader moves particles: leaves and drips fall up to FallCap, smoke and fireflies rise and wander.
+            q.Apply(_mesh, new Vector3(6, AmbientRules.FallCap + 2, 6), new Vector3(6, 12, 6));
+        }
+
+        /// <summary>Quads for the particle shader (every corner of a slot holds the same data), and their mesh.</summary>
+        sealed class Quads
+        {
+            readonly List<Vector3> _v; readonly List<Vector4> _a, _b, _c, _d; readonly List<Color32> _col; readonly List<int> _t;
+            Vector3 _lo = Vector3.one * float.MaxValue, _hi = Vector3.one * float.MinValue;
+            public Quads(int n)
+            {
+                _v = new List<Vector3>(n * 4); _a = new List<Vector4>(n * 4); _b = new List<Vector4>(n * 4); _c = new List<Vector4>(n * 4); _d = new List<Vector4>(n * 4);
+                _col = new List<Color32>(n * 4); _t = new List<int>(n * 6);
+            }
+
+            public void Add(Vector3 pos, ParticleMotion motion, float seed, Vector4 b, Vector4 c, Vector4 d, Color32 color)
+            {
+                int v0 = _v.Count;
                 for (int i = 0; i < 4; i++)
                 {
-                    verts.Add(e.Pos);
-                    a.Add(new Vector4(i == 0 || i == 1 ? -0.5f : 0.5f, i == 1 || i == 2 ? 0.5f : -0.5f, (float)k.Motion, s.Seed));
-                    b.Add(ub); c.Add(uc); d.Add(ud); colors.Add(e.Color);
+                    _v.Add(pos);
+                    _a.Add(new Vector4(i == 0 || i == 1 ? -0.5f : 0.5f, i == 1 || i == 2 ? 0.5f : -0.5f, (float)motion, seed));
+                    _b.Add(b); _c.Add(c); _d.Add(d); _col.Add(color);
                 }
-                tris.Add(v0); tris.Add(v0 + 1); tris.Add(v0 + 2); tris.Add(v0); tris.Add(v0 + 2); tris.Add(v0 + 3);
-                lo = Vector3.Min(lo, e.Pos); hi = Vector3.Max(hi, e.Pos);
+                _t.Add(v0); _t.Add(v0 + 1); _t.Add(v0 + 2); _t.Add(v0); _t.Add(v0 + 2); _t.Add(v0 + 3);
+                _lo = Vector3.Min(_lo, pos); _hi = Vector3.Max(_hi, pos);
             }
-            _mesh.Clear();
-            if (slots.Count == 0) return;
-            _mesh.SetVertices(verts);
-            _mesh.SetUVs(0, a); _mesh.SetUVs(1, b); _mesh.SetUVs(2, c); _mesh.SetUVs(3, d);
-            _mesh.SetColors(colors);
-            _mesh.SetTriangles(tris, 0, false);
-            // The shader moves particles: leaves and drips fall up to FallCap, smoke and fireflies rise and wander. Z mirrored.
-            lo -= new Vector3(6, AmbientRules.FallCap + 2, 6); hi += new Vector3(6, 12, 6);
-            _mesh.bounds = new Bounds(new Vector3((lo.x + hi.x) / 2, (lo.y + hi.y) / 2, -(lo.z + hi.z) / 2), hi - lo);
+
+            /// <summary>Fills the mesh; bounds around the spawn points grown by how far particles travel (Z mirrored).</summary>
+            public void Apply(Mesh m, Vector3 down, Vector3 up)
+            {
+                m.Clear();
+                if (_v.Count == 0) return;
+                m.SetVertices(_v);
+                m.SetUVs(0, _a); m.SetUVs(1, _b); m.SetUVs(2, _c); m.SetUVs(3, _d);
+                m.SetColors(_col);
+                m.SetTriangles(_t, 0, false);
+                Vector3 lo = _lo - down, hi = _hi + up;
+                m.bounds = new Bounds(new Vector3((lo.x + hi.x) / 2, (lo.y + hi.y) / 2, -(lo.z + hi.z) / 2), hi - lo);
+            }
+        }
+
+        // ---------- [motion] explosions (the explode action): one-shot clouds and a flash in a second, small mesh ----------
+
+        struct Burst { public Vector3 Pos; public float Power, Start; }
+        readonly List<Burst> _bursts = new List<Burst>();
+        Mesh _burstMesh;
+        MeshRenderer _burstRenderer;
+        bool _burstDirty;
+        public const int MaxBursts = 8;
+
+        /// <summary>An explosion at a world position (PROTOCOL.md "Block animations").</summary>
+        public void Explode(Vector3 world, float power)
+        {
+            if (!Enabled || Model == null || !Model.Loaded) return;
+            if (_bursts.Count >= MaxBursts) _bursts.RemoveAt(0);
+            _bursts.Add(new Burst { Pos = world - (Vector3)Model.Origin, Power = power, Start = Time.timeSinceLevelLoad });
+            _burstDirty = true;
+        }
+
+        void UpdateBursts()
+        {
+            if (_burstMesh == null)
+            {
+                var go = new GameObject("explosions");
+                go.transform.SetParent(transform, false);
+                _burstMesh = new Mesh { name = "explosions" };
+                _burstMesh.MarkDynamic();
+                go.AddComponent<MeshFilter>().sharedMesh = _burstMesh;
+                _burstRenderer = go.AddComponent<MeshRenderer>();
+                _burstRenderer.sharedMaterial = _mat;
+                EntityFigure.Quiet(_burstRenderer);
+            }
+            float now = Time.timeSinceLevelLoad;
+            for (int i = _bursts.Count - 1; i >= 0; i--) if (now - _bursts[i].Start > 1.5f) { _bursts.RemoveAt(i); _burstDirty = true; }
+            _burstRenderer.enabled = _bursts.Count > 0;
+            if (!_burstDirty) return;
+            _burstDirty = false;
+            var q = new Quads(_bursts.Count * 49);
+            var white = new Color32(255, 255, 255, 255);
+            foreach (var bu in _bursts)
+            {
+                var k = ParticleKind.Explosion;
+                int n = ParticleKind.ExplosionClouds(bu.Power);
+                float spread = ParticleKind.ExplosionSpread(bu.Power), size = k.Size * Mathf.Clamp(bu.Power / 4f, 0.5f, 1.5f);
+                for (int i = 0; i < n; i++)   // HugeExplosionSeedParticle: 6 a tick for 8 ticks
+                    q.Add(bu.Pos, k.Motion, AmbientRules.Hash01(bu.Pos + new Vector3(i * 0.37f, bu.Start, i * 0.11f)), new Vector4(bu.Start + (i / 6) / 20f, 1, k.Life, size),
+                          new Vector4(spread, spread, spread, 0), new Vector4(k.Sprite, k.Sprites, LightCode.FullBright, 1), white);
+                var f = ParticleKind.Flash;
+                q.Add(bu.Pos, f.Motion, AmbientRules.Hash01(bu.Pos + new Vector3(0, bu.Start, 0)), new Vector4(bu.Start, 1, f.Life, f.Size * Mathf.Clamp(bu.Power / 4f, 0.5f, 1.5f)),
+                      Vector4.zero, new Vector4(f.Sprite, f.Sprites, LightCode.FullBright, 1), white);
+            }
+            q.Apply(_burstMesh, Vector3.one * 8f, Vector3.one * 8f);
         }
 
         /// <summary>The sprite array from the pack (once). False when there's nothing to draw with.</summary>
@@ -181,6 +251,7 @@ namespace TabletopCraft.World
         void OnDestroy()
         {
             if (_mesh != null) Destroy(_mesh);
+            if (_burstMesh != null) Destroy(_burstMesh);
             if (_mat != null) Destroy(_mat);
             if (_tex != null) Destroy(_tex);
         }

@@ -863,6 +863,8 @@ namespace TabletopCraft
                     foreach (var a in _actions)
                     {
                         if (a.Kind == ActionKind.Swing || a.Kind == ActionKind.Hurt) { if (!_entities.Act(a)) _players.Act(a); }
+                        else if (a.Kind == ActionKind.Lid || a.Kind == ActionKind.Bell) _blockEntities.Act(a);   // [motion] lids, bells
+                        else if (a.Kind == ActionKind.Explode) _particles?.Explode(a.At, a.Power);              // [motion] cloud and flash
                         else _effects.Apply(a);
                     }
                     break;

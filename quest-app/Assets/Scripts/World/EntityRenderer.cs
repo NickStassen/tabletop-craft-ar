@@ -37,6 +37,8 @@ namespace TabletopCraft.World
             public SwingState Swing;
             public float Age, HurtUntil, NextLight;
             public Color Light = Color.white;
+            public float DyingSince = -1, FuseAt;   // [motion] when the dying pose arrived; when the fuse was last sent
+            public int LastFuse;
         }
 
         readonly Dictionary<int, Shown> _shown = new Dictionary<int, Shown>();
@@ -203,12 +205,54 @@ namespace TabletopCraft.World
                 root.localRotation = !turns ? Quaternion.identity
                     : Quaternion.Euler(0, look.Kind == EntityKind.Model ? EntityCatalog.RootTurn(look.Root, yaw) : 180f + yaw, 0);
                 root.localScale = Vector3.one * (scale * look.Scale);
+                var overlay = now < s.HurtUntil ? HurtOverlay : new Color(1, 0, 0, 0);
+                var light = Motion(s, e, root, scale * look.Scale, now, ref overlay);   // [motion] dying, sleeping, fuses
 
                 if (now >= s.NextLight) { s.Light = LivingLight(e, look, s.Pos); s.NextLight = now + 0.25f; }
-                s.Fig.SetColors(s.Light, now < s.HurtUntil ? HurtOverlay : new Color(1, 0, 0, 0));
+                s.Fig.SetColors(s.Light * light, overlay);
                 if (s.Fig.Label != null && cam != null) s.Fig.Label.transform.rotation = Quaternion.LookRotation(s.Fig.Label.transform.position - cam.transform.position);
                 if (cam != null) s.Fig.FaceCamera(cam.transform);   // [living] sprites and display billboards
             }
+        }
+
+        /// <summary>[motion] LivingEntityRenderer and the fuse renderers on top of the standing pose (MotionCurves): a dying
+        /// mob tips over, a mob asleep in a bed lies in it, primed TNT swells and flashes white, a creeper swells and
+        /// blinks. Returns a light multiplier (the TNT flash); may set the overlay.</summary>
+        float Motion(Shown s, EntityInfo e, Transform root, float baseScale, float now, ref Color overlay)
+        {
+            if (e.Pose == "dying")
+            {
+                if (s.DyingSince < 0) s.DyingSince = now;
+                float tilt = MotionCurves.DeathTiltDeg((now - s.DyingSince) * MotionCurves.TicksPerSecond + 2f, e.Path != null && e.Path.EndsWith("spider") ? 180f : 90f);
+                root.localRotation *= Quaternion.AngleAxis(tilt, Vector3.forward);
+            }
+            else s.DyingSince = -1;
+            if (e.Pose == "sleeping" && Model != null && Model.Loaded)
+            {
+                // In a bed: lying on the back, head toward the headboard, shifted toward the foot by the standing eye
+                // height less 0.1 (vanilla's translate), the model's face (+Z) up.
+                var cell = Vector3Int.FloorToInt(s.Pos) - Model.Origin;
+                if (MotionCurves.BedFacing(Model.State(Model.Get(cell.x, cell.y, cell.z)), out int dx, out int dz))
+                {
+                    root.localRotation = Quaternion.LookRotation(Vector3.up, new Vector3(dx, 0, -dz));
+                    root.localPosition = ToLocal(s.Pos - new Vector3(dx, 0, dz) * 1.4f);
+                }
+            }
+            if (e.Fuse > 0)
+            {
+                if (e.Fuse != s.LastFuse) { s.LastFuse = e.Fuse; s.FuseAt = now; }
+                float fuse = e.Fuse - (now - s.FuseAt) * MotionCurves.TicksPerSecond;
+                root.localScale = Vector3.one * (baseScale * MotionCurves.TntScale(fuse));
+                if (MotionCurves.TntWhite(fuse)) return 2.6f;   // the white block (vertex colours saturate)
+            }
+            else if (e.Swell > 0)
+            {
+                MotionCurves.CreeperScale(e.Swell, out float across, out float up);
+                root.localScale = new Vector3(across, up, across) * baseScale;
+                float w = MotionCurves.CreeperWhite(e.Swell);
+                if (w > 0) overlay = new Color(1, 1, 1, w * 0.8f);
+            }
+            return 1f;
         }
 
         /// <summary>The lightmap colour at a world position (the block the entity's middle is in); [living] in the current
