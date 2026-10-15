@@ -104,6 +104,61 @@ public final class ActionBatch {
         put("sound_stop:" + x + "," + y + "," + z, new Action(world, x + 0.5, y + 0.5, z + 0.5, SOUND_MARGIN, o));
     }
 
+    // ---------- [motion] what animates on the table (PROTOCOL.md "Block animations") ----------
+
+    /** Explosions are seen from a little outside the region (their cloud is several blocks wide). */
+    public static final int EXPLOSION_MARGIN = 6;
+
+    /**
+     * [motion] A container's lid opens (its first viewer) or closes (its last): chests, trapped, ender and copper
+     * chests, shulker boxes. Barrels need nothing (their open state is in the block state).
+     */
+    public void lid(String world, int x, int y, int z, boolean open) {
+        JsonObject o = kind("lid");
+        o.add("pos", Protocol.ints(x, y, z));
+        o.addProperty("open", open);
+        put("lid:" + x + "," + y + "," + z, new Action(world, x, y, z, 0, o));
+    }
+
+    /** [motion] Blocks whose lid the client animates (ChestRenderer and ShulkerBoxRenderer blocks). */
+    public static boolean lidded(String blockId) {
+        String p = blockId.startsWith("minecraft:") ? blockId.substring(10) : blockId;
+        return p.equals("chest") || p.equals("trapped_chest") || p.equals("ender_chest") || p.endsWith("copper_chest") || p.endsWith("shulker_box");
+    }
+
+    /** [motion] A bell was rung from {@code dir} (north, south, east, west: the side it swings away from). */
+    public void bell(String world, int x, int y, int z, String dir) {
+        JsonObject o = kind("bell");
+        o.add("pos", Protocol.ints(x, y, z));
+        o.addProperty("dir", dir);
+        put("bell:" + x + "," + y + "," + z, new Action(world, x, y, z, 0, o));
+    }
+
+    /** [motion] An explosion at a point: clients draw its cloud and flash, sized by its power (TNT 4). */
+    public void explode(String world, double x, double y, double z, float power) {
+        JsonObject o = kind("explode");
+        o.add("pos", Protocol.doubles(x, y, z));
+        o.addProperty("power", Math.round(power * 10.0) / 10.0);
+        put("explode:" + (int) Math.floor(x) + "," + (int) Math.floor(y) + "," + (int) Math.floor(z), new Action(world, x, y, z, EXPLOSION_MARGIN, o));
+    }
+
+    /**
+     * [motion] Vanilla's explosion power for what exploded (Bukkit's events don't carry it): TNT and TNT minecarts 4,
+     * creepers 3 (charged 6), end crystals 6, the wither's birth 7, ghast fireballs 1, wither skulls 1, beds and respawn
+     * anchors (a block, null type) 5; anything else 3.
+     */
+    public static float explosionPower(String entityType, boolean charged) {
+        if (entityType == null) return 5f;
+        return switch (entityType) {
+            case "minecraft:tnt", "minecraft:tnt_minecart" -> 4f;
+            case "minecraft:creeper" -> charged ? 6f : 3f;
+            case "minecraft:end_crystal" -> 6f;
+            case "minecraft:wither" -> 7f;
+            case "minecraft:fireball", "minecraft:wither_skull" -> 1f;
+            default -> 3f;
+        };
+    }
+
     static boolean isSound(JsonObject a) {
         String k = a.get("kind").getAsString();
         return k.equals("sound") || k.equals("sound_stop");

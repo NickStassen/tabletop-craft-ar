@@ -139,6 +139,10 @@ public final class EntitySampler {
             if (face != null && face != org.bukkit.block.BlockFace.DOWN) s.attach = face.name().toLowerCase(Locale.ROOT);
         }
         if (e instanceof Snowman sn && sn.isDerp()) s.sheared = true;   // a sheared snow golem has no pumpkin
+        // [motion] TntRenderer flashes and swells on the fuse, CreeperRenderer on the swelling (swell / (maxSwell - 2)).
+        if (e instanceof TNTPrimed tnt) s.fuse = Math.max(1, tnt.getFuseTicks());
+        if (e instanceof Creeper cr && cr.getFuseTicks() > 0)
+            s.swell = Math.max(0, Math.min(1, cr.getFuseTicks() / (double) Math.max(1, cr.getMaxFuseTicks() - 2)));
     }
 
     /**
