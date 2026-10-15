@@ -137,6 +137,18 @@ namespace TabletopCraft.EditorTools
 
         static Net.ChunkSnapshot Snap(WorldModel w) => new Net.ChunkSnapshot { SnapshotId = w.SnapshotId, World = w.World, Origin = w.Origin, Dims = w.Dims, Palette = w.Palette.ToArray(), Grid = w.Grid };
 
+        /// <summary>[gpu] Drawn submeshes (solid, cutout, transparent) that have indices but no material: they'd be invisible.</summary>
+        static int Bare(Transform blocks)
+        {
+            int n = 0;
+            foreach (var mr in blocks.GetComponentsInChildren<MeshRenderer>(false))
+            {
+                var m = mr.GetComponent<MeshFilter>()?.sharedMesh; if (m == null) continue;
+                for (int s = 0; s < Mathf.Min(3, m.subMeshCount); s++) if (m.GetIndexCount(s) > 0 && (s >= mr.sharedMaterials.Length || mr.sharedMaterials[s] == null)) n++;
+            }
+            return n;
+        }
+
         /// <summary>Vertex count, triangle count and the sum of vertex positions under "Blocks" (block units, Z mirrored).</summary>
         static (long verts, long tris, double sx, double sy, double sz) OnScreen(Transform blocks)
         {
@@ -226,7 +238,9 @@ namespace TabletopCraft.EditorTools
             void Report(string what, string how, int frames, long ms)
             {
                 var got = OnScreen(go.transform); var want = Sum(expect);
-                bool ok = r.Idle && Same(got, want) && (go.transform.Find("Retiring")?.childCount ?? 0) == 0;
+                int bare = Bare(go.transform);
+                bool ok = r.Idle && Same(got, want) && (go.transform.Find("Retiring")?.childCount ?? 0) == 0 && bare == 0;
+                if (bare > 0) Debug.LogError($"BATCHRENDER {what}: {bare} non-empty submeshes without a material");
                 if (!ok) errors++;
                 Debug.Log($"BATCHRENDER {(ok ? "PASS" : "FAIL")} {what}: {how} in {frames} frames {ms} ms; on screen {got.verts} verts {got.tris} tris, expected {want.V}/{want.T}; {r.Stats()}");
             }
@@ -291,6 +305,7 @@ namespace TabletopCraft.EditorTools
                 // skirt tile (World/SurfaceSkirt.cs); when everything is meshed and uploaded the tiles go and what is on screen
                 // is the terrain alone again.
                 bool skirtWas = SurfaceSkirt.Enabled; SurfaceSkirt.Enabled = true;
+                SolidLayers.Enabled = false;   // [gpu] everything alpha-tested here: the skirt must draw its second submesh too
                 var n = model.SectionCount;
                 var box = new SectionBox { Min = new Vector3Int(0, 0, 0), Max = n };
                 r.Scope = r.KeepScope = r.VisibleScope = box;
@@ -302,22 +317,24 @@ namespace TabletopCraft.EditorTools
                 var oldOrigin = model.Origin;
                 model.ApplySnapshot(Snap(next));
                 r.OnSnapshot(plan, oldOrigin, next.Origin);
-                int frames = 0, most = 0, shown = 0;
+                int frames = 0, most = 0, shown = 0, bare = 0;
                 for (; frames < 20000 && (frames < 3 || !r.Idle || r.Refreshing > 0 || r.SkirtTiles > 0); frames++)
                 {
                     update.Invoke(r, null);
                     most = Mathf.Max(most, r.SkirtTiles);
+                    bare = Mathf.Max(bare, Bare(go.transform));
                     foreach (var mf in go.GetComponentsInChildren<MeshFilter>(false)) if (mf.name == "skirt" && mf.sharedMesh && mf.sharedMesh.vertexCount > 0) { shown++; break; }
                     System.Threading.Thread.Sleep(1);
                 }
                 bool cleared = r.SkirtTiles == 0;
                 foreach (var mf in go.GetComponentsInChildren<MeshFilter>(false)) if (mf.name == "skirt") cleared = false;
-                if (most == 0 || shown == 0 || !cleared) { errors++; Debug.LogError($"BATCHRENDER skirt: most {most} tiles, shown in {shown} frames, cleared {cleared}"); }
+                if (most == 0 || shown == 0 || !cleared || bare > 0) { errors++; Debug.LogError($"BATCHRENDER skirt: most {most} tiles, shown in {shown} frames, cleared {cleared}, {bare} submeshes without a material"); }
                 expect = Expect(model, expect, plan, atlas);
                 Report("skirt while gliding east", $"up to {most} skirt tiles, on screen in {shown} frames, all gone after", frames, sw.ElapsedMilliseconds);
                 r.Motion = Vector3.zero;
                 r.Scope = r.KeepScope = r.VisibleScope = SectionBox.All;
                 SurfaceSkirt.Enabled = skirtWas;
+                SolidLayers.Enabled = true;
             }
             Debug.Log($"BATCHRENDER done: {errors} errors");
             Object.DestroyImmediate(go);
