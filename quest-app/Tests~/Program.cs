@@ -200,6 +200,7 @@ static class Program
         else Console.WriteLine("SKIP block model tests: set MC_CLIENT_JAR or pass --jar PATH (a client jar or resource pack zip)");
         RenderTests.Run(Check, jar);   // 0.3.1 vanilla look: randomness, offsets, random UV tables (RenderTests.cs)
         LivingTests.Run(Check, Fixture, jar);   // [living] time of day, weather, leads, bolts, rain, displays, gear (LivingTests.cs)
+        SoundTests.Run(Check, Fixture, args);   // [sound] sounds.json, inference, voices, sounds.zip, asset delivery (SoundTests.cs)
 
         int sceneIdx = Array.IndexOf(args, "--scene");
         if (sceneIdx >= 0 && jar != null) SceneDump.Run(jar, args[sceneIdx + 1], args);
@@ -226,6 +227,8 @@ static class Program
         if (liveInteractIdx >= 0) InteractTests.Live(args[liveInteractIdx + 1], Check);
         int liveControlIdx = Array.IndexOf(args, "--live-control");   // [talk] --live-control URL TOKEN
         if (liveControlIdx >= 0) ControlTests.Live(args[liveControlIdx + 1], liveControlIdx + 2 < args.Length ? args[liveControlIdx + 2] : "", Check);
+        int liveAssetsIdx = Array.IndexOf(args, "--live-assets");   // [sound] --live-assets URL TOKEN (assets.serve on, dummy files)
+        if (liveAssetsIdx >= 0) SoundTests.LiveAssets(args[liveAssetsIdx + 1], liveAssetsIdx + 2 < args.Length ? args[liveAssetsIdx + 2] : "", Check);
         Console.WriteLine(fails == 0 ? "ALL PASS" : $"{fails} FAILED");
         return fails == 0 ? 0 : 1;
     }

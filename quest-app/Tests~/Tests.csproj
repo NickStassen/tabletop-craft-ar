@@ -35,5 +35,8 @@
     <Compile Include="../Assets/Scripts/World/KeyboardModel.cs;../Assets/Scripts/World/AppPrefs.cs;../Assets/Scripts/World/SessionState.cs;../Assets/Scripts/Net/LanDiscovery.cs" />
     <!-- [blocks] block entities: catalog, baked models, block_entities data (PROTOCOL.md 4.29) -->
     <Compile Include="../Assets/Scripts/World/BlockEntityCatalog.cs;../Assets/Scripts/World/BlockEntityModels.cs;../Assets/Scripts/Net/BlockEntityProtocol.cs;../Assets/Scripts/World/SignText.cs;../Assets/Scripts/World/BlockEntityExtras.cs" />
+    <!-- [sound] sounds.json, block sound groups, inference, voices, sounds.zip; asset delivery (PROTOCOL.md "Sound", "Asset delivery") -->
+    <Compile Include="../Assets/Scripts/World/SoundDefs.cs;../Assets/Scripts/World/SoundRules.cs;../Assets/Scripts/World/SoundDirector.cs;../Assets/Scripts/World/SoundMixer.cs;../Assets/Scripts/World/SoundPack.cs" />
+    <Compile Include="../Assets/Scripts/Net/AssetProtocol.cs;../Assets/Scripts/World/AssetSync.cs" />
   </ItemGroup>
 </Project>
