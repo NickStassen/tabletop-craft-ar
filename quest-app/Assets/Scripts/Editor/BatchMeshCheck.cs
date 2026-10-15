@@ -90,18 +90,60 @@ namespace TabletopCraft.EditorTools
                 if (Mathf.Abs(bn[i].x - rn.x) > 0.02f || Mathf.Abs(bn[i].y - rn.y) > 0.02f || Mathf.Abs(bn[i].z - rn.z) > 0.02f)
                 { if (errors++ < 10) Debug.LogError($"BATCHCHECK normal {i}: {bn[i]} vs RecalculateNormals {rn}"); }
             }
-            for (int sub = 0; sub < 3; sub++)
+            // [gpu] The batch splits the opaque range: solid triangles first (drawn without alpha test), then the rest.
+            var solidRef = new List<int>(); var cutRef = new List<int>();
+            for (int i = 0; i + 2 < refTris[0].Count; i += 3)
+            {
+                int a = refTris[0][i], b1 = refTris[0][i + 1], c1 = refTris[0][i + 2];
+                bool solid = SolidLayers.Enabled && refColors[a].a == 255 && refColors[b1].a == 255 && refColors[c1].a == 255 && SolidLayers.Face(refUvs[a].z);
+                (solid ? solidRef : cutRef).AddRange(new[] { a, b1, c1 });
+            }
+            var wantTris = new[] { solidRef, cutRef, refTris[1], refTris[2] };
+            for (int sub = 0; sub < 4; sub++)
             {
                 var bt = batch.GetTriangles(sub);
-                bool same = bt.Length == refTris[sub].Count;
-                for (int i = 0; same && i < bt.Length; i++) same = bt[i] == refTris[sub][i];
-                if (!same) { errors++; Debug.LogError($"BATCHCHECK submesh {sub}: {bt.Length} vs {refTris[sub].Count} indices differ"); }
+                bool same = bt.Length == wantTris[sub].Count;
+                for (int i = 0; same && i < bt.Length; i++) same = bt[i] == wantTris[sub][i];
+                if (!same) { errors++; Debug.LogError($"BATCHCHECK submesh {sub}: {bt.Length} vs {wantTris[sub].Count} indices differ"); }
             }
             var b = batch.bounds;
             var lo = refVerts[0]; var hi = refVerts[0];
             foreach (var p in refVerts) { lo = Vector3.Min(lo, p); hi = Vector3.Max(hi, p); }
             if ((b.min - lo).sqrMagnitude > 1e-6f || (b.max - hi).sqrMagnitude > 1e-6f) { errors++; Debug.LogError($"BATCHCHECK bounds {b.min}..{b.max} vs {lo}..{hi}"); }
-            Debug.Log($"BATCHCHECK done: {parts.Count} sections, {checkedVerts} vertices ({zeroNormals} with zero normals), submeshes {data.Opaque / 3}/{data.Transparent / 3}/{data.WaterBack / 3} triangles, {errors} errors");
+
+            // [gpu] The same batch packed (PackedVertex, 20 bytes) and read back through Unity: positions within 1/128 block,
+            // uv within 1/2048, the colour times vanilla's face shade of the classic normal, layer/table as uv.z encodes them,
+            // the same triangles and bounds.
+            var pdata = BatchData.Assemble(parts, true);
+            var pm = new Mesh();
+            TabletopRenderer.Fill(pm, pdata);
+            int packedErrors = 0;
+            if (pdata.Packed == null || pm.GetVertexAttributeFormat(UnityEngine.Rendering.VertexAttribute.Position) != UnityEngine.Rendering.VertexAttributeFormat.SNorm16 || pm.GetVertexBufferStride(0) != PackedVertex.Size)
+            { packedErrors++; Debug.LogError($"BATCHCHECK packed: not packed (stride {pm.GetVertexBufferStride(0)})"); }
+            else
+            {
+                var pv = pm.vertices; var pc = pm.colors32; var pu = new List<Vector4>(); pm.GetUVs(0, pu);
+                for (int i = 0; i < Mathf.Min(pv.Length, refVerts.Count); i++)
+                {
+                    var n = bn[i];
+                    float shade = Mathf.Abs(n.y) > 0.9f ? (n.y > 0 ? 1f : 0.5f) : Mathf.Abs(n.z) > 0.9f ? 0.8f : Mathf.Abs(n.x) > 0.9f ? 0.6f : 1f;
+                    var rc = refColors[i];
+                    var want = new Color32((byte)Mathf.RoundToInt(rc.r * shade), (byte)Mathf.RoundToInt(rc.g * shade), (byte)Mathf.RoundToInt(rc.b * shade), rc.a);
+                    int z = Mathf.RoundToInt(refUvs[i].z), table = z < 0 ? 0 : z / RandomUv.LayerStride, layer = z < 0 ? -1 : z - table * RandomUv.LayerStride;
+                    var pos = pv[i] * (32767f / 64f); var u = pu[i];
+                    bool ok = (pos - refVerts[i]).sqrMagnitude < 1e-4f && Mathf.Abs(u.x * 32767f / 1024f - refUvs[i].x) < 5e-4f && Mathf.Abs(u.y * 32767f / 1024f - refUvs[i].y) < 5e-4f
+                              && Mathf.RoundToInt(u.z * 32767f) == layer && Mathf.RoundToInt(u.w * 32767f) == table && Mathf.Abs(pc[i].r - want.r) <= 1 && Mathf.Abs(pc[i].g - want.g) <= 1
+                              && Mathf.Abs(pc[i].b - want.b) <= 1 && pc[i].a == want.a;
+                    if (!ok && packedErrors++ < 10) Debug.LogError($"BATCHCHECK packed vertex {i}: {pos} uv {u} colour {pc[i]} vs {refVerts[i]} {refUvs[i]} {want}");
+                }
+                for (int sub = 0; sub < 4; sub++) if (!System.Linq.Enumerable.SequenceEqual(pm.GetTriangles(sub), batch.GetTriangles(sub))) { packedErrors++; Debug.LogError($"BATCHCHECK packed submesh {sub} differs"); }
+                if ((pm.bounds.min - lo).sqrMagnitude > 1e-6f || (pm.bounds.max - hi).sqrMagnitude > 1e-6f) { packedErrors++; Debug.LogError($"BATCHCHECK packed bounds {pm.bounds.min}..{pm.bounds.max}"); }
+            }
+            errors += packedErrors;
+            Debug.Log($"BATCHCHECK packed: {pdata.VertCount} vertices, {pdata.Bytes / 1024} KB vs {data.Bytes / 1024} KB, {packedErrors} errors");
+            pdata.Release();
+            Object.DestroyImmediate(pm);
+            Debug.Log($"BATCHCHECK done: {parts.Count} sections, {checkedVerts} vertices ({zeroNormals} with zero normals), submeshes {data.Solid / 3}/{(data.Opaque - data.Solid) / 3}/{data.Transparent / 3}/{data.WaterBack / 3} triangles (solid/cutout/transparent/water back), {errors} errors");
             data.Release();
             Object.DestroyImmediate(batch);
             if (Application.isBatchMode) EditorApplication.Exit(errors == 0 ? 0 : 1);
@@ -128,6 +170,18 @@ namespace TabletopCraft.EditorTools
 
         static Net.ChunkSnapshot Snap(WorldModel w) => new Net.ChunkSnapshot { SnapshotId = w.SnapshotId, World = w.World, Origin = w.Origin, Dims = w.Dims, Palette = w.Palette.ToArray(), Grid = w.Grid };
 
+        /// <summary>[gpu] Drawn submeshes (solid, cutout, transparent) that have indices but no material: they'd be invisible.</summary>
+        static int Bare(Transform blocks)
+        {
+            int n = 0;
+            foreach (var mr in blocks.GetComponentsInChildren<MeshRenderer>(false))
+            {
+                var m = mr.GetComponent<MeshFilter>()?.sharedMesh; if (m == null) continue;
+                for (int s = 0; s < Mathf.Min(3, m.subMeshCount); s++) if (m.GetIndexCount(s) > 0 && (s >= mr.sharedMaterials.Length || mr.sharedMaterials[s] == null)) n++;
+            }
+            return n;
+        }
+
         /// <summary>Vertex count, triangle count and the sum of vertex positions under "Blocks" (block units, Z mirrored).</summary>
         static (long verts, long tris, double sx, double sy, double sz) OnScreen(Transform blocks)
         {
@@ -136,8 +190,10 @@ namespace TabletopCraft.EditorTools
             {
                 var m = mf.sharedMesh; if (m == null || m.vertexCount == 0) continue;
                 var p = mf.transform.localPosition;
-                foreach (var q in m.vertices) { sx += q.x + p.x; sy += q.y + p.y; sz += q.z + p.z; }
-                v += m.vertexCount; t += (m.GetIndexCount(0) + m.GetIndexCount(1)) / 3;
+                float k = m.GetVertexAttributeFormat(UnityEngine.Rendering.VertexAttribute.Position) == UnityEngine.Rendering.VertexAttributeFormat.SNorm16 ? 32767f / 64f : 1f;   // [gpu] PackedVertex
+                foreach (var q in m.vertices) { sx += q.x * k + p.x; sy += q.y * k + p.y; sz += q.z * k + p.z; }
+                v += m.vertexCount;
+                for (int s = 0; s < Mathf.Min(3, m.subMeshCount); s++) t += m.GetIndexCount(s) / 3;   // [gpu] solid, cutout, transparent
             }
             return (v, t, sx, sy, sz);
         }
@@ -216,7 +272,9 @@ namespace TabletopCraft.EditorTools
             void Report(string what, string how, int frames, long ms)
             {
                 var got = OnScreen(go.transform); var want = Sum(expect);
-                bool ok = r.Idle && Same(got, want) && (go.transform.Find("Retiring")?.childCount ?? 0) == 0;
+                int bare = Bare(go.transform);
+                bool ok = r.Idle && Same(got, want) && (go.transform.Find("Retiring")?.childCount ?? 0) == 0 && bare == 0;
+                if (bare > 0) Debug.LogError($"BATCHRENDER {what}: {bare} non-empty submeshes without a material");
                 if (!ok) errors++;
                 Debug.Log($"BATCHRENDER {(ok ? "PASS" : "FAIL")} {what}: {how} in {frames} frames {ms} ms; on screen {got.verts} verts {got.tris} tris, expected {want.V}/{want.T}; {r.Stats()}");
             }
@@ -281,6 +339,7 @@ namespace TabletopCraft.EditorTools
                 // skirt tile (World/SurfaceSkirt.cs); when everything is meshed and uploaded the tiles go and what is on screen
                 // is the terrain alone again.
                 bool skirtWas = SurfaceSkirt.Enabled; SurfaceSkirt.Enabled = true;
+                SolidLayers.Enabled = false;   // [gpu] everything alpha-tested here: the skirt must draw its second submesh too
                 var n = model.SectionCount;
                 var box = new SectionBox { Min = new Vector3Int(0, 0, 0), Max = n };
                 r.Scope = r.KeepScope = r.VisibleScope = box;
@@ -292,22 +351,24 @@ namespace TabletopCraft.EditorTools
                 var oldOrigin = model.Origin;
                 model.ApplySnapshot(Snap(next));
                 r.OnSnapshot(plan, oldOrigin, next.Origin);
-                int frames = 0, most = 0, shown = 0;
+                int frames = 0, most = 0, shown = 0, bare = 0;
                 for (; frames < 20000 && (frames < 3 || !r.Idle || r.Refreshing > 0 || r.SkirtTiles > 0); frames++)
                 {
                     update.Invoke(r, null);
                     most = Mathf.Max(most, r.SkirtTiles);
+                    bare = Mathf.Max(bare, Bare(go.transform));
                     foreach (var mf in go.GetComponentsInChildren<MeshFilter>(false)) if (mf.name == "skirt" && mf.sharedMesh && mf.sharedMesh.vertexCount > 0) { shown++; break; }
                     System.Threading.Thread.Sleep(1);
                 }
                 bool cleared = r.SkirtTiles == 0;
                 foreach (var mf in go.GetComponentsInChildren<MeshFilter>(false)) if (mf.name == "skirt") cleared = false;
-                if (most == 0 || shown == 0 || !cleared) { errors++; Debug.LogError($"BATCHRENDER skirt: most {most} tiles, shown in {shown} frames, cleared {cleared}"); }
+                if (most == 0 || shown == 0 || !cleared || bare > 0) { errors++; Debug.LogError($"BATCHRENDER skirt: most {most} tiles, shown in {shown} frames, cleared {cleared}, {bare} submeshes without a material"); }
                 expect = Expect(model, expect, plan, atlas);
                 Report("skirt while gliding east", $"up to {most} skirt tiles, on screen in {shown} frames, all gone after", frames, sw.ElapsedMilliseconds);
                 r.Motion = Vector3.zero;
                 r.Scope = r.KeepScope = r.VisibleScope = SectionBox.All;
                 SurfaceSkirt.Enabled = skirtWas;
+                SolidLayers.Enabled = true;
             }
             Debug.Log($"BATCHRENDER done: {errors} errors");
             Object.DestroyImmediate(go);

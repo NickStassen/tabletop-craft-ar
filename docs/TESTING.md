@@ -1294,3 +1294,58 @@ What Geyser sends a Bedrock client, for each part of the giant (seen with `--tra
 ### Known gaps
 - Bedrock players never see the giant's hands: Geyser drops every item display. The Bedrock Mannequin's arms hang still.
 - At the default block size the Bedrock Mannequin's head is 8 blocks against the 25-block floating head, because 16 is the `SCALE` maximum.
+
+## GPU at 256 wide (gpu; 2026-10-15)
+
+### On the headset before (Quest 3, 0.8.0 + passthrough alpha, link thread, perf levels/foveation; width 256, region 352x186x352)
+- 1.34M faces, 5.46M vertices, 108 batches, about 216 draw calls. PERF 26-31 fps, frame_ms p50 34-37, and a 145-160 ms hitch in every 5 s window.
+- VrApi: GPU% 0.95-0.99, app GPU time 26-35 ms, GPU clock 640 MHz. High dynamic foveation (applied) didn't help.
+- `ovrgpuprofiler`: 405M vertices shaded/s (about 15M a frame: two views plus binning), ALU/vertex 100, vertex fetch stall 39%; 1.35G fragments shaded/s (about 50M a frame, 5x overdraw with 2 mm blocks and triangles a few pixels big), time 65% fragments / 35% vertices, 2.0 textures/fragment, shader ALU capacity 24%.
+- A/B through tabletop.json (about 20 s each, same view): `mipmaps`, `particles`, `surface_skirt` and `leaves_inner` off one at a time: no change (27-28 fps). All of them plus `weather_fx` off: 31 fps and no hitch.
+- At 0.3.0 the same face count ran at 55-65 fps; the block shaders have grown since (random rotation, explicit gradients, day light lookup, more varyings).
+
+### What changed (bisectable commits: the rain fix, the shaders, a skirt fix, the vertices, the draw order)
+1. **Rain hitch.** `WeatherRenderer` rebuilt its 2,500 drops every 5 s whether blocks had changed or not, running ~40 culture-aware string tests per drop (`Precipitation.Blocks`) and biome string lookups. These are now cached per palette index and per biome, the buffers are reused, and the timed rebuild waits for a block change. `Tests~ -c Release --measure-weather DIR`, full layout on x86 (before: the 0.8.0 code in the same run): 64 wide 4.7 -> 0.5 ms, 256 wide 8.9 -> 0.9 ms. Culture-aware comparisons are far slower under IL2CPP on the headset, which fits the 150 ms.
+2. **No discard for opaque terrain.** Every block pixel had a `discard` (clip box and alpha test), which turns off early depth rejection: each hidden fragment was shaded, then depth-tested. Opaque faces on fully opaque layers now go to a solid submesh drawn without alpha test (Geometry queue, first), the window is cut by hardware clip planes (`SV_ClipDistance`), fog and day light are keyword variants, and batches assemble their sections top down.
+3. **20-byte vertices** for batches (`PackedVertex`, was 32).
+
+### Offline numbers
+GLES3 statements in `main` (`ShaderCheck.Stats`, multiview, HLSLcc emits about one per DXBC instruction), vertex outputs in components (clip position and eye index included), vertex inputs:
+
+| Blocks variant | vertex stmts | fragment stmts | varyings | inputs | discard in fragment |
+|---|---|---|---|---|---|
+| 0.8.0 | 61 | 88 | 22 | 15 (32 B) | 2 |
+| solid, clip planes, noon | 46 | 74 | 16 | 15 (32 B) | 0 |
+| solid, clip planes, noon, packed | 48 | 74 | 16 | 12 (20 B) | 0 |
+| cutout, clip planes, noon, packed | 48 | 76 | 16 | 12 (20 B) | 1 (alpha test) |
+| packed, day light (night, rain) | 58 | 76 | 16 | 12 (20 B) | 1 |
+| eye in water (+ fog) | +1 | +8 | +3 | | |
+
+`Tests~ -c Release --jar 26.3.jar --measure-batches DIR` on the area snapshots (seed 12345, mostly ocean with lush caves):
+
+| window | opaque triangles | solid (no alpha test) | vertex + index data, 32 B -> 20 B vertices |
+|---|---|---|---|
+| 64 | 134,524 | 90,992 (68%) | 11.2 -> 7.7 MB |
+| 128 | 353,354 | 225,262 (64%) | 29.4 -> 20.1 MB |
+| 192 | 765,840 | 473,462 (62%) | 66.3 -> 45.4 MB |
+| 256 | 1,253,670 | 780,718 (62%) | 109.5 -> 74.9 MB |
+
+Faces and vertices are unchanged (726,586 faces, 3.02M vertices at 256 here). At 256 the alpha-tested rest is mostly kelp and seagrass (360k of 473k triangles), then grass side overlays, cave vines, leaf litter and short grass. No batch falls back to the classic vertices. Draw calls: one more per batch with both solid and alpha-tested faces (about 216 -> 320 at 256).
+
+### Tests
+- `Tests~` (with `--jar` and `--entity-models`): ALL PASS, including the drop-stop cache against the name test, the solid split (flat colours, opaque layers, random tables, the 4-layer flow table, unknown layers, alpha in vertex colours, `solid_pass` off), batches keeping each section's solid faces first, `PackedVertex` against the classic vertex (positions, uv, light code, face direction and shade, layer and table) and the fallback for coordinates out of range.
+- Unity: `ShaderCheck.Run` 360 variants, 0 errors (Vulkan and GLES3, with the new keywords); `BatchMeshCheck.Run` (classic and packed uploads read back through Unity, four submeshes) and `RunRenderer` (now also: no non-empty submesh without a material, the skirt glide with every face alpha-tested) pass; `BuildApk` builds.
+
+### To measure on the headset (same view, width 256, about 20 s each)
+1. Defaults: PERF fps and frame_ms, VrApi app GPU time, and whether the 5 s hitch is gone in the rain.
+2. `ovrgpuprofiler`: fragments shaded/s (expected well under half of 1.35G/s), vertex fetch stall %, vertices shaded/s.
+3. A/B one at a time: `"clip_planes": false`, `"solid_pass": false`, `"packed_vertices": false`.
+4. Look: terrain cut cleanly at the window edges while gliding (clip planes), leaves, plants and grass side overlays unchanged, water and glass unchanged, night and rain light unchanged, the fog when the eye is in water.
+
+### Not verified (needs the headset)
+Everything on the GPU: these are offline counts. Whether Unity's Vulkan device enables `shaderClipDistance` (the variant compiles; if terrain shows outside the window, `"clip_planes": false`).
+
+### Known gaps
+- The first time night or rain starts, or the eye enters water, the block materials switch to a variant the GPU hasn't built yet: expect one short hitch then (not prewarmed).
+- Random texture rotation stays a per-face branch (coherent across a face); a variant would need another submesh and draw call per batch. The vertex colour is still converted from sRGB per vertex (3 vector multiply-adds).
+- If 72 fps isn't reached at 256 wide, the next step is a distance LOD: section columns far from the view centre meshed at 2x2x2 blocks (or the surface skirt's heightfield), full detail near it, with skirts on the seams.

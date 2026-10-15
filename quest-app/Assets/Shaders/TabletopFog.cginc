@@ -17,4 +17,17 @@ inline half3 TabletopFog(half3 col, float3 worldPos)
     return lerp(col, (half3)_TabletopFogColor.rgb, (half)f);
 }
 
+// [gpu] The block shaders compile the fog only while the eye is in a fluid: `#pragma multi_compile _ TABLETOP_FOG` (EyeEffects
+// sets the global keyword with the strength), then TABLETOP_FOG_COORDS(5) in v2f, TABLETOP_TRANSFER_FOG(o, worldPos) in vert
+// and TABLETOP_APPLY_FOG(c.rgb, i) in frag. Without the keyword there is no fog varying and no per-pixel distance.
+#if defined(TABLETOP_FOG)
+#define TABLETOP_FOG_COORDS(idx) float3 fogPos : TEXCOORD##idx;
+#define TABLETOP_TRANSFER_FOG(o, worldPos) o.fogPos = (worldPos);
+#define TABLETOP_APPLY_FOG(col, i) col = TabletopFog(col, (i).fogPos);
+#else
+#define TABLETOP_FOG_COORDS(idx)
+#define TABLETOP_TRANSFER_FOG(o, worldPos)
+#define TABLETOP_APPLY_FOG(col, i)
+#endif
+
 #endif

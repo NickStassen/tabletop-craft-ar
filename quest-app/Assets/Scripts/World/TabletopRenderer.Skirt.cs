@@ -141,7 +141,7 @@ namespace TabletopCraft.World
             tile.Mesh.MarkDynamic();
             tile.Go.GetComponent<MeshFilter>().sharedMesh = tile.Mesh;
             var r = tile.Renderer = tile.Go.GetComponent<MeshRenderer>();
-            r.sharedMaterials = _skirtMats ?? (_skirtMats = new[] { OpaqueMaterial });
+            r.sharedMaterials = _skirtMats ?? (_skirtMats = new[] { SolidMaterial, OpaqueMaterial });   // [gpu] Fill: solid, then alpha-tested faces
             r.shadowCastingMode = ShadowCastingMode.Off; r.receiveShadows = false;
             r.lightProbeUsage = LightProbeUsage.Off; r.reflectionProbeUsage = ReflectionProbeUsage.Off;
             return tile;

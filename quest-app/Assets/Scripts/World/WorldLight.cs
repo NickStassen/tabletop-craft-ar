@@ -61,6 +61,7 @@ namespace TabletopCraft.World
             BlockShading.Environment = env;
             bool noon = env.SameAs(LightEnv.Noon);
             Shader.SetGlobalFloat(OnId, noon ? 0f : 1f);
+            BlockKeywords.Set(BlockKeywords.DayLight, !noon);   // [gpu] the block shaders' lookup only when it changes anything
             if (noon) return;
             DayLight.Ratios(env, _rgb);
             var px = new Color[256];
@@ -74,6 +75,7 @@ namespace TabletopCraft.World
         void OnDestroy()
         {
             Shader.SetGlobalFloat(OnId, 0f);
+            BlockKeywords.Set(BlockKeywords.DayLight, false);
             if (_ratio != null) Destroy(_ratio);
         }
     }

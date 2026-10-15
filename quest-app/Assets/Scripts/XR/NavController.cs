@@ -258,6 +258,7 @@ namespace TabletopCraft.XR
             var half = new Vector3(w.x * bs / 2f + e, w.y * bs / 2f + e, w.z * bs / 2f + e);
             var box = Matrix4x4.Scale(new Vector3(1f / half.x, 1f / half.y, 1f / half.z)) * Matrix4x4.Translate(new Vector3(0, -w.y * bs / 2f, 0));
             Shader.SetGlobalMatrix(ClipId, box * Anchor.worldToLocalMatrix);
+            BlockKeywords.Set(BlockKeywords.ClipPlanes, BlockKeywords.UseClipPlanes);   // [gpu] block shaders: hardware clip planes
             if (Caps)
             {
                 // While a new region is meshed behind the old one, the old terrain shows as it is (no caps for the new box).

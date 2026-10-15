@@ -28,6 +28,94 @@ static class AreaTests
         LayoutTests();
         SectionMeshTests();
         BatchTests();
+        SolidSplitTests();
+        PackedVertexTests();
+    }
+
+    /// <summary>[gpu] PackedVertex (20 bytes) against the classic BatchVertex: positions exact in 1/64 steps, uv in 1/1024,
+    /// light code, face direction and shade (multiplied into the colour as the classic shader multiplies it), layer and
+    /// table out of uv.z; a batch whose coordinates don't fit stays classic.</summary>
+    static void PackedVertexTests()
+    {
+        var md = new MeshData();
+        // An up face with random table 5 and a light code, a south face on layer 7 (alpha 128), a flat-colour east face,
+        // and a 45 degree quad (no face shade, no direction).
+        void Quad(Vector3 a, Vector3 b, Vector3 c, Vector3 d, float z, Color32 col, byte light)
+        {
+            int s = md.Verts.Count;
+            md.Verts.Add(a); md.Verts.Add(b); md.Verts.Add(c); md.Verts.Add(d);
+            md.Uvs.Add(new Vector3(a.x + 0.0625f, a.z, z)); md.Uvs.Add(new Vector3(b.x, b.z, z)); md.Uvs.Add(new Vector3(c.x, c.z - 3.5f, z)); md.Uvs.Add(new Vector3(d.x, -d.z, z));
+            for (int k = 0; k < 4; k++) { md.Colors.Add(col); md.Light.Add(light); }
+            md.Opaque.AddRange(new[] { s, s + 2, s + 1, s, s + 3, s + 2 });
+        }
+        Quad(new Vector3(1, 5, 2), new Vector3(4, 5, 2), new Vector3(4, 5, 6), new Vector3(1, 5, 6), 3 + RandomUv.LayerStride * 5, new Color32(200, 100, 50, 255), 0xE7);
+        Quad(new Vector3(0, 0, 9), new Vector3(16, 0, 9), new Vector3(16, 15.4375f, 9), new Vector3(0, 15.4375f, 9), 7, new Color32(255, 255, 255, 128), 0x0F);
+        Quad(new Vector3(3, 1, 1), new Vector3(3, 1, 2), new Vector3(3, 2, 2), new Vector3(3, 2, 1), -1, new Color32(90, 90, 90, 255), 0xF0);
+        Quad(new Vector3(0, 0, 0), new Vector3(1, 0, 1), new Vector3(1, 1, 1), new Vector3(0, 1, 0), 2, new Color32(10, 20, 30, 255), 0x55);
+        var sm = SectionMesh.From(md, new Vector3Int(1, 2, 3));
+        var off = new Vector3(32, 48, -32);
+        var classic = BatchData.Assemble(new List<(SectionMesh, Vector3)> { (sm, off) });
+        var packed = BatchData.Assemble(new List<(SectionMesh, Vector3)> { (sm, off) }, true);
+        bool ok = packed.Packed != null && packed.Verts.Length == 0 && packed.Bytes == (long)packed.VertCount * 20 + packed.IndexCount * 4
+                  && (packed.Min - classic.Min).sqrMagnitude == 0 && (packed.Max - classic.Max).sqrMagnitude == 0 && packed.Indices.Take(packed.IndexCount).SequenceEqual(classic.Indices.Take(classic.IndexCount));
+        string bad = ok ? "" : $" (header: packed {packed.Packed != null}, verts {packed.Verts.Length}, bytes {packed.Bytes}, min {packed.Min} {classic.Min})";
+        for (int i = 0; ok && i < classic.VertCount; i++)
+        {
+            var c = classic.Verts[i]; var p = packed.Packed[i];
+            float shade = PackedVertex.Shade(c.Nx, c.Ny, c.Nz, out int dir);
+            int z = (int)Math.Round(c.Uv.z);
+            bool v = (p.Position - c.Pos).sqrMagnitude < 1e-10f && Math.Abs(p.Uv.x - c.Uv.x) < 1e-6f && Math.Abs(p.Uv.y - c.Uv.y) < 1e-6f
+                     && p.Light == LightCode.FromSnorm(c.Nw) && p.Dir == dir && p.Layer == (z < 0 ? -1 : z % RandomUv.LayerStride) && p.Table == (z < 0 ? 0 : z / RandomUv.LayerStride)
+                     && p.Color.r == (byte)Math.Round(c.Color.r * shade) && p.Color.a == c.Color.a;
+            if (!v) { ok = false; bad = $" vertex {i}: {p.Position} {p.Uv} light {p.Light} dir {p.Dir} layer {p.Layer}/{p.Table} {p.Color} vs {c.Pos} {c.Uv} {c.Color} shade {shade}"; }
+        }
+        var dirs = packed.Packed.Take(packed.VertCount).Select(p => p.Dir).Distinct().OrderBy(d => d).ToArray();
+        var shades = packed.Packed.Take(packed.VertCount).Select(p => p.Color.r).Distinct().OrderBy(r => r).ToArray();
+        Check(ok && dirs.SequenceEqual(new[] { 0, 2, 4, 6 }) && shades.SequenceEqual(new byte[] { 10, 54, 200, 204 }),
+              $"packed vertices: 20 bytes, positions/uv exact, light codes, face directions {string.Join(",", dirs)} and shades {string.Join(",", shades)} as the classic shader{bad}");
+        var far = BatchData.Assemble(new List<(SectionMesh, Vector3)> { (sm, new Vector3(0, 600, 0)) }, true);
+        Check(far.Packed == null && far.Verts.Length >= far.VertCount && far.Max.y > 512, $"a batch out of the packed range (600 blocks up) stays classic (packed {far.Packed != null}, verts {far.Verts.Length}/{far.VertCount}, max y {far.Max.y})");
+        classic.Release(); packed.Release(); far.Release();
+    }
+
+    /// <summary>[gpu] Opaque faces on fully opaque layers (and flat colours) with opaque vertex colours go to the solid range
+    /// (drawn without alpha test), first and in mesher order; the rest stay alpha-tested. Batches keep the split.</summary>
+    static void SolidSplitTests()
+    {
+        SolidLayers.Clear();
+        SolidLayers.Set(0, true); SolidLayers.Set(1, false); SolidLayers.Set(2, true); SolidLayers.Set(3, true); SolidLayers.Set(5, true);
+        // quad layer (uv.z), vertex alpha, expected solid: layer 0; layer 1 (holes); flat colour; layer 0 with alpha 200;
+        // layer 0 with random table 3; [flow] table 64 over layers 0..3 (1 has holes); table 64 over 2..5 (4 unknown);
+        // a layer the atlas never published.
+        var quads = new (float z, byte a, bool solid)[]
+        {
+            (0, 255, true), (1, 255, false), (-1, 255, true), (0, 200, false), (0 + RandomUv.LayerStride * 3, 255, true),
+            (0 + RandomUv.LayerStride * FluidRules.QuadTable, 255, false), (2 + RandomUv.LayerStride * FluidRules.QuadTable, 255, false), (40, 255, false),
+        };
+        var md = new MeshData();
+        for (int q = 0; q < quads.Length; q++)
+        {
+            int s = md.Verts.Count;
+            md.Verts.Add(new Vector3(q, 1, 0)); md.Verts.Add(new Vector3(q + 1, 1, 0)); md.Verts.Add(new Vector3(q + 1, 1, 1)); md.Verts.Add(new Vector3(q, 1, 1));
+            for (int k = 0; k < 4; k++) { md.Uvs.Add(new Vector3(k & 1, k >> 1, quads[q].z)); md.Colors.Add(new Color32(200, 200, 200, quads[q].a)); }
+            md.Opaque.AddRange(new[] { s, s + 1, s + 2, s, s + 2, s + 3 });
+        }
+        var sm = SectionMesh.From(md, new Vector3Int(0, 0, 0));
+        int wantSolid = quads.Count(q => q.solid) * 6;
+        int Quad(int index) => index / 4;
+        var order = Enumerable.Range(0, sm.Opaque / 6).Select(t => Quad(sm.Indices[t * 6])).ToList();
+        var want = Enumerable.Range(0, quads.Length).Where(q => quads[q].solid).Concat(Enumerable.Range(0, quads.Length).Where(q => !quads[q].solid)).ToList();
+        Check(sm.Solid == wantSolid && sm.Opaque == quads.Length * 6 && order.SequenceEqual(want),
+              $"solid split: {sm.Solid / 6} of {quads.Length} quads solid (flat colours, opaque layers, random tables), first and in order (got {sm.Solid / 6}: {string.Join(",", order)})");
+        var b = BatchData.Assemble(new List<(SectionMesh, Vector3)> { (sm, Vector3.zero), (sm, new Vector3(16, 0, 0)) });
+        bool firstSolid = Enumerable.Range(0, b.Solid).All(i => quads[Quad(b.Indices[i] % (quads.Length * 4))].solid);
+        bool restCut = Enumerable.Range(b.Solid, b.Opaque - b.Solid).All(i => !quads[Quad(b.Indices[i] % (quads.Length * 4))].solid);
+        Check(b.Solid == 2 * wantSolid && firstSolid && restCut && b.DrawCalls(false) == 2, "a batch keeps every section's solid faces first (one solid and one alpha-tested draw)");
+        SolidLayers.Enabled = false;
+        var off = SectionMesh.From(md, new Vector3Int(0, 0, 0));
+        SolidLayers.Enabled = true;
+        Check(off.Solid == 0 && off.Opaque == quads.Length * 6, "solid_pass false: every opaque face alpha-tested, as before");
+        SolidLayers.Clear();
     }
 
     static NavState Nav(Vector3Int origin, Vector3Int dims, Vector3Int margin)
@@ -332,6 +420,22 @@ static class AreaTests
         return ChunkSnapshot.From((Dictionary<string, object>)j);
     }
 
+    /// <summary>[gpu] Rain layout time per area snapshot (WeatherRenderer.Rebuild's work): 2,500 drops, cold and warm.</summary>
+    public static void MeasureWeather(string dir)
+    {
+        foreach (var f in System.IO.Directory.GetFiles(dir, "*.json").OrderBy(p => int.TryParse(System.IO.Path.GetFileNameWithoutExtension(p), out var v) ? v : 0))
+        {
+            var w = new WorldModel();
+            w.ApplySnapshot(LoadSnapshot(f));
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            int n = Precipitation.Layout(w, 0, 0, w.Dims.x, w.Dims.z, 2500, 1).Count;
+            double cold = sw.Elapsed.TotalMilliseconds;
+            sw.Restart();
+            for (int r = 0; r < 10; r++) Precipitation.Layout(w, 0, 0, w.Dims.x, w.Dims.z, 2500, 2 + r);
+            Console.WriteLine($"MEASURE_WEATHER {System.IO.Path.GetFileName(f)} region={w.Dims.x}x{w.Dims.y}x{w.Dims.z} drops={n} cold_ms={cold:F1} warm_ms={sw.Elapsed.TotalMilliseconds / 10:F2}");
+        }
+    }
+
     public static void MeasureBatches(string dir, string jar)
     {
         using var assets = jar != null ? new ZipAssets(jar) : null;
@@ -360,7 +464,23 @@ static class AreaTests
             int sectionDraws = secs.Values.Sum(s => (s.Opaque > 0 ? 1 : 0) + (s.Transparent > 0 ? 1 : 0));
             int window = w.Dims.x - 32;
             Console.WriteLine($"MEASURE_BATCH {System.IO.Path.GetFileName(f)} window={window} region={w.Dims.x}x{w.Dims.y}x{w.Dims.z} light={(w.Light != null ? "yes" : "no")} pack={(assets != null ? "yes" : "no")} " +
-                              $"sections={n.x * n.y * n.z} non_empty={secs.Count} verts={verts} tris={tris} faces={secs.Values.Sum(s => (long)s.Quads)} mesh_ms_1thread={meshMs:F0}");
+                              $"sections={n.x * n.y * n.z} non_empty={secs.Count} verts={verts} tris={tris} faces={secs.Values.Sum(s => (long)s.Quads)} mesh_ms_1thread={meshMs:F0} " +
+                              $"opaque_tris={secs.Values.Sum(s => (long)s.Opaque / 3)} solid_tris={secs.Values.Sum(s => (long)s.Solid / 3)} transparent_tris={secs.Values.Sum(s => (long)s.Transparent / 3)}");
+            {
+                // [gpu] upload size of the area's batches with 32-byte BatchVertex vs 20-byte PackedVertex (batches that don't fit stay classic)
+                var lay = new BatchLayout(w.Origin, w.Dims, BatchRules.Columns);
+                long classicBytes = 0, packedBytes = 0; int fallbacks = 0;
+                foreach (var key in lay.AllKeys())
+                {
+                    var parts = lay.SectionsOf(key).Where(secs.ContainsKey).Select(s => (secs[s], lay.Offset(s, key, lay.Sy))).ToList();
+                    var pb = BatchData.Assemble(parts, true);
+                    if (pb.VertCount == 0) continue;
+                    if (pb.Packed == null) fallbacks++;
+                    packedBytes += pb.Bytes; classicBytes += (long)pb.VertCount * BatchVertex.Size + pb.IndexCount * 4L;
+                    pb.Release();
+                }
+                Console.WriteLine($"MEASURE_PACKED {System.IO.Path.GetFileName(f)} verts={verts} vertex_bytes {BatchVertex.Size} -> {PackedVertex.Size}, vertex+index MB {classicBytes / 1048576.0:F1} -> {packedBytes / 1048576.0:F1}, batches left classic {fallbacks}");
+            }
             Console.WriteLine($"  per-section meshes (before): renderers={secs.Count} draw_calls={sectionDraws}");
             foreach (int cols in new[] { 1, 2, 3, 4, 6, 8 })
             {

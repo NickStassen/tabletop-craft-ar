@@ -340,6 +340,12 @@ static partial class LivingTests
         var w = World(2, 6, 1, (x, y, z) => y <= 1 ? 1 : (y == 2 && x == 0 ? 2 : (x == 1 && y == 3 ? 3 : 0)), (x, y, z) => 0xF0,
                       "minecraft:air", "minecraft:grass_block[snowy=false]", "minecraft:poppy", "minecraft:stone");
         Check(Precipitation.Ground(w, 0, 0) == 2 && Precipitation.Ground(w, 1, 0) == 4, "drops pass flowers and stop on the highest solid block");
+        // [gpu] The per-palette cache answers like the name test, and follows palette growth (block_update palette_add).
+        Check(Enumerable.Range(0, w.Palette.Count).All(i => Precipitation.Blocks(w, (ushort)i) == Precipitation.StopsDrops(w.ShapeOf((ushort)i), w.Palette[i])),
+              "cached drop stops match the name test");
+        w.Palette.Add("minecraft:oak_planks"); w.Grid[w.Index(0, 5, 0)] = (ushort)(w.Palette.Count - 1);
+        Check(Precipitation.Ground(w, 0, 0) == 6, "a block added to the palette stops drops");
+        w.Grid[w.Index(0, 5, 0)] = 0; w.Palette.RemoveAt(w.Palette.Count - 1);
         var drops = Precipitation.Layout(w, 0, 0, 2, 1, 50, 7);
         Check(drops.Count == 50 && drops.All(d => d.Kind == Precip.Rain && d.Top == 6 && (d.Ground == 2 || d.Ground == 4) && d.Speed > 10) && Precipitation.Layout(w, 0, 0, 2, 1, 50, 7).Select(d => d.X).SequenceEqual(drops.Select(d => d.X)),
               "drop layout: deterministic, rain without biome data, from the region top to the ground");

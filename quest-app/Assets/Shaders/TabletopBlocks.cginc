@@ -25,6 +25,23 @@ float _TabletopBlocksSize;      // global: texels per block (the atlas tile size
 #define TABLETOP_BLOCKS_GRADIENTS(i) float2 tbDx = ddx((i).uv.xy), tbDy = ddy((i).uv.xy);
 #define TABLETOP_TRANSFER_RANDOM(o, v) { float t_ = (v).uv.z >= 0 ? floor(((v).uv.z + 0.5) / 4096.0) : 0; o.uv.z = (v).uv.z - t_ * 4096.0; o.randomTable = t_; o.cellPos = (v).vertex.xyz - (v).normal.xyz * 0.5; }
 
+// [gpu] Batches upload a 20-byte PackedVertex (SectionBatches.cs; the block shaders' TABLETOP_PACKED variant): SNorm16
+// position in 1/64 blocks with w = light code + 256 * face direction (0..5: +x, -x, +y, -y, +z, -z; 6: none), the
+// colour with the face shade multiplied in, SNorm16 uv in 1/1024 blocks, the layer (-1 = flat colour) and the table.
+// Unpacks what the classic path reads from the normal and uv.z: object position, light code, uv + layer, table, cellPos.
+inline void TabletopUnpack(float4 vertex, float4 uv, out float3 p, out float code, out float3 uvl, out float table, out float3 cellPos)
+{
+    p = vertex.xyz * (32767.0 / 64.0);
+    float meta = round(vertex.w * 32767.0);
+    float dir = floor(meta * (1.0 / 256.0));
+    code = meta - dir * 256.0;
+    float axis = floor(dir * 0.5);
+    float3 n = float3(axis == 0, axis == 1, axis == 2) * (1.0 - 2.0 * (dir - 2.0 * axis));
+    cellPos = p - 0.5 * n;
+    uvl = float3(uv.xy * (32767.0 / 1024.0), round(uv.z * 32767.0));
+    table = round(uv.w * 32767.0);
+}
+
 inline uint TabletopHash(int3 c)
 {
     uint h = (uint)c.x * 0x8da6b343u ^ (uint)c.y * 0xd8163841u ^ (uint)c.z * 0xcb1ab31fu;

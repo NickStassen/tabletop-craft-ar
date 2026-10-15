@@ -38,6 +38,7 @@ namespace TabletopCraft.World
             {
                 if (!File.Exists(path)) { Status = "no pack at " + path + " (flat colours)"; return false; }
                 _zip = ZipFile.OpenRead(path);
+                SolidLayers.Clear();   // [gpu] this atlas numbers its layers from 0
                 Status = "pack loaded: " + Path.GetFileName(path);
                 BiomeColormapLoader.Load(_zip); // grass/foliage/dry_foliage colour maps for biome tints
                 return true;
@@ -192,6 +193,7 @@ namespace TabletopCraft.World
             _pixels.Add(LoadAnimation(entry.FullName, tex, _pixels.Count) ?? FirstFrame(tex, TileSize));   // animated: all frames kept
             UnityEngine.Object.Destroy(tex);
             l = _pixels.Count - 1;
+            PublishSolid(l);   // [gpu]
             _layers[texture] = l;
             _arrayDirty = true;
             return l;
@@ -219,13 +221,31 @@ namespace TabletopCraft.World
                 {
                     l = _pixels.Count;
                     for (int q = 0; q < 4; q++)
+                    {
                         _pixels.Add(LoadAnimation(entry.FullName, tex, _pixels.Count, q) ?? Crop(tex.GetPixels32(), tex.width, tex.height, (q & 1) * TileSize, (q >> 1) * TileSize, TileSize, TileSize, TileSize));
+                        PublishSolid(_pixels.Count - 1);   // [gpu]
+                    }
                     _arrayDirty = true;
                 }
                 UnityEngine.Object.Destroy(tex);
             }
             _quadLayers[texture] = l;
             return l;
+        }
+
+        /// <summary>[gpu] Tells the meshers (SolidLayers) whether a new layer is opaque in every texel of every animation frame:
+        /// its faces then skip the alpha test.</summary>
+        void PublishSolid(int layer)
+        {
+            bool solid = Opaque(_pixels[layer]);
+            if (solid) foreach (var f in AnimationFrames(layer)) if (!Opaque(f)) { solid = false; break; }
+            SolidLayers.Set(layer, solid);
+        }
+
+        static bool Opaque(Color32[] px)
+        {
+            foreach (var p in px) if (p.a != 255) return false;
+            return true;
         }
 
         static Color32[] FirstFrame(Texture2D t, int size)

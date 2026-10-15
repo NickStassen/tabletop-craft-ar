@@ -35,6 +35,12 @@ namespace TabletopCraft.World
         public int AnimatedTextures => _anims.Count;
         public long FrameCopies { get; private set; }
 
+        /// <summary>[gpu] Every frame of a layer's animation (none if it isn't animated).</summary>
+        IEnumerable<Color32[]> AnimationFrames(int layer)
+        {
+            foreach (var a in _anims) if (a.Layer == layer) foreach (var f in a.Frames) yield return f;
+        }
+
         /// <summary>From Layer() for each new texture: if it is animated, keeps all its frames and returns the pixels
         /// for its atlas layer (the first frame shown); otherwise null. part 0-3: only that quarter of each frame
         /// (top-left, top-right, bottom-left, bottom-right; [flow] QuadLayer), -1 = the whole frame.</summary>
