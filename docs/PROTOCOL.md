@@ -7,7 +7,7 @@ Status: **v1, normative.** The server plugin (`server-plugin/`), the Quest app (
 ## 1. Transport
 
 - WebSocket (RFC 6455), plaintext `ws://` on LAN. Default endpoint: `ws://<server-host>:8765/tabletop` (port and path configurable in the plugin's `config.yml`).
-- Every message is **one UTF-8 JSON text frame** holding one JSON object. Binary frames are reserved for a later version. A v1 peer that gets a binary frame replies with `error` code `unsupported` and ignores the frame.
+- Every message is **one UTF-8 JSON text frame** holding one JSON object, with one exception: the server answers `asset_get` with a **binary frame** (an asset chunk, "Asset delivery"; next version). Clients send no binary frames; a server that gets one replies with `error` code `unsupported` and ignores it, and a client ignores binary frames it didn't ask for.
 - Why JSON and not binary in v1: a 32x32x64 band is only tens of KB once run-length encoded (see §6.3), pose traffic at 30 Hz is about 10 KB/s, and JSON is easy to debug with `websocat` or the fake client. A binary chunk encoding is planned only if measurements show it's needed (PLAN.md, Phase 5).
 - Permessage-deflate is optional. The server MAY offer it, and the client MAY decline. Nothing in this spec depends on compression.
 - Max frame size the server accepts: 64 KiB. Max frame the server sends: 4 MiB.
@@ -83,6 +83,8 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 | `container_query` / `container` | C→S / S→C | open a container's view; its slots, re-sent while they change, or the view's end ("Containers", needs `interact_v1`) |
 | `container_edit` / `container_close` | C→S | set one slot or sort the container; stop watching it ("Containers") |
 | `sign_edit` | C→S | one side of a sign: four lines, dye colour, glowing ink ("Signs", needs `interact_v1`) |
+| `sound_groups` | S→C | every block's break, step, place, hit and fall sounds, once after the registries ("Sound", needs `sound_v1`) |
+| `assets` / `asset_get` | S→C / C→S | the operator's own pack.zip, entity_models.json and sounds.zip on offer; a chunk of one, answered by a binary frame ("Asset delivery", needs `assets_v1`) |
 
 ### 4.1 `hello` (C→S)
 
@@ -331,6 +333,7 @@ Codes (strings, closed set in v1):
 | `interact_denied` | no | an `interact` or `entity_op` without `interact_v1`, with a family switched off, or that does nothing there ("Using blocks and items"); a `container_query`, `container_edit` or `sign_edit` that isn't allowed or valid there ("Containers", "Signs") |
 | `not_found` | no | an `entity_op` whose entity is gone (died, despawned, unloaded) ("Acting on mobs") |
 | `mark_denied` | no | a `bookmark` without `marks_v1`, on a read-only server (`marks.edit`), over `marks.max`, or removing a name that doesn't exist ("Marks: bookmarks, spawn and worlds") |
+| `asset_denied` | no | an `asset_get` without `assets_v1` (asset delivery off, no `auth.token`, not from the LAN, or not asked for) ("Asset delivery"); `not_found` also answers an `asset_get` for a name that isn't offered 
 
 `ref_seq` is the `seq` of the offending message, if any. When `fatal` is true, the sender closes the socket right after.
 
@@ -396,6 +399,7 @@ So the headset can find a server without typing its address (QUEST_SETUP.md Part
 - **v0.5.0: undo, box edits and brushes ("Undo, box edits and brushes").** New cap `power_v1` (with `edit_v1`; config.yml `edit.power`, `edit.undo-depth`, `edit.box-max-blocks`, `edit.box-budget-ms`, `edit.brush-...`); `block_edit`, `interact`, `container_edit` and `sign_edit` gain an optional `group` (container and sign edits are journalled too); messages `undo`, `redo`, `history`, `box_edit`, `box_progress`, `brush`; `welcome.limits` gains `undo_depth`, `box_max_blocks`, `brush_max_radius`, `brush_blocks_per_second` for `power_v1` sessions. Errors about them carry `op` (`undo`, `redo`, `box_edit` with `box_op`, `brush` with `brush_op`) and `group`. Fixtures `hello_power.json`, `welcome_power.json`, `block_edit_group.json`, `interact_group.json`, `undo.json`, `redo.json`, `history.json`, `box_edit_fill.json`, `box_edit_replace.json`, `box_edit_clone.json`, `box_progress.json`, `box_progress_done.json`, `brush.json`, `brush_replace.json`, `error_box_denied.json`.
 - **v0.5.0: a living world ("World state: time and weather", "Living entities").** New cap `world_v1` and message `world_state` (time, day time, rain, thunder, dimension, sky light; on change and about once a second; config.yml `world-state`). `entities` entries gain `leash` (the holder's id), `eye`, `chested`, `name_visible`, `xp`, `owner`, `carried`, `peek`, `attach` and `display` (display entity transformation, billboard, brightness, item context, text); text displays are listed; a snow golem without its pumpkin is `sheared`; a cushion has its `color`. Fixtures `world_state.json`, `entities_living.json`.
 - **v0.5.1: no protocol change.** Faster section meshing (same output), adaptive mesh jobs and the optional surface skirt are client-side (QUEST_SETUP.md Part H: `surface_skirt`, `skirt_speed`, `mesh_workers`).
+- **next version: sound and asset delivery ("Sound", "Asset delivery").** New cap `sound_v1` (config.yml `sound.enabled`): message `sound_groups` (every block's sound group, once after the registries) and the `actions` kinds `sound` and `sound_stop` (only to `sound_v1` sessions). New cap `assets_v1` (config.yml `assets`, off by default, needs `auth.token`, LAN addresses only): messages `assets` and `asset_get`, the first binary frame of the protocol (an asset chunk, §1), error `asset_denied` (`not_found` and errors about an `asset_get` carry `op: "asset_get"` and `name`). Fixtures `hello_sound.json`, `welcome_sound.json`, `sound_groups.json`, `actions_sound.json`, `assets.json`, `asset_get.json`, `error_asset_denied.json`, `asset_chunk.bin`.
 
 ## 4.13–4.16 Runtime region control (v1, additive)
 
@@ -1193,3 +1197,77 @@ The headset's container view: chests (a double chest as one view), trapped and c
 ### Fixtures and tests
 
 Fixtures `hello_operator.json`, `welcome_operator.json` (`worlds`, `marks`, `interact.containers`/`signs`), `region_info_worlds.json`, `region_request_jump.json`, `bookmark.json`, `bookmark_remove.json`, `bookmarks.json`, `error_mark_denied.json`, `container_query.json`, `container.json` (a double chest), `container_furnace.json` (view only), `container_closed.json`, `container_edit.json`, `container_edit_put.json`, `container_edit_sort.json`, `container_close.json`, `error_container_denied.json`, `sign_edit.json`. Java `OperatorFixtureTest` (parsers and builders) and `ContainerRulesTest` (slot rules, sorting, titles, the bookmark store), Python `test_tabletop_protocol.py` (`validate_operator`, `validate_worlds`), C# `Tests~/OperatorTests.cs` (parsing, jump plans, following against `NavState`, the Marks tab, the container view, the sign editor). Live: `tools/operator_check.py` (35 checks with a mineflayer player) and `Tests~ --live-operator URL TOKEN PLAYER` (following with the app's own classes).
+
+## Sound (next version; cap `sound_v1`)
+
+The headset plays the game's sounds on the table from the user's own `sounds.zip` (made by `tools/sounds/PackSounds.java` from their own launcher install, QUEST_SETUP.md Part E; nothing of the game ships with the project). It works out most sounds itself from what it already gets (below); the server adds what only it knows. A client lists `sound_v1` in `hello.caps`; the server grants it unless config.yml `sound.enabled` is false and lists it in `welcome.caps`.
+
+### `sound_groups` (S→C)
+
+Once per connection to `sound_v1` sessions, after `block_registry` (and `item_registry`), before the first `chunk_snapshot`. Each block's SoundType, which the game keeps in code (`BlockData#getSoundGroup`); blocks with the same five sounds, volume and pitch share one group:
+
+```json
+{"v":1,"type":"sound_groups","seq":3,"t":1760370000015,"count":7,
+ "groups":[{"break":"block.stone.break","step":"block.stone.step","place":"block.stone.place","hit":"block.stone.hit","fall":"block.stone.fall",
+            "volume":1.0,"pitch":1.0,"blocks":["minecraft:stone","minecraft:cobblestone","minecraft:stone_bricks"]},
+           {"break":"block.anvil.break","step":"block.anvil.step","place":"block.anvil.place","hit":"block.anvil.hit","fall":"block.anvil.fall",
+            "volume":0.3,"pitch":1.0,"blocks":["minecraft:anvil"]}]}
+```
+
+- Sound ids are sound event ids as `sounds.json` keys them: the `minecraft:` namespace is left out, others are kept (`mymod:block.thing.break`). `count`: the blocks listed in all groups. Paper 26.3: 1283 blocks in 129 groups, about 64 KB.
+- Clients play them like the game: a break or place at volume (v + 1) / 2 and pitch × 0.8, a digging hit at (v + 1) / 8 and pitch × 0.5, a step at v × 0.15. A block that isn't listed falls back to the client's own guess.
+
+### `sound` and `sound_stop` (in `actions`)
+
+Two more `actions` kinds (§4.22), sent only to sessions with both `actions_v1` and `sound_v1`, for sounds a client can't infer:
+
+```json
+{"kind":"sound","sound":"block.note_block.harp","pos":[105.5,64.5,-35.5],"volume":3.0,"pitch":1.189}
+{"kind":"sound","sound":"music_disc.cat","pos":[103.5,64.5,-38.5],"volume":4.0,"pitch":1.0,"stream":true}
+{"kind":"sound_stop","pos":[103,64,-38]}
+```
+
+| field | meaning |
+|---|---|
+| `sound` | the sound event id (as in `sound_groups`) |
+| `pos` | world position (3 decimals); block sounds at the block centre |
+| `volume` | the game's volume: loudness min(volume, 1), heard up to attenuation_distance (16 blocks) × max(1, volume) |
+| `pitch` | 0.5–2 |
+| `stream` | true for long sounds the client should stream (jukebox songs) |
+| `sound_stop` `pos` | stop what plays at that block (a jukebox stopped or emptied) |
+
+The server sends: note blocks (every note played, by players, redstone or the headset: `block.note_block.<instrument>`, volume 3, pitch 2^((note − 12) / 12)), bells (`block.bell.use`, volume 2), containers opening and closing (chests, trapped chests, barrels, shulker boxes, ender chests, copper chests; volume 0.5, pitch 0.9–1.0), jukebox songs (the disc's sound, volume 4, `stream`) and their stop, explosions (`entity.generic.explode` volume 4, pitch (1 + (r1 − r2) × 0.2) × 0.7; wind charges `entity.wind_charge.wind_burst`, breeze charges `entity.breeze.wind_burst`), fire lit by a player (flint and steel, fire charge), a player's bucket emptied or filled, bone meal, and the sound the plugin plays for the headset's own `interact` (doors, levers, buttons, buckets, tools...). The same sound at the same block collapses within a tick; sounds up to 8 blocks outside the region (horizontally) are included.
+
+Client guidance (non-normative; Quest `World/SoundDirector.cs`, `SoundRules.cs`, `SoundMixer.cs`): from `actions` `break` (with an `id`; explosion breaks are covered by the explosion) and `place` the block's group sound; from `dig` a hit every 4 ticks while the cracks keep coming; from `block_update` the sounds of state changes the game makes when a player or redstone uses a block (doors, trapdoors and fence gates by their family, levers, buttons, pressure plates, pistons, comparators, candles, campfires, composters) or a tool (stripping, scraping, waxing, tilling, paths, carving), but no break or place sound for a plain change (`/fill`, physics); from `entities` and `player_positions` footsteps (a step per 1/0.6 blocks walked on the ground; mobs with their own `entity.<type>.step`, else the block underfoot), mob ambient sounds on the game's clock (each tick a chance of counter/1000, then 80 ticks of quiet), hurt (`actions` `hurt`) and death (pose `dying`) sounds, item and experience pickups (one vanishing next to a player or mob), a lightning bolt's thunder and impact, primed TNT; from `world_state` rain where it lands (`weather.rain`, volume 0.2, a few times a second); the game's random ambience of flowing water, open lava and fire near the view. A sound at a block within a second of the same sound at that block (inferred and sent) plays once. On the table the fall-off distance is scaled with the block size (QUEST_SETUP.md Part E).
+
+Fixtures `hello_sound.json`, `welcome_sound.json`, `sound_groups.json`, `actions_sound.json`. Java `SoundTest`, Python `test_sound_fixtures_and_rules`, C# `Tests~/SoundTests.cs`. Live: `tools/sound_check.py`.
+
+## Asset delivery (next version; cap `assets_v1`)
+
+Optional and off by default: a server operator who wants to skip `adb` can let their own server hand their own headsets the files the app reads from its files folder: `pack.zip`, `entity_models.json`, `sounds.zip`. **The project ships no Mojang assets**: these are the operator's own copies, made from their own Minecraft install (QUEST_SETUP.md Part E), and only for their own devices.
+
+- **Granted** (`assets_v1` in `welcome.caps`) when config.yml `assets.serve` is true, `assets.dir` is a folder, `auth.token` is set (so the session presented it), the client asked for `assets_v1` and its address is private (10/8, 172.16/12, 192.168/16, fc00::/7), link-local or loopback. Only the three names above are ever read from `assets.dir`.
+- **Offer (S→C)**, after `welcome` and the registries, once the server has hashed the files (at start and `/tabletop reload`; again when a file changes while being served):
+
+```json
+{"v":1,"type":"assets","seq":4,"t":1760370000016,"chunk":262144,
+ "files":[{"name":"entity_models.json","size":91234,"sha256":"5f70…c6ef"},{"name":"sounds.zip","size":67012345,"sha256":"0263…813f"}]}
+```
+
+  `chunk`: the length an `asset_get` should ask for (at most 1 MiB). Files not in the folder are left out; an empty list means nothing is offered.
+- **`asset_get` (C→S)**: `{"type":"asset_get","name":"sounds.zip","offset":262144,"length":262144}`. `offset` 0..size−1, `length` 1..1 MiB (the last chunk is shorter). At most 8 in flight per session (more get `rate_limited`). Errors carry `op: "asset_get"` and `name`: `asset_denied` (no grant), `not_found` (not offered, or changed on the server: a new offer follows), `bad_message` (offset or length out of range).
+- **The answer is one binary frame** (the only binary frame in the protocol):
+
+| bytes | field |
+|---|---|
+| 0–3 | `TTA1` (ASCII) |
+| 4 | n: the name's length, 1–64 |
+| 5 … 5+n−1 | the name (ASCII) |
+| 5+n … 12+n | the offset, unsigned 64-bit big-endian |
+| 13+n … | the file's bytes from the offset |
+
+- Frames for one session go out in request order, paced to `assets.max-mb-per-second` (default 8 MB/s) on a worker thread, so the world stream keeps flowing. The server logs every finished file (`ASSETS session=… sent sounds.zip 67.0 MB in 8.4 s`) and every refusal.
+- **Client guidance** (non-normative; Quest `World/AssetSync.cs`): compare each offered file with the local copy by size and SHA-256 (cache the hash by size and date), download the missing or different ones one at a time with a few requests in flight into `<name>.part` (which survives a dropped link and resumes), check the SHA-256 of the whole file before replacing the old one, then reload what changed.
+- **Why binary frames over the same WebSocket** and not an HTTP GET with the token: the session is already authenticated and LAN-checked, no second port or firewall rule is needed, Java-WebSocket can't serve plain HTTP on its port, and pulling chunk by chunk gives flow control and resuming for free.
+
+Fixtures `assets.json`, `asset_get.json`, `error_asset_denied.json`, `asset_chunk.bin` (one frame). Java `SoundTest` (frame byte for byte, LAN check), Python `test_asset_messages_and_frame`, C# `Tests~/SoundTests.cs` (offer, frame, a download against an in-memory server with resume and a checksum mismatch). Live: `tools/sound_check.py --assets-dir DIR`, `Tests~ --live-assets URL TOKEN` (the app's own classes; dummy files).

@@ -91,10 +91,15 @@ public final class TabletopPlugin extends JavaPlugin {
     // [comfort] LAN discovery (PROTOCOL.md 7, config.yml discovery): answers the headset's UDP probe on its own thread.
     private LanBeacon beacon;
     private volatile int onlinePlayers;
+    // [sound] Block sound groups for sound_v1 headsets (built on start/reload) and opt-in asset delivery (config assets).
+    private volatile SoundGroups soundGroups = SoundGroups.empty();
+    private volatile boolean soundEnabled = true;
+    AssetService assets;   // onEnable (needs the logger)
 
     @Override public void onEnable() {
         saveDefaultConfig();
         editWorld = new EditWorld(getLogger(), avatar::entities);
+        assets = new AssetService(getLogger(), this::send, this::allSessions);   // [sound]
         getServer().getPluginManager().registerEvents(new BlockListener(this), this);
         getServer().getPluginManager().registerEvents(actions, this);
         getServer().getPluginManager().registerEvents(blockEntities, this);   // [blocks] sign edits, interactions
@@ -157,6 +162,10 @@ public final class TabletopPlugin extends JavaPlugin {
         operator.configure(c);  // [operator]
         World iw = Bukkit.getWorld(defaultRegion().world());
         interact.buildItemRegistry(iw != null ? iw : Bukkit.getWorlds().isEmpty() ? null : Bukkit.getWorlds().get(0));
+        soundEnabled = c.getBoolean("sound.enabled", true);   // [sound]
+        buildSoundGroups();
+        assets.configure(c.getBoolean("assets.serve", false), c.getString("assets.dir", ""), !c.getString("auth.token", "").isEmpty(),
+            c.getDouble("assets.max-mb-per-second", 8));
         outbound = Executors.newSingleThreadExecutor(r -> { Thread t = new Thread(r, "tabletop-outbound"); t.setDaemon(true); return t; });
         link = new LinkServer(this, c.getString("bind.host", "0.0.0.0"), c.getInt("bind.port", 8765), c.getString("bind.path", "/tabletop"), c.getString("auth.token", ""));
         link.start();
@@ -186,6 +195,7 @@ public final class TabletopPlugin extends JavaPlugin {
 
     private void stop() {
         if (tickTask != null) tickTask.cancel();
+        assets.stop();   // [sound]
         interact.shutdown();   // [hands] held mobs get their gravity and AI back
         power.shutdown();      // [power] running box edits stop (their sessions close)
         operator.shutdown();   // [operator] container lids close
@@ -334,6 +344,8 @@ public final class TabletopPlugin extends JavaPlugin {
         if (s.canCommand) sc.add(ControlMessages.CAP_COMMAND);
         if (s.wantsStatus) sc.add(ControlMessages.CAP_STATUS);
         if (s.canInteract) sc.add(InteractMessages.CAP);   // [hands]
+        if (s.wantsSound) sc.add(Protocol.CAP_SOUND);      // [sound]
+        if (s.canAssets) sc.add(AssetService.CAP);
         if (power.granted(s)) sc.add(PowerMessages.CAP);   // [power]
         if (s.wantsMarks) sc.add(OperatorMessages.CAP_MARKS);   // [operator]
         w.add("caps", sc);
@@ -343,8 +355,27 @@ public final class TabletopPlugin extends JavaPlugin {
         send(s, w);
         send(s, blockRegistry.message());   // [menu] every placeable block, once per connection (PROTOCOL.md 4.24)
         if (s.canInteract) send(s, interact.itemRegistryMessage());   // [hands] usable items and spawn eggs
+        if (s.wantsSound) send(s, soundGroups.message());   // [sound] each block's break/step/place/hit/fall sounds
         if (s.wantsMarks) send(s, operator.bookmarksMessage());       // [operator] the shared bookmarks
         subscribe(s, r, null);
+        assets.offer(s);   // [sound] the operator's own files, when asset delivery is on and hashed (else when it is)
+    }
+
+    /** [sound] Reads every block's sound group (main thread, start/reload) and logs the message size. */
+    private void buildSoundGroups() {
+        long t0 = System.nanoTime();
+        try { soundGroups = SoundGroups.scan(); }
+        catch (RuntimeException e) { getLogger().warning("sound groups: " + e); soundGroups = SoundGroups.empty(); return; }
+        int bytes = Protocol.GSON.toJson(soundGroups.message()).getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+        getLogger().info(String.format("SOUND_GROUPS %d blocks in %d groups, %d bytes, %.1f ms", soundGroups.blocks(), soundGroups.size(), bytes,
+            (System.nanoTime() - t0) / 1e6));
+    }
+
+    boolean soundEnabled() { return soundEnabled; }
+
+    /** [sound] A sound for sound_v1 headsets at a position (InteractService: the sound it plays for a headset's use). */
+    void soundAt(Location l, String sound, float volume, float pitch) {
+        if (sound != null) actions.sound(l, new SoundRules.Play(SoundGroups.key(sound), volume, pitch), false);
     }
 
     /** [menu] Reads the placeable blocks (item registry order, categories from tags and names) and logs the message size. */
@@ -1138,6 +1169,11 @@ public final class TabletopPlugin extends JavaPlugin {
                     r.world(), r.ox(), r.oy(), r.oz(), r.sx(), r.sy(), r.sz(), ready().size(), avatar.spawned() ? "spawned" : "none", avatar.scale(), avatar.placement.id(), avatar.posesApplied));
                 sender.sendMessage("[tabletop] " + control.stats() + "; commands " + (control.commandsAllowed() ? "on, deny " + control.denyList() : "off (" + control.commandsOffReason() + ")"));   // [talk]
                 sender.sendMessage("[tabletop] " + interact.stats());   // [hands]
+                String aw = assets.why();   // [sound]
+                sender.sendMessage(String.format("[tabletop] sound %s (%d blocks in %d groups); assets %s", soundEnabled ? "on" : "off",
+                    soundGroups.blocks(), soundGroups.size(), aw != null ? "off (" + aw + ")"
+                        : assets.ready() ? "serving " + assets.files().keySet() + String.format(", sent %d files %.1f MB, refused %d", assets.sentFiles, assets.sentBytes / 1e6, assets.refused)
+                        : "hashing..."));
                 sender.sendMessage("[tabletop] " + power.stats());      // [power]
                 sender.sendMessage("[tabletop] " + operator.stats());   // [operator]
             }

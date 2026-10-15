@@ -774,3 +774,51 @@ def test_operator_validation_rejects(name, patch):
 
 def test_operator_error_codes():
     validate({"v": 1, "type": "error", "seq": 0, "t": 0, "code": "mark_denied", "message": "x"})
+
+
+def test_sound_fixtures_and_rules():
+    """[sound] sound_groups, sound actions, hello/welcome caps (PROTOCOL.md "Sound")."""
+    from tabletop_protocol import CAP_ASSETS, CAP_SOUND
+    g = json.loads((FIX / "sound_groups.json").read_text())
+    validate(g)
+    assert g["count"] == sum(len(x["blocks"]) for x in g["groups"]) == 7
+    anvil = next(x for x in g["groups"] if "minecraft:anvil" in x["blocks"])
+    assert anvil["volume"] == 0.3 and anvil["break"] == "block.anvil.break"
+    bad = json.loads(json.dumps(g))
+    bad["count"] = 8
+    with pytest.raises(ValueError):
+        validate(bad)
+    a = json.loads((FIX / "actions_sound.json").read_text())
+    validate(a)
+    kinds = [x["kind"] for x in a["actions"]]
+    assert kinds.count("sound") == 4 and "sound_stop" in kinds
+    disc = next(x for x in a["actions"] if x.get("sound") == "music_disc.cat")
+    assert disc["stream"] and disc["volume"] == 4.0
+    for patch in ({"pitch": 3.0}, {"pos": [1, 2]}, {"sound": None}):
+        b = json.loads(json.dumps(a))
+        b["actions"][0].update(patch)
+        with pytest.raises(ValueError):
+            validate(b)
+    assert CAP_SOUND in json.loads((FIX / "hello_sound.json").read_text())["caps"]
+    assert {CAP_SOUND, CAP_ASSETS} <= set(json.loads((FIX / "welcome_sound.json").read_text())["caps"])
+
+
+def test_asset_messages_and_frame():
+    """[sound] assets, asset_get, asset_denied and the binary chunk frame (PROTOCOL.md "Asset delivery")."""
+    from tabletop_protocol import ASSET_NAMES, asset_frame, parse_asset_frame
+    offer = json.loads((FIX / "assets.json").read_text())
+    validate(offer)
+    assert all(f["name"] in ASSET_NAMES and len(f["sha256"]) == 64 for f in offer["files"])
+    get = json.loads((FIX / "asset_get.json").read_text())
+    validate(get)
+    for patch in ({"name": "evil.sh"}, {"length": 2 << 20}, {"offset": -1}):
+        with pytest.raises(ValueError):
+            validate(dict(get, **patch))
+    err = json.loads((FIX / "error_asset_denied.json").read_text())
+    validate(err)
+    assert err["op"] == "asset_get" and err["name"] == "sounds.zip"
+    raw = (FIX / "asset_chunk.bin").read_bytes()
+    assert parse_asset_frame(raw) == ("sounds.zip", 262144, b"tabletop asset chunk")
+    assert asset_frame("sounds.zip", 262144, b"tabletop asset chunk") == raw
+    with pytest.raises(ValueError):
+        parse_asset_frame(b"XXXX" + raw[4:])

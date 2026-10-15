@@ -75,7 +75,10 @@ Ordered by how much each adds to the feeling of a living world on the table that
 - A diorama plinth and a soft shadow on the real table.
 - (Done, not yet tried on the headset) Status text off the view: the full status is the block menu's Info tab, events are short toasts, area setup has a small panel on the left hand, and a small HUD is optional (`show_hud`).
 
-**4. Sound.** Spatial audio from the miniature: blocks, footsteps, mobs, water, rain. It needs the user's sound assets from the launcher's asset index on the headset, plus server sound events.
+**4. Sound.**
+- (Done, not yet tried on the headset) Spatial sound from the miniature (0.6; QUEST_SETUP.md Part E step 4 and Part P, PROTOCOL.md "Sound"): the user's own sounds packaged by `tools/sounds/PackSounds.java` into `sounds.zip`; blocks breaking, placed and dug, footsteps, mobs (ambient, hurt, death), doors and redstone parts, tools, pickups, thunder, rain, water, lava and fire, note blocks, bells, containers, jukeboxes and explosions (the server's `sound` actions), a chat ping; fall-off scaled with the block size, 24 voices with priorities, volume on the Info tab.
+- (Done, not yet tried on the headset) Getting the user's own `pack.zip`, `entity_models.json` and `sounds.zip` from their own server instead of adb (opt-in `assets.serve`, token and LAN only; PROTOCOL.md "Asset delivery").
+- Open: mob sound variants (26.x moody cows, big pigs, angry/cute wolves: the server doesn't say which), the underwater and biome ambience loops, music, sounds other plugins play (`World#playSound` has no event), HRTF spatialisation (Unity's panning only; the Meta XR Audio SDK would be a new package).
 
 **5. God powers.**
 - (Done, not yet tried on the headset) A block palette, hotbar and creative inventory: the server's `block_registry` (PROTOCOL.md 4.24), the block menu on the left hand with categories, search and icons from the user's pack, a 9-slot hotbar (QUEST_SETUP.md Part J).

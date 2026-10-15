@@ -79,11 +79,45 @@ public final class ActionBatch {
         put(key, new Action(world, x, y, z, player ? PLAYER_MARGIN : ENTITY_MARGIN, o));
     }
 
+    /** [sound] Sounds around the region a headset still hears (PROTOCOL.md "Sound"). */
+    public static final int SOUND_MARGIN = 8;
+
+    /**
+     * [sound] A sound the headset can't infer (note blocks, bells, containers, jukeboxes, explosions, the headset's own
+     * uses): event id, world position (block sounds at the block centre), vanilla volume and pitch, streamed or not. The
+     * same sound at the same block collapses within a tick. Only sound_v1 sessions get it.
+     */
+    public void sound(String world, double x, double y, double z, String sound, float volume, float pitch, boolean stream) {
+        JsonObject o = kind("sound");
+        o.addProperty("sound", sound);
+        o.add("pos", Protocol.doubles(x, y, z));
+        o.addProperty("volume", Math.round(volume * 1000.0) / 1000.0);
+        o.addProperty("pitch", Math.round(pitch * 1000.0) / 1000.0);
+        if (stream) o.addProperty("stream", true);
+        put("sound:" + sound + "@" + (int) Math.floor(x) + "," + (int) Math.floor(y) + "," + (int) Math.floor(z), new Action(world, x, y, z, SOUND_MARGIN, o));
+    }
+
+    /** [sound] Stop what plays at a block (a jukebox stopped or emptied). */
+    public void soundStop(String world, int x, int y, int z) {
+        JsonObject o = kind("sound_stop");
+        o.add("pos", Protocol.ints(x, y, z));
+        put("sound_stop:" + x + "," + y + "," + z, new Action(world, x + 0.5, y + 0.5, z + 0.5, SOUND_MARGIN, o));
+    }
+
+    static boolean isSound(JsonObject a) {
+        String k = a.get("kind").getAsString();
+        return k.equals("sound") || k.equals("sound_stop");
+    }
+
     /** The actions inside a region (its box grown by each action's margin; y without margin for blocks), in order. */
-    public JsonArray forRegion(RegionSpec r) {
+    public JsonArray forRegion(RegionSpec r) { return forRegion(r, true); }
+
+    /** Like {@link #forRegion(RegionSpec)}; {@code sounds} false leaves out sound and sound_stop (sessions without sound_v1). */
+    public JsonArray forRegion(RegionSpec r, boolean sounds) {
         JsonArray a = new JsonArray();
         for (Action x : actions.values()) {
             if (!x.world().equals(r.world())) continue;
+            if (!sounds && isSound(x.json())) continue;
             int m = x.margin();
             boolean in = x.x() >= r.ox() - m && x.x() < r.ox() + r.sx() + m && x.z() >= r.oz() - m && x.z() < r.oz() + r.sz() + m
                 && x.y() >= r.oy() - Math.min(m, ENTITY_MARGIN) && x.y() < r.oy() + r.sy() + Math.min(m, ENTITY_MARGIN);
@@ -93,8 +127,10 @@ public final class ActionBatch {
     }
 
     /** The message for one region, or null when nothing happened there. */
-    public JsonObject message(RegionSpec r) {
-        JsonArray a = forRegion(r);
+    public JsonObject message(RegionSpec r) { return message(r, true); }
+
+    public JsonObject message(RegionSpec r, boolean sounds) {
+        JsonArray a = forRegion(r, sounds);
         if (a.isEmpty()) return null;
         JsonObject o = Protocol.body("actions");
         o.add("actions", a);

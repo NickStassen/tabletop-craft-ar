@@ -178,6 +178,8 @@ public final class LinkServer extends WebSocketServer {
                     }
                     plugin.enqueue(() -> plugin.interact.onEntityOp(s, op, refSeq));
                 }
+                // [sound] asset delivery (PROTOCOL.md "Asset delivery"): checked here, read and paced on the asset worker
+                case "asset_get" -> plugin.assets.onGet(s, m, refSeq);
                 // [operator] bookmarks (marks_v1), container view and editing, sign editing (interact_v1): parsed and
                 // rate-limited here (bookmarks share the query bucket, containers and signs the interact bucket), run on the main thread
                 case "bookmark" -> {
@@ -256,6 +258,8 @@ public final class LinkServer extends WebSocketServer {
                 else if (c.equals(InteractMessages.CAP) && plugin.interact.allowed()) plugin.interact.grant(s);   // [hands]
                 else if (c.equals(PowerMessages.CAP)) wantsPower = true;
                 else if (c.equals(Protocol.CAP_WORLD)) s.wantsWorld = plugin.worldStateEnabled();   // [living] world_state
+                else if (c.equals(Protocol.CAP_SOUND)) s.wantsSound = plugin.soundEnabled();        // [sound]
+                else if (c.equals(AssetService.CAP)) plugin.assets.grant(s);   // [sound] only with auth.token set, from the LAN
                 else if (c.equals(OperatorMessages.CAP_MARKS) && plugin.operator.marksAllowed()) s.wantsMarks = true;   // [operator]
             }
         if (wantsPower && s.canEdit && plugin.power.allowed()) plugin.power.grant(s);   // [power]

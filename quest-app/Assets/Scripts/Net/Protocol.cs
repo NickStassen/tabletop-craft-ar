@@ -22,8 +22,16 @@ namespace TabletopCraft.Net
                                               InteractProtocol.Cap, CapWorld, OperatorProtocol.CapMarks, PowerProtocol.Cap },   // [hands], [living], [operator], [power]
             };
             if (!string.IsNullOrEmpty(OperatorName)) d["operator_name"] = OperatorName;   // [talk] the name in chat (PROTOCOL.md 4.26)
+            var caps = (List<object>)d["caps"];
+            if (WantSound) caps.Add(CapSound);                 // [sound] sound_groups and sound actions
+            if (WantAssets) caps.Add(AssetProtocol.Cap);       // [sound] the operator's own files, if the server offers them
             return d;
         }
+
+        /// <summary>[sound] Spatial sound (PROTOCOL.md "Sound"): block sound groups and the sounds the server names.</summary>
+        public const string CapSound = "sound_v1";
+        /// <summary>[sound] tabletop.json "sound" (default true) and "download_assets" (default true).</summary>
+        public static bool WantSound = true, WantAssets = true;
 
         /// <summary>[talk] tabletop.json operator_name, else skin_player: the name Java players see in chat (the server sanitises it).</summary>
         public static string OperatorName;

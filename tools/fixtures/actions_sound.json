@@ -1,0 +1,14 @@
+{
+ "v": 1,
+ "type": "actions",
+ "seq": 9,
+ "t": 1760370001150,
+ "actions": [
+  {"kind": "sound", "sound": "block.note_block.harp", "pos": [105.5, 64.5, -35.5], "volume": 3.0, "pitch": 1.189},
+  {"kind": "sound", "sound": "block.chest.open", "pos": [107.5, 64.5, -35.5], "volume": 0.5, "pitch": 0.94},
+  {"kind": "sound", "sound": "entity.generic.explode", "pos": [110.2, 63.0, -30.7], "volume": 4.0, "pitch": 0.71},
+  {"kind": "sound", "sound": "music_disc.cat", "pos": [103.5, 64.5, -38.5], "volume": 4.0, "pitch": 1.0, "stream": true},
+  {"kind": "sound_stop", "pos": [103, 64, -38]},
+  {"kind": "break", "pos": [106, 63, -36], "block": "minecraft:stone", "id": 7}
+ ]
+}

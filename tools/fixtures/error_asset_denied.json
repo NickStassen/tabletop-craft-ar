@@ -1,0 +1,12 @@
+{
+ "v": 1,
+ "type": "error",
+ "seq": 13,
+ "t": 1760370000510,
+ "code": "asset_denied",
+ "message": "assets.serve is false",
+ "ref_seq": 12,
+ "fatal": false,
+ "op": "asset_get",
+ "name": "sounds.zip"
+}

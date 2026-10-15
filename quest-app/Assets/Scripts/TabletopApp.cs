@@ -115,6 +115,75 @@ namespace TabletopCraft
         // [living] time of day and weather (WorldLight), rain, snow and lightning (WeatherRenderer), leads (LeashRenderer)
         WorldLight _light;
         WeatherRenderer _weather;
+        // [sound] spatial sound from the user's sounds.zip (World/TabletopSound.cs) and the opt-in download of the
+        // operator's own files from their server (World/AssetSync.cs, PROTOCOL.md "Asset delivery")
+        TabletopSound _sound;
+        AssetSync _assets;
+        float _volume = 0.8f, _soundRange = 8f, _assetToastAt, _reloadAt = -1;
+        bool _soundOn = true, _chatPing = true, _downloadAssets = true, _reloadAfterPack = true, _packDownloaded, _linkUp;
+        int _maxVoices = 24;
+
+        /// <summary>[sound] The sound player under RegionRoot, its volume, and the asset downloader.</summary>
+        void SetupSound()
+        {
+            var soundT = new GameObject("Sound").transform; soundT.SetParent(_regionRoot, false);
+            soundT.gameObject.SetActive(false);   // Awake after MaxVoices is set
+            _sound = soundT.gameObject.AddComponent<TabletopSound>();
+            _sound.MaxVoices = Mathf.Clamp(_maxVoices, 4, 64);
+            soundT.gameObject.SetActive(true);
+            _sound.Head = Head; _sound.Model = _world; _sound.Nav = _nav.State; _sound.BlockSize = () => BlockSizeM;
+            _sound.Rain = () => _light != null && _light.Clock.Known ? _light.Clock.Rain : 0f;
+            _sound.Hearing = _soundRange; _sound.Director.ChatPing = _chatPing;
+            _sound.SetVolume(_volume, _soundOn);
+            _sound.Load(Path.Combine(Application.persistentDataPath, SoundPack.FileName));
+            _edit.Editor.Edited = (op, pos, st) => _sound.Director.OnOwnEdit(op, pos, st, Time.unscaledTimeAsDouble);
+            _menu.Model.Volume = Mathf.RoundToInt(_volume * 10) * 10; _menu.Model.SoundOn = _soundOn;
+            _menu.VolumeChanged = (pct, on) => { _volume = pct / 100f; _soundOn = on; _sound.SetVolume(_volume, on); };
+            if (_downloadAssets)
+            {
+                _assets = new AssetSync(Application.persistentDataPath);
+                _assets.Completed = AssetDownloaded;
+            }
+        }
+
+        /// <summary>[sound] A file from the server is in place: sounds and entity models reload; a new pack restarts the scene.</summary>
+        void AssetDownloaded(string name)
+        {
+            string path = Path.Combine(Application.persistentDataPath, name);
+            Debug.Log("[Tabletop] downloaded " + name);
+            if (name == SoundPack.FileName) { _sound.Load(path); _hud.Toast("Sounds downloaded and loaded", ToastKind.Info); }
+            else if (name == EntityModels.FileName) { System.Threading.Tasks.Task.Run(() => EntityModels.LoadFile(path)); _hud.Toast("Entity models downloaded and loaded", ToastKind.Info); }
+            else if (name == "pack.zip") _packDownloaded = true;
+        }
+
+        /// <summary>[sound] Asset downloads: requests, the progress toast, a lost link, the restart for a new pack.zip.</summary>
+        void PumpAssets(float now)
+        {
+            if (_assets == null) return;
+            bool up = _link.Connected;
+            if (_linkUp && !up) _assets.LinkLost();
+            _linkUp = up;
+            if (up) foreach (var g in _assets.Pump()) _link.Send(g);
+            else _assets.Pump();
+            if (now >= _assetToastAt)
+            {
+                _assetToastAt = now + 0.5f;
+                string t = _assets.Toast();
+                if (t != null) _hud.Toast(t, ToastKind.Info, 2, "assets");
+            }
+            if (_packDownloaded && !_assets.Busy && _reloadAt < 0)
+            {
+                _packDownloaded = false;
+                if (_reloadAfterPack) { _reloadAt = now + 2f; _hud.Toast("pack.zip downloaded: reloading with the new textures...", ToastKind.Info, 3); }
+                else _hud.Toast("pack.zip downloaded: restart the app to use it", ToastKind.Info, 8);
+            }
+            if (_reloadAt >= 0 && now >= _reloadAt)
+            {
+                _reloadAt = -1;
+                FlushPrefs();
+                UnityEngine.SceneManagement.SceneManager.LoadScene(UnityEngine.SceneManagement.SceneManager.GetActiveScene().buildIndex);
+            }
+        }
 
         /// <summary>[living] The living-world parts: the light follows world_state, weather and leads are drawn on the table.</summary>
         void SetupLiving()
@@ -335,6 +404,7 @@ namespace TabletopCraft
             OVRManager.HMDUnmounted += OnUnmounted;
             OVRManager.HMDMounted += OnMounted;
 
+            SetupSound();   // [sound] after the menu and the editor (its volume row, own edits)
             Protocol.OperatorName = !string.IsNullOrEmpty(_operatorName) ? _operatorName : SkinPlayer;   // [talk] hello.operator_name
             StartLink();
             _health.NewServer(Time.unscaledTime);
@@ -371,6 +441,14 @@ namespace TabletopCraft
                 _operatorName = c.S("operator_name");                                           // [talk] the name in chat
                 foreach (var q in c.A("quick_commands") ?? new List<object>()) if (q is string qs) _quickCommands.Add(qs);   // [talk] Console quick buttons
                 _leftTrigger = c.S("left_trigger") == "place" ? TriggerMode.Place : TriggerMode.Use;   // [hands] what the left trigger does first
+                // [sound] sound (on), volume and sound (shared with prefs.json: see LoadPrefs), hearing range, voices, chat ping,
+                //   downloads from the server (assets_v1) and the restart after a new pack.zip
+                _soundRange = Mathf.Clamp((float)c.D("sound_range", _soundRange), 1f, 64f);
+                _maxVoices = c.I("max_voices", _maxVoices);
+                _chatPing = c.B("chat_ping", true);
+                _downloadAssets = c.B("download_assets", true);
+                _reloadAfterPack = c.B("reload_after_pack", true);
+                Protocol.WantAssets = _downloadAssets;
                 BatchRules.Columns = Math.Max(1, c.I("batch_columns", BatchRules.Columns));     // [area] sections per batch side
                 TabletopRenderer.SectionsPerJob = Math.Max(1, c.I("mesh_sections_per_job", TabletopRenderer.SectionsPerJob));   // [nav] meshing throughput
                 TabletopRenderer.Workers = Mathf.Clamp(c.I("mesh_workers", TabletopRenderer.Workers), 1, 8);                    // [mesh] meshing threads
@@ -393,6 +471,8 @@ namespace TabletopCraft
             var bs = AppPrefs.Pick(Cfg("block_size_m"), _prefs.BlockSizeM.HasValue ? (object)(double)_prefs.BlockSizeM.Value : null, Seen("block_size_m"));
             if (bs is double b && b > 0) { BlockSizeM = Mathf.Clamp((float)b, 0.002f, 0.1f); _blockSizeKnown = true; }
             _showHud = AppPrefs.Pick(Cfg("show_hud"), _prefs.ShowHud, Seen("show_hud")) is bool h && h;
+            if (AppPrefs.Pick(Cfg("volume"), _prefs.Volume.HasValue ? (object)(double)_prefs.Volume.Value : null, Seen("volume")) is double vol) _volume = Mathf.Clamp01((float)vol);   // [sound]
+            if (AppPrefs.Pick(Cfg("sound"), _prefs.Sound, Seen("sound")) is bool snd) _soundOn = snd;
             // area_width is a request ("start at this preset"): only when tabletop.json's value is new or edited.
             var aw = Cfg("area_width");
             _areaWidth = aw is double w && !Equals(aw, Seen("area_width")) ? (int)w : 0;
@@ -410,6 +490,7 @@ namespace TabletopCraft
             {
                 BlockSizeM = BlockSizeM, AreaWidth = AreaSizing.Current(_nav.State), ShowHud = _showHud, MenuTab = m.TabId(m.Tab),
                 Hotbar = m.Hotbar.Slots(), HotbarSelected = m.Hotbar.Selected, Selected = m.Selected,
+                Volume = _volume, Sound = _soundOn,   // [sound]
             };
             if (_placement.TryRelative(out var id, out var rel)) { p.TableAnchor = id; p.Table = rel; }
             else { p.TableAnchor = _prefs.TableAnchor; p.Table = _prefs.Table; }   // no table this session: keep the old one
@@ -438,6 +519,7 @@ namespace TabletopCraft
         void StartLink()
         {
             _link = new LinkClient(ServerUrl, Token);
+            if (_assets != null) _link.Binary = _assets.OnBinary;   // [sound] asset chunks arrive as binary frames
             _link.Start();
             if (_poses) _poses.Link = _link;
             _menu.Model.ServerUrl = ServerUrl;
@@ -592,6 +674,7 @@ namespace TabletopCraft
             }
             Notify();   // [menu] toasts instead of the head-locked status text
             Comfort(Time.unscaledTime);
+            PumpAssets(Time.unscaledTime);   // [sound]
         }
 
         /// <summary>[comfort] Link health (stale figures hidden), the loading toast, the LAN search, debounced prefs.json.</summary>
@@ -628,7 +711,9 @@ namespace TabletopCraft
             $"\nTALK {TalkStatus()}" +   // [talk]
             $"\nHANDS {HandsStatus()}" +   // [hands]
             $"\nPOWER {_tools.Status}" +   // [power]
-            $"\nTIME {LivingStatus()}";   // [living]
+            $"\nTIME {LivingStatus()}" +   // [living]
+            $"\nSOUND {_sound.Status}" +   // [sound]
+            $"\nASSETS {(_assets == null ? "off (download_assets false)" : _assets.Status)}";
 
         /// <summary>[hands] Using blocks, items and mobs as the server granted it, and what the left trigger does first.</summary>
         string HandsStatus() =>
@@ -719,6 +804,7 @@ namespace TabletopCraft
                     _players.Apply(new List<PlayerInfo>());
                     _entities.Clear();
                     _light.Reset();   // [living] noon until this server's world_state
+                    _sound.Director.Clear();   // [sound] a new session lists its entities and players afresh
                     if (_announce) { _announce = false; _hud.Toast("Connected to " + ServerAddress.HostOf(_link.Url), ToastKind.Info); }
                     break;
                 case "region_info":
@@ -747,6 +833,7 @@ namespace TabletopCraft
                     catch (Exception e) { BadSnapshot(m.I("snapshot_id"), e.Message); }
                     break;
                 case "block_update":
+                    _sound.Director.OnBlockUpdate(_world, m, Time.unscaledTimeAsDouble);   // [sound] doors, levers, tools (before the cells change)
                     _edit.Editor.OnBlockUpdate(_world, m);   // the server's values replace block-edit guesses
                     if (_world.ApplyBlockUpdate(m)) _caps.ModelVersion = ++_modelVersion;   // [nav] caps re-slice
                     break;
@@ -754,13 +841,17 @@ namespace TabletopCraft
                     var list = new List<PlayerInfo>();
                     foreach (var o in m.A("players")) list.Add(PlayerInfo.From((Dictionary<string, object>)o));
                     _players.Apply(list);
+                    _sound.Director.OnPlayers(list, _world, Time.unscaledTimeAsDouble);   // [sound] footsteps, hurt, death
                     break;
-                case "entities": _entities.Apply(m); break;   // [entities] PROTOCOL.md 4.21
+                case "entities": _entities.Apply(m); _sound.Director.OnEntities(m, _world, Time.unscaledTimeAsDouble); break;   // [entities] PROTOCOL.md 4.21, [sound]
+                case BlockSounds.Type: _sound.Director.Groups = BlockSounds.From(m); Debug.Log($"[Tabletop] sound groups: {_sound.Director.Groups.Count} blocks"); break;   // [sound]
+                case AssetProtocol.Type: _assets?.OnOffer(m); break;   // [sound] the operator's own files (PROTOCOL.md "Asset delivery")
                 case "block_entities": _blockEntities.Apply(m); break;   // [blocks] PROTOCOL.md 4.29
                 case "world_state": _light.Apply(m); break;   // [living] time of day and weather
                 case "actions":                                  // [entities] PROTOCOL.md 4.22
                     _actions.Clear();
                     GameAction.Parse(m, _actions);
+                    _sound.Director.OnActions(_actions, _world, Time.unscaledTimeAsDouble);   // [sound] breaks, places, digging, hurt, the server's sounds
                     foreach (var a in _actions)
                     {
                         if (a.Kind == ActionKind.Swing || a.Kind == ActionKind.Hurt) { if (!_entities.Act(a)) _players.Act(a); }
@@ -774,6 +865,7 @@ namespace TabletopCraft
                 case "server_status": case "world_info": case "players_info":
                 case "bookmarks": case "container":   // [operator] PROTOCOL.md "Marks...", "Containers"
                     _ops.OnMessage(m);
+                    if (m.S("type") == "chat") _sound.Director.OnChat(m, Time.unscaledTimeAsDouble);   // [sound] a soft ping for what others say
                     break;
                 case ItemRegistry.Type:   // [hands] usable items and spawn eggs (PROTOCOL.md "Using blocks and items")
                     try
@@ -800,6 +892,7 @@ namespace TabletopCraft
                     catch (Exception e) { Debug.LogWarning("[Tabletop] bad block_registry: " + e.Message); _hud.Toast("Bad block list from the server", ToastKind.Error); }
                     break;
                 case "error":
+                    if (_assets != null && _assets.OnError(m)) { _hud.Toast("Download: " + m.S("message"), ToastKind.Warn, 6); Debug.LogWarning($"[Tabletop] asset error {m.S("code")}: {m.S("message")}"); break; }   // [sound]
                     if (_nav.OnFollowReply(m)) break;   // [operator] following's region_query: the player left
                     if (_ops.OnError(m)) { Debug.Log($"[Tabletop] panel error {m.S("code")}: {m.S("message")}"); break; }   // [talk] the panel shows it
                     _tools.OnError(m);   // [power] a refused box edit, undo, redo or stroke: its job is no longer pending
@@ -848,6 +941,8 @@ namespace TabletopCraft
         void AssetToasts()
         {
             if (!_atlas.HasPack) _hud.Toast("No pack.zip: plain colours (QUEST_SETUP Part E)", ToastKind.Warn, 8);
+            if (_soundOn && !File.Exists(Path.Combine(Application.persistentDataPath, SoundPack.FileName)))
+                _hud.Toast("No sounds.zip: no sound (Part E)", ToastKind.Warn, 8);   // [sound]
             if (!File.Exists(Path.Combine(Application.persistentDataPath, EntityModels.FileName)))
                 _hud.Toast("No entity_models.json: mobs are boxes (Part E)", ToastKind.Warn, 8);
         }

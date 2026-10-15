@@ -127,6 +127,18 @@ REQUIRED["world_state"] = ["world", "dimension", "skylight", "time", "day_time",
 DIMENSIONS = ("overworld", "the_nether", "the_end", "custom")
 BILLBOARDS = ("fixed", "vertical", "horizontal", "center")
 
+# [sound] Spatial sound (PROTOCOL.md "Sound"; cap sound_v1) and asset delivery ("Asset delivery"; cap assets_v1).
+CAP_SOUND, CAP_ASSETS = "sound_v1", "assets_v1"
+REQUIRED["sound_groups"] = ["count", "groups"]
+REQUIRED["assets"] = ["chunk", "files"]
+REQUIRED["asset_get"] = ["name", "offset", "length"]
+ACTION_KINDS |= {"sound", "sound_stop"}
+ERROR_CODES |= {"asset_denied"}
+ASSET_NAMES = ("entity_models.json", "sounds.zip", "pack.zip")
+ASSET_MAX_CHUNK = 1 << 20
+SOUND_GROUP_KEYS = ("break", "step", "place", "hit", "fall")
+_SOUND_ID = re.compile(r"^([a-z0-9_.\-]+:)?[a-z0-9_./\-]+$")
+
 # [operator] Marks (bookmarks, spawn, worlds; cap marks_v1), containers and signs (interact_v1). PROTOCOL.md "Marks:
 # bookmarks, spawn and worlds", "Containers", "Signs".
 CAP_MARKS = "marks_v1"
@@ -212,6 +224,11 @@ def validate(msg: dict) -> None:
                 raise ValueError("dig stage must be -1..9")
             if k in ("break", "place") and not isinstance(a.get("block"), str):
                 raise ValueError(f"{k} action needs a block state")
+            if k == "sound" and (not isinstance(a.get("sound"), str) or not _vec(a.get("pos"))
+                                 or not isinstance(a.get("volume"), (int, float)) or not 0.5 <= a.get("pitch", 0) <= 2.0):
+                raise ValueError(f"sound action needs a sound id, pos, volume and a pitch 0.5..2: {a}")   # [sound]
+            if k == "sound_stop" and not _int_pos(a.get("pos")):
+                raise ValueError("sound_stop needs an integer block pos")
     if t == "block_edit":
         validate_block_edit(msg)
     if t == "block_registry":
@@ -230,6 +247,8 @@ def validate(msg: dict) -> None:
         raise ValueError("region_info spawn must be [x, y, z] integers")
     if t == "welcome" and "interact" in msg and not isinstance(msg["interact"], dict):
         raise ValueError("welcome interact must be an object")
+    if t in ("sound_groups", "assets", "asset_get"):
+        validate_sound(msg)   # [sound]
     if t == "world_state":
         validate_world_state(msg)   # [living]
     if t in POWER_REQUIRED or t in ("block_edit", "interact") or (t == "welcome" and CAP_POWER in (msg.get("caps") or [])):
@@ -1065,3 +1084,52 @@ class EntityMirror:
 
     def of_type(self, type_: str) -> list[dict]:
         return [e for e in self.entities.values() if e["type"] == type_]
+
+
+def validate_sound(msg: dict) -> None:
+    """[sound] sound_groups, assets and asset_get (PROTOCOL.md "Sound", "Asset delivery")."""
+    t = msg["type"]
+    if t == "sound_groups":
+        n = 0
+        for g in msg["groups"]:
+            for k in SOUND_GROUP_KEYS:
+                if g.get(k) is not None and not (isinstance(g[k], str) and _SOUND_ID.match(g[k])):
+                    raise ValueError(f"sound group {k} must be a sound id, got {g.get(k)}")
+            if not isinstance(g.get("volume"), (int, float)) or not isinstance(g.get("pitch"), (int, float)):
+                raise ValueError("sound group needs volume and pitch")
+            if not g.get("blocks") or not all(isinstance(b, str) and _ID.match(b) for b in g["blocks"]):
+                raise ValueError("sound group needs block ids")
+            n += len(g["blocks"])
+        if n != msg["count"]:
+            raise ValueError(f"sound_groups count {msg['count']} but {n} blocks listed")
+    elif t == "assets":
+        if not isinstance(msg["chunk"], int) or not 1024 <= msg["chunk"] <= ASSET_MAX_CHUNK:
+            raise ValueError("assets chunk must be 1024..1 MiB")
+        for f in msg["files"]:
+            if f.get("name") not in ASSET_NAMES or not isinstance(f.get("size"), int) or f["size"] <= 0:
+                raise ValueError(f"assets file must be one of {ASSET_NAMES} with a size: {f}")
+            if not (isinstance(f.get("sha256"), str) and re.fullmatch(r"[0-9a-f]{64}", f["sha256"])):
+                raise ValueError("assets sha256 must be 64 lower-case hex digits")
+    elif t == "asset_get":
+        if msg["name"] not in ASSET_NAMES or not isinstance(msg["offset"], int) or msg["offset"] < 0:
+            raise ValueError("asset_get needs a known name and an offset >= 0")
+        if not isinstance(msg["length"], int) or not 1 <= msg["length"] <= ASSET_MAX_CHUNK:
+            raise ValueError("asset_get length must be 1..1 MiB")
+
+
+def asset_frame(name: str, offset: int, data: bytes) -> bytes:
+    """[sound] A binary asset frame: b"TTA1", the name's length and ASCII name, the offset (8 bytes big-endian), the data."""
+    n = name.encode("ascii")
+    if not 1 <= len(n) <= 64:
+        raise ValueError("asset name must be 1..64 ASCII bytes")
+    return b"TTA1" + bytes([len(n)]) + n + offset.to_bytes(8, "big") + data
+
+
+def parse_asset_frame(frame: bytes) -> tuple[str, int, bytes]:
+    """[sound] (name, offset, data) of a binary asset frame; ValueError for anything else."""
+    if len(frame) < 15 or frame[:4] != b"TTA1":
+        raise ValueError("not an asset frame")
+    n = frame[4]
+    if not 1 <= n <= 64 or len(frame) <= 13 + n:
+        raise ValueError("bad asset frame header")
+    return frame[5:5 + n].decode("ascii"), int.from_bytes(frame[5 + n:13 + n], "big"), frame[13 + n:]

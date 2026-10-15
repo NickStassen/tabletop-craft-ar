@@ -1192,3 +1192,31 @@ What a section costs on the Quest (`GLIDE ... mesh_ms=` is the worker time per s
 - The skirt is a stand-in: top faces only plus steps, flat-lit (no AO), no grass side overlays, water and leaves opaque, nothing for overhangs or caves seen through the cut sides (the caps show those). It covers only what the region snapshot has (the margin ahead); beyond the region there is nothing to show until the next delta.
 - With `skirt_speed` 2 and slow meshing, detail can trail far behind (the skirt covers the window's surface, and detail fills in when the glide slows or stops).
 - Dropped sections' geometry stays on the GPU until their batch is rebuilt (at most 4 s, hidden by the clip box).
+
+## Sound and asset delivery (`sound_v1` / `assets_v1`, PROTOCOL "Sound" and "Asset delivery"; Paper 26.3, 2026-10-15, no headset)
+
+### Tests
+- Java (`./gradlew build`): `SoundTest`: the `sound_groups` message against its fixture, `SoundRules` (note pitch, container, explosion, bucket, ignite sounds), sound actions in `ActionBatch` (the fixture, collapse within a tick, other worlds, the 8-block margin, nothing for sessions without `sound_v1`), the asset frame byte for byte against `asset_chunk.bin`, the offer and `asset_denied` against their fixtures, the LAN check (private, ULA, link-local, loopback in; public and CGNAT out), SHA-256.
+- Python (`pytest`): `test_sound_fixtures_and_rules`, `test_asset_messages_and_frame` (validators for `sound_groups`, the `sound`/`sound_stop` kinds, `assets`, `asset_get`, the frame parser and builder).
+- C# (`Tests~`, `SoundTests.cs`, 70 checks): sounds.json parsing and the variant pick (weights within 3% over 8000 picks, event references multiply volume and pitch, stream and attenuation), block sound groups (server table, the fallback guess), every state-change rule, the director (the actions fixture, explosion breaks silent, door transition once at the lower half, dedupe of a server sound against an inferred one, own edits, steps every 1/0.6 blocks with mobs' own step sounds, ambient rate, hurt, death, pickups, thunder, TNT, player steps and none while riding, digging hits, rain, water and lava ambience, chat ping), the mixer (fall-off, voice caps, stealing, `sound_stop`), sounds.zip (extraction cache, stale caches deleted, refused paths), the downloader against an in-memory server (download, nothing re-downloaded or re-hashed next time, resume after a dropped link, checksum mismatch keeps the old file, `asset_denied`), the Info tab's volume row, prefs.json. With `--sounds sounds.zip` (the user's own, from `PackSounds`): all 84 hand-written sound ids exist in the 26.3 sounds.json, picked variants (also through an event reference) extract to Ogg files. Full run with `--jar`, `--entity-models` and `--sounds`: ALL PASS (1424 checks). Python: 249 passed, ruff clean.
+- Unity 6000.0.84f1 batch compile: no errors or warnings in Assets; ShaderCheck 160 variants, 0 errors.
+
+### PackSounds (this machine's launcher, 26.3, asset index 34)
+- `--list`: 1991 events; blocks 28.5 MB, mobs 34.0, items 3.6, weather 0.8, ui 0.3, ambient 15.9, music 258.9, records 34.3, other 0.6 (files counted once per group).
+- Default groups: 1915 events, 4679 files, 67.0 MB zip, 1.3 s (SHA-1 checked).
+
+### Live server (own Paper 26.3, flat world, ports 25625/8825, `auth.token` set, `assets.serve` on with DUMMY files: 4 MB pack.zip, 12 MB sounds.zip of random bytes)
+- `SOUND_GROUPS 1283 blocks in 129 groups, 62562 bytes, 8 ms` at start; about 64 KB once per `sound_v1` connection.
+- `tools/sound_check.py --assets-dir DIR`: 15/15. `sound_groups` arrives after `block_registry` and `item_registry`, before the first snapshot; a note block played from the headset comes back as `block.note_block.harp` at the block centre, volume 3, pitch 0.53 (note 1); a door as `block.wooden_door.open`; TNT lit with flint and steel as `entity.tnt.primed`, then `entity.generic.explode` (volume 4) 4.1 s later; a client without `sound_v1` got 48 actions and no sound; the offer matched the folder (sizes, SHA-256); both files downloaded and matched at 8.1 MB/s (the configured 8 MB/s pace); a name outside the three is `not_found`, a 2 MiB length `bad_message`, a client without `assets_v1` `asset_denied`.
+- `Tests~ --live-assets ws://127.0.0.1:8825/tabletop TOKEN` (the app's LinkClient and AssetSync): 3 files, 16 MB downloaded and verified in 2.0 s (7.9 MB/s). Server log: one `ASSETS session=… sent <file> … MB/s` line per file.
+
+### Not verified (needs the headset)
+- That Unity decodes the extracted OGGs on the Quest (`UnityWebRequestMultimedia`, `AudioType.OGGVORBIS`, `file://`), the first-play latency (the copy out of the zip and the decode), and memory with ~300 clips.
+- How it sounds: the fall-off scale (`sound_range` 8), panning from the head, the 24-voice limit in a busy area, rain and ambience density at wide presets, footsteps of many mobs.
+- The asset download on Wi-Fi to the headset (speed, the toast, resume after taking the headset off), and the scene reload after a new `pack.zip` (OVRManager and MRUK coming back).
+
+### Known gaps
+- 26.x mob sound variants (moody cows, big and mini pigs, wolf moods, royal cats) play the base mob's sounds: the server doesn't send the sound variant.
+- Sounds other plugins play with `World#playSound` (no Bukkit event) and the game's own server sounds without a block or entity change (eating, drinking, shearing by Java players, a goat horn) aren't heard; biome and underwater ambience loops and music aren't played.
+- Unity's built-in panning only (no HRTF; the Meta XR Audio SDK would be a new package).
+- `sound_groups` is about 64 KB per connection (full block ids); fine on a LAN.

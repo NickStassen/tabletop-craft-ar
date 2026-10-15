@@ -1,0 +1,17 @@
+{
+ "v": 1,
+ "type": "sound_groups",
+ "seq": 3,
+ "t": 1760370000015,
+ "count": 7,
+ "groups": [
+  {"break": "block.stone.break", "step": "block.stone.step", "place": "block.stone.place", "hit": "block.stone.hit", "fall": "block.stone.fall",
+   "volume": 1.0, "pitch": 1.0, "blocks": ["minecraft:stone", "minecraft:cobblestone", "minecraft:stone_bricks"]},
+  {"break": "block.wood.break", "step": "block.wood.step", "place": "block.wood.place", "hit": "block.wood.hit", "fall": "block.wood.fall",
+   "volume": 1.0, "pitch": 1.0, "blocks": ["minecraft:oak_planks", "minecraft:oak_log"]},
+  {"break": "block.grass.break", "step": "block.grass.step", "place": "block.grass.place", "hit": "block.grass.hit", "fall": "block.grass.fall",
+   "volume": 1.0, "pitch": 1.0, "blocks": ["minecraft:grass_block"]},
+  {"break": "block.anvil.break", "step": "block.anvil.step", "place": "block.anvil.place", "hit": "block.anvil.hit", "fall": "block.anvil.fall",
+   "volume": 0.3, "pitch": 1.0, "blocks": ["minecraft:anvil"]}
+ ]
+}

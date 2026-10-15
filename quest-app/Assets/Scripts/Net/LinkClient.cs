@@ -184,10 +184,16 @@ namespace TabletopCraft.Net
             }
         }
 
+        /// <summary>[sound] Binary frames (asset chunks, PROTOCOL.md "Asset delivery"), whole, on the receive thread.</summary>
+        public Action<byte[], int> Binary;
+        public const int MaxBinary = 2 << 20;
+
         async Task ReceiveLoop(ClientWebSocket ws, CancellationToken ct)
         {
             var buf = new byte[64 * 1024];
             var sb = new StringBuilder();
+            byte[] bin = null;
+            int binLen = 0;
             while (ws.State == WebSocketState.Open && !ct.IsCancellationRequested)
             {
                 // Backpressure: the main thread hasn't drained the queue (if this lasts DeadSeconds, KeepAlive resets the link).
@@ -203,7 +209,22 @@ namespace TabletopCraft.Net
                     else if (code == 4003) { _fatalReason = "wrong token: tabletop.json \"token\" must match the plugin's auth.token"; _fatalCode = code; }
                     return;
                 }
-                if (r.MessageType == WebSocketMessageType.Binary) continue; // v1: text only
+                if (r.MessageType == WebSocketMessageType.Binary)
+                {
+                    // [sound] asset chunks: gathered whole (at most MaxBinary), then handed over on this thread
+                    if (bin == null) bin = new byte[256 * 1024 + 1024];
+                    if (binLen + r.Count > MaxBinary) { binLen = -1; }
+                    else if (binLen >= 0)
+                    {
+                        if (binLen + r.Count > bin.Length) Array.Resize(ref bin, Math.Min(MaxBinary, Math.Max(bin.Length * 2, binLen + r.Count)));
+                        Buffer.BlockCopy(buf, 0, bin, binLen, r.Count);
+                        binLen += r.Count;
+                    }
+                    if (!r.EndOfMessage) continue;
+                    if (binLen > 0) { try { Binary?.Invoke(bin, binLen); } catch (Exception e) { Debug.LogWarning("[Tabletop] binary frame: " + e.Message); } }
+                    binLen = 0;
+                    continue;
+                }
                 sb.Append(Encoding.UTF8.GetString(buf, 0, r.Count));
                 if (!r.EndOfMessage) continue;
                 string text = sb.ToString(); sb.Clear();

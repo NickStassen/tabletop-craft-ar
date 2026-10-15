@@ -214,17 +214,22 @@ namespace TabletopCraft.Net
         static float F(object v) => v is double x ? (float)x : 0f;
     }
 
-    public enum ActionKind { Swing, Dig, Break, Place, Hurt }
+    public enum ActionKind { Swing, Dig, Break, Place, Hurt, Sound, SoundStop }
 
-    /// <summary>One entry of an "actions" message (PROTOCOL.md 4.22).</summary>
+    /// <summary>One entry of an "actions" message (PROTOCOL.md 4.22; [sound] sound and sound_stop, "Sound").</summary>
     public struct GameAction
     {
         public ActionKind Kind;
         public int Id;              // entity id (swing, hurt; who for dig/break/place, -1 if not sent)
         public bool OffHand, Crit;
-        public Vector3Int Pos;      // world block (dig, break, place)
+        public Vector3Int Pos;      // world block (dig, break, place, sound_stop; a sound's block)
         public int Stage;           // dig: 0..9, -1 = cleared
         public string Block;        // break, place: block state
+        // [sound] sound: the event id, where (world, not rounded to the block), vanilla volume and pitch, streamed
+        public string Sound;
+        public Vector3 At;
+        public float Volume, Pitch;
+        public bool Stream;
 
         /// <summary>Parses the actions of a message into list (unknown kinds are skipped).</summary>
         public static void Parse(Dictionary<string, object> m, List<GameAction> list)
@@ -236,7 +241,12 @@ namespace TabletopCraft.Net
                 var d = o as Dictionary<string, object>;
                 if (d == null) continue;
                 var g = new GameAction { Id = d.I("id", -1), Stage = d.I("stage", -1), Block = d.S("block"), Crit = d.B("crit"), OffHand = d.S("hand") == "off" };
-                if (d.A("pos") is List<object> p && p.Count == 3) g.Pos = new Vector3Int((int)(double)p[0], (int)(double)p[1], (int)(double)p[2]);
+                if (d.A("pos") is List<object> p && p.Count == 3)
+                {
+                    float px = (float)(double)p[0], py = (float)(double)p[1], pz = (float)(double)p[2];
+                    g.At = new Vector3(px, py, pz);
+                    g.Pos = new Vector3Int(Mathf.FloorToInt(px), Mathf.FloorToInt(py), Mathf.FloorToInt(pz));
+                }
                 switch (d.S("kind"))
                 {
                     case "swing": g.Kind = ActionKind.Swing; break;
@@ -244,6 +254,11 @@ namespace TabletopCraft.Net
                     case "break": g.Kind = ActionKind.Break; break;
                     case "place": g.Kind = ActionKind.Place; break;
                     case "hurt": g.Kind = ActionKind.Hurt; break;
+                    case "sound":   // [sound]
+                        g.Kind = ActionKind.Sound; g.Sound = d.S("sound"); g.Volume = (float)d.D("volume", 1); g.Pitch = (float)d.D("pitch", 1); g.Stream = d.B("stream");
+                        if (g.Sound == null) continue;
+                        break;
+                    case "sound_stop": g.Kind = ActionKind.SoundStop; break;
                     default: continue;
                 }
                 list.Add(g);
