@@ -57,6 +57,13 @@ namespace UnityEngine
         public override int GetHashCode() => x * 73856093 ^ y * 19349663;
         public override string ToString() => $"({x}, {y})";
     }
+    // [flow] fluid top-face UVs (FluidMesher.FlowUvs)
+    public struct Vector2
+    {
+        public float x, y;
+        public Vector2(float x, float y) { this.x = x; this.y = y; }
+        public override string ToString() => $"({x:F3}, {y:F3})";
+    }
     public struct Quaternion
     {
         public float x, y, z, w;

@@ -16,7 +16,7 @@ static class WaterTests
     // Fluid faces get layer 1 (water) / 2 (lava), everything else 0, so the tests can tell quads apart.
     sealed class Tagged : IFaceSource
     {
-        public FaceKey Face(string s, int d) => new FaceKey { Layer = s == FluidRules.WaterState ? 1 : s == FluidRules.LavaState ? 2 : 0, Color = BlockRules.FlatColor(s) };
+        public FaceKey Face(string s, int d) => new FaceKey { Layer = s == FluidRules.WaterState || s == FluidRules.WaterFlowState || s == FluidRules.OverlayState ? 1 : s == FluidRules.LavaState || s == FluidRules.LavaFlowState ? 2 : 0, Color = BlockRules.FlatColor(s) };
     }
 
     static WorldModel World(int dx, int dy, int dz, Func<int, int, int, int> f, params string[] palette)
@@ -136,7 +136,92 @@ static class WaterTests
         m = Mesh(World(16, 5, 16, (x, y, z) => y < 4 ? 1 : 0, "minecraft:air", water));
         check(Quads(m, 1).Count == 10, $"16x4x16 ocean: greedy-merged to 10 quads (got {Quads(m, 1).Count})");
 
+        Flow(check);
         Animations(check, args);
+    }
+
+    // [flow] Still sprite layer 1 (water) / 2 (lava), flowing sprites 3 / 5 split in four (QuadTable), overlay 4.
+    sealed class FlowFaces : IFaceSource
+    {
+        public FaceKey Face(string s, int d)
+        {
+            int l = s == FluidRules.WaterState ? 1 : s == FluidRules.LavaState ? 2 : s == FluidRules.WaterFlowState ? 3 : s == FluidRules.OverlayState ? 4 : s == FluidRules.LavaFlowState ? 5 : 0;
+            return new FaceKey { Layer = l, Color = BlockRules.FlatColor(s), Random = l == 3 || l == 5 ? FluidRules.QuadTable : (byte)0 };
+        }
+    }
+
+    const float Quad3 = 3 + 4096f * FluidRules.QuadTable, Quad5 = 5 + 4096f * FluidRules.QuadTable;
+
+    /// <summary>Quads (first vertex index) whose uv.z is z, outside faces only; top = not vertical.</summary>
+    static List<int> ByLayer(MeshData m, float z, bool? top = null)
+    {
+        var inside = new HashSet<int>(m.WaterBack);
+        var r = new List<int>();
+        for (int q = 0; q < m.Verts.Count; q += 4)
+        {
+            if (m.Uvs[q].z != z || inside.Contains(q)) continue;
+            Vector3 a = m.Verts[q], b = m.Verts[q + 1], c = m.Verts[q + 2];
+            bool flat = !(a.x == b.x && b.x == c.x) && !(a.z == b.z && b.z == c.z);
+            if (top == null || top == flat) r.Add(q);
+        }
+        return r;
+    }
+
+    /// <summary>Downhill direction of the texture on a top quad (NW, SW, SE, NE): where the sprite's v grows (it
+    /// scrolls down the image), in world x/z per block.</summary>
+    static (float x, float z) TexFlow(MeshData m, int q)
+    {
+        Vector3 nw = m.Uvs[q], sw = m.Uvs[q + 1], ne = m.Uvs[q + 3];
+        return (-(ne.y - nw.y), -(sw.y - nw.y));   // uv v is up (-sprite v)
+    }
+
+    static void Flow(Action<bool, string> check)
+    {
+        var faces = new FlowFaces();
+        MeshData M(WorldModel w) { var m = new MeshData(); GreedyMesher.Build(w, default, faces, m); GreedyMesher.BuildSpecials(w, default, faces, m); return m; }
+
+        // FlowUvs: the sprite's downward scroll runs along the flow, one block = half the sprite (|gradient| 1).
+        var uv = new Vector2[4];
+        bool ok = true;
+        for (int i = 0; i < 16; i++)
+        {
+            float a = i * Mathf.PI / 8f, fx = Mathf.Cos(a), fz = Mathf.Sin(a);
+            FluidMesher.FlowUvs(fx, fz, uv);
+            float gx = -(uv[3].y - uv[0].y), gz = -(uv[1].y - uv[0].y), ux = uv[3].x - uv[0].x, uz = uv[1].x - uv[0].x;
+            ok &= Math.Abs(gx - fx) < 1e-4 && Math.Abs(gz - fz) < 1e-4 && Math.Abs(ux * gx + uz * gz) < 1e-4 && Math.Abs(ux * ux + uz * uz - 1) < 1e-4;
+            float cu = (uv[0].x + uv[2].x) / 2, cv = (uv[0].y + uv[2].y) / 2;   // centred on the sprite (vanilla 0.5, 0.5)
+            ok &= Math.Abs(cu - 1) < 1e-4 && Math.Abs(cv + 1) < 1e-4;
+        }
+        FluidMesher.FlowUvs(0, 1, uv);   // south: the sprite unturned, its centre half (vanilla u 0.25..0.75)
+        ok &= Math.Abs(uv[0].x - 0.5f) < 1e-5 && Math.Abs(uv[0].y + 0.5f) < 1e-5 && Math.Abs(uv[2].x - 1.5f) < 1e-5 && Math.Abs(uv[2].y + 1.5f) < 1e-5;
+        check(ok, "flow uvs: turned to the flow, half the sprite per block, centred like vanilla's FluidRenderer");
+
+        // A still ocean: tops still (merged), every side the flowing sprite (2 rows per side: the surface row is lower).
+        var ocean = M(World(4, 3, 4, (x, y, z) => y < 2 ? 1 : 0, "minecraft:air", "minecraft:water[level=0]"));
+        check(ByLayer(ocean, 1, true).Count == 2 && ByLayer(ocean, Quad3, true).Count == 0 && ByLayer(ocean, Quad3, false).Count == 8 && ByLayer(ocean, 1, false).Count == 0,
+            $"still ocean: still top (merged) and bottom, flowing sides ({ByLayer(ocean, 1, true).Count} still tops+bottoms, {ByLayer(ocean, Quad3, false).Count} flow sides)");
+
+        // A stream on a stone floor: source, level 1, level 2, air (x = 0..3). Vanilla getFlow of the level-1 cell:
+        // west pulls by 7/9 - 8/9, east by 7/9 - 6/9 -> (2/9, 0): east. The source's east neighbour is lower: east too.
+        string[] pal = { "minecraft:air", "minecraft:stone", "minecraft:water[level=0]", "minecraft:water[level=1]", "minecraft:water[level=2]" };
+        var stream = M(World(4, 2, 1, (x, y, z) => y == 0 ? 1 : x < 3 ? 2 + x : 0, pal));
+        var tops = ByLayer(stream, Quad3, true);
+        bool east = tops.Count == 3;
+        foreach (int q in tops) { var (tx, tz) = TexFlow(stream, q); east &= tx > 0.99f && Math.Abs(tz) < 1e-4; }
+        check(east && ByLayer(stream, 1, true).Count == 0, $"stream: every top turned to flow east like vanilla getFlow ({tops.Count} flow tops)");
+
+        // Over a drop: a source with air east of it and water below that air pulls east (vanilla: own - (below - 8/9)).
+        var drop = M(World(2, 2, 1, (x, y, z) => x == 0 ? (y == 1 ? 2 : 1) : (y == 0 ? 2 : 0), pal));
+        var dt = ByLayer(drop, Quad3, true);
+        bool dEast = dt.Count == 1;
+        foreach (int q in dt) { var (tx, tz) = TexFlow(drop, q); dEast &= tx > 0.99f && Math.Abs(tz) < 1e-4; }
+        check(dEast, "waterfall edge: the source pulls toward the water below its open neighbour");
+
+        // Against glass, water shows the overlay; against air the flowing sprite. Lava: its own flowing sprite, never the overlay.
+        var glass = M(World(3, 1, 1, (x, y, z) => x == 1 ? 2 : x == 2 ? 1 : 0, "minecraft:air", "minecraft:glass", "minecraft:water[level=0]"));
+        check(ByLayer(glass, 4, false).Count == 1 && ByLayer(glass, Quad3, false).Count == 3, $"water against glass: overlay side ({ByLayer(glass, 4, false).Count}), flowing elsewhere");
+        var lava = M(World(3, 1, 1, (x, y, z) => x == 1 ? 2 : x == 2 ? 1 : 0, "minecraft:air", "minecraft:glass", "minecraft:lava[level=0]"));
+        check(ByLayer(lava, 4, false).Count == 0 && ByLayer(lava, Quad5, false).Count == 4 && ByLayer(lava, 2, true).Count == 2, "lava: flowing sides (no overlay), still top and bottom");
     }
 
     /// <summary>--measure-fluids DIR: fluid quads and FluidMesher time per saved chunk_snapshot (tools/measure_regions.py).</summary>

@@ -9,7 +9,7 @@ static class EyeTests
 {
     sealed class Tagged : IFaceSource
     {
-        public FaceKey Face(string s, int d) => new FaceKey { Layer = s == FluidRules.WaterState ? 1 : s == FluidRules.LavaState ? 2 : 0, Color = BlockRules.FlatColor(s) };
+        public FaceKey Face(string s, int d) => new FaceKey { Layer = s == FluidRules.WaterState || s == FluidRules.WaterFlowState || s == FluidRules.OverlayState ? 1 : s == FluidRules.LavaState || s == FluidRules.LavaFlowState ? 2 : 0, Color = BlockRules.FlatColor(s) };
     }
 
     static WorldModel World(int dx, int dy, int dz, Func<int, int, int, int> f, params string[] palette)

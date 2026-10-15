@@ -7,9 +7,14 @@
 // weighted average of the cell and its neighbours, and a cell under more of the same fluid is full height.
 // Flat faces (ocean tops, full-height walls at the region edge, bottoms) are greedy-merged like GreedyMesher.Build;
 // sloped ones are emitted per cell. Water goes to the transparent submesh, lava to the opaque one.
+// [flow] Textures as vanilla's FluidRenderer (26.3): the still sprite on the bottom and on tops without flow, the
+// flowing sprite (water_flow / lava_flow, animated: the animation scrolls it down) on every side and on tops whose
+// flow vector (FlowingFluid.getFlow from the neighbours' heights) isn't zero, turned to the flow direction, and
+// water_overlay on water sides against glass, ice, slime, honey and leaves. The flowing sprites are twice the tile
+// size: the atlas splits them into four layers that the block shader picks per 2-block cell (FluidRules.QuadTable).
 // Engine-free and run on meshing worker threads: it only reads the grid and IFaceSource. Fluids take their faces
-// from the canonical "minecraft:water"/"minecraft:lava" states, which TabletopRenderer.Prewarm resolves on the main
-// thread (see FluidRules.FaceState).
+// from the canonical "minecraft:water"/"minecraft:lava" states and the flow/overlay pseudo-states, which
+// TabletopRenderer.Prewarm resolves on the main thread (see FluidRules.FaceState).
 using System;
 using System.Collections.Concurrent;
 using UnityEngine;
@@ -21,6 +26,14 @@ namespace TabletopCraft.World
     public static class FluidRules
     {
         public const string WaterState = "minecraft:water", LavaState = "minecraft:lava";
+        /// <summary>[flow] Pseudo-states the atlas answers with the flowing sprite (water_flow / lava_flow, split into
+        /// four layers, Random = QuadTable) and with water_overlay: vanilla's FluidStateModelSet names these textures in
+        /// code, not in a model. Never in a grid; prewarmed on the main thread with the canonical states.</summary>
+        public const string WaterFlowState = "minecraft:water[tabletop=flow]", LavaFlowState = "minecraft:lava[tabletop=flow]",
+            OverlayState = "minecraft:water[tabletop=overlay]";
+        /// <summary>[flow] uv.z table id of a texture twice the tile size kept as four layers (TL, TR, BL, BR): the block
+        /// shader picks the layer from the 2-block cell (TabletopBlocks.cginc). Past RandomUv.MaxTables (63).</summary>
+        public const byte QuadTable = 64;
 
         // Packed info: kind in bits 0-1, amount (vanilla FluidState.getAmount, 1..8) in bits 2-5; 0 = no fluid.
         // Concurrent: filled from the meshing worker threads.
@@ -106,7 +119,7 @@ namespace TabletopCraft.World
     public static class FluidMesher
     {
         const int S = WorldModel.Section, P = S + 2;
-        const byte InBounds = 1, Solid = 2;
+        const byte InBounds = 1, Solid = 2, SeeThrough = 4;   // SeeThrough: glass, ice, slime, honey, leaves ([flow] overlay)
 
         static readonly Vector3Int[] Dirs = { new Vector3Int(-1, 0, 0), new Vector3Int(1, 0, 0), new Vector3Int(0, -1, 0), new Vector3Int(0, 1, 0), new Vector3Int(0, 0, -1), new Vector3Int(0, 0, 1) };
 
@@ -131,7 +144,8 @@ namespace TabletopCraft.World
             // The (S+2)^3 neighbourhood: fluid info, full-face bits and flags per cell.
             readonly byte[] _fluid = new byte[P * P * P], _full = new byte[P * P * P], _flags = new byte[P * P * P];
             readonly float[] _corners = new float[S * S * S * 4];   // 4 top-corner heights per section cell: NW, SW, SE, NE
-            readonly FaceKey[] _mask = new FaceKey[S * S], _keys = new FaceKey[12];
+            // Face keys per fluid kind ((kind - 1) * 8): 0-5 still (per direction), 6 flowing, 7 overlay (water only).
+            readonly FaceKey[] _mask = new FaceKey[S * S], _keys = new FaceKey[16];
             readonly float[] _maskH = new float[S * S];
             readonly bool[] _has = new bool[S * S];
             int[] _pal = new int[256];   // palette id -> packed (fluid | full << 8 | flags << 16) + 1, 0 = not looked up
@@ -148,12 +162,14 @@ namespace TabletopCraft.World
                 for (int k = 1; k <= 2; k++)
                 {
                     if ((kinds & 1 << k) == 0) continue;
-                    string st = k == (int)FluidKind.Water ? FluidRules.WaterState : FluidRules.LavaState;
-                    for (int d = 0; d < 6; d++)
+                    bool water = k == (int)FluidKind.Water;
+                    string st = water ? FluidRules.WaterState : FluidRules.LavaState;
+                    for (int d = 0; d < 8; d++)
                     {
-                        var key = faces.Face(st, d);
-                        if (k == (int)FluidKind.Water) key.Transparent = true;
-                        _keys[(k - 1) * 6 + d] = key;
+                        var key = d < 6 ? faces.Face(st, d) : d == 6 ? faces.Face(water ? FluidRules.WaterFlowState : FluidRules.LavaFlowState, 4)
+                            : water ? faces.Face(FluidRules.OverlayState, 4) : default;
+                        if (water) key.Transparent = true;
+                        _keys[(k - 1) * 8 + d] = key;
                     }
                 }
 
@@ -180,17 +196,26 @@ namespace TabletopCraft.World
                                 bool nbFull = (_full[ni] & nbBit) != 0;
                                 int c = Cell(p.x, p.y, p.z);
                                 float nw = _corners[c], sw = _corners[c + 1], se = _corners[c + 2], ne = _corners[c + 3];
-                                var key = Key(w, kind, dir, b0 + p);
+                                FaceKey key;
                                 if (dir == 3)
                                 {
                                     // A lowered surface is never hidden by the block above (vanilla checks min height < 1).
                                     if (nbFull && nw >= 1f && sw >= 1f && se >= 1f && ne >= 1f) continue;
+                                    // [flow] A moving surface: the flowing sprite turned to the flow, one quad per cell.
+                                    if (Flow(p.x, p.y, p.z, kind, out float fx, out float fz))
+                                    {
+                                        TopFlow(m, b0, p.x, p.z, p.y, nw, sw, se, ne, fx, fz, Key(w, kind, 6, dir, b0 + p));
+                                        continue;
+                                    }
+                                    key = Key(w, kind, dir, dir, b0 + p);
                                     if (nw == sw && sw == se && se == ne) { _mask[k] = key; _maskH[k] = nw; _has[k] = true; }
                                     else Top(m, b0, p.x, p.x + 1, p.z, p.z + 1, p.y, nw, sw, se, ne, key);
                                     continue;
                                 }
                                 if (nbFull) continue;
-                                if (dir == 2) { _mask[k] = key; _maskH[k] = 0; _has[k] = true; continue; }
+                                if (dir == 2) { _mask[k] = Key(w, kind, dir, dir, b0 + p); _maskH[k] = 0; _has[k] = true; continue; }
+                                // [flow] Sides: the flowing sprite; water against glass, ice, slime, honey or leaves: the overlay.
+                                key = Key(w, kind, kind == (int)FluidKind.Water && (_flags[ni] & SeeThrough) != 0 ? 7 : 6, dir, b0 + p);
                                 float h0, h1;   // top of the side at its t0 / t1 end (see Side)
                                 if (dir == 0) { h0 = nw; h1 = sw; } else if (dir == 1) { h0 = ne; h1 = se; } else if (dir == 4) { h0 = nw; h1 = ne; } else { h0 = sw; h1 = se; }
                                 if (h0 == h1) { _mask[k] = key; _maskH[k] = h0; _has[k] = true; }
@@ -202,9 +227,11 @@ namespace TabletopCraft.World
                 }
             }
 
-            FaceKey Key(WorldModel w, int kind, int dir, Vector3Int pos)
+            /// <summary>The face key of slot (0-5 still per direction, 6 flowing, 7 overlay), tinted and lit for a face
+            /// in direction dir of the cell at pos.</summary>
+            FaceKey Key(WorldModel w, int kind, int slot, int dir, Vector3Int pos)
             {
-                var key = _keys[(kind - 1) * 6 + dir];
+                var key = _keys[(kind - 1) * 8 + slot];
                 if (kind == (int)FluidKind.Water) key.Color = WaterColor(w, pos.x, pos.y, pos.z, key.Color);
                 // Light (vanilla LiquidBlockRenderer: one value per face), folded into the key so the greedy merge of
                 // flat fluid faces only joins equally lit cells.
@@ -322,12 +349,55 @@ namespace TabletopCraft.World
                 Add(ref sum, ref wt, cur); Add(ref sum, ref wt, b); Add(ref sum, ref wt, a);
                 return sum / wt;
             }
+
+            /// <summary>[flow] Vanilla FlowingFluid.getFlow, x and z (section-local cell): each horizontal neighbour of
+            /// the same fluid (or none) pulls by the height difference; an open neighbour without fluid pulls toward the
+            /// fluid below it. The falling case only adds -y, which leaves the top texture's angle alone. False = still.</summary>
+            bool Flow(int x, int y, int z, int kind, out float fx, out float fz)
+            {
+                fx = fz = 0f;
+                float own = FluidRules.Height(_fluid[Pad(x, y, z)]);
+                Pull(x, y, z - 1, kind, own, 0, -1, ref fx, ref fz);   // north
+                Pull(x + 1, y, z, kind, own, 1, 0, ref fx, ref fz);    // east
+                Pull(x, y, z + 1, kind, own, 0, 1, ref fx, ref fz);    // south
+                Pull(x - 1, y, z, kind, own, -1, 0, ref fx, ref fz);   // west
+                return fx != 0f || fz != 0f;
+            }
+
+            void Pull(int x, int y, int z, int kind, float own, int sx, int sz, ref float fx, ref float fz)
+            {
+                int i = Pad(x, y, z), nk = _fluid[i] & 3;
+                if (nk != 0 && nk != kind) return;                  // another fluid doesn't affect the flow
+                float d;
+                if (nk == kind) d = own - FluidRules.Height(_fluid[i]);
+                else
+                {
+                    if ((_flags[i] & Solid) != 0) return;           // BLOCKS_FLUID_FLOW (blocks_motion, signs)
+                    int b = _fluid[Pad(x, y - 1, z)];
+                    if ((b & 3) != kind) return;
+                    d = own - (FluidRules.Height((byte)b) - 8f / 9f);
+                }
+                fx += sx * d; fz += sz * d;
+            }
+        }
+
+        /// <summary>[flow] Vanilla's top-face UVs for a flow (fx, fz): the flowing sprite's centre half, turned so the
+        /// sprite's downward scroll runs along the flow. Sprite fractions (u right, v down) of the NW, SW, SE, NE corners,
+        /// as uv in block units of the split 2x sprite: (2u, -2v).</summary>
+        public static void FlowUvs(float fx, float fz, Vector2[] uv)
+        {
+            float a = Mathf.Atan2(fz, fx) - Mathf.PI / 2f, s = Mathf.Sin(a) * 0.25f, c = Mathf.Cos(a) * 0.25f;
+            uv[0] = new Vector2(2f * (0.5f - c - s), -2f * (0.5f - c + s));
+            uv[1] = new Vector2(2f * (0.5f - c + s), -2f * (0.5f + c + s));
+            uv[2] = new Vector2(2f * (0.5f + c + s), -2f * (0.5f + c - s));
+            uv[3] = new Vector2(2f * (0.5f + c - s), -2f * (0.5f - c - s));
         }
 
         static int Lookup(string state)
         {
             var shape = BlockRules.Shape(state);
-            int flags = InBounds | (shape != BlockShape.Air && shape != BlockShape.Cross && shape != BlockShape.Fluid ? Solid : 0);
+            int flags = InBounds | (shape != BlockShape.Air && shape != BlockShape.Cross && shape != BlockShape.Fluid ? Solid : 0)
+                        | (shape == BlockShape.TransparentCube ? SeeThrough : 0);
             return FluidRules.Info(state) | FluidRules.FullFaces(state, shape) << 8 | flags << 16;
         }
 
@@ -345,6 +415,16 @@ namespace TabletopCraft.World
         static void Top(MeshData m, Vector3Int b0, float x0, float x1, float z0, float z1, float y, float nw, float sw, float se, float ne, FaceKey key) =>
             Quad(m, b0, 3, new Vector3(x0, y + nw, z0), new Vector3(x0, y + sw, z1), new Vector3(x1, y + se, z1), new Vector3(x1, y + ne, z0), key);
 
+        [ThreadStatic] static Vector2[] _flowUv;
+
+        /// <summary>[flow] One cell's top with the flowing sprite turned to the flow (fx, fz).</summary>
+        static void TopFlow(MeshData m, Vector3Int b0, int x, int z, int y, float nw, float sw, float se, float ne, float fx, float fz, FaceKey key)
+        {
+            var uv = _flowUv ?? (_flowUv = new Vector2[4]);
+            FlowUvs(fx, fz, uv);
+            Quad(m, b0, new Vector3(x, y + nw, z), new Vector3(x, y + sw, z + 1), new Vector3(x + 1, y + se, z + 1), new Vector3(x + 1, y + ne, z), uv[0], uv[1], uv[2], uv[3], key);
+        }
+
         static void Bottom(MeshData m, Vector3Int b0, float x0, float x1, float z0, float z1, float y, FaceKey key) =>
             Quad(m, b0, 2, new Vector3(x0, y, z0), new Vector3(x1, y, z0), new Vector3(x1, y, z1), new Vector3(x0, y, z1), key);
 
@@ -361,11 +441,16 @@ namespace TabletopCraft.World
             }
         }
 
-        static void Quad(MeshData m, Vector3Int b0, int dir, Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, FaceKey key)
+        static void Quad(MeshData m, Vector3Int b0, int dir, Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, FaceKey key) =>
+            Quad(m, b0, p0, p1, p2, p3, Uv(dir, p0), Uv(dir, p1), Uv(dir, p2), Uv(dir, p3), key);
+
+        static void Quad(MeshData m, Vector3Int b0, Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, Vector2 t0, Vector2 t1, Vector2 t2, Vector2 t3, FaceKey key)
         {
             int s = m.Verts.Count;
             m.Verts.Add(p0 + b0); m.Verts.Add(p1 + b0); m.Verts.Add(p2 + b0); m.Verts.Add(p3 + b0);
-            m.Uvs.Add(Uv(dir, p0, key.Layer)); m.Uvs.Add(Uv(dir, p1, key.Layer)); m.Uvs.Add(Uv(dir, p2, key.Layer)); m.Uvs.Add(Uv(dir, p3, key.Layer));
+            // uv.z: the layer, plus the table id (FluidRules.QuadTable for the split flowing sprites).
+            float z = key.Layer >= 0 && key.Random != 0 ? key.Layer + RandomUv.LayerStride * key.Random : key.Layer;
+            m.Uvs.Add(new Vector3(t0.x, t0.y, z)); m.Uvs.Add(new Vector3(t1.x, t1.y, z)); m.Uvs.Add(new Vector3(t2.x, t2.y, z)); m.Uvs.Add(new Vector3(t3.x, t3.y, z));
             m.AddColors(new Quad4(key.Color, key.Light));   // tint x light and the light code, set in Key() (BlockShading.Fluid)
             var t = key.Transparent ? m.Transparent : m.Opaque;
             t.Add(s); t.Add(s + 1); t.Add(s + 2); t.Add(s); t.Add(s + 2); t.Add(s + 3);
@@ -384,16 +469,16 @@ namespace TabletopCraft.World
 
         /// <summary>UVs in block units from the section-local position, so merged and lowered faces tile and crop the
         /// texture instead of stretching it: u runs to the viewer's right, v up (north on top faces).</summary>
-        static Vector3 Uv(int dir, Vector3 p, float layer)
+        static Vector2 Uv(int dir, Vector3 p)
         {
             switch (dir)
             {
-                case 0: return new Vector3(p.z, p.y, layer);
-                case 1: return new Vector3(-p.z, p.y, layer);
-                case 2: return new Vector3(p.x, p.z, layer);
-                case 3: return new Vector3(p.x, -p.z, layer);
-                case 4: return new Vector3(-p.x, p.y, layer);
-                default: return new Vector3(p.x, p.y, layer);
+                case 0: return new Vector2(p.z, p.y);
+                case 1: return new Vector2(-p.z, p.y);
+                case 2: return new Vector2(p.x, p.z);
+                case 3: return new Vector2(p.x, -p.z);
+                case 4: return new Vector2(-p.x, p.y);
+                default: return new Vector2(p.x, p.y);
             }
         }
     }
