@@ -116,7 +116,10 @@ public final class EntitySampler {
     /** Baby flag, variants, colours and similar per-type looks (PROTOCOL.md 4.21 lists the fields). */
     static void variants(Entity e, EntityState s) {
         if (e instanceof Ageable a) s.baby = !a.isAdult();
-        if (e instanceof ArmorStand as) s.small = as.isSmall();
+        if (e instanceof ArmorStand as) {
+            s.small = as.isSmall(); s.arms = as.hasArms(); s.basePlate = as.hasBasePlate();
+            s.standPose = standPose(as.getHeadPose(), as.getBodyPose(), as.getLeftArmPose(), as.getRightArmPose(), as.getLeftLegPose(), as.getRightLegPose());
+        }
         if (e instanceof Tameable t && t.isTamed()) s.tamed = true;
         if (e instanceof Sheep sh) { s.color = dye(sh.getColor()); s.sheared = sh.isSheared(); }
         else if (e instanceof Shulker sk) s.color = dye(sk.getColor());
@@ -198,6 +201,24 @@ public final class EntitySampler {
     }
 
     private static String dye(DyeColor c) { return c == null ? null : c.name().toLowerCase(Locale.ROOT); }
+
+    /**
+     * An armour stand's part angles (Bukkit EulerAngles, radians) as {@link EntityState#standPose}: degrees rounded to
+     * 0.1, in head, body, left arm, right arm, left leg, right leg order; null when all are vanilla's defaults.
+     */
+    static float[] standPose(org.bukkit.util.EulerAngle... parts) {
+        float[] p = new float[18];
+        boolean custom = false;
+        for (int i = 0; i < 6; i++) {
+            double[] r = { parts[i].getX(), parts[i].getY(), parts[i].getZ() };
+            for (int a = 0; a < 3; a++) {
+                float deg = Math.round(Math.toDegrees(r[a]) * 10) / 10f;
+                p[i * 3 + a] = deg;
+                if (Math.abs(deg - EntityState.DEFAULT_STAND_POSE[i * 3 + a]) > 0.05f) custom = true;
+            }
+        }
+        return custom ? p : null;
+    }
 
     private static String profession(String p) { return p == null || p.equals("none") ? null : p; }
 

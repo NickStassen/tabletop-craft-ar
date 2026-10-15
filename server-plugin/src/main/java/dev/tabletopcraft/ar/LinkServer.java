@@ -123,6 +123,24 @@ public final class LinkServer extends WebSocketServer {
                     }
                     plugin.enqueue(() -> plugin.onBlockEdit(s, e, refSeq));
                 }
+                // [talk] chat, commands, status (PROTOCOL.md 4.26-4.28): parsed and rate-limited here, run on the main thread
+                case "chat_send" -> {
+                    String said = ControlMessages.chatSendText(m);
+                    if (!limited(s, s.chatLimiter, "chat messages", refSeq)) plugin.enqueue(() -> plugin.control.onChatSend(s, said, refSeq));
+                }
+                case "command" -> {
+                    ControlMessages.CommandRequest r = ControlMessages.command(m, plugin.control.commandMaxLen);
+                    if (!limited(s, s.commandLimiter, "commands", refSeq)) plugin.enqueue(() -> plugin.control.onCommand(s, r, refSeq));
+                }
+                case "command_complete" -> {
+                    String line = ControlMessages.completeLine(m, plugin.control.commandMaxLen);
+                    if (!limited(s, s.completeLimiter, "completions", refSeq)) plugin.enqueue(() -> plugin.control.onComplete(s, line, refSeq));
+                }
+                case "world_query" -> {
+                    String world = m.has("world") && m.get("world").isJsonPrimitive() ? m.get("world").getAsString() : null;
+                    if (!limited(s, s.completeLimiter, "queries", refSeq)) plugin.enqueue(() -> plugin.control.onWorldQuery(s, world, refSeq));
+                }
+                case "players_query" -> { if (!limited(s, s.completeLimiter, "queries", refSeq)) plugin.enqueue(() -> plugin.control.onPlayersQuery(s, refSeq)); }
                 case "ping" -> {
                     JsonObject p = Protocol.body("pong");
                     if (m.has("id")) p.add("id", m.get("id"));
@@ -150,7 +168,7 @@ public final class LinkServer extends WebSocketServer {
             for (var e : m.getAsJsonArray("protocols")) if (e.getAsInt() == Protocol.VERSION) speaks = true;
         if (!speaks) { fatal(s, "version_mismatch", "server speaks protocols [" + Protocol.VERSION + "]", refSeq, Protocol.CLOSE_VERSION); return; }
         String t = m.has("token") && !m.get("token").isJsonNull() ? m.get("token").getAsString() : "";
-        if (!token.isEmpty() && !token.equals(t)) { fatal(s, "auth_failed", "bad or missing token", refSeq, Protocol.CLOSE_AUTH); return; }
+        if (!token.isEmpty() && !tokenMatches(token, t)) { fatal(s, "auth_failed", "bad or missing token", refSeq, Protocol.CLOSE_AUTH); return; }
         s.client = m.has("client") ? m.get("client").getAsString() : "unknown";
         if (m.has("caps") && m.get("caps").isJsonArray()) {
             java.util.Set<String> caps = new java.util.HashSet<>();
@@ -166,10 +184,36 @@ public final class LinkServer extends WebSocketServer {
                 else if (c.equals(Protocol.CAP_ENTITIES)) s.wantsEntities = plugin.entitiesEnabled();
                 else if (c.equals(Protocol.CAP_ACTIONS)) s.wantsActions = plugin.actionsEnabled();
                 else if (c.equals(Protocol.CAP_EDIT) && plugin.editAllowed()) { s.editLimiter = new EditLimiter(plugin.editRate()); s.canEdit = true; }
+                // [talk] PROTOCOL.md 4.26-4.28
+                else if (c.equals(ControlMessages.CAP_CHAT) && plugin.control.chatAllowed()) s.wantsChat = true;
+                else if (c.equals(ControlMessages.CAP_COMMAND) && plugin.control.commandsAllowed()) s.canCommand = true;
+                else if (c.equals(ControlMessages.CAP_STATUS) && plugin.control.statusAllowed()) s.wantsStatus = true;
             }
+        ControlService cs = plugin.control;   // [talk] rate limits (token buckets) and the chat name
+        s.chatLimiter = new EditLimiter(cs.chatRate, cs.chatBurst);
+        s.commandLimiter = new EditLimiter(cs.commandRate, cs.commandBurst);
+        s.completeLimiter = new EditLimiter(cs.completeRate, cs.completeRate);
+        s.operatorName = ChatText.name(m.has("operator_name") && m.get("operator_name").isJsonPrimitive() ? m.get("operator_name").getAsString() : null, cs.defaultName);
         s.state = Session.State.READY;
         plugin.getLogger().info("Hello from " + s.client + " (session " + s.id + ") @ " + s.conn.getRemoteSocketAddress());
         plugin.enqueue(() -> plugin.onReady(s));
+    }
+
+    /** [talk] True (and an error rate_limited sent) when the session's bucket is empty. */
+    private boolean limited(Session s, EditLimiter lim, String what, Long refSeq) {
+        if (lim == null || lim.tryAcquire(System.nanoTime())) return false;
+        s.send(Protocol.error("rate_limited", "too many " + what + " per second", refSeq, false));
+        return true;
+    }
+
+    /** Constant-time token check: both sides hashed (no length leak), then MessageDigest.isEqual. */
+    static boolean tokenMatches(String expected, String given) {
+        try {
+            var sha = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] a = sha.digest(expected.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            byte[] b = sha.digest((given == null ? "" : given).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.security.MessageDigest.isEqual(a, b);
+        } catch (java.security.NoSuchAlgorithmException e) { throw new IllegalStateException(e); }   // every JVM has SHA-256
     }
 
     private void fatal(Session s, String code, String msg, Long refSeq, int closeCode) {
@@ -179,5 +223,11 @@ public final class LinkServer extends WebSocketServer {
 
     @Override public void onError(WebSocket conn, Exception ex) { plugin.getLogger().log(Level.WARNING, "Websocket error", ex); }
 
-    @Override public void onStart() { plugin.getLogger().info("Link listening on ws://" + getAddress().getHostString() + ":" + getPort() + path); }
+    @Override public void onStart() {
+        plugin.getLogger().info("Link listening on ws://" + getAddress().getHostString() + ":" + getPort() + path);
+        // ws://0.0.0.0 isn't something to type into the headset: list the addresses it can actually use.
+        var urls = LanBeacon.headsetUrls(getAddress().getHostString(), getPort(), path, LanBeacon.localNics());
+        for (String u : urls) plugin.getLogger().info("Headset URL: " + u);
+        if (urls.isEmpty()) plugin.getLogger().info("Headset URL: ws://<this PC's LAN IPv4>:" + getPort() + path + " (no private IPv4 found)");
+    }
 }

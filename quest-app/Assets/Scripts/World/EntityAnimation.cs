@@ -9,6 +9,24 @@ namespace TabletopCraft.World
 {
     public enum PartRole { None, Head, RightHindLeg, LeftHindLeg, RightFrontLeg, LeftFrontLeg, RightArm, LeftArm, RightLeg, LeftLeg, RightWing, LeftWing, Tail, Fin, Tentacle, SpiderLeg }
 
+    /// <summary>EndCrystalModel.setupAnim: the glass spins at 3 degrees per tick and bobs (EndCrystalRenderer.getY).
+    /// outer_glass: rotY(spin) * rot(60 degrees about (1, 0, 1)), and its pivot y + BobPx; inner_glass and cube:
+    /// rot(60 degrees about (1, 0, 1)) * rotY(spin). Figure space keeps the game's rotation numbers.</summary>
+    public static class CrystalAnimation
+    {
+        public const float TiltDeg = 60f;   // 1.0471976 rad about (sin 45, 0, sin 45)
+
+        public static float SpinDeg(float ageTicks) => ageTicks * 3f;
+
+        /// <summary>EndCrystalRenderer.getY(age) * 16 / 2: added to outer_glass.y (game model pixels).</summary>
+        public static float BobPx(float ageTicks)
+        {
+            float s = (float)Math.Sin(ageTicks * 0.2f) / 2f + 0.5f;
+            float y = (s * s + s) * 0.4f - 1.4f;
+            return y * 16f / 2f;
+        }
+    }
+
     /// <summary>Per-model part roles, worked out once from the part names.</summary>
     public sealed class EntityRig
     {
@@ -74,6 +92,7 @@ namespace TabletopCraft.World
         public float AgeTicks;
         public float AttackTime;            // 0 = no swing, else 0..1 through the arm swing
         public bool OffHandSwing, OnGround, ArmsForward, Riding;
+        public float BodyYaw;               // degrees, the figure's yaw (armour stand base plates turn against it)
     }
 
     public static class EntityAnimation

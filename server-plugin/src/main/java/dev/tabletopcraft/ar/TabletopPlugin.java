@@ -10,8 +10,6 @@ import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.data.BlockData;
-import org.bukkit.block.data.Levelled;
-import org.bukkit.block.data.Waterlogged;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Entity;
@@ -31,11 +29,12 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class TabletopPlugin extends JavaPlugin {
     private RegionCaps caps = RegionCaps.DEFAULT;
 
-    private LinkServer link;
+    private volatile LinkServer link;   // [talk] volatile: read by the async chat handler
     private ExecutorService outbound;
     private final RegionReader reader = new RegionReader(this);
     private final java.util.Set<RegionSpec> diffInFlight = new java.util.HashSet<>();
     private final GiantAvatar avatar = new GiantAvatar();
+    private EditWorld editWorld;                          // applies block_edit (onEnable: needs the logger)
     private final ConcurrentLinkedQueue<Runnable> queue = new ConcurrentLinkedQueue<>();
     private record PoseSet(Session s, Pose head, Pose left, Pose right, long seq, int snapshotId) {}
     /** Server capabilities in welcome.caps (PROTOCOL.md 4.17-4.18). */
@@ -79,11 +78,18 @@ public final class TabletopPlugin extends JavaPlugin {
     private volatile Set<String> editDeny = Set.of();
     // [menu] Placeable blocks for the headset's block menu (block_registry, PROTOCOL.md 4.24), built on start/reload.
     private volatile BlockRegistry blockRegistry = BlockRegistry.empty();
+    // [talk] chat, commands and server status for the headset (PROTOCOL.md 4.26-4.28)
+    final ControlService control = new ControlService(this);
+    // [comfort] LAN discovery (PROTOCOL.md 7, config.yml discovery): answers the headset's UDP probe on its own thread.
+    private LanBeacon beacon;
+    private volatile int onlinePlayers;
 
     @Override public void onEnable() {
         saveDefaultConfig();
+        editWorld = new EditWorld(getLogger(), avatar::entities);
         getServer().getPluginManager().registerEvents(new BlockListener(this), this);
         getServer().getPluginManager().registerEvents(actions, this);
+        getServer().getPluginManager().registerEvents(control, this);   // [talk]
         start();
     }
 
@@ -131,14 +137,37 @@ public final class TabletopPlugin extends JavaPlugin {
         for (String id : c.getStringList("edit.deny")) deny.add(BlockEdit.blockId(id));
         editDeny = Set.copyOf(deny);
         buildBlockRegistry();   // [menu]
+        control.configure(c);   // [talk]
         outbound = Executors.newSingleThreadExecutor(r -> { Thread t = new Thread(r, "tabletop-outbound"); t.setDaemon(true); return t; });
         link = new LinkServer(this, c.getString("bind.host", "0.0.0.0"), c.getInt("bind.port", 8765), c.getString("bind.path", "/tabletop"), c.getString("auth.token", ""));
         link.start();
+        startDiscovery();
         tickTask = Bukkit.getScheduler().runTaskTimer(this, this::tick, 1, 1);
+    }
+
+    /** [comfort] The discovery responder (LanBeacon). Its reply reads only values fixed here and a volatile player count. */
+    private void startDiscovery() {
+        var c = getConfig();
+        if (!c.getBoolean("discovery.enabled", true)) return;
+        int udp = c.getInt("discovery.port", 8765), wsPort = c.getInt("bind.port", 8765);
+        String path = c.getString("bind.path", "/tabletop"), version = getPluginMeta().getVersion(), mc = Bukkit.getMinecraftVersion();
+        String name = c.getString("discovery.name", "");
+        if (name == null || name.isBlank())
+            name = net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText().serialize(Bukkit.motd());
+        boolean token = !c.getString("auth.token", "").isEmpty();
+        String shown = name;
+        onlinePlayers = Bukkit.getOnlinePlayers().size();
+        try {
+            beacon = LanBeacon.start(getLogger(), udp, () -> LanBeacon.reply(shown, wsPort, path, token, version, mc, onlinePlayers));
+            getLogger().info("LAN discovery on UDP " + udp + " as \"" + shown + "\" (headset: menu > Info > Server > Find servers)");
+        } catch (java.net.SocketException e) {
+            getLogger().warning("LAN discovery off: UDP " + udp + " unavailable (" + e.getMessage() + "); set discovery.port or discovery.enabled in config.yml");
+        }
     }
 
     private void stop() {
         if (tickTask != null) tickTask.cancel();
+        if (beacon != null) { beacon.stop(); beacon = null; }
         if (configSaveAt >= 0) { configSaveAt = -1; saveConfig(); }
         movesInFlight = 0; moveTargets.clear();   // [nav]
         avatar.remove();
@@ -160,11 +189,17 @@ public final class TabletopPlugin extends JavaPlugin {
     boolean biomesEnabled() { return biomesOn; }
     boolean entitiesEnabled() { return entities.enabled; }
     boolean actionsEnabled() { return actions.enabled; }
-    private void send(Session s, JsonObject body) { if (outbound != null && !outbound.isShutdown()) outbound.execute(() -> s.send(body)); }
+    void send(Session s, JsonObject body) { if (outbound != null && !outbound.isShutdown()) outbound.execute(() -> s.send(body)); }
     /** Like send, adding the UTF-8 size to a counter (entities bytes/s). */
     void sendCounting(Session s, JsonObject body, java.util.concurrent.atomic.AtomicLong bytes, java.util.concurrent.atomic.AtomicLong total) {
         if (outbound != null && !outbound.isShutdown()) outbound.execute(() -> { int n = s.sendCounted(body); bytes.addAndGet(n); total.addAndGet(n); });
     }
+
+    /** [talk] Every connected session, any state (thread-safe view). */
+    Collection<Session> allSessions() { LinkServer l = link; return l == null ? List.of() : l.sessions(); }
+
+    /** [talk] The operator's chat line as a speech bubble over the giant's head, for Java players. */
+    void giantSays(String text, int seconds) { if (avatar.spawned()) avatar.say(text, seconds); }
 
     void markDirty(String world, int x, int y, int z) {
         if (link == null) return;
@@ -199,7 +234,9 @@ public final class TabletopPlugin extends JavaPlugin {
         }
         if (tickCount % Math.max(1, getConfig().getInt("stream.players-every-ticks", 2)) == 0) { sendPlayers(); entities.tick(ready()); }
         actions.flush(ready());   // swings, digging, breaks, damage of this tick (PROTOCOL.md 4.22)
-        if (tickCount % 20 == 0) timeouts();
+        control.tick(tickCount);  // [talk] late command output, server_status
+        avatar.tickBubble();      // [talk] the giant's speech bubble follows the head and expires
+        if (tickCount % 20 == 0) { timeouts(); onlinePlayers = Bukkit.getOnlinePlayers().size(); }
         // [nav] A move read that never finished (a chunk load failed) must not hold diffs back forever.
         if (movesInFlight > 0 && System.currentTimeMillis() - moveStartedMs > 15000) {
             getLogger().warning("region move read did not finish; diffs resume");
@@ -252,7 +289,12 @@ public final class TabletopPlugin extends JavaPlugin {
         sc.add("view_margin");
         sc.add("pose_snapshot_id");
         if (s.canEdit) sc.add(Protocol.CAP_EDIT);   // block editing (PROTOCOL.md 4.20)
+        // [talk] chat, commands, status (PROTOCOL.md 4.26-4.28)
+        if (s.wantsChat) sc.add(ControlMessages.CAP_CHAT);
+        if (s.canCommand) sc.add(ControlMessages.CAP_COMMAND);
+        if (s.wantsStatus) sc.add(ControlMessages.CAP_STATUS);
         w.add("caps", sc);
+        control.welcome(s, w);
         send(s, w);
         send(s, blockRegistry.message());   // [menu] every placeable block, once per connection (PROTOCOL.md 4.24)
         subscribe(s, r, null);
@@ -549,7 +591,8 @@ public final class TabletopPlugin extends JavaPlugin {
             com.google.gson.JsonArray arr = new com.google.gson.JsonArray();
             for (Player p : w.getPlayers()) {
                 Location l = p.getLocation();
-                if (l.getX() < r.ox() - margin || l.getX() > r.ox() + r.sx() + margin || l.getZ() < r.oz() - margin || l.getZ() > r.oz() + r.sz() + margin) continue;
+                // [comfort] near the region on all three axes; no spectators, invisible or vanished players (PlayerFilter)
+                if (!PlayerFilter.near(r, l.getX(), l.getY(), l.getZ(), margin) || !PlayerFilter.shown(p, Bukkit.getOnlinePlayers())) continue;
                 JsonObject e = new JsonObject();
                 e.addProperty("uuid", p.getUniqueId().toString());
                 e.addProperty("name", p.getName());
@@ -606,6 +649,12 @@ public final class TabletopPlugin extends JavaPlugin {
         o.add("origin", Protocol.ints(r.ox(), r.oy(), r.oz()));
         o.add("dims", Protocol.ints(r.sx(), r.sy(), r.sz()));
         o.add("view_margin", Protocol.ints(sharedMargin));   // PROTOCOL.md 4.17
+        // [comfort] the new region's limits, build height included: after a move to another world the headset must not
+        // keep gliding inside the old world's height (PROTOCOL.md 4.13)
+        JsonObject lim = new JsonObject();
+        caps.addTo(lim);
+        addBuildHeight(lim, r.world());
+        o.add("limits", lim);
         o.addProperty("by_session", by == null ? "server" : by.id);
         if (refSeq != null && by != null) o.addProperty("ref_seq", refSeq);
         return o;
@@ -751,10 +800,11 @@ public final class TabletopPlugin extends JavaPlugin {
     int editRate() { return editRate; }
 
     /**
-     * Applies one block_edit on the main thread: only inside the session's region, never into an occupied cell, never
-     * a state from edit.deny. Breaking a block that holds water leaves water and placing a waterloggable block into a
-     * water source waterlogs it (vanilla). A plugin's setBlockData fires no block events, so the region is marked dirty
-     * here and the change reaches every headset through the normal block_update diff (this tick).
+     * Applies one block_edit on the main thread: only inside the session's region and the world border, only blocks
+     * from block_registry and not from edit.deny, the way vanilla places and breaks them (EditWorld: replaceable
+     * cells, nobody in the way, both halves of doors, beds and tall plants, persistent leaves, waterlogging from the
+     * cell, connections to the neighbours). A plugin's setBlockData fires no block events, so the region is marked
+     * dirty here and the change reaches every headset through the normal block_update diff (this tick).
      */
     void onBlockEdit(Session s, BlockEdit e, Long refSeq) {
         if (s.state != Session.State.READY) return;
@@ -764,41 +814,31 @@ public final class TabletopPlugin extends JavaPlugin {
         World w = Bukkit.getWorld(r.world());
         if (w == null) { denyEdit(s, e, "world_not_found", "no world " + r.world(), refSeq); return; }
         if (!w.isChunkLoaded(e.x() >> 4, e.z() >> 4)) { denyEdit(s, e, "edit_denied", "chunk not loaded", refSeq); return; }
-        Block b = w.getBlockAt(e.x(), e.y(), e.z());
-        BlockData old = b.getBlockData(), next;
-        if (e.op() == BlockEdit.Op.BREAK) {
-            if (old.getMaterial().isAir()) { getLogger().info(String.format("EDIT session=%s break %d,%d,%d: already air", s.id, e.x(), e.y(), e.z())); return; }
-            next = Bukkit.createBlockData(holdsWater(old) ? Material.WATER : Material.AIR);
-        } else {
+        long t0 = System.nanoTime();
+        EditWorld.Outcome o;
+        if (e.op() == BlockEdit.Op.BREAK) o = editWorld.breakBlock(w, e, editPhysics);
+        else {
+            BlockData next;
             try { next = Bukkit.createBlockData(e.state()); }
             catch (IllegalArgumentException ex) { denyEdit(s, e, "bad_state", "not a block state: " + e.state(), refSeq); return; }
             String id = BlockEdit.blockId(next.getAsString());
             if (next.getMaterial().isAir()) { denyEdit(s, e, "bad_state", "use op break to remove a block", refSeq); return; }
-            if (editDeny.contains(id)) { denyEdit(s, e, "edit_denied", id + " can't be placed from the headset (edit.deny)", refSeq); return; }
-            String notPlaceable = blockRegistry.refusePlace(id);   // [menu] only blocks from block_registry (PROTOCOL.md 4.24)
-            if (notPlaceable != null) { denyEdit(s, e, "bad_state", notPlaceable, refSeq); return; }
-            if (!b.isReplaceable()) { denyEdit(s, e, "edit_denied", "cell is occupied by " + old.getAsString(), refSeq); return; }
-            if (next instanceof Waterlogged wl && old.getMaterial() == Material.WATER && old instanceof Levelled lv && lv.getLevel() == 0) wl.setWaterlogged(true);
+            if (editDeny.contains(id)) { denyEdit(s, e, "edit_denied", EditRules.label(id) + " can't be placed from the headset (edit.deny)", refSeq); return; }
+            if (!blockRegistry.placeable(id)) {   // [menu] only blocks from block_registry (PROTOCOL.md 4.24)
+                denyEdit(s, e, "bad_state", EditRules.label(id) + " is not a placeable block (not in block_registry)", refSeq); return;
+            }
+            o = editWorld.place(w, r, e, next, editPhysics);
         }
-        long t0 = System.nanoTime();
-        b.setBlockData(next, editPhysics);
-        markDirty(w.getName(), e.x(), e.y(), e.z());
-        getLogger().info(String.format("EDIT session=%s %s %s %d,%d,%d%s %s -> %s (%.2f ms)", s.id, e.op().id(), w.getName(), e.x(), e.y(), e.z(),
-            e.face() == null ? "" : " face=" + e.face(), old.getAsString(), b.getBlockData().getAsString(), (System.nanoTime() - t0) / 1e6));
+        if (o.denied() != null) { denyEdit(s, e, o.denied().code(), o.denied().message(), refSeq); return; }
+        if (o.cells().isEmpty()) { getLogger().info(String.format("EDIT session=%s %s %d,%d,%d: already air", s.id, e.op().id(), e.x(), e.y(), e.z())); return; }
+        for (int[] c : o.cells()) markDirty(w.getName(), c[0], c[1], c[2]);
+        getLogger().info(String.format("EDIT session=%s %s %s %d,%d,%d%s %s -> %s%s (%.2f ms)", s.id, e.op().id(), w.getName(), e.x(), e.y(), e.z(),
+            e.face() == null ? "" : " face=" + e.face(), o.before(), o.after(), o.cells().size() > 1 ? " cells=" + o.cells().size() : "", (System.nanoTime() - t0) / 1e6));
     }
 
     private void denyEdit(Session s, BlockEdit e, String code, String why, Long refSeq) {
         getLogger().info(String.format("EDIT_DENIED session=%s %s %d,%d,%d %s: %s", s.id, e.op().id(), e.x(), e.y(), e.z(), code, why));
         send(s, e.error(code, why, refSeq));
-    }
-
-    /** Waterlogged blocks and the always-underwater plants leave a water source when broken. */
-    private static boolean holdsWater(BlockData d) {
-        if (d instanceof Waterlogged wl && wl.isWaterlogged()) return true;
-        return switch (d.getMaterial()) {
-            case KELP, KELP_PLANT, SEAGRASS, TALL_SEAGRASS, BUBBLE_COLUMN -> true;
-            default -> false;
-        };
     }
 
     // ---------- avatar ----------
@@ -1013,11 +1053,22 @@ public final class TabletopPlugin extends JavaPlugin {
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (args.length == 0) return false;
-        switch (args[0].toLowerCase(Locale.ROOT)) {
+        String sub0 = args[0].toLowerCase(Locale.ROOT);
+        // [talk] /tabletop tell is for every player (tabletop.tell, default true); the rest needs tabletop.admin.
+        if (sub0.equals("tell")) {
+            if (!sender.hasPermission("tabletop.tell")) { sender.sendMessage("[tabletop] you may not message the headsets (tabletop.tell)"); return true; }
+            if (args.length < 2) { sender.sendMessage("[tabletop] usage: /tabletop tell <message>"); return true; }
+            int n = control.tell(sender, String.join(" ", Arrays.copyOfRange(args, 1, args.length)));
+            sender.sendMessage(n < 0 ? "[tabletop] message is empty or too long" : n == 0 ? "[tabletop] no headset with chat is connected" : "[tabletop] sent to " + n + (n == 1 ? " headset" : " headsets"));
+            return true;
+        }
+        if (!sender.hasPermission("tabletop.admin")) { sender.sendMessage("[tabletop] you need tabletop.admin for that"); return true; }
+        switch (sub0) {
             case "status" -> {
                 RegionSpec r = defaultRegion();
                 sender.sendMessage(String.format("[tabletop] default region %s origin %d %d %d dims %d %d %d; clients %d; avatar %s scale %.2f placement %s; poses applied %d",
                     r.world(), r.ox(), r.oy(), r.oz(), r.sx(), r.sy(), r.sz(), ready().size(), avatar.spawned() ? "spawned" : "none", avatar.scale(), avatar.placement.id(), avatar.posesApplied));
+                sender.sendMessage("[tabletop] " + control.stats() + "; commands " + (control.commandsAllowed() ? "on, deny " + control.denyList() : "off (" + control.commandsOffReason() + ")"));   // [talk]
             }
             case "setorigin" -> {
                 int x, y, z; String world;
@@ -1098,7 +1149,7 @@ public final class TabletopPlugin extends JavaPlugin {
 
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
-        if (args.length == 1) return List.of("status", "setorigin", "setsize", "avatar", "entities", "reload");
+        if (args.length == 1) return sender.hasPermission("tabletop.admin") ? List.of("status", "setorigin", "setsize", "avatar", "entities", "reload", "tell") : List.of("tell");
         if (args.length == 2 && args[0].equalsIgnoreCase("avatar")) return List.of("status", "spawn", "remove", "blocksize", "placement", "skin");
         if (args.length == 3 && args[0].equalsIgnoreCase("avatar") && args[1].equalsIgnoreCase("placement")) return List.of("floating", "ground", "exact");
         return List.of();

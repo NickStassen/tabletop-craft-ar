@@ -1,0 +1,48 @@
+{
+ "v": 1,
+ "type": "server_status",
+ "seq": 98,
+ "t": 1760370008000,
+ "tps": [
+  20.0,
+  19.98,
+  20.0
+ ],
+ "mspt": 3.21,
+ "memory": {
+  "used_mb": 812,
+  "max_mb": 2048
+ },
+ "players": {
+  "online": 1,
+  "max": 20
+ },
+ "tick": {
+  "rate": 20.0,
+  "frozen": false,
+  "stepping": false,
+  "sprinting": false
+ },
+ "worlds": [
+  {
+   "name": "world",
+   "env": "normal",
+   "chunks": 441,
+   "entities": 118,
+   "players": 1,
+   "time": 6000,
+   "day": 12,
+   "weather": "clear"
+  },
+  {
+   "name": "world_nether",
+   "env": "nether",
+   "chunks": 0,
+   "entities": 0,
+   "players": 0,
+   "time": 6000,
+   "day": 12,
+   "weather": "clear"
+  }
+ ]
+}

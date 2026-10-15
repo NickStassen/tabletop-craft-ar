@@ -69,6 +69,11 @@ public final class Session {
     /** Granted edit_v1 in welcome.caps (block_edit, PROTOCOL.md 4.20); its rate limit, set together with it. */
     public volatile boolean canEdit;
     public volatile EditLimiter editLimiter;
+    // [talk] Chat, commands and status (PROTOCOL.md 4.26-4.28), set at hello. operatorName: the sanitised name Java
+    // players see in chat (hello.operator_name, else config chat.default-name).
+    public volatile boolean wantsChat, canCommand, wantsStatus;
+    public volatile String operatorName = "Tabletop";
+    public volatile EditLimiter chatLimiter, commandLimiter, completeLimiter;
 
     /** RegionReader extras this session needs in its snapshots and diffs. */
     public int readExtras() { return (wantsLight ? RegionReader.LIGHT : 0) | (wantsBiomes ? RegionReader.BIOMES : 0); }

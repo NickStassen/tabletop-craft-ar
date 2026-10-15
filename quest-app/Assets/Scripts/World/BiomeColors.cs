@@ -72,8 +72,11 @@ namespace TabletopCraft.World
         public static bool PositionDependent(BiomeInfo b, TintKind kind) => kind == TintKind.Grass && b.Modifier == GrassModifier.Swamp;
 
         /// <summary>
-        /// Vanilla BlockColors: which tint a block's tinted faces (model "tintindex") take. Returns None with a fixed colour
-        /// for blocks whose tint doesn't depend on the biome (spruce/birch leaves, lily pads, stems, redstone wire).
+        /// Vanilla BlockColors.createDefault (26.3): which tint a block's tinted faces (model "tintindex") take. Returns
+        /// None with a fixed colour for blocks whose tint doesn't depend on the biome (spruce/birch leaves, lily pads,
+        /// stems, redstone wire), and None without one for every block vanilla registers no tint for: their tintindex is
+        /// ignored and the face drawn untinted (cherry and pale oak leaves, bamboo, lava/powder snow cauldrons, the
+        /// stonecutter blade...). See Tinted for the per-index rule.
         /// </summary>
         public static TintKind BlockTint(string state, out Color32? fixedColor)
         {
@@ -81,6 +84,11 @@ namespace TabletopCraft.World
             string p = BlockRules.Path(state);
             switch (p)
             {
+                case "grass_block": case "short_grass": case "tall_grass": case "fern": case "large_fern": case "potted_fern":
+                case "bush": case "sugar_cane": case "pink_petals": case "wildflowers":
+                    return TintKind.Grass;
+                case "oak_leaves": case "jungle_leaves": case "acacia_leaves": case "dark_oak_leaves": case "mangrove_leaves": case "vine":
+                    return TintKind.Foliage;
                 case "spruce_leaves": fixedColor = Rgb(0x619961); return TintKind.None;
                 case "birch_leaves": fixedColor = Rgb(0x80A755); return TintKind.None;
                 case "lily_pad": fixedColor = Rgb(0x208030); return TintKind.None;
@@ -101,8 +109,18 @@ namespace TabletopCraft.World
                 case "leaf_litter": return TintKind.DryFoliage;
                 case "water": case "bubble_column": case "water_cauldron": return TintKind.Water;
             }
-            if (p.EndsWith("leaves") || p == "vine") return TintKind.Foliage;
-            return TintKind.Grass; // grass_block, short/tall grass, ferns, sugar cane, bush, pink petals, wildflowers, ...
+            return TintKind.None;
+        }
+
+        /// <summary>Vanilla BlockColors.getTintSource: whether a face with this tintindex is tinted at all. A block takes a
+        /// tint only if vanilla registers one for it, and only for the indices it registers: pink petals and wildflowers
+        /// list a blank layer at index 0 (the petals) and the grass colour at index 1 (the stems); everything else index 0.</summary>
+        public static bool Tinted(string state, int tintIndex)
+        {
+            if (tintIndex < 0) return false;
+            string p = BlockRules.Path(state);
+            if (p == "pink_petals" || p == "wildflowers") return tintIndex == 1;
+            return tintIndex == 0 && (BlockTint(state, out var fixedColor) != TintKind.None || fixedColor.HasValue);
         }
 
         static int Prop(string state, string key)

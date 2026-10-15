@@ -143,4 +143,15 @@ class FixtureTest {
         assertEquals(0.01, c.blockSizeM());
         assertEquals("wide", c.model());
     }
+
+    /** Next version (PROTOCOL.md 4.13): region_changed carries the region's limits as region_info does, build_height included. */
+    @Test void regionChangedFixtureCarriesLimits() throws Exception {
+        JsonObject lim = fixture("region_changed").getAsJsonObject("limits");
+        JsonObject caps = new JsonObject();
+        RegionCaps.DEFAULT.addTo(caps);
+        for (String k : caps.keySet()) assertEquals(caps.get(k), lim.get(k), k);
+        var bh = lim.getAsJsonArray("build_height");
+        assertEquals(2, bh.size());
+        assertTrue(bh.get(0).getAsInt() < bh.get(1).getAsInt());
+    }
 }

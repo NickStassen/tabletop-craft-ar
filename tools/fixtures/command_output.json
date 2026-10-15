@@ -1,0 +1,10 @@
+{
+ "v": 1,
+ "type": "command_output",
+ "seq": 95,
+ "t": 1760370007200,
+ "ref_seq": 81,
+ "lines": [
+  "Backup finished in 1.2 s"
+ ]
+}

@@ -7,9 +7,14 @@ import pytest
 from tabletop_protocol import (
     CAP_ACTIONS,
     CAP_BIOMES,
+    CAP_CHAT,
+    CAP_COMMAND,
     CAP_EDIT,
     CAP_ENTITIES,
     CAP_LIGHT,
+    CAP_STATUS,
+    CHAT_KINDS,
+    DISCOVERY_PORT,
     REGISTRY_CATEGORIES,
     EntityMirror,
     Envelope,
@@ -21,6 +26,7 @@ from tabletop_protocol import (
     registry_id,
     registry_states,
     scripted_pose,
+    suggestion_apply,
     validate,
 )
 
@@ -221,6 +227,23 @@ def test_entities_full_then_delta():
     assert m.entities == {}
 
 
+def test_entities_armor_stands():
+    """Armour stands (PROTOCOL.md 4.21): arms, base_plate and stand_pose; a default stand sends neither arms nor a pose."""
+    msg = json.loads((FIX / "entities_armor_stand.json").read_text())
+    validate(msg)
+    m = EntityMirror()
+    m.apply(msg)
+    plain, posed, small = m.entities[201], m.entities[202], m.entities[203]
+    assert plain["base_plate"] and "arms" not in plain and "stand_pose" not in plain
+    assert posed["arms"] and "base_plate" not in posed and posed["stand_pose"]["right_arm"] == [-110.0, 25.0, 10.0]
+    assert small["small"] and small["invisible"] and small["equipment"] == {"head": "minecraft:iron_helmet"}
+    m.apply({"full": False, "entities": [{"id": 202, "stand_pose": None, "arms": False}]})
+    assert m.entities[202]["stand_pose"] is None and not m.entities[202]["arms"]   # cleared, like other fields
+    del msg["entities"][1]["stand_pose"]["left_leg"]
+    with pytest.raises(ValueError):
+        validate(msg)
+
+
 def test_entities_validation():
     msg = json.loads((FIX / "entities.json").read_text())
     del msg["entities"][0]["type"]
@@ -334,5 +357,103 @@ def test_block_registry_fixture():
 def test_block_registry_rejects_bad_fields(patch):
     msg = json.loads((FIX / "block_registry.json").read_text())
     msg.update(patch)
+    with pytest.raises(ValueError):
+        validate(msg)
+
+
+# ---------- [talk] chat, commands, status (PROTOCOL.md 4.26-4.28) ----------
+CONTROL_FIXTURES = ("chat", "chat_death", "chat_operator", "chat_send", "command", "command_result", "command_output", "command_complete",
+                    "command_suggestions", "server_status", "world_query", "world_info", "players_query", "players_info",
+                    "error_command_denied", "hello_control", "welcome_control")
+
+
+def test_control_fixtures_exist_and_validate():
+    for name in CONTROL_FIXTURES:
+        validate(json.loads((FIX / f"{name}.json").read_text()))
+
+
+def test_control_caps_and_welcome_objects():
+    hello = json.loads((FIX / "hello_control.json").read_text())
+    welcome = json.loads((FIX / "welcome_control.json").read_text())
+    assert {CAP_CHAT, CAP_COMMAND, CAP_STATUS} <= set(hello["caps"]) and hello["operator_name"] == "Nick"
+    assert {CAP_CHAT, CAP_COMMAND, CAP_STATUS} <= set(welcome["caps"])
+    assert welcome["chat"] == {"send": True, "name": "Nick", "max_len": 256}
+    assert welcome["commands"]["max_len"] == 256 and "time set day" in welcome["commands"]["quick"]
+
+
+def test_chat_kinds_and_from():
+    for name in ("chat", "chat_death", "chat_operator"):
+        m = json.loads((FIX / f"{name}.json").read_text())
+        assert m["kind"] in CHAT_KINDS
+    op = json.loads((FIX / "chat_operator.json").read_text())
+    assert op["line"].endswith(op["text"]) and op["from"]["session"] == "6f1c"
+
+
+def test_suggestions_replace_from_start():
+    complete = json.loads((FIX / "command_complete.json").read_text())
+    sug = json.loads((FIX / "command_suggestions.json").read_text())
+    assert sug["ref_seq"] == complete["seq"]
+    assert suggestion_apply(complete["line"], sug["start"], sug["items"][0]) == "gamerule advance_time"
+
+
+def test_command_result_refers_to_the_command():
+    cmd = json.loads((FIX / "command.json").read_text())
+    res = json.loads((FIX / "command_result.json").read_text())
+    assert res["ref_seq"] == cmd["seq"] and res["ok"] is True and cmd["at"]["pos"] == [105, 64, -35]
+
+
+@pytest.mark.parametrize("name,patch", [
+    ("chat", {"kind": "shout"}),
+    ("chat", {"from": {"uuid": "x"}}),
+    ("chat_send", {"text": ""}),
+    ("chat_send", {"text": "x" * 257}),
+    ("command", {"line": "time set day\nstop"}),
+    ("command", {"line": " / "}),
+    ("command", {"at": {"pos": [1, 2]}}),
+    ("command_result", {"ok": "yes"}),
+    ("command_result", {"lines": [1]}),
+    ("command_suggestions", {"start": -1}),
+    ("command_suggestions", {"items": ["x"] * 51}),
+    ("server_status", {"tps": [20.0]}),
+    ("world_info", {"weather": "snow"}),
+    ("world_info", {"gamerules": {"x": [1]}}),
+    ("players_info", {"players": [{"name": "A"}]}),
+])
+def test_control_validation_rejects(name, patch):
+    msg = json.loads((FIX / f"{name}.json").read_text())
+    msg.update(patch)
+    with pytest.raises(ValueError):
+        validate(msg)
+
+
+def test_control_error_codes():
+    for code in ("chat_denied", "command_denied"):
+        validate({"v": 1, "type": "error", "seq": 0, "t": 0, "code": code, "message": "x"})
+
+
+def test_discovery_probe_and_reply_fixtures():
+    """LAN discovery (PROTOCOL.md 7): UDP probe and reply, no envelope."""
+    probe = json.loads((FIX / "discovery_probe.json").read_text())
+    reply = json.loads((FIX / "discovery_reply.json").read_text())
+    validate(probe)
+    validate(reply)
+    assert probe == {"type": "tabletop_discover", "v": 1}
+    assert reply["port"] == DISCOVERY_PORT and reply["path"] == "/tabletop" and reply["token"] is False
+
+
+@pytest.mark.parametrize("patch", [{"port": 0}, {"port": 70000}, {"path": "tabletop"}, {"token": "no"}, {"v": 2}])
+def test_discovery_reply_rejects_bad_fields(patch):
+    msg = json.loads((FIX / "discovery_reply.json").read_text())
+    msg.update(patch)
+    with pytest.raises(ValueError):
+        validate(msg)
+
+
+def test_region_changed_carries_the_new_worlds_build_height():
+    """next version: region_changed has limits (build_height of the region's world) for gliding after a world change."""
+    msg = json.loads((FIX / "region_changed.json").read_text())
+    validate(msg)
+    assert msg["limits"]["build_height"] == [0, 256] and msg["world"] == "world_nether"
+    msg["limits"]["build_height"] = [320, -64]
     with pytest.raises(ValueError):
         validate(msg)

@@ -33,6 +33,12 @@ REQUIRED = {
     "block_edit": ["op", "pos"],
     "block_registry": ["count", "categories"],
 }
+# LAN discovery over UDP (PROTOCOL.md 7): not WebSocket messages, so no envelope. Required fields per type.
+DISCOVERY = {
+    "tabletop_discover": [],
+    "tabletop_server": ["name", "port", "path", "token"],
+}
+DISCOVERY_PORT = 8765
 # block_registry categories (PROTOCOL.md 4.24), in tab order.
 REGISTRY_CATEGORIES = ("building", "colored", "natural", "functional", "redstone", "other")
 ERROR_CODES = {"version_mismatch", "auth_failed", "bad_message", "unknown_type", "unsupported", "region_too_large",
@@ -46,14 +52,39 @@ CAP_ENTITIES = "entities_v1"
 CAP_ACTIONS = "actions_v1"
 ACTION_KINDS = {"swing", "dig", "break", "place", "hurt"}
 EQUIPMENT_SLOTS = {"main_hand", "off_hand", "head", "chest", "legs", "feet", "body", "saddle"}
+STAND_PARTS = {"head", "body", "left_arm", "right_arm", "left_leg", "right_leg"}
 PLAYER_POSES = {"standing", "sneaking", "swimming", "sleeping", "gliding", "riding", "spin_attack", "dying"}
 # Block editing from the headset (PROTOCOL.md 4.20): block_edit, granted in welcome.caps.
 CAP_EDIT = "edit_v1"
 FACES = ("west", "east", "down", "up", "north", "south")
 
+# [talk] Chat, commands and server status (PROTOCOL.md 4.26-4.28).
+CAP_CHAT, CAP_COMMAND, CAP_STATUS = "chat_v1", "command_v1", "status_v1"
+CHAT_KINDS = ("chat", "join", "quit", "death", "advancement", "broadcast", "say", "me", "operator", "whisper")
+CONTROL_REQUIRED = {
+    "chat": ["kind", "text"],
+    "chat_send": ["text"],
+    "command": ["line"],
+    "command_result": ["ref_seq", "ok", "ms", "lines"],
+    "command_output": ["ref_seq", "lines"],
+    "command_complete": ["line"],
+    "command_suggestions": ["ref_seq", "start", "items"],
+    "server_status": ["tps", "mspt", "memory", "players", "tick", "worlds"],
+    "world_query": [],
+    "world_info": ["world", "env", "time", "day", "weather", "difficulty", "spawn", "tick", "gamerules"],
+    "players_query": [],
+    "players_info": ["players"],
+}
+REQUIRED.update(CONTROL_REQUIRED)
+ERROR_CODES |= {"chat_denied", "command_denied"}
+WEATHERS = ("clear", "rain", "thunder")
+
 
 def validate(msg: dict) -> None:
     t = msg.get("type")
+    if t in DISCOVERY:
+        validate_discovery(msg)
+        return
     if msg.get("v") != PROTOCOL_VERSION:
         raise ValueError(f"bad protocol version in {t}: {msg.get('v')}")
     if t not in REQUIRED:
@@ -77,6 +108,11 @@ def validate(msg: dict) -> None:
         raise ValueError(f"unknown error code {msg['code']}")
     if t in ("welcome", "region_info") and not isinstance(msg["limits"].get("max_view_width"), int):
         raise ValueError(f"{t} limits need max_view_width (PROTOCOL.md 4.25)")
+    if t == "region_changed" and "limits" in msg:
+        # next version: region_changed carries the new world's limits, build_height included (PROTOCOL.md 4.13)
+        bh = msg["limits"].get("build_height")
+        if bh is not None and not (isinstance(bh, list) and len(bh) == 2 and all(isinstance(v, int) for v in bh) and bh[0] < bh[1]):
+            raise ValueError(f"region_changed limits.build_height must be [minY, maxY), got {bh}")
     if t == "player_positions":
         for p in msg["players"]:
             if p.get("skin_model") not in (None, "wide", "slim"):
@@ -93,6 +129,7 @@ def validate(msg: dict) -> None:
             if "pos" in e and len(e["pos"]) != 3:
                 raise ValueError(f"entities entry {e['id']} pos must have 3 numbers")
             _check_equipment(e.get("equipment"))
+            _check_stand_pose(e.get("stand_pose"))
         if not all(isinstance(i, int) for i in msg.get("removed") or []):
             raise ValueError("entities removed must be a list of ids")
     if t == "actions":
@@ -114,6 +151,89 @@ def validate(msg: dict) -> None:
         validate_block_edit(msg)
     if t == "block_registry":
         validate_block_registry(msg)
+    if t in CONTROL_REQUIRED:
+        validate_control(msg)   # [talk]
+
+
+def _ints(v, n: int) -> bool:
+    return isinstance(v, list) and len(v) == n and all(isinstance(x, int) and not isinstance(x, bool) for x in v)
+
+
+def _strings(v) -> bool:
+    return isinstance(v, list) and all(isinstance(x, str) for x in v)
+
+
+def validate_control(msg: dict) -> None:
+    """[talk] chat, commands and status messages (PROTOCOL.md 4.26-4.28)."""
+    t = msg["type"]
+    if t == "chat":
+        if msg["kind"] not in CHAT_KINDS:
+            raise ValueError(f"chat kind {msg['kind']} is not one of {CHAT_KINDS}")
+        f = msg.get("from")
+        if f is not None and not (isinstance(f, dict) and isinstance(f.get("name"), str)):
+            raise ValueError("chat from needs a name")
+        if not isinstance(msg["text"], str):
+            raise ValueError("chat text must be a string")
+    elif t == "chat_send":
+        if not isinstance(msg["text"], str) or not msg["text"].strip() or len(msg["text"]) > 256:
+            raise ValueError("chat_send text must be 1..256 characters")
+    elif t in ("command", "command_complete"):
+        line = msg["line"]
+        if not isinstance(line, str) or len(line) > 256 or any(ord(c) < 32 for c in line):
+            raise ValueError(f"{t} line must be one line of at most 256 characters")
+        if t == "command" and not line.strip().lstrip("/").strip():
+            raise ValueError("command line is empty")
+        at = msg.get("at")
+        if at is not None and not (isinstance(at, dict) and _ints(at.get("pos"), 3)):
+            raise ValueError("command at needs pos [x, y, z] integers")
+    elif t in ("command_result", "command_output"):
+        if not _strings(msg["lines"]):
+            raise ValueError(f"{t} lines must be strings")
+        if t == "command_result" and not isinstance(msg["ok"], bool):
+            raise ValueError("command_result ok must be a boolean")
+    elif t == "command_suggestions":
+        if not isinstance(msg["start"], int) or msg["start"] < 0 or not _strings(msg["items"]) or len(msg["items"]) > 50:
+            raise ValueError("command_suggestions needs start >= 0 and at most 50 string items")
+    elif t == "server_status":
+        if len(msg["tps"]) != 3 or not all(isinstance(x, (int, float)) for x in msg["tps"]):
+            raise ValueError("server_status tps must be [1m, 5m, 15m]")
+        for w in msg["worlds"]:
+            if not isinstance(w.get("name"), str) or w.get("weather") not in WEATHERS:
+                raise ValueError(f"server_status world entry {w} needs a name and weather")
+    elif t == "world_info":
+        if msg["weather"] not in WEATHERS or not _ints(msg["spawn"], 3) or not isinstance(msg["gamerules"], dict):
+            raise ValueError("world_info needs weather, spawn [x, y, z] and a gamerules object")
+        for k, v in msg["gamerules"].items():
+            if not isinstance(k, str) or not isinstance(v, (bool, int, float, str)):
+                raise ValueError(f"world_info gamerule {k} has a bad value {v!r}")
+    elif t == "players_info":
+        for p in msg["players"]:
+            for k in ("name", "uuid", "world", "gamemode"):
+                if not isinstance(p.get(k), str):
+                    raise ValueError(f"players_info entry needs {k}")
+            if len(p.get("pos") or []) != 3:
+                raise ValueError("players_info pos must have 3 numbers")
+
+
+def suggestion_apply(line: str, start: int, item: str) -> str:
+    """[talk] The line after accepting a command_suggestions item: everything from start is replaced."""
+    return line[:start] + item
+
+
+def validate_discovery(msg: dict) -> None:
+    """LAN discovery over UDP (PROTOCOL.md 7): the headset's probe and a plugin's reply. No envelope (seq, t)."""
+    if msg.get("v") != PROTOCOL_VERSION:
+        raise ValueError(f"bad protocol version in {msg.get('type')}: {msg.get('v')}")
+    for k in DISCOVERY[msg["type"]]:
+        if k not in msg:
+            raise ValueError(f"{msg['type']} missing {k}")
+    if msg["type"] == "tabletop_server":
+        if not (isinstance(msg["port"], int) and 0 < msg["port"] < 65536):
+            raise ValueError(f"tabletop_server port must be 1..65535, got {msg['port']}")
+        if not (isinstance(msg["path"], str) and msg["path"].startswith("/")):
+            raise ValueError(f"tabletop_server path must start with /, got {msg['path']}")
+        if not isinstance(msg["token"], bool):
+            raise ValueError("tabletop_server token must be true or false")
 
 
 def validate_block_registry(msg: dict) -> None:
@@ -150,6 +270,14 @@ def registry_id(state: str) -> str:
 def registry_states(msg: dict) -> dict[str, str]:
     """block_registry -> {block id: default state}, in menu order."""
     return {registry_id(s): s for c in msg["categories"] for s in c["blocks"]}
+
+
+def _check_stand_pose(pose: dict | None) -> None:
+    """An armour stand's stand_pose (PROTOCOL.md 4.21): every part once, [x, y, z] degrees."""
+    if pose is None:
+        return
+    if set(pose) != STAND_PARTS or not all(isinstance(v, list) and len(v) == 3 for v in pose.values()):
+        raise ValueError(f"stand_pose needs [x, y, z] for each of {sorted(STAND_PARTS)}, got {pose}")
 
 
 def _check_equipment(eq: dict | None) -> None:

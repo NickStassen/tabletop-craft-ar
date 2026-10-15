@@ -151,15 +151,18 @@ namespace TabletopCraft.World
                     WalkPos = s.Walk.Pos, WalkSpeed = s.Walk.Speed,
                     HeadYaw = Mathf.Clamp(Mathf.DeltaAngle(s.Body, s.Yaw), -85f, 85f), HeadPitch = s.Pitch,
                     AgeTicks = s.Age, AttackTime = attack, OffHandSwing = s.Swing.OffHand,
-                    OnGround = e.OnGround, ArmsForward = look.ArmsForward, Riding = riding,
+                    OnGround = e.OnGround, ArmsForward = look.ArmsForward, Riding = riding, BodyYaw = e.HasBodyYaw ? s.Body : s.Yaw,
                 };
                 s.Fig.Animate(anim, s.Pitch);
 
                 var root = s.Fig.Root.transform;
                 root.localPosition = ToLocal(s.Pos);
                 bool turns = look.Kind == EntityKind.Model || look.Kind == EntityKind.Box;
-                // Minecraft yaw 0 faces +Z (south) = Unity -Z after the mirror (Euler Y 180), as for the player figures.
-                root.localRotation = turns ? Quaternion.Euler(0, 180f + (e.HasBodyYaw ? s.Body : s.Yaw), 0) : Quaternion.identity;
+                // Minecraft yaw 0 faces +Z (south) = Unity -Z after the mirror (Euler Y 180), as for the player figures;
+                // projectiles, knots and end crystals have their own rule (EntityCatalog.RootTurn).
+                float yaw = e.HasBodyYaw ? s.Body : s.Yaw;
+                root.localRotation = !turns ? Quaternion.identity
+                    : Quaternion.Euler(0, look.Kind == EntityKind.Model ? EntityCatalog.RootTurn(look.Root, yaw) : 180f + yaw, 0);
                 root.localScale = Vector3.one * (scale * look.Scale);
 
                 if (now >= s.NextLight) { s.Light = LightAt(s.Pos, look.Kind == EntityKind.Model ? e.Height * 0.5f : 0.25f); s.NextLight = now + 0.25f; }

@@ -22,6 +22,7 @@ namespace TabletopCraft.World
             public string Error;
             public bool Delta;
             public int Parts = 1, Listed = -1;  // Listed: sections sent (sectioned snapshots)
+            public HashSet<Vector3Int> ListedKeys;   // [edit] a delta's sent section keys (pending block edits elsewhere carry over)
             public double Ms;                   // worker time
         }
 
@@ -79,6 +80,7 @@ namespace TabletopCraft.World
                 var (s, delta) = decode(listed);
                 r.Snapshot = s; r.Delta = delta;
                 r.Listed = parts > 1 || delta || listed.Count > 0 ? listed.Count : -1;
+                if (delta) r.ListedKeys = new HashSet<Vector3Int>(listed);   // [edit]
                 r.Plan = SectionPlan.Compute(current, s, stale, delta ? listed : null);
             }
             catch (Exception e) { r.Error = e.Message; r.Snapshot = null; }

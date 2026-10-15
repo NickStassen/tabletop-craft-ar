@@ -2,7 +2,8 @@
 // the left hand and feeds it what the right controller's ray hits; this file decides what a hover, a trigger pull, a
 // stick push, the right stick click or a B pick does.
 //
-//   Tabs: the server's categories (block_registry), Search (on-panel QWERTY keyboard), Info (status, "Show HUD").
+//   Tabs: the server's categories (block_registry), Search (on-panel keyboard, World/KeyboardModel.cs), Info (status,
+//         "Show HUD", "Reset view", and the Server field: type an address or pick a server found on the LAN).
 //   Grid: 9 columns, scrolled by rows (right stick or the arrows while the ray is on the panel).
 //   Hotbar: 9 recent picks, most recent first, one per block (picking oak stairs again moves them to the front).
 //   Area row (optional): 5 area sizes, shown only when the app wires the area hooks.
@@ -14,7 +15,8 @@ using TabletopCraft.Net;
 
 namespace TabletopCraft.World
 {
-    public enum MenuPart { None, Panel, Tab, Cell, ScrollUp, ScrollDown, Hotbar, Key, AreaStep, HudToggle }
+    public enum MenuPart { None, Panel, Tab, Cell, ScrollUp, ScrollDown, Hotbar, Key, AreaStep, HudToggle,
+                           ResetView, ServerField, ServerFind, ServerConnect, ServerCancel, FoundServer }
 
     public struct MenuHit
     {
@@ -36,7 +38,8 @@ namespace TabletopCraft.World
     /// <summary>One clickable or labelled box of the panel.</summary>
     public struct MenuItem { public MenuPart Part; public int Index; public MenuRect R; public string Label; }
 
-    public enum MenuActionKind { None, Select, Tab, Typed, Scrolled, HotbarSlot, Area, HudToggle }
+    public enum MenuActionKind { None, Select, Tab, Typed, Scrolled, HotbarSlot, Area, HudToggle,
+                                 ResetView, ServerEdit, ServerFind, ServerConnect, ServerCancel }
 
     public struct MenuAction
     {
@@ -84,6 +87,25 @@ namespace TabletopCraft.World
             Selected = i;
             return _slots[i];
         }
+
+        /// <summary>A copy of the 9 slots (null = empty), for the app's prefs.json.</summary>
+        public string[] Slots() => (string[])_slots.Clone();
+
+        /// <summary>Restores saved slots (prefs.json): empty entries are skipped, one slot per block id is kept.</summary>
+        public void Restore(IList<string> slots, int selected)
+        {
+            if (slots == null) return;
+            Array.Clear(_slots, 0, Size);
+            var ids = new HashSet<string>();
+            int k = 0, sel = 0;
+            for (int i = 0; i < slots.Count && k < Size; i++)
+            {
+                if (string.IsNullOrEmpty(slots[i]) || !ids.Add(BlockRegistry.IdOf(slots[i]))) continue;
+                if (i == selected) sel = k;
+                _slots[k++] = slots[i];
+            }
+            Selected = sel;
+        }
     }
 
     public sealed class BlockMenuModel
@@ -91,15 +113,26 @@ namespace TabletopCraft.World
         // Layout (metres). Readable at arm's length: 30 mm cells, 24 mm tabs and keys.
         public const int Columns = 9, Rows = 5, SearchRows = 3;
         public const float Margin = 0.008f, Gap = 0.004f, TabH = 0.024f, Cell = 0.030f, ScrollW = 0.022f, NameH = 0.018f,
-                           HotH = 0.034f, AreaH = 0.024f, KeyH = 0.024f, SearchH = 0.022f, AreaLabelW = 0.05f;
-        public const int MaxQuery = 24;
-        public const string KeyRows = "qwertyuiop|asdfghjkl|zxcvbnm";
-        public const int KeySpace = 26, KeyDelete = 27, KeyClear = 28;
+                           HotH = 0.034f, AreaH = 0.024f, KeyH = 0.024f, SearchH = 0.022f, AreaLabelW = 0.05f, ButtonH = 0.024f;
+        public const int MaxQuery = 32, MaxServer = 96, MaxFound = 4;
+        public const int KeySpace = KeyboardModel.KeySpace, KeyDelete = KeyboardModel.KeyDelete, KeyClear = KeyboardModel.KeyClear,
+                         KeyEnter = KeyboardModel.KeyEnter;
 
         public BlockRegistry Registry { get; private set; }
         public bool Open { get; private set; }
         public int Tab { get; private set; }
-        public string Query { get; private set; } = "";
+        /// <summary>The Search tab's keyboard; its text is the query. Enter picks the first result.</summary>
+        public readonly KeyboardModel SearchKeys = new KeyboardModel { MaxLength = MaxQuery, CollapseSpaces = true, EnterLabel = "pick" };
+        public string Query => SearchKeys.Text;
+        /// <summary>The Info tab's Server field: the address being typed. Enter connects.</summary>
+        public readonly KeyboardModel ServerKeys = new KeyboardModel { MaxLength = MaxServer, EnterLabel = "connect" };
+        /// <summary>The server the app is set to (shown on the Info tab's Server button).</summary>
+        public string ServerUrl = "";
+        /// <summary>The Server field is open on the Info tab (keyboard, found servers, Find / Connect / Cancel).</summary>
+        public bool ServerEditing { get; private set; }
+        /// <summary>Servers found on the LAN (button label, URL), and a line about the search ("searching...", "2 found").</summary>
+        public readonly List<(string Label, string Url)> Found = new List<(string, string)>();
+        public string FoundNote = "";
         public int Scroll { get; private set; }
         public readonly Hotbar Hotbar = new Hotbar();
         /// <summary>The block the left trigger places (BlockEditor.Selected follows it).</summary>
@@ -119,6 +152,7 @@ namespace TabletopCraft.World
         List<BlockEntry> _items = new List<BlockEntry>();
         readonly Dictionary<int, int> _scrollByTab = new Dictionary<int, int>();
         float _stickDir; double _stickNext;
+        string _wantTab;   // a category tab restored from prefs.json before the server's block list arrived
 
         public BlockMenuModel() { Hotbar.Push(Selected); }
 
@@ -136,15 +170,42 @@ namespace TabletopCraft.World
             bool search = Tab == SearchTab, info = Tab == InfoTab;   // Search and Info move when the category count changes
             Registry = r;
             Tab = search ? SearchTab : info ? InfoTab : Tab > InfoTab ? 0 : Tab;
+            if (_wantTab != null) { int want = TabOfId(_wantTab); if (want >= 0) Tab = want; _wantTab = null; }
             _scrollByTab.Clear();
             Refresh(true);
+        }
+
+        /// <summary>A stable name for a tab (prefs.json): the category id, "search" or "info".</summary>
+        public string TabId(int tab) => tab == SearchTab ? "search" : tab == InfoTab ? "info"
+            : Registry != null && tab >= 0 && tab < CategoryCount ? Registry.CategoryIds[tab] : null;
+
+        int TabOfId(string id) => id == "search" ? SearchTab : id == "info" ? InfoTab : Registry != null ? Registry.CategoryIds.IndexOf(id) : -1;
+
+        /// <summary>Restores the tab from prefs.json. A category tab waits for the server's block list (SetRegistry).</summary>
+        public void RestoreTab(string id)
+        {
+            if (string.IsNullOrEmpty(id)) return;
+            int t = TabOfId(id);
+            if (t >= 0) SetTab(t);
+            else if (Registry == null) _wantTab = id;
+        }
+
+        /// <summary>Restores the hotbar and the selected block from prefs.json.</summary>
+        public void Restore(IList<string> hotbar, int hotbarSelected, string selected)
+        {
+            Hotbar.Restore(hotbar, hotbarSelected);
+            if (!string.IsNullOrEmpty(selected)) Selected = selected;
+            else if (Hotbar.Current != null) Selected = Hotbar.Current;
+            if (Hotbar.Count == 0) Hotbar.Push(Selected);
+            Note = "";
+            Version++;
         }
 
         public void SetOpen(bool open)
         {
             if (open == Open) return;
             Open = open;
-            if (!open) { PointerOnPanel = false; Hover = MenuHit.Nothing; }
+            if (!open) { PointerOnPanel = false; Hover = MenuHit.Nothing; ServerEditing = false; }
             Version++;
         }
 
@@ -188,15 +249,51 @@ namespace TabletopCraft.World
                     return new MenuAction { Kind = MenuActionKind.HotbarSlot, State = s, Value = Hover.Index };
                 case MenuPart.ScrollUp: return ScrollBy(-GridRows) ? new MenuAction { Kind = MenuActionKind.Scrolled, Value = Scroll } : none;
                 case MenuPart.ScrollDown: return ScrollBy(GridRows) ? new MenuAction { Kind = MenuActionKind.Scrolled, Value = Scroll } : none;
-                case MenuPart.Key: return Key(Hover.Index) ? new MenuAction { Kind = MenuActionKind.Typed, Value = Hover.Index } : none;
+                case MenuPart.Key: return Key(Hover.Index);
                 case MenuPart.AreaStep:
                     if (AreaPresets == null || Hover.Index >= AreaPresets.Length) return none;
                     return new MenuAction { Kind = MenuActionKind.Area, Value = AreaPresets[Hover.Index] };
                 case MenuPart.HudToggle:
                     ShowHud = !ShowHud; Version++;
                     return new MenuAction { Kind = MenuActionKind.HudToggle, Value = ShowHud ? 1 : 0 };
+                case MenuPart.ResetView: return new MenuAction { Kind = MenuActionKind.ResetView };
+                case MenuPart.ServerField:
+                    ServerEditing = true; Note = "";
+                    ServerKeys.SetText(ServerUrl); ServerKeys.ResetMode();
+                    Version++;
+                    return new MenuAction { Kind = MenuActionKind.ServerEdit };
+                case MenuPart.ServerFind: return new MenuAction { Kind = MenuActionKind.ServerFind };
+                case MenuPart.FoundServer:
+                    if (Hover.Index >= Found.Count) return none;
+                    ServerKeys.SetText(Found[Hover.Index].Url);
+                    return Connect(Found[Hover.Index].Url);
+                case MenuPart.ServerConnect: return Connect(ServerKeys.Text);
+                case MenuPart.ServerCancel:
+                    ServerEditing = false; Note = ""; Version++;
+                    return new MenuAction { Kind = MenuActionKind.ServerCancel };
             }
             return none;
+        }
+
+        /// <summary>The keyboard on the current tab: Search's, the Server field's while it's open, else null.</summary>
+        public KeyboardModel ActiveKeys => Tab == SearchTab ? SearchKeys : Tab == InfoTab && ServerEditing ? ServerKeys : null;
+
+        /// <summary>Connect to a typed or found address: normalised (ws://host:8765/tabletop by default) or refused.</summary>
+        MenuAction Connect(string text)
+        {
+            string url = ServerAddress.Normalize(text);
+            if (url == null) { Note = "not a server address: " + text; Version++; return new MenuAction(); }
+            ServerEditing = false; ServerUrl = url; Note = ""; Version++;
+            return new MenuAction { Kind = MenuActionKind.ServerConnect, State = url };
+        }
+
+        /// <summary>Servers found on the LAN (or a note while searching / when none answered).</summary>
+        public void SetFound(IEnumerable<(string Label, string Url)> found, string note)
+        {
+            Found.Clear();
+            if (found != null) foreach (var f in found) if (Found.Count < MaxFound) Found.Add(f);
+            FoundNote = note ?? "";
+            Version++;
         }
 
         /// <summary>Right stick Y while the ray is on the panel: push to scroll one row, hold to repeat. True when it scrolled.</summary>
@@ -222,6 +319,7 @@ namespace TabletopCraft.World
         {
             if (tab < 0 || tab > InfoTab || tab == Tab) return false;
             Tab = tab;
+            if (tab != InfoTab) ServerEditing = false;
             Refresh(false);
             return true;
         }
@@ -251,22 +349,28 @@ namespace TabletopCraft.World
             return s;
         }
 
-        /// <summary>An on-panel key: letters and space append to the query, delete removes the last character, clear empties it.</summary>
-        public bool Key(int key)
+        /// <summary>
+        /// An on-panel key of the tab's keyboard (World/KeyboardModel.cs). Search: typing filters the list, enter picks
+        /// the first result. Server field: enter connects to the typed address.
+        /// </summary>
+        public MenuAction Key(int key)
         {
-            string q = Query;
-            if (key >= 0 && key < 26) { if (q.Length < MaxQuery) q += KeyChar(key); }
-            else if (key == KeySpace) { if (q.Length > 0 && q.Length < MaxQuery && !q.EndsWith(" ")) q += " "; }
-            else if (key == KeyDelete) { if (q.Length > 0) q = q.Substring(0, q.Length - 1); }
-            else if (key == KeyClear) q = "";
-            if (q == Query) return false;
-            Query = q;
-            _scrollByTab[Tab] = 0;
-            Refresh(false);
-            return true;
+            var none = new MenuAction();
+            var kb = ActiveKeys;
+            if (kb == null) return none;
+            var r = kb.Press(key);
+            if (r == KeyResult.Enter)
+            {
+                if (kb == ServerKeys) return Connect(kb.Text);
+                if (_items.Count == 0) return none;
+                Choose(_items[0].State);
+                return new MenuAction { Kind = MenuActionKind.Select, State = _items[0].State };
+            }
+            if (r == KeyResult.None) return none;
+            if (kb == SearchKeys && r == KeyResult.Text) { _scrollByTab[Tab] = 0; Refresh(false); }
+            Version++;
+            return new MenuAction { Kind = MenuActionKind.Typed, Value = key };
         }
-
-        public static char KeyChar(int key) => KeyRows.Replace("|", "")[key];
 
         /// <summary>Name line text: what the ray is on, else the selected block (and the last note).</summary>
         public string NameLine()
@@ -274,6 +378,9 @@ namespace TabletopCraft.World
             if (Hover.Part == MenuPart.Cell && CellEntry(Hover.Index) is BlockEntry e) return e.Label;
             if (Hover.Part == MenuPart.Hotbar && Hotbar[Hover.Index] is string hs) return LabelOf(hs);
             if (Hover.Part == MenuPart.Tab) return TabLabel(Hover.Index);
+            if (Hover.Part == MenuPart.FoundServer && Hover.Index < Found.Count) return Found[Hover.Index].Url;
+            if (Hover.Part == MenuPart.ServerField) return "Change the server: " + ServerUrl;
+            if (Hover.Part == MenuPart.ResetView) return "North up, fit to the table, view in the middle of the area";
             if (Note.Length > 0) return Note;
             return "Selected: " + LabelOf(Selected);
         }
@@ -351,41 +458,33 @@ namespace TabletopCraft.World
             for (int t = 0; t < tabs; t++) L.Items.Add(new MenuItem { Part = MenuPart.Tab, Index = t, R = new MenuRect(Margin + t * tw, y, tw, TabH), Label = TabCaption(t) });
             y += TabH + Gap;
             if (Tab == SearchTab) { L.SearchField = new MenuRect(Margin, y, inner, SearchH); y += SearchH + Gap; }
-            int rows = Tab == InfoTab ? Rows : GridRows;
-            L.Grid = new MenuRect(Margin, y, Columns * Cell, rows * Cell);
-            if (Tab == InfoTab)
-            {
-                float bh = 0.024f, bw = 0.09f;
-                L.Info = new MenuRect(Margin, y, inner, rows * Cell - bh - Gap);
-                L.Items.Add(new MenuItem { Part = MenuPart.HudToggle, Index = 0, R = new MenuRect(Margin, y + rows * Cell - bh, bw, bh), Label = ShowHud ? "Show HUD: on" : "Show HUD: off" });
-            }
+            if (Tab == InfoTab && ServerEditing) y = ServerLayout(L, y, inner);
             else
             {
-                for (int r = 0; r < rows; r++)
-                    for (int c = 0; c < Columns; c++)
-                        L.Items.Add(new MenuItem { Part = MenuPart.Cell, Index = r * Columns + c, R = new MenuRect(Margin + c * Cell, y + r * Cell, Cell, Cell) });
-                float sx = Margin + Columns * Cell + Gap;
-                L.Items.Add(new MenuItem { Part = MenuPart.ScrollUp, R = new MenuRect(sx, y, ScrollW, ScrollW) });
-                L.Items.Add(new MenuItem { Part = MenuPart.ScrollDown, R = new MenuRect(sx, y + rows * Cell - ScrollW, ScrollW, ScrollW) });
-                L.ScrollTrack = new MenuRect(sx + ScrollW * 0.35f, y + ScrollW + Gap, ScrollW * 0.3f, rows * Cell - 2 * ScrollW - 2 * Gap);
-            }
-            y += rows * Cell + Gap;
-            if (Tab == SearchTab)
-            {
-                float kw = inner / 10;
-                var rowsOfKeys = KeyRows.Split('|');
-                int k = 0;
-                for (int r = 0; r < rowsOfKeys.Length; r++)
+                int rows = Tab == InfoTab ? Rows : GridRows;
+                L.Grid = new MenuRect(Margin, y, Columns * Cell, rows * Cell);
+                if (Tab == InfoTab)
                 {
-                    float x0 = Margin + (10 - rowsOfKeys[r].Length) * kw / 2;
-                    for (int i = 0; i < rowsOfKeys[r].Length; i++, k++)
-                        L.Items.Add(new MenuItem { Part = MenuPart.Key, Index = k, R = new MenuRect(x0 + i * kw, y + r * KeyH, kw, KeyH), Label = char.ToUpperInvariant(rowsOfKeys[r][i]).ToString() });
+                    // Status text, then [Show HUD] [Reset view] and the Server button (opens the Server field).
+                    float bh = ButtonH, bw = (inner - Gap) / 2, y1 = y + rows * Cell - 2 * bh - Gap;
+                    L.Info = new MenuRect(Margin, y, inner, y1 - Gap - y);
+                    L.Items.Add(new MenuItem { Part = MenuPart.HudToggle, Index = 0, R = new MenuRect(Margin, y1, bw, bh), Label = ShowHud ? "Show HUD: on" : "Show HUD: off" });
+                    L.Items.Add(new MenuItem { Part = MenuPart.ResetView, Index = 0, R = new MenuRect(Margin + bw + Gap, y1, bw, bh), Label = "Reset view" });
+                    L.Items.Add(new MenuItem { Part = MenuPart.ServerField, Index = 0, R = new MenuRect(Margin, y1 + bh + Gap, inner, bh),
+                                               Label = "Server: " + (ServerUrl.Length > 0 ? ServerUrl : "-") + "  (change)" });
                 }
-                float yb = y + 3 * KeyH;
-                L.Items.Add(new MenuItem { Part = MenuPart.Key, Index = KeySpace, R = new MenuRect(Margin + 1 * kw, yb, 4 * kw, KeyH), Label = "space" });
-                L.Items.Add(new MenuItem { Part = MenuPart.Key, Index = KeyDelete, R = new MenuRect(Margin + 5 * kw, yb, 2 * kw, KeyH), Label = "delete" });
-                L.Items.Add(new MenuItem { Part = MenuPart.Key, Index = KeyClear, R = new MenuRect(Margin + 7 * kw, yb, 2 * kw, KeyH), Label = "clear" });
-                y += 4 * KeyH + Gap;
+                else
+                {
+                    for (int r = 0; r < rows; r++)
+                        for (int c = 0; c < Columns; c++)
+                            L.Items.Add(new MenuItem { Part = MenuPart.Cell, Index = r * Columns + c, R = new MenuRect(Margin + c * Cell, y + r * Cell, Cell, Cell) });
+                    float sx = Margin + Columns * Cell + Gap;
+                    L.Items.Add(new MenuItem { Part = MenuPart.ScrollUp, R = new MenuRect(sx, y, ScrollW, ScrollW) });
+                    L.Items.Add(new MenuItem { Part = MenuPart.ScrollDown, R = new MenuRect(sx, y + rows * Cell - ScrollW, ScrollW, ScrollW) });
+                    L.ScrollTrack = new MenuRect(sx + ScrollW * 0.35f, y + ScrollW + Gap, ScrollW * 0.3f, rows * Cell - 2 * ScrollW - 2 * Gap);
+                }
+                y += rows * Cell + Gap;
+                if (Tab == SearchTab) { L.Items.AddRange(SearchKeys.Layout(Margin, y, inner, KeyH)); y += KeyboardModel.Rows * KeyH + Gap; }
             }
             L.Name = new MenuRect(Margin, y, inner, NameH);
             y += NameH;
@@ -405,6 +504,26 @@ namespace TabletopCraft.World
             return L;
         }
 
+        /// <summary>The Info tab while the Server field is open: the address, found servers (2 x 2), Find / Connect /
+        /// Cancel, and the keyboard.</summary>
+        float ServerLayout(MenuLayout L, float y, float inner)
+        {
+            L.ServerText = new MenuRect(Margin, y, inner, SearchH);
+            y += SearchH + Gap;
+            float bw = (inner - Gap) / 2;
+            L.FoundNote = new MenuRect(Margin, y, inner, 2 * ButtonH + Gap);
+            for (int i = 0; i < Found.Count && i < MaxFound; i++)
+                L.Items.Add(new MenuItem { Part = MenuPart.FoundServer, Index = i, R = new MenuRect(Margin + (i % 2) * (bw + Gap), y + (i / 2) * (ButtonH + Gap), bw, ButtonH), Label = Found[i].Label });
+            y += 2 * (ButtonH + Gap);
+            float w3 = (inner - 2 * Gap) / 3;
+            L.Items.Add(new MenuItem { Part = MenuPart.ServerFind, R = new MenuRect(Margin, y, w3, ButtonH), Label = "Find servers" });
+            L.Items.Add(new MenuItem { Part = MenuPart.ServerConnect, R = new MenuRect(Margin + w3 + Gap, y, w3, ButtonH), Label = "Connect" });
+            L.Items.Add(new MenuItem { Part = MenuPart.ServerCancel, R = new MenuRect(Margin + 2 * (w3 + Gap), y, w3, ButtonH), Label = "Cancel" });
+            y += ButtonH + Gap;
+            L.Items.AddRange(ServerKeys.Layout(Margin, y, inner, KeyH));
+            return y + KeyboardModel.Rows * KeyH + Gap;
+        }
+
         /// <summary>What a point on the panel (metres from the top-left, y down) hits; Panel for the background, None outside.</summary>
         public static MenuHit HitTest(MenuLayout L, float x, float y)
         {
@@ -418,6 +537,6 @@ namespace TabletopCraft.World
     {
         public float Width, Height;
         public readonly List<MenuItem> Items = new List<MenuItem>();
-        public MenuRect Grid, Name, SearchField, Info, ScrollTrack, AreaLabel;
+        public MenuRect Grid, Name, SearchField, Info, ScrollTrack, AreaLabel, ServerText, FoundNote;
     }
 }

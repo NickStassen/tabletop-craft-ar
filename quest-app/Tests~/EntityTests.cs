@@ -20,6 +20,7 @@ static class EntityTests
         Actions(check, fixture);
         Timing(check);
         NoData(check);
+        Roots(check);
         if (models != null && EntityModels.LoadFile(models))
         {
             Console.WriteLine("entity models: " + EntityModels.Status);
@@ -30,6 +31,79 @@ static class EntityTests
                                + (models != null ? " (" + EntityModels.Status + ")" : ""));
         if (jar != null) Pack(check, jar);
         else Console.WriteLine("SKIP entity pack tests: set MC_CLIENT_JAR or pass --jar PATH");
+    }
+
+    /// <summary>Projectiles, tridents, end crystals and leash knots: the figure transforms (EntityCatalog.RootTurn,
+    /// RootOffset, RootRotation and the look's scale, as EntityRenderer/EntityFigure apply them to the point-reflected
+    /// figure meshes) equal the vanilla renderers' PoseStack (ArrowRenderer, ThrownTridentRenderer, EndCrystalRenderer,
+    /// LeashKnotRenderer bytecode) seen through the renderer's Z mirror.</summary>
+    static void Roots(Action<bool, string> check)
+    {
+        float[] M(params float[][] ms) { var r = EntityScene.I(); foreach (var m in ms) r = EntityScene.Mul(r, m); return r; }
+        float[] Vanilla(RootKind k, float yRot, float xRot) => k switch
+        {
+            RootKind.Projectile => M(EntityScene.RY(yRot - 90), EntityScene.RZ(xRot)),
+            RootKind.Trident => M(EntityScene.RY(yRot - 90), EntityScene.RZ(xRot + 90)),
+            RootKind.Crystal => M(EntityScene.S(2, 2, 2), EntityScene.T(0, -0.5f, 0)),
+            _ => EntityScene.S(-1, -1, 1),   // leash knot: the flip only
+        };
+        var pts = new[] { new Vector3(4, 0, 0), new Vector3(-11, 2.5f, 0), new Vector3(0, -2, 1.5f), new Vector3(3, 7, -5), new Vector3(0, 24, 0) };
+        float worst = 0;
+        foreach (var k in new[] { RootKind.Projectile, RootKind.Trident, RootKind.Crystal, RootKind.Origin })
+            foreach (float yaw in new[] { 0f, 37f, 90f, -135f })
+                foreach (float pitch in new[] { 0f, 30f, -60f })
+                {
+                    float scale = k == RootKind.Crystal ? 2 : 1;
+                    var fig = M(EntityScene.RY(EntityCatalog.RootTurn(k, yaw)), EntityScene.S(scale / 16, scale / 16, scale / 16), EntityScene.ModelRoot(k, pitch));
+                    var van = M(EntityScene.S(1, 1, -1), Vanilla(k, yaw, pitch), EntityScene.S(1 / 16f, 1 / 16f, 1 / 16f));
+                    foreach (var p in pts)
+                    {
+                        var fp = EntityScene.Apply(fig, new Vector3(-p.x, -p.y, -p.z));   // figure meshes are point-reflected
+                        var vp = EntityScene.Apply(van, p);
+                        worst = Math.Max(worst, Math.Max(Math.Abs(fp.x - vp.x), Math.Max(Math.Abs(fp.y - vp.y), Math.Abs(fp.z - vp.z))));
+                    }
+                }
+        check(worst < 1e-4f, $"projectile/trident/crystal/knot roots match the vanilla renderers through the Z mirror (worst {worst:G3} blocks)");
+        // An arrow's tip (model +x) points along its flight: yRot = atan2(dx, dz), xRot up. Unity: east +X, south -Z.
+        Vector3 Tip(float yaw, float pitch) => EntityScene.Apply(M(EntityScene.RY(EntityCatalog.RootTurn(RootKind.Projectile, yaw)), EntityScene.ModelRoot(RootKind.Projectile, pitch)), new Vector3(-4, 0, 0));
+        var east = Tip(90, 0); var south = Tip(0, 0); var up = Tip(90, 30);
+        check(east.x > 3.9f && Math.Abs(east.z) < 1e-3f && south.z < -3.9f && up.y > 1.9f && up.x > 3.4f,
+              $"arrow flying east points east (unity {east.x:F2},{east.z:F2}), south points -Z ({south.z:F2}), pitched up points up ({up.y:F2})");
+        var a = EntityCatalog.Resolve(new EntityInfo { Type = "minecraft:arrow" }); var tr = EntityCatalog.Resolve(new EntityInfo { Type = "minecraft:trident" });
+        StandFixture(check);
+        var cr = EntityCatalog.Resolve(new EntityInfo { Type = "minecraft:end_crystal" });
+        check(a.Root == RootKind.Projectile && EntityCatalog.Resolve(new EntityInfo { Type = "minecraft:spectral_arrow" }).Root == RootKind.Projectile &&
+              tr.Root == RootKind.Trident && cr.Root == RootKind.Crystal && cr.Scale == 2, "catalog: arrows are projectiles, the trident its own root, the end crystal at scale 2");
+        // EndCrystalRenderer.getY at age 0 is (0.25 + 0.5) * 0.4 - 1.4 = -1.1: the glass sits 8.8 px lower; it spins 3 deg/tick.
+        check(Math.Abs(CrystalAnimation.BobPx(0) + 8.8f) < 1e-3f && CrystalAnimation.SpinDeg(10) == 30f &&
+              Enumerable.Range(0, 200).All(t => CrystalAnimation.BobPx(t) >= -11.2f - 1e-3f && CrystalAnimation.BobPx(t) <= -4.8f + 1e-3f),
+              "end crystal glass bobs between 4.8 and 11.2 px below its pivot and spins 3 deg per tick");
+    }
+
+    /// <summary>Armour stands (PROTOCOL.md 4.21 arms / base_plate / stand_pose) from tools/fixtures/entities_armor_stand.json,
+    /// and how the figure poses them (EntityCatalog.StandPart, ArmorStandModel.setupAnim).</summary>
+    static void StandFixture(Action<bool, string> check)
+    {
+        string path = null;
+        for (var d = new System.IO.DirectoryInfo(AppContext.BaseDirectory); d != null && path == null; d = d.Parent)
+        { var p = System.IO.Path.Combine(d.FullName, "tools", "fixtures", "entities_armor_stand.json"); if (System.IO.File.Exists(p)) path = p; }
+        var s = new EntityStore();
+        s.Apply(Json.Parse(System.IO.File.ReadAllText(path)) as Dictionary<string, object>, null);
+        EntityInfo plain = s.Get(201), posed = s.Get(202), small = s.Get(203);
+        check(plain.BasePlate && !plain.Arms && plain.StandPose == null && posed.Arms && !posed.BasePlate && posed.StandPose[9] == -110 && posed.StandPose[10] == 25 &&
+              posed.StandPose[13] == 0 && small.Small && small.Invisible && small.BasePlate && small.Hand("head") == "minecraft:iron_helmet",
+              "armour stand fixture: base plate, arms, pose (right arm -110/25/10), small invisible stand with a helmet");
+        bool Part(EntityInfo e, string n, float yaw, out Vector3 d, out bool v) => EntityCatalog.StandPart(e, n, yaw, out d, out v);
+        Part(plain, "left_arm", 0, out var la, out bool laShown); Part(plain, "right_leg", 0, out var rl, out _);
+        Part(posed, "right_arm", 0, out var ra, out bool raShown); Part(posed, "shoulder_stick", 0, out var sh, out _);
+        Part(plain, "base_plate", 45, out var bp, out bool bpShown); Part(posed, "base_plate", -90, out _, out bool posedPlate);
+        Part(plain, "hat", 0, out _, out bool hat);
+        check(!laShown && la.x == -10 && la.z == -10 && rl.x == 1 && rl.z == 1 && raShown && ra.x == -110 && ra.y == 25 && sh.y == 5 &&
+              bpShown && bp.y == -45 && !posedPlate && !hat && !Part(plain, "tail", 0, out _, out _),
+              "armour stand parts: vanilla default pose without stand_pose, arms only with arms, sticks follow the body, the base plate turns against the yaw, no hat");
+        // Removing a stand's pose (null) goes back to the default pose; full lists clear arms/base plate.
+        s.Apply(Json.Parse("{\"full\":false,\"entities\":[{\"id\":202,\"stand_pose\":null,\"arms\":false}]}") as Dictionary<string, object>, null);
+        check(s.Get(202).StandPose == null && !s.Get(202).Arms, "armour stand delta: stand_pose null and arms false clear them");
     }
 
     static Dictionary<string, object> Load(Func<string, string> fixture, string name) =>

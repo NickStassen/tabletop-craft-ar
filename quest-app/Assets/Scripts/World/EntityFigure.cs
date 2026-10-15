@@ -24,7 +24,9 @@ namespace TabletopCraft.World
         Vector3[] _defaultRad;
         float[] _rot;
         Transform _spin;                 // items: spinning node
+        EntityInfo _info;                // model figures: the entity they were built for (armour stand pose, invisibility)
         readonly List<MeshRenderer> _renderers = new List<MeshRenderer>();
+        readonly List<MeshRenderer> _body = new List<MeshRenderer>();   // the model and its second layer, not gear
         readonly MaterialPropertyBlock _mpb = new MaterialPropertyBlock();
         Color _color = Color.white, _overlay = new Color(1, 0, 0, 0);
         EntityGear _gear;
@@ -40,6 +42,7 @@ namespace TabletopCraft.World
                     _model = EntityModels.Get(look.Model);
                     if (_model == null) { BuildBox(e, tex); break; }
                     _rig = EntityRig.For(_model);
+                    _info = e;
                     BuildModel(tex);
                     break;
                 case EntityKind.Item: BuildItem(e, tex); break;
@@ -58,9 +61,10 @@ namespace TabletopCraft.World
             var mat = tex.Material(tex.Get(Look.Texture, Look.Overlays, Look.Tint.r == 255 && Look.Tint.g == 255 && Look.Tint.b == 255 ? (Color32?)null : Look.Tint));
             _modelRoot = new GameObject("model").transform;
             _modelRoot.SetParent(Root.transform, false);
-            // The game renderer's transforms before the model (EntityCatalog.RootOffset); minecarts are pitched in Animate.
+            // The game renderer's transforms before the model (EntityCatalog.RootOffset/RootRotation); minecarts and
+            // projectiles follow their pitch in Animate.
             _modelRoot.localPosition = EntityCatalog.RootOffset(Look.Root);
-            _modelRoot.localRotation = Quaternion.AngleAxis(EntityCatalog.RootYaw(Look.Root), Vector3.up);
+            _modelRoot.localRotation = RootRotation(Look.Root, 0);
             int n = _model.Parts.Count;
             _parts = new Transform[n];
             _defaults = new Quaternion[n];
@@ -90,8 +94,10 @@ namespace TabletopCraft.World
                 t.localScale = new Vector3(p.Sx, p.Sy, p.Sz);
                 _parts[p.Index] = t;
                 bool hidden = Look.HideArms && (p.Name == "right_arm" || p.Name == "left_arm");
+                // Armour stands: arms and base plate only when the stand has them, never the humanoid hat.
+                if (Look.ArmorStand && EntityCatalog.StandPart(_info, p.Name, 0, out _, out bool shown) && !shown) hidden = true;
                 var mesh = EntityMeshes.Part(_model, p);
-                if (mesh != null && !hidden) AddRenderer(t.gameObject, mesh, mat);
+                if (mesh != null && !hidden) { AddRenderer(t.gameObject, mesh, mat); _body.Add(_renderers[_renderers.Count - 1]); }
             }
             if (Look.ExtraModel != null)
             {
@@ -113,15 +119,51 @@ namespace TabletopCraft.World
                         if (hp != null && (hp.Rx != p.Rx || hp.Ry != p.Ry || hp.Rz != p.Rz))
                             go.transform.localRotation = Quaternion.Inverse(_defaults[hp.Index]) * Rot(p.Rx, p.Ry, p.Rz);
                         AddRenderer(go, mesh, emat);
+                        _body.Add(_renderers[_renderers.Count - 1]);
                     }
             }
             if (Look.Contents != null) BuildBlock(Look.Contents, tex, 12f, new Vector3(0, 10.5f, 0));
+            if (Look.ArmorStand) PoseStand(0);
             TopPx = Look.Root == RootKind.Living ? Height() : 16;
+            // LivingEntityRenderer: an invisible mob's model and its layers (wool, clothes, slime shell) aren't drawn;
+            // its armour and held items are (EntityGear hangs them on the same, still animated, part transforms).
+            if (_info.Invisible) foreach (var r in _body) r.enabled = false;
+        }
+
+        /// <summary>Armour stands: the pose replaces the animated rotations (EntityCatalog.StandPart).</summary>
+        void PoseStand(float yaw)
+        {
+            foreach (var p in _model.Parts)
+                if (EntityCatalog.StandPart(_info, p.Name, yaw, out var deg, out _))
+                    _parts[p.Index].localRotation = Rot(deg.x * Mathf.Deg2Rad, deg.y * Mathf.Deg2Rad, deg.z * Mathf.Deg2Rad);
         }
 
         /// <summary>Game rotation Z * Y * X (radians) as a Unity quaternion (same numbers, see PlayerModel).</summary>
         static Quaternion Rot(float x, float y, float z) =>
             Quaternion.AngleAxis(z * Mathf.Rad2Deg, Vector3.forward) * Quaternion.AngleAxis(y * Mathf.Rad2Deg, Vector3.up) * Quaternion.AngleAxis(x * Mathf.Rad2Deg, Vector3.right);
+
+        static Quaternion RootRotation(RootKind k, float pitch)
+        {
+            EntityCatalog.RootRotation(k, pitch, out float yaw, out float roll);
+            return Quaternion.AngleAxis(yaw, Vector3.up) * Quaternion.AngleAxis(roll, Vector3.forward);
+        }
+
+        static readonly Vector3 CrystalAxis = new Vector3(1, 0, 1).normalized;
+
+        /// <summary>End crystal glass: spin and bob (CrystalAnimation, EndCrystalModel.setupAnim).</summary>
+        void AnimateCrystal(float age)
+        {
+            var outer = _model.Find("outer_glass");
+            if (outer == null) return;
+            float spin = CrystalAnimation.SpinDeg(age);
+            var tilt = Quaternion.AngleAxis(CrystalAnimation.TiltDeg, CrystalAxis);
+            var t = _parts[outer.Index];
+            EntityModels.Pivot(outer, out float x, out float y, out float z);
+            t.localPosition = new Vector3(x, y - CrystalAnimation.BobPx(age), z);   // figure space: the pivot is point-reflected
+            t.localRotation = Quaternion.AngleAxis(spin, Vector3.up) * tilt;
+            foreach (var name in new[] { "inner_glass", "cube" })
+                if (_model.Find(name) is EModelPart p) _parts[p.Index].localRotation = tilt * Quaternion.AngleAxis(spin, Vector3.up);
+        }
 
         float Height()
         {
@@ -146,6 +188,7 @@ namespace TabletopCraft.World
         /// <summary>Applies one frame of animation (rotation deltas on the default pose of each animated part).</summary>
         public void Animate(in EntityAnimInput a, float pitchDeg)
         {
+            if (_rig != null && Look.ArmorStand) { PoseStand(a.BodyYaw); return; }
             if (_rig != null)
             {
                 EntityAnimation.Pose(_rig, a, _rot);
@@ -155,7 +198,9 @@ namespace TabletopCraft.World
                     var d = _defaultRad[i];
                     _parts[i].localRotation = Rot(d.x + _rot[3 * i], d.y + _rot[3 * i + 1], d.z + _rot[3 * i + 2]);
                 }
-                if (Look.Root == RootKind.Minecart) _modelRoot.localRotation = Quaternion.AngleAxis(-pitchDeg, Vector3.forward);
+                if (Look.Root == RootKind.Minecart || Look.Root == RootKind.Projectile || Look.Root == RootKind.Trident)
+                    _modelRoot.localRotation = RootRotation(Look.Root, pitchDeg);
+                if (Look.Root == RootKind.Crystal) AnimateCrystal(a.AgeTicks);
             }
             if (_spin != null)
             {

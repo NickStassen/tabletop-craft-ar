@@ -3,9 +3,11 @@
  "type": "region_changed",
  "seq": 40,
  "t": 1760370001300,
- "world": "world",
+ "world": "world_nether",
  "origin": [-20, 32, -73],
  "dims": [64, 96, 64],
+ "view_margin": [16, 16, 16],
+ "limits": {"max_dims": [352, 384, 352], "max_blocks": 25165824, "max_bytes": 33554432, "max_view_width": 256, "build_height": [0, 256]},
  "by_session": "a24830b3",
  "ref_seq": 7
 }

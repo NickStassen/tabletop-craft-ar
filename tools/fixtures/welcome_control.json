@@ -1,0 +1,64 @@
+{
+ "v": 1,
+ "type": "welcome",
+ "seq": 0,
+ "t": 1760370000012,
+ "protocol": 1,
+ "server": "tabletop-plugin",
+ "server_version": "0.4.0",
+ "mc_version": "26.3",
+ "session": "6f1c",
+ "world": "world",
+ "region": {
+  "origin": [
+   100,
+   60,
+   -40
+  ],
+  "dims": [
+   32,
+   64,
+   32
+  ],
+  "view_margin": [
+   0,
+   0,
+   0
+  ]
+ },
+ "limits": {
+  "max_dims": [
+   288,
+   384,
+   288
+  ],
+  "max_blocks": 16777216,
+  "max_bytes": 33554432,
+  "max_view_width": 256,
+  "pose_hz_max": 60,
+  "player_hz": 10
+ },
+ "avatar_supported": true,
+ "caps": [
+  "view_margin",
+  "pose_snapshot_id",
+  "edit_v1",
+  "chat_v1",
+  "command_v1",
+  "status_v1"
+ ],
+ "chat": {
+  "send": true,
+  "name": "Nick",
+  "max_len": 256
+ },
+ "commands": {
+  "quick": [
+   "time set day",
+   "weather clear",
+   "tick freeze",
+   "tick unfreeze"
+  ],
+  "max_len": 256
+ }
+}

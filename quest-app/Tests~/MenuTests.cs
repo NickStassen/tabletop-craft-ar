@@ -142,7 +142,7 @@ static class MenuTests
         // Search.
         m.SetTab(m.SearchTab);
         L = m.Layout();
-        check(m.Items.Count == r.Count && L.Items.Count(i => i.Part == MenuPart.Key) == 29 && L.Items.Count(i => i.Part == MenuPart.Cell) == 27, "search: empty query lists all, keyboard + 3 rows");
+        check(m.Items.Count == r.Count && L.Items.Count(i => i.Part == MenuPart.Key) == 32 && L.Items.Count(i => i.Part == MenuPart.Cell) == 27, "search: empty query lists all, keyboard + 3 rows");
         foreach (char ch in "oak") { m.Point(HitOf(m, MenuPart.Key, "qwertyuiopasdfghjklzxcvbnm".IndexOf(ch)), true); m.Click(); }
         check(m.Query == "oak" && m.Items.Count == 4 && m.Items[0].Id == "minecraft:oak_log" && m.Items[1].Id == "minecraft:oak_stairs"
               && m.Items[2].Id == "minecraft:oak_planks" && m.Items[3].Id == "minecraft:dark_oak_planks", "search: names starting with the query first, then word matches");

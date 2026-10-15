@@ -1,0 +1,13 @@
+{
+ "v": 1,
+ "type": "chat",
+ "seq": 40,
+ "t": 1760370005000,
+ "kind": "chat",
+ "from": {
+  "name": "Alex",
+  "uuid": "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+  "id": 7
+ },
+ "text": "hi giant"
+}

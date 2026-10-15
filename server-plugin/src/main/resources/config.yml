@@ -4,8 +4,18 @@ bind:
   port: 8765
   path: /tabletop
 auth:
-  # Shared secret the headset sends in hello. Empty = auth disabled (LAN dev only).
+  # Shared secret the headset sends in hello. Empty = auth disabled (LAN dev only). [talk] Server commands from the
+  # headset (commands below) need it by default; it travels in clear on the LAN (ws://).
   token: ""
+# LAN discovery (PROTOCOL.md 7): the headset's "Find servers" (block menu > Info > Server) broadcasts a small UDP probe
+# and this server answers with its name, the WebSocket port and path above, and whether a token is needed. Only
+# private, link-local and loopback addresses get an answer. Open UDP 8765 in the PC's firewall too (QUEST_SETUP Part A);
+# without it the headset falls back to scanning the LAN for TCP port 8765.
+discovery:
+  enabled: true
+  port: 8765
+  # Name shown on the headset's button. Empty = the server's MOTD (server.properties motd).
+  name: ""
 region:
   # Default region sent after welcome. Origin is the min (north-west, bottom) corner.
   world: world
@@ -16,7 +26,8 @@ stream:
   safety-diff-ticks: 20
   # player_positions every N ticks (2 = 10 Hz).
   players-every-ticks: 2
-  # Players within region XZ bounds + this margin are sent.
+  # Players within the region box + this margin (x, z and y) are sent; spectators, invisible players and players
+  # hidden by a vanish plugin (or from any other player) never are.
   players-margin: 16
   # Send chunk_snapshot as 16^3 sections (split into messages, deltas when the region moves by whole sections) to
   # clients that advertise "sections_v1" (PROTOCOL.md 4.18). false = always one rle_palette_v1 message.
@@ -98,6 +109,54 @@ edit:
     - minecraft:jigsaw
     - minecraft:test_block
     - minecraft:test_instance_block
+# [talk] Chat between Java players and the headset (chat_v1, PROTOCOL.md 4.26). Headsets that ask for chat_v1 get
+# game chat, joins, quits, deaths, advancements, plugin broadcasts and /say, /me; with "send" they can talk too.
+chat:
+  enabled: true
+  # Let headsets send chat (chat_send). Off = they only read.
+  send: true
+  # What Java players see. <name> is the headset's operator_name (tabletop.json; else its skin_player, else
+  # default-name), cut to letters, digits and _ (16 at most); <message> is the text. Both are inserted as plain text
+  # (MiniMessage tags typed on the headset stay literal). Keep a fixed prefix such as [Giant] so a headset can't pass
+  # for a real player. These are server messages: not signed, and chat plugins that listen to player chat don't see them.
+  format: "<gold>[Giant]</gold> <name>: <message>"
+  # /me from the headset.
+  me-format: "<gold>* [Giant]</gold> <name> <message>"
+  default-name: Tabletop
+  max-length: 256
+  # Chat messages per second per headset (a token bucket of "burst"); more get error rate_limited.
+  max-per-second: 2
+  burst: 5
+  # The headset's line floats above the giant's head for Java players for this many seconds (0 = off).
+  bubble-seconds: 5
+# [talk] Server commands from the headset (command_v1, PROTOCOL.md 4.27). A headset command runs with operator
+# rights (like the console), so by default it needs auth.token: without a token there is no command_v1 at all.
+# SECURITY: the link is plain ws:// on the LAN. The token and every command travel unencrypted, and anyone who can
+# sniff the LAN can replay the token. Use it only on a network you trust; ARCHITECTURE.md 6 has wss:// beyond that.
+commands:
+  enabled: true
+  # true: commands only when auth.token above is set (every connected headset presented it).
+  require-token: true
+  # Commands per second per headset (a token bucket of "burst"). Tab completions and the world/players queries share
+  # their own limit (completions-per-second).
+  max-per-second: 2
+  burst: 5
+  completions-per-second: 10
+  max-length: 256
+  # Non-empty: only these commands may run (roots; "tp" and "teleport" are separate entries).
+  allow: []
+  # Never from the headset. Aliases resolve (rl is reload, minecraft:stop is stop), and execute ... run stop is
+  # checked too.
+  deny: [stop, restart, reload, op, deop, ban, ban-ip, pardon, pardon-ip, whitelist, save-off, debug, jfr, perf, transfer]
+  # Ops (permission tabletop.notify) see "[Tabletop: /command]" in grey when a headset runs one.
+  notify-ops: true
+  # Quick buttons in the headset's Console tab (tabletop.json "quick_commands" adds its own).
+  quick: ["time set day", "weather clear", "tick freeze", "tick unfreeze"]
+# [talk] Server status for headsets (status_v1, PROTOCOL.md 4.28): server_status (TPS, MSPT, memory, players, worlds)
+# every every-ticks ticks, world_info (time, weather, difficulty, gamerules) and players_info on request.
+status:
+  enabled: true
+  every-ticks: 40
 debug:
   # Broadcast avatar_state with a "debug" object (entity positions) every 10 ticks.
   avatar-state: false

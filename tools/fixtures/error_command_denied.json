@@ -1,0 +1,10 @@
+{
+ "v": 1,
+ "type": "error",
+ "seq": 97,
+ "t": 1760370006600,
+ "code": "command_denied",
+ "message": "/stop is in commands.deny",
+ "ref_seq": 83,
+ "fatal": false
+}
