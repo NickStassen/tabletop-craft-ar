@@ -536,7 +536,10 @@ namespace TabletopCraft.World
                 _parts.Clear();
                 foreach (var s in _layout.SectionsOf(key))
                     if (_secs.TryGetValue(s, out var m)) _parts.Add((m, _layout.Offset(s, key, b.Y0)));
+                // [gpu] Top sections first: the miniature is seen from above, so the surface fills the depth buffer before the
+                // caves under it, which the GPU then rejects before shading them (solid faces have no discard).
                 var parts = _parts.ToArray();
+                System.Array.Sort(parts, (p, q) => q.Item2.y != p.Item2.y ? q.Item2.y.CompareTo(p.Item2.y) : 0);
                 b.Assembling = true; _assembling++;
                 b.Fresh = FreshOf(key);   // [mesh]
                 Task.Run(() =>
