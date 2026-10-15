@@ -13,6 +13,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /** Per-connection state: AWAIT_HELLO -> READY -> CLOSED, subscription, palette and seq counter. */
 public final class Session {
+    /** [nav] region_requests this session sent; the server applies only the newest one's read (TabletopPlugin). Main thread. */
+    long regionRequests;
     public enum State { AWAIT_HELLO, READY, CLOSED }
 
     public final WebSocket conn;

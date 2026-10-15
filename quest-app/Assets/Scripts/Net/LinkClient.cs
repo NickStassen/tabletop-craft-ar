@@ -94,6 +94,16 @@ namespace TabletopCraft.Net
         volatile bool _welcomed, _stopping;
         long _rtt = -1, _lastInbound;
         int _welcomes, _deadAborts, _pingId;
+        // [send] One sender thread (not the thread pool, which meshing keeps busy): messages go out in order, but only the
+        // newest pose is kept, so a slow socket never queues seconds of stale poses in front of region requests and edits.
+        readonly object _outLock = new object();
+        readonly Queue<(ClientWebSocket ws, Dictionary<string, object> body)> _out = new Queue<(ClientWebSocket, Dictionary<string, object>)>();
+        (ClientWebSocket ws, Dictionary<string, object> body)? _pose;
+        readonly AutoResetEvent _outSignal = new AutoResetEvent(false);
+        Thread _sender;
+        /// <summary>[send] Poses dropped because a newer one replaced them before it went out (a busy link).</summary>
+        public long PosesDropped => Interlocked.Read(ref _posesDropped);
+        long _posesDropped;
 
         public LinkClient(string url, string token)
         {
@@ -113,6 +123,7 @@ namespace TabletopCraft.Net
             _cts = new CancellationTokenSource();
             var ct = _cts.Token;
             _loop = Task.Run(() => RunLoop(ct));
+            if (_sender == null) { _sender = new Thread(SenderLoop) { IsBackground = true, Name = "tabletop-send" }; _sender.Start(); }
         }
 
         static double Now => Clock.Elapsed.TotalSeconds;
@@ -179,7 +190,7 @@ namespace TabletopCraft.Net
                 if (_welcomed && Now >= nextPing)
                 {
                     nextPing = Now + PingSeconds;
-                    _ = SendAsync(ws, Protocol.Ping(_pingId++), false);
+                    Post(ws, Protocol.Ping(_pingId++));
                 }
             }
         }
@@ -240,7 +251,7 @@ namespace TabletopCraft.Net
                         if (msg.I("id") % 15 == 0) Debug.Log($"[Tabletop] rtt {rtt} ms");
                         continue;
                     case "ping":
-                        _ = SendAsync(ws, new Dictionary<string, object> { ["type"] = "pong", ["id"] = msg.I("id"), ["echo_t"] = (long)msg.D("t") }, false);
+                        Post(ws, new Dictionary<string, object> { ["type"] = "pong", ["id"] = msg.I("id"), ["echo_t"] = (long)msg.D("t") });
                         continue;
                     case "welcome":
                         _welcomed = true;
@@ -252,7 +263,42 @@ namespace TabletopCraft.Net
         }
 
         /// <summary>Fire-and-forget send; adds the envelope (v, seq, t). Dropped while not connected.</summary>
-        public void Send(Dictionary<string, object> body) { var ws = _ws; if (Connected && ws != null) _ = SendAsync(ws, body, false); }
+        public void Send(Dictionary<string, object> body) { var ws = _ws; if (Connected && ws != null) Post(ws, body); }
+
+        /// <summary>[send] Hands a message to the sender thread; a pose replaces the one still waiting.</summary>
+        void Post(ClientWebSocket ws, Dictionary<string, object> body)
+        {
+            lock (_outLock)
+            {
+                if (body.TryGetValue("type", out var t) && (t as string) == "pose")
+                {
+                    if (_pose.HasValue) Interlocked.Increment(ref _posesDropped);
+                    _pose = (ws, body);
+                }
+                else _out.Enqueue((ws, body));
+            }
+            _outSignal.Set();
+        }
+
+        void SenderLoop()
+        {
+            while (!_stopping)
+            {
+                _outSignal.WaitOne(250);
+                while (!_stopping)
+                {
+                    (ClientWebSocket ws, Dictionary<string, object> body) item;
+                    lock (_outLock)
+                    {
+                        if (_out.Count > 0) item = _out.Dequeue();
+                        else if (_pose.HasValue) { item = _pose.Value; _pose = null; }
+                        else break;
+                    }
+                    try { SendAsync(item.ws, item.body, false).GetAwaiter().GetResult(); }
+                    catch (Exception e) { Debug.LogWarning("[Tabletop] send failed: " + e.Message); }
+                }
+            }
+        }
 
         /// <summary>[talk] Like Send, but takes the envelope seq now and returns it (-1 when not connected), so a reply's
         /// ref_seq can be matched (commands, completions, queries). Under contention the wire order may differ from the
@@ -264,7 +310,7 @@ namespace TabletopCraft.Net
             uint s;
             lock (_seqLock) s = _seq++;
             body[ReservedSeq] = s;
-            _ = SendAsync(ws, body, false);
+            Post(ws, body);
             return s;
         }
 

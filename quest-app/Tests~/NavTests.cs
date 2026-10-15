@@ -55,7 +55,7 @@ static class NavTests
         Check(!n.Pending && n.Move(new Vector3(1, 0, 0), 0.1f, 3.5f) == null, "nav: refusal backs off");
         Check(n.Move(new Vector3(-1, 1, 1), 0.1f, 5.5f).HasValue, "nav: asks again after the back-off");
         Check(n.Move(new Vector3(0, 0, 0), 0.1f, 6f) == null && n.Pending, "nav: one request in flight at a time");
-        Check(n.Move(new Vector3(-1, 0, 0), 0.1f, 12f).HasValue, "nav: a lost answer times out");
+        Check(n.Move(new Vector3(-1, 0, 0), 0.1f, 5.5f + n.RequestTimeout + 0.5f).HasValue, "nav: a lost answer times out");
 
         // Another headset moved the shared region far away: re-centre.
         n.OnRegion("world", new Vector3Int(1000, 0, 0), new Vector3Int(96, 64, 96), new Vector3Int(16, 16, 16), 13f);

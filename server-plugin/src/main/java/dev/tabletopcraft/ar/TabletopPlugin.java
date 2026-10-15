@@ -783,6 +783,7 @@ public final class TabletopPlugin extends JavaPlugin {
         long prevEst = sharedEstBytes;
         RegionSpec prevEstRegion = sharedEstRegion;
         if (base != null) { movesInFlight++; moveTargets.add(r); moveStartedMs = System.currentTimeMillis(); }
+        final long reqNo = ++s.regionRequests;   // [nav] only this headset's newest request is applied (see below)
         // Byte cap: estimate from the global-palette RLE (same run structure as each session's encoding), plus the
         // light/biome fields (estimated by the reader), all off the main thread. [nav] An incremental read scales the
         // previous region's estimate to the kept volume and adds the fresh sections' own estimate.
@@ -806,6 +807,13 @@ public final class TabletopPlugin extends JavaPlugin {
         }, (d, est) -> {
             if (base != null) endMove(r, base);
             if (s.state != Session.State.READY) return;
+            // [nav] A newer request from the same headset started while this one was read (a slow link queued several):
+            // applying this one now would flip the area back to an older size or place.
+            if (reqNo != s.regionRequests) {
+                getLogger().info(String.format("REGION_SUPERSEDED by=%s origin=%d,%d,%d dims=%dx%dx%d (a newer request from this headset follows)",
+                    s.id, r.ox(), r.oy(), r.oz(), r.sx(), r.sy(), r.sz()));
+                return;
+            }
             if (est > caps.maxBytes()) {
                 String msg = String.format("snapshot would be about %d bytes, over max %d (try a smaller region)", est, caps.maxBytes());
                 getLogger().info("REGION_REJECT " + msg);

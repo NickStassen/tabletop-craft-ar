@@ -42,7 +42,7 @@ namespace TabletopCraft.World
         public float BaseSpeedM = 0.12f;            // table metres per second at full stick deflection
         public float RampSeconds = 2f;              // holding the stick ramps the speed up to x(1 + RampGain)
         public float RampGain = 2f;
-        public float RequestTimeout = 6f;           // s without an answer before another request may go out
+        public float RequestTimeout = 20f;          // s without an answer before another request may go out (a resize to 256 can take seconds; a too-early retry used to queue stale shifts)
         public float MinRequestInterval = 0.2f;
         // [nav] Lookahead (see the top of the file).
         /// <summary>Blocks of loaded data kept behind the window when the region is shifted ahead (so a stop or a turn has room).</summary>
