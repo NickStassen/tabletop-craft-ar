@@ -258,6 +258,24 @@ namespace TabletopCraft.EditorTools
             bool water = drawsUnder > r.Stats().DrawCalls;
             if (!water) errors++;
             Debug.Log($"BATCHRENDER {(water ? "PASS" : "FAIL")} underwater adds the inside-water submesh draws ({r.Stats().DrawCalls} -> {drawsUnder})");
+            {
+                // [nav] Lazy margin (MeshScope): meshes outside KeepScope are dropped, and meshed again when the window returns.
+                var all = expect;
+                var box = new SectionBox { Min = new Vector3Int(1, 0, 1), Max = new Vector3Int(3, 3, 3) };
+                r.Scope = r.KeepScope = r.VisibleScope = box;
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                update.Invoke(r, null);   // a frame sees the new boxes (Pump only runs while something is pending)
+                int frames = 1 + Pump(20000);
+                expect = new Dictionary<Vector3Int, Stat>();
+                foreach (var kv in all) if (box.Contains(kv.Key)) expect[kv.Key] = kv.Value;
+                Report("lazy margin drops meshes outside the kept box", $"{all.Count - expect.Count} sections dropped", frames, sw.ElapsedMilliseconds);
+                r.Scope = r.KeepScope = r.VisibleScope = SectionBox.All;
+                sw.Restart();
+                update.Invoke(r, null);
+                frames = 1 + Pump(20000);
+                expect = all;
+                Report("lazy margin meshes them again when the window comes back", "re-meshed", frames, sw.ElapsedMilliseconds);
+            }
             Debug.Log($"BATCHRENDER done: {errors} errors");
             Object.DestroyImmediate(go);
             if (Application.isBatchMode) EditorApplication.Exit(errors == 0 ? 0 : 1);

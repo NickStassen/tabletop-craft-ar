@@ -18,6 +18,21 @@ namespace TabletopCraft.World
         public static readonly int[] All = { 64, 96, 128, 192, 256 };
         public const int MinWidth = 16;
 
+        /// <summary>
+        /// [nav] View margin per side (x and z) for a visible width: a wider window needs more runway to glide fast (the
+        /// region round trip grows with its size; TESTING.md "Faster gliding"). Pairs of (from width, margin), ascending.
+        /// The margin is shrunk to fit the server's caps; presets are always sized with the minimum (NavState.MarginPref).
+        /// </summary>
+        public static (int width, int margin)[] MarginByWidth = { (0, 16), (128, 32), (256, 48) };
+
+        /// <summary>[nav] The margin this width wants (MarginByWidth), before the server's caps.</summary>
+        public static int MarginFor(int width)
+        {
+            int m = MarginByWidth.Length > 0 ? MarginByWidth[0].margin : 16;
+            foreach (var (w, mm) in MarginByWidth) if (width >= w) m = mm;
+            return m;
+        }
+
         /// <summary>Largest window the server accepts: limits.max_view_width, and the region with margin m on both
         /// sides must fit max_dims.x/z.</summary>
         public static int MaxWidth(RegionLimits caps, int margin)
@@ -59,28 +74,25 @@ namespace TabletopCraft.World
         /// <summary>
         /// The region_request for a window `width` wide on x and z around the current view (nav.View), keeping the
         /// height, the y margin and the section grid: the origin differs from the current one by whole sections on
-        /// every axis (centred to within 8 blocks), so the reply re-keys. The x/z margin is the larger of the current one
-        /// and NavState.MarginPref, shrunk to fit the server's dims and block caps. Null when nothing would change or the
-        /// region can't fit.
+        /// every axis (centred to within 8 blocks), so the reply re-keys. [nav] The width is limited with the minimum
+        /// margin (NavState.MarginPref), so a bigger margin never takes a preset away; the x/z margin is MarginFor(width),
+        /// shrunk to fit the server's dims and block caps. Null when nothing would change or the region can't fit.
         /// </summary>
         public static RegionMove? Plan(NavState nav, int width, RegionLimits caps)
         {
             if (nav == null || !nav.Loaded) return null;
-            int m = Math.Max(Math.Max(nav.Margin.x, nav.Margin.z), Math.Max(nav.MarginPref.x, nav.MarginPref.z));
-            m = Math.Max(0, Math.Min(m, (Math.Min(caps.MaxX, caps.MaxZ) - MinWidth) / 2));
-            int w = Snap(width, MaxWidth(caps, m));
+            int m0 = Math.Max(0, Math.Min(Math.Max(nav.MarginPref.x, nav.MarginPref.z), (Math.Min(caps.MaxX, caps.MaxZ) - MinWidth) / 2));
+            int w = Snap(width, MaxWidth(caps, m0));
+            int m = Math.Max(0, Math.Min(Math.Max(m0, MarginFor(w)), (Math.Min(caps.MaxX, caps.MaxZ) - w) / 2));
             long h = nav.Dims.y;
             while (m > 0 && (long)(w + 2 * m) * (w + 2 * m) * h > caps.MaxBlocks) m = Math.Max(0, m - 8);
             if ((long)(w + 2 * m) * (w + 2 * m) * h > caps.MaxBlocks) return null;
             var dims = new Vector3Int(w + 2 * m, nav.Dims.y, w + 2 * m);
             var margin = new Vector3Int(m, nav.Margin.y, m);
             if (dims == nav.Dims && margin == nav.Margin) return null;
-            var o = new Vector3Int(Aligned(nav.Origin.x, nav.View.x - dims.x / 2f), nav.Origin.y, Aligned(nav.Origin.z, nav.View.z - dims.z / 2f));
+            var o = new Vector3Int(NavState.AlignedTo(nav.Origin.x, nav.View.x - dims.x / 2f), nav.Origin.y, NavState.AlignedTo(nav.Origin.z, nav.View.z - dims.z / 2f));
             return new RegionMove { Origin = o, Dims = dims, Margin = margin, Kind = "resize" };
         }
-
-        /// <summary>The origin closest to `ideal` that differs from `current` by whole sections.</summary>
-        static int Aligned(int current, float ideal) => current + (int)Math.Round((ideal - current) / NavState.Step, MidpointRounding.AwayFromZero) * NavState.Step;
 
         /// <summary>Block size that keeps the footprint on the table: bs * oldWidth / newWidth, within the protocol's range.</summary>
         public static float ScaleBlockSize(float bs, int oldWidth, int newWidth)

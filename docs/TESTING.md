@@ -931,3 +931,65 @@ The look of every kind at table scale, lighting at night and in caves, the end p
 - The enchanting book stays closed and idle (vanilla opens it toward a nearby player); banner flags don't sway; the conduit's wind isn't animated.
 - Sign text is plain: styles and per-line colours from commands are dropped.
 - A player head placed with only a name gets its skin after a lookup (about 3 s the first time); a server without internet access sends no skin, and the head shows the default one.
+
+## Faster gliding at wide areas (0.4.0 nav; Paper 26.3, seed 12345, 2026-10-14/15, no headset)
+
+The headset at 256 wide (region 288×160×288, 16-block margin) glided at 4–9 blocks/s (1–2 cm/s on the table): the stream cap allowed 12 blocks of runway per round trip, and the round trip (until every new section was meshed) was 1–1.5 s. Measured on an own Paper 26.3 server (2 GB heap, own ports, seed 12345, chunks generated, every client with `sections_v1` + `light_v1` + `biomes_v1`), on an x86 PC (Ryzen 7 9800X3D). "Before" is master 9f0e1ab (plugin and app logic), built from the same sources.
+
+### Tests
+
+| Suite | Result |
+|---|---|
+| Plugin (JUnit) | 125 tests, 0 failures. New: `RegionMergeTest` (9: a one-section shift of 288×160×288 reads one column of 180 sections and 18 chunks; the merged grid equals a full read for shifts on every axis, two sections, grow, shrink, an unaligned move and partial edge sections, light included; the sections read are exactly what a delta lists; shrinking reads nothing; when a base is usable; base biome lookup; section size estimates; mapped section encoding; biomes weigh only on part 0), the default caps fit 256 + 2 × 48. |
+| Tools (pytest + ruff) | 120 passed, ruff clean. `nav_e2e.py` gained `--fresh` (the v1 client reads every region itself with a private `subscribe`), `--churn` (setblock and falling sand near the centre while the region moves), `--margin-y`, and the time until the last part arrived. |
+| Quest scripts (`Tests~`, .NET 8, `--jar` + `--entity-models`) | 908/908 PASS. New in `NavTests.FastGlideTests` (32): margins by width and presets on 352 and 288 servers; the margin grown on the first push (whole sections, window and view kept); runway and caps; a simulated glide (72 Hz, answers after 0.3 s) at the cap without stalls, well above it with stalls; stopping and jitter ask for nothing; reversing turns the region round once; wiggling 6 blocks never ping-pongs; diagonal; vertical lookahead stops at the build height top and bottom; a resize doesn't count as glide latency; `MeshScope` boxes, lead ahead, order, no margin; the mesh cap and rate meter. |
+| Unity 6000.0.84f1 batch compile | 0 errors; the only warning in `Assets/` is the existing CS0618 (`overlayType`). |
+| `Editor/ShaderCheck` | 80 variants, 0 errors (no shader changed). |
+| `Editor/BatchMeshCheck.RunRenderer` | 10/10 PASS: the eight existing steps with jobs of 4 sections, plus meshes outside `KeepScope` dropped and meshed again when the scope comes back. |
+| Live: `nav_e2e.py --fresh --churn --light` | `ok`: 6 and 8 one-section shifts at 128 wide (margins 16 and 32), each delta-assembled region equal, blocks and light, to an independent full read; 41 block changes during the run. |
+| Live: `area_e2e.py --light --widths 64,96,128,192,256,64,256,96` | `ok`: every resize (now read incrementally) equals a fresh client's full snapshot. |
+| Live: `Tests~ --live`, `--live-resize` | all PASS (`--live-resize` 64 → 256 now loads the 352-wide region: 4,480 sections in 2.1 s; the full resends match). |
+
+### Server: one-section shift (`nav_e2e.py --no-v1 --light`, REGION_SET / SNAPSHOT log lines)
+
+| | before, 288×160×288 | after, 288×160×288 | after, 352×160×352 (256 + 48 margins) |
+|---|---|---|---|
+| sections read | 3,240 (all) | 180 | 220 |
+| chunks captured, main thread | 361 in 2–3 ticks, 3.0–3.5 ms | 18 in 1 tick, 0.16–0.27 ms | 22 in 1 tick, 0.2–0.5 ms |
+| walk (async) | 212–227 ms | 20–31 ms (copy 3–10 ms) | 22–42 ms (copy 7–21 ms) |
+| remap / encode (outbound) | 16–18 / 19–25 ms | 1–5 / 2–10 ms | 1–6 / 2–8 ms |
+| REGION_SET total | 300–350 ms | 45–51 ms | 50 ms (one 100 ms) |
+| until the last part arrived (client) | about 400 ms | 68–151 ms | 158–236 ms |
+| delta size | 0.44–0.89 MB | the same | 0.5–1.2 MB, 1–2 parts |
+
+- The total is now one tick: the walk used to wait for Bukkit's async heartbeat (up to 50 ms) and the load step for the next tick; both are gone when the chunks are loaded, which `stream.ticket-ring: 1` arranges for the next shift.
+- Resizes read only the ring too: 192 → 256 reads 1,024 of 2,592 sections (walk 68 ms, was 186 ms); shrinking reads nothing.
+- **Fixed on the way:** at 352 wide every section went in its own part (220 parts, 6.8 MB for a one-section shift) because the biome estimate (4 bytes per cell, 1.24 MB) counted on every part; it is now the RLE size, on part 0 only.
+- The `region_request` size estimate of an incremental move scales the previous estimate to the kept volume and adds the new sections in `sections_v1` form, which is 15–40% above the old one-message estimate; it drifts up a little while gliding (12 MB at 352 wide with light, cap 32 MiB).
+- **Memory:** `max_region` is now 352×384×352 and 25,165,824 blocks (`blocks` was 16,777,216). One copy of 352×160×352 is 79 MB of ids and 20 MB of light on the server (a moving region holds two or three copies: the session's last grid, the move being read, a diff), and 59 MB (ushort + light) on the headset, which holds two while a delta decodes.
+
+### Pan speed per preset (`Tests~ dotnet run -c Release -- --live-glide ws://… --widths 64,96,128,192,256 --glide-seconds 15`)
+
+Full stick for 15 s along +x and back along −x, block size fitted to a 0.8 × 0.6 m table (2.23 mm at 256), 72 Hz frames running `NavState` and the renderer's meshing schedule (3 jobs, flat colours with light). "Asked" is 0.12 m/s × 3 (the ramp) / block size. "4× slower meshing" holds each worker 4× as long per section (`--mesh-slowdown 4`, 3.2 ms per section instead of 0.8), a stand-in for the Quest until it is measured there.
+
+| width (margin after) | asked, blocks/s | before: blocks/s (cm/s) | server change only | after (cm/s) | after, 4× slower meshing (cm/s) |
+|---|---|---|---|---|---|
+| 64 (16) | 40 | 21–22 (18–20) | 24 (21) | 38.5 (34.3) | 38.5 (34.3) |
+| 96 (16) | 61 | – | – | 57.9 (34.4) | 57.9 (34.4) |
+| 128 (32) | 81 | 14 (6.1–6.3) | 16 (7.1–7.3) | 77.2 (34.4) | 53–54 (23.4–23.9) |
+| 192 (32) | 121 | 9.2–9.4 (2.7–2.8) | 11.3–11.8 (3.3–3.5) | 66–68 (19.5–20.1) | 40.5–41 (12.0–12.2) |
+| 256 (48) | 162 | 5.8–18 (1.3–4.1) | 8.7–9.6 (1.9–2.1) | 52–54 (11.5–12.0) | 33.5–34 (7.5) |
+
+- Before, the cap used the latency until every new section was meshed (0.5–1.5 s at 256) and 12 blocks of runway; the server change alone cut the round trip from about 450 to 130 ms but not the meshing.
+- After, at 256: round trip 152–158 ms (stream cap 156–184 blocks/s), so meshing is the limit: about 900 sections/s here (560–650 with the slowdown), mesh cap 52–54 (34). Up to 128 wide the asked speed is reached: the same 34 cm/s of table at every scale, as the stick curve intends. At 192 and 256 the table speed is lower (12–20 cm/s here) because every block of travel brings more sections into view.
+- Frames with sections on screen not meshed yet: under 1.5% up to 192, 2.5–8% at 256 (4–9% with the slowdown), at the far edge of the window. With 80% of the measured rate instead of 65% it was 20–40% at 256 for 15% more speed.
+
+### Not verified (needs the headset)
+
+The real mesh rate and the speed it allows at 192 and 256 (read `GLIDE ... mesh_rate_s=... blocks_s=... holes_s=...`), frame times while gliding with jobs of 4 sections (`mesh_sections_per_job`), sections popping in at the far edge, the lookahead's feel when stopping and turning round, and GC pauses from the new grid each delta allocates (59 MB at 352×160×352).
+
+### Known gaps
+
+- When a delta lands, sections that were being meshed are meshed again (their job is dropped as stale): up to about 5% of the meshing at 256.
+- The headset still copies the whole grid per delta; reusing buffers would remove that allocation.
+- The mesh cap is unknown until meshing has been saturated for 0.5 s; until then only the stream cap applies.

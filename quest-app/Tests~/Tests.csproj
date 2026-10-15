@@ -14,6 +14,8 @@
     <Compile Include="../Assets/Scripts/World/NavState.cs;../Assets/Scripts/World/SectionPlan.cs;../Assets/Scripts/World/SnapshotAssembler.cs;../Assets/Scripts/World/CapMesher.cs;../Assets/Scripts/Net/SectionedSnapshot.cs" />
     <!-- [area] width presets and mesh batching -->
     <Compile Include="../Assets/Scripts/World/AreaSizing.cs;../Assets/Scripts/World/SectionBatches.cs" />
+    <!-- [nav] which sections are meshed: near the visible window only -->
+    <Compile Include="../Assets/Scripts/World/MeshScope.cs" />
     <Compile Include="../Assets/Scripts/World/BlockShading.cs;../Assets/Scripts/World/BiomeColors.cs" />
     <Compile Include="../Assets/Scripts/World/BlockModelBaker.cs;../Assets/Scripts/World/BlockModels.cs;../Assets/Scripts/World/PistonGhosts.cs;../Assets/Scripts/World/TextureMips.cs" />
     <Compile Include="../Assets/Scripts/World/PlayerModel.cs;../Assets/Scripts/World/PlayerAnimation.cs;../Assets/Scripts/World/SkinImage.cs" />

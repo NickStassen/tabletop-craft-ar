@@ -83,7 +83,7 @@ static class AreaTests
         n.View = n.RegionCentre;
         Check(AreaSizing.Plan(n, 64, Server) == null, "plan: same width -> nothing to send");
         var capped = Server; capped.MaxViewWidth = 192;
-        Check(AreaSizing.Plan(n, 256, capped).Value.Dims.x == 224, "plan: the server's max caps the width (192 + margins)");
+        Check(AreaSizing.Plan(n, 256, capped).Value.Dims.x == 192 + 2 * 32, "plan: the server's max caps the width (192 + its 32-block glide margins)");
         var fewBlocks = Server; fewBlocks.MaxBlocks = 288L * 288 * 128 - 1;
         var fb = AreaSizing.Plan(n, 256, fewBlocks).Value;
         Check(fb.Dims.x == 256 + 2 * fb.Margin.x && fb.Margin.x < 16 && (long)fb.Dims.x * fb.Dims.y * fb.Dims.z <= fewBlocks.MaxBlocks, $"plan: the block cap shrinks the margin first ({fb.Margin.x})");

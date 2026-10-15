@@ -71,6 +71,9 @@ class RegionRequestTest {
         assertEquals(96, lim.get("max_view_width").getAsInt());
         assertEquals(RegionCaps.DEFAULT_VIEW_WIDTH, RegionCaps.DEFAULT.maxViewWidth());
         assertTrue(RegionCaps.DEFAULT.maxX() >= RegionCaps.DEFAULT_VIEW_WIDTH + 32, "default max_region fits a 256 window plus the 16-block margins");
+        // [nav] ... and the 48-block glide margin the headset uses at 256, 128 blocks of window height plus 16 above and below.
+        assertNull(RegionCaps.DEFAULT.check(RegionCaps.DEFAULT_VIEW_WIDTH + 96, 160, RegionCaps.DEFAULT_VIEW_WIDTH + 96));
+        assertNotNull(RegionCaps.OLD_DEFAULT.check(352, 160, 352), "the 0.3.0 defaults did not");
     }
 
     @Test void byteEstimateIsCloseToRealJson() {

@@ -160,6 +160,19 @@ static class Program
         int liveResizeIdx = Array.IndexOf(args, "--live-resize");
         if (liveResizeIdx >= 0) { AreaTests.LiveResize(args[liveResizeIdx + 1], Check); Console.WriteLine(fails == 0 ? "ALL PASS" : $"{fails} FAILED"); return fails == 0 ? 0 : 1; }
 
+        int glideIdx = Array.IndexOf(args, "--live-glide");   // [nav] sustainable pan speed per width preset (GlideTests.cs)
+        if (glideIdx >= 0)
+        {
+            int wi = Array.IndexOf(args, "--widths"), si = Array.IndexOf(args, "--glide-seconds"), sl = Array.IndexOf(args, "--mesh-slowdown");
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            var widths = wi >= 0 ? args[wi + 1].Split(',').Select(int.Parse).ToArray() : new[] { 64, 128, 256 };
+            int ui = Array.IndexOf(args, "--mesh-utilisation");
+            if (ui >= 0) MeshScope.Utilisation = float.Parse(args[ui + 1], inv);
+            GlideTests.LiveGlide(args[glideIdx + 1], widths, si >= 0 ? float.Parse(args[si + 1], inv) : 8f,
+                                 !args.Contains("--no-mesh"), sl >= 0 ? float.Parse(args[sl + 1], inv) : 1f, Check);
+            Console.WriteLine(fails == 0 ? "ALL PASS" : $"{fails} FAILED");
+            return fails == 0 ? 0 : 1;
+        }
         int navMeasIdx = Array.IndexOf(args, "--measure-nav");
         if (navMeasIdx >= 0) { NavTests.MeasureNav(args[navMeasIdx + 1]); return 0; }
         PlayerTests.Run(Check, Fixture);
