@@ -103,6 +103,14 @@ namespace TabletopCraft.World
         }
 
         /// <summary>[talk] A player's name label (chat bubbles sit above it), or null when the figure isn't on the table.</summary>
+        /// <summary>[operator] A player's figure as drawn (eased world position of the feet), for following them.</summary>
+        public bool TryShown(string uuid, out Vector3 pos)
+        {
+            if (uuid != null && _markers.TryGetValue(uuid, out var m)) { pos = m.Shown; return true; }
+            pos = default;
+            return false;
+        }
+
         public Transform LabelOf(string uuid) => uuid != null && _markers.TryGetValue(uuid, out var m) && m.Fig.Label != null ? m.Fig.Label.transform : null;
 
         /// <summary>World feet position -> RegionRoot-local Unity metres (Z mirrored).</summary>
