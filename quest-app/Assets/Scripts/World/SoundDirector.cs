@@ -229,7 +229,9 @@ namespace TabletopCraft.World
                 Emit(new SoundCue("entity.lightning_bolt.thunder", 10000f, 0.8f + R() * 0.2f), e.Pos, SoundPriority.Event, null, false, now);
                 Emit(new SoundCue("entity.lightning_bolt.impact", 2f, 0.5f + R() * 0.2f), e.Pos, SoundPriority.Event, null, false, now);
             }
-            else if (p == "tnt") Emit(new SoundCue("entity.tnt.primed", 1f, 1f), e.Pos, SoundPriority.Event, null, false, now);
+            // keyed by its block: the server's own entity.tnt.primed for TNT the headset lit plays once
+            else if (p == "tnt") Emit(new SoundCue("entity.tnt.primed", 1f, 1f), e.Pos, SoundPriority.Event,
+                                      new Vector3Int(Mathf.FloorToInt(e.Pos.x), Mathf.FloorToInt(e.Pos.y), Mathf.FloorToInt(e.Pos.z)), false, now);
         }
 
         void MobStep(EntityInfo e, WorldModel w, double now)
