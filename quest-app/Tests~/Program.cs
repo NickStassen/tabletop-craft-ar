@@ -188,6 +188,8 @@ static class Program
         if (liveIdx >= 0) Live(args[liveIdx + 1]);
         int liveEditIdx = Array.IndexOf(args, "--live-edit");
         if (liveEditIdx >= 0) EditTests.Live(args[liveEditIdx + 1], Check);
+        int liveInteractIdx = Array.IndexOf(args, "--live-interact");   // [hands] --live-interact URL (a flat world)
+        if (liveInteractIdx >= 0) InteractTests.Live(args[liveInteractIdx + 1], Check);
         int liveControlIdx = Array.IndexOf(args, "--live-control");   // [talk] --live-control URL TOKEN
         if (liveControlIdx >= 0) ControlTests.Live(args[liveControlIdx + 1], liveControlIdx + 2 < args.Length ? args[liveControlIdx + 2] : "", Check);
         Console.WriteLine(fails == 0 ? "ALL PASS" : $"{fails} FAILED");

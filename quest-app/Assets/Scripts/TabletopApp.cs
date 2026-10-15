@@ -7,6 +7,8 @@
 // [area] optional: "area_width": 192 (start at that width preset, block size fitted to the table),
 //   "batch_columns": 4 (sections per mesh batch side, TabletopRenderer)
 // [talk] optional: "operator_name": "Nick" (the name in chat, else skin_player), "quick_commands": ["time set day"]
+// [hands] optional: "left_trigger": "use" (default: vanilla right-click order, left grip + trigger places) or "place"
+//   (the trigger always places or uses the selected item; left grip + trigger does the right-click order)
 // [comfort] prefs.json next to it (World/AppPrefs.cs) remembers block size, table placement, hotbar, selected block,
 //   menu tab and Show HUD; without a saved or configured block size the area is fitted to the table. The link stops
 //   while the headset is off (giant despawned, bye) and restarts when it's back on. A setup card, an offline badge
@@ -95,6 +97,11 @@ namespace TabletopCraft
         ChatView _chatView;
         string _operatorName;
         readonly List<string> _quickCommands = new List<string>();
+        // [hands] using blocks, items and mobs (interact_v1): what the server allows, its item list, the mob info card
+        InteractWelcome _interact = new InteractWelcome();
+        ItemRegistry _items;
+        EntityCard _card;
+        TriggerMode _leftTrigger = TriggerMode.Use;
 
         void Start()
         {
@@ -218,7 +225,23 @@ namespace TabletopCraft
             _ops.WorldName = () => _world.World;
             _ops.AimedBlock = () => _edit.Target.Hit && _world.Loaded ? _world.Origin + _edit.Target.Block : (Vector3Int?)null;
             _ops.Toast = (t, k) => _hud.Toast(t, k);
-            _edit.Blocked = () => _area.Active || _menu.CapturesRight || _ops.CapturesRight;
+            // [hands] The left trigger's right-click order, mobs and players on the ray, the right grip's carry, B on a mob
+            // (XR/BlockEditMode.cs, World/UseRules.cs), and the mob info card above the mob (XR/EntityCard.cs).
+            _edit.Interact = () => _interact;
+            _edit.CollectTargets = list => { _entities.Targets(list); _players.Targets(list); };
+            _edit.Mode = _leftTrigger;
+            _edit.NameTag = () => _menu.Model.NameTag;
+            _edit.LabelOf = s => _menu.Model.LabelOf(s);
+            _edit.Icons = _icons;
+            _card = gameObject.AddComponent<EntityCard>();
+            _card.Head = Head; _card.RightHand = RightHand;
+            _card.Blocked = () => _area.Active;
+            _card.RayTaken = () => _menu.CapturesRight || _ops.CapturesRight;
+            _card.Send = b => _link.Send(b);
+            _card.Interact = () => _interact;
+            _card.Top = _edit.TryEntityTop;
+            _card.Result = r => _edit.Editor.Result = r;
+            _edit.Blocked = () => _area.Active || _menu.CapturesRight || _ops.CapturesRight || _card.CapturesRight;
             _chatView = gameObject.AddComponent<ChatView>();
             _chatView.Head = Head; _chatView.LeftHand = LeftHand; _chatView.Log = _ops.Model.Log; _chatView.Bubbles = _ops.Bubbles;
             _chatView.Hidden = () => _ops.Open || _menu.Open || _area.Active;
@@ -272,6 +295,7 @@ namespace TabletopCraft
                 // [menu] show_hud, [area] area_width and block_size_m are shared with prefs.json: see LoadPrefs
                 _operatorName = c.S("operator_name");                                           // [talk] the name in chat
                 foreach (var q in c.A("quick_commands") ?? new List<object>()) if (q is string qs) _quickCommands.Add(qs);   // [talk] Console quick buttons
+                _leftTrigger = c.S("left_trigger") == "place" ? TriggerMode.Place : TriggerMode.Use;   // [hands] what the left trigger does first
                 BatchRules.Columns = Math.Max(1, c.I("batch_columns", BatchRules.Columns));     // [area] sections per batch side
             }
             catch (Exception e) { Debug.LogWarning("[Tabletop] bad tabletop.json: " + e.Message); }
@@ -520,7 +544,14 @@ namespace TabletopCraft
             AreaSize.Status + "\n" +   // [area]
             (_area.Active ? _area.Status : (_area.Status.Length > 0 ? _area.Status : "Y (left) = set up area   left stick = move") + "\n" + _edit.Status) +
             $"\nBLOCKS {(_registry != null ? _registry.Count + " placeable" : "-")}  {_icons.Status}" +
-            $"\nTALK {TalkStatus()}";   // [talk]
+            $"\nTALK {TalkStatus()}" +   // [talk]
+            $"\nHANDS {HandsStatus()}";   // [hands]
+
+        /// <summary>[hands] Using blocks, items and mobs as the server granted it, and what the left trigger does first.</summary>
+        string HandsStatus() =>
+            !_interact.Allowed ? "off (the server has no interact_v1, or interact.enabled is off)"
+            : $"on, {_items?.Count ?? 0} items, left trigger {(_leftTrigger == TriggerMode.Use ? "uses first (grip = place)" : "places (grip = use)")}" +
+              $"{(_interact.Entities ? "" : ", no mobs")}{(_interact.HarmPlayers ? ", players can be hurt" : "")}";
 
         /// <summary>[talk] Chat, commands and status as the server granted them (X opens the operator panel).</summary>
         string TalkStatus()
@@ -567,6 +598,9 @@ namespace TabletopCraft
                     _nav.OnWelcome(m);   // [nav] server caps, limits, build height
                     AreaSize.OnLimits(m.O("limits"));   // [area] max_view_width
                     _ops.OnWelcome(m, _quickCommands);   // [talk] chat, commands, status granted
+                    _interact = InteractWelcome.From(m);   // [hands] item_registry follows for interact_v1 sessions
+                    if (!_interact.Allowed && _items != null) { _items = null; _menu.SetItems(null); }
+                    _card.Model.Close();
                     // Light from the server makes faces merge less: scale the area-setup face estimate (soft cap).
                     AreaMath.LightFactor = AreaMath.LightFactorFor(m.A("caps")?.Contains(Protocol.CapLight) == true, BlockShading.SmoothLighting);
                     _link.Send(Protocol.AvatarConfig(true, BlockSizeM, SkinPlayer, true, "Tabletop Giant"));
@@ -618,6 +652,18 @@ namespace TabletopCraft
                 case "chat": case "command_result": case "command_output": case "command_suggestions":   // [talk] PROTOCOL.md 4.26-4.28
                 case "server_status": case "world_info": case "players_info":
                     _ops.OnMessage(m);
+                    break;
+                case ItemRegistry.Type:   // [hands] usable items and spawn eggs (PROTOCOL.md "Using blocks and items")
+                    try
+                    {
+                        _items = ItemRegistry.From(m);
+                        _menu.SetItems(_items);
+                        Debug.Log($"[Tabletop] item registry: {_items.Use.Count} usable items, {_items.Eggs.Count} spawn eggs");
+                    }
+                    catch (Exception e) { Debug.LogWarning("[Tabletop] bad item_registry: " + e.Message); }
+                    break;
+                case "entity_info":   // [hands] the info card above the mob
+                    _card.Show(EntityInfoMessage.From(m));
                     break;
                 case BlockRegistry.Type:   // [menu] every placeable block (PROTOCOL.md 4.24)
                     try

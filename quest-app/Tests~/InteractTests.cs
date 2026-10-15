@@ -6,6 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using TabletopCraft.Net;
 using TabletopCraft.World;
 using UnityEngine;
@@ -222,6 +223,104 @@ static class InteractTests
         check(ed.Result == "used bone meal on grass block" && w.State(w.Get(5, 3, 6)) == "minecraft:grass_block[snowy=false]", "no optimistic change for an interact");
         ed.OnError(w, Parse("{\"code\":\"interact_denied\",\"message\":\"bone meal does nothing to stone\",\"op\":\"interact\",\"pos\":[105,63,-34]}"));
         check(ed.Result == "bone meal does nothing to stone" && ed.Pending.Count == 0, "an interact refusal only reports");
+    }
+
+    /// <summary>
+    /// --live-interact URL: the app's own classes against a running plugin on a flat world (grass at y = -61): moves the
+    /// region to x/z 0..31 at the surface, places a door with block_edit, opens it with the left trigger's decision and
+    /// BlockEditor.Interact, spawns a pig with its egg, aims at it with EntityRaycast, asks for its info card, and kills it
+    /// from the card. The door is broken again at the end.
+    /// </summary>
+    public static void Live(string url, Action<bool, string> check)
+    {
+        var link = new LinkClient(url, "");
+        link.Start();
+        var w = new WorldModel();
+        var ed = new BlockEditor();
+        var store = new EntityStore();
+        var asm = new SnapshotAssembler();
+        var card = new EntityCardModel();
+        InteractWelcome welcome = null;
+        ItemRegistry items = null;
+        EntityInfoMessage info = null;
+        var errors = new List<string>();
+        var t0 = DateTime.UtcNow;
+        double Now() => (DateTime.UtcNow - t0).TotalSeconds;
+        bool Wait(Func<bool> done, double seconds = 6)
+        {
+            var end = DateTime.UtcNow.AddSeconds(seconds);
+            while (DateTime.UtcNow < end)
+            {
+                while (link.Inbound.TryDequeue(out var m))
+                    switch (m.S("type"))
+                    {
+                        case "welcome": ed.ServerAllows = m.A("caps")?.Contains(Protocol.CapEdit) == true; welcome = InteractWelcome.From(m); break;
+                        case ItemRegistry.Type: items = ItemRegistry.From(m); break;
+                        case "chunk_snapshot":
+                            asm.Offer(m, w, new HashSet<Vector3Int>());
+                            if (!asm.Busy) break;
+                            var res = asm.Wait();
+                            if (res.Error == null) { w.ApplySnapshot(res.Snapshot); ed.OnSnapshot(w, res.Delta ? res.ListedKeys : null); }
+                            break;
+                        case "block_update": ed.OnBlockUpdate(w, m); w.ApplyBlockUpdate(m); break;
+                        case "entities": store.Apply(m, null); break;
+                        case "entity_info": info = EntityInfoMessage.From(m); card.Show(info, welcome, Now()); break;
+                        case "error": errors.Add($"{m.S("code")}: {m.S("message")}"); ed.OnError(w, m); break;
+                    }
+                if (done()) return true;
+                Thread.Sleep(5);
+            }
+            return false;
+        }
+        check(Wait(() => w.Loaded && link.Connected && welcome != null && items != null), "live interact: welcome, item_registry and a snapshot");
+        check(welcome != null && welcome.Allowed && items?.Find("item:minecraft:pig_spawn_egg") != null, "live interact: interact_v1 granted, pig egg offered");
+        if (welcome == null || !welcome.Allowed) { link.Dispose(); return; }
+        var origin = new Vector3Int(0, -64, 0);
+        link.Send(Protocol.RegionRequest(w.World, origin, new Vector3Int(32, 64, 32)));
+        check(Wait(() => w.Loaded && w.Origin == origin), $"live interact: region on the surface ({w.Origin})");
+        var down = new Vector3(0, -1, 0);
+        var lo = new Vector3(0, 0, 0); var hi = (Vector3)w.Dims;
+        BlockHit Ray(float x, float z) => BlockRaycast.Cast(w, new Vector3(x, w.Dims.y - 0.5f, z), down, w.Dims.y, lo, hi);
+        var ground = Ray(10.5f, 10.5f);
+        check(ground.Hit && ground.Block.y == 3 && w.State(w.Get(10, 3, 10)).StartsWith("minecraft:grass_block"), "live interact: grass at y=-61");
+        var doorCell = new Vector3Int(10, 4, 10);
+        link.Send(Protocol.BlockEdit("place", w.Origin + doorCell, Door, "up"));
+        check(Wait(() => w.State(w.Get(10, 4, 10)).StartsWith("minecraft:oak_door") && w.State(w.Get(10, 5, 10)).Contains("half=upper")), "live interact: a door placed");
+        var onDoor = Ray(10.5f, 10.5f);
+        string doorState = w.State(w.Get(onDoor.Block.x, onDoor.Block.y, onDoor.Block.z));
+        var act = UseRules.Decide(false, doorState, "minecraft:stone", false, TriggerMode.Use, welcome);
+        check(act == LeftAction.Interact, $"live interact: the left trigger would use the door ({act})");
+        link.Send(ed.Interact(w, onDoor, null, false, down));
+        check(Wait(() => BlockEditRules.Prop(w.State(w.Get(10, 4, 10)), "open") == "true" && BlockEditRules.Prop(w.State(w.Get(10, 5, 10)), "open") == "true"),
+              "live interact: the door opened (both halves)");
+        // A pig from its egg on the grass a few blocks away, found with the app's entity store and ray.
+        var known = new HashSet<int>(store.All.Keys);
+        var grass = Ray(16.5f, 20.5f);
+        link.Send(ed.Interact(w, grass, "minecraft:pig_spawn_egg", false, down));
+        EntityInfo pig = null;
+        check(Wait(() => (pig = store.All.Values.FirstOrDefault(e => e.Type == "minecraft:pig" && !known.Contains(e.Id))) != null), "live interact: the egg spawned a pig");
+        if (pig != null)
+        {
+            var target = new EntityTarget { Uuid = pig.Uuid, Id = pig.Id, Type = pig.Type, Name = pig.Name, Pos = pig.Pos, Width = pig.Width, Height = pig.Height };
+            var local = pig.Pos - (Vector3)w.Origin;
+            var hitPig = EntityRaycast.Cast(new List<EntityTarget> { target }, w.Origin, new Vector3(local.x, w.Dims.y - 0.5f, local.z), down, w.Dims.y, lo, hi);
+            var under = BlockRaycast.Cast(w, new Vector3(local.x, w.Dims.y - 0.5f, local.z), down, w.Dims.y, lo, hi);
+            check(hitPig.Hit && EntityRaycast.EntityFirst(hitPig, under) && UseRules.Decide(true, null, "minecraft:stone", false, TriggerMode.Use, welcome) == LeftAction.Entity,
+                  "live interact: the ray from above hits the pig before the grass");
+            string op = UseRules.EntityOp("minecraft:stone", "", out var item, out var text);
+            link.Send(InteractProtocol.EntityOp(pig.Uuid, op, item: item, text: text));
+            check(Wait(() => info != null && info.Uuid == pig.Uuid) && card.Open && info.Lines()[0] == "Pig" && card.Buttons.Any(b => b.Op == "kill"),
+                  $"live interact: the info card ({(info == null ? "none" : string.Join(" | ", info.Lines()))})");
+            var r = card.ButtonRect(card.Buttons.FindIndex(b => b.Op == "kill"));
+            card.Point(r.CX, r.CY, true);
+            string kill = card.Click(Now());
+            link.Send(InteractProtocol.EntityOp(pig.Uuid, kill));
+            check(kill == "kill" && Wait(() => !store.All.ContainsKey(pig.Id)), "live interact: killed from the card");
+        }
+        check(errors.Count == 0, "live interact: no refusals" + (errors.Count > 0 ? ": " + string.Join("; ", errors) : ""));
+        link.Send(Protocol.BlockEdit("break", w.Origin + doorCell, null, "up"));
+        Wait(() => w.State(w.Get(10, 4, 10)) == "minecraft:air", 3);
+        link.Dispose();
     }
 
     static void Card(Action<bool, string> check, Func<string, string> fixture)
