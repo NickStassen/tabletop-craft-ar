@@ -14,7 +14,7 @@ surface of a flat world (region_request origin [x, -64, z]), builds a small test
      dropped somewhere else, frozen and unfrozen, made to glow, moved, and killed; entity_info reports each step;
   5. flint and steel lights TNT (the block goes, a primed TNT entity comes) and entity_op remove takes it away before
      it explodes;
-  6. refusals carry op and pos (or uuid): a chest (the container view's hook), an axe on stone, a position outside
+  6. refusals carry op and pos (or uuid): a chest (opened with container_query instead), an axe on stone, a position outside
      the region, an item the server doesn't offer, an unknown uuid, and a second client without interact_v1.
 The bench is broken again at the end (water that flowed dries by itself).
 
@@ -318,7 +318,7 @@ async def run(a: argparse.Namespace) -> dict:
     s = await use(P(20, 12), "up")
     e = await c.until(lambda: c.errors("interact_denied", s))
     check(e and e[0].get("op") == "interact" and e[0].get("pos") == list(P(20, 12)) and "container" in e[0]["message"],
-          "a chest is the container view's hook (refused for now, with op and pos)", msg=e and e[0]["message"])
+          "a chest isn't an interact (the headset opens it with container_query): refused with op and pos", msg=e and e[0]["message"])
     s = await use(P(8, 4), "up", "minecraft:iron_axe")
     e = await c.until(lambda: c.errors("interact_denied", s))
     check(e and "stone" in e[0]["message"], "an axe on stone is refused readably", msg=e and e[0]["message"])

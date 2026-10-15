@@ -554,19 +554,26 @@ static class OperatorTests
         var start = new RegionMove { Origin = new Vector3Int(sp.x - 48, Math.Max(nav.MinY, sp.y - 48), sp.z - 48), Dims = new Vector3Int(96, 96, 96), Margin = new Vector3Int(16, 16, 16), Kind = "jump" };
         link.Send(Protocol.RegionRequest(worlds[0].Name, start.Origin, start.Dims, start.Margin));
         check(Pump(() => nav.Loaded && nav.Origin == start.Origin && nav.Dims == start.Dims, 20), "live operator: a 64-wide area at the spawn");
+        Cmd($"gamemode creative {player}");   // a falling or survival bot gets kicked for its movement while it is teleported about
         check(Cmd($"tp {player} {sp.x + 0.5} {sp.y + 1} {sp.z + 0.5}"), "live operator: the player is at the spawn");
-        // Who is it (uuid)?
+        // Who is it (the uuid, as the Players tab knows it)? Then follow: the figure on the table drives the glide.
+        string uuid = null;
+        Pump(() => players.Count > 0, 5);
         long q = link.SendTracked(Protocol.RegionQuery(player));
         follow.Start(player, null, Now());
         follow.Sent(q);
         check(Pump(() => follow.HasTarget, 5), "live operator: region_query finds the player");
-        // Walk the player east in 2-block steps (tp ~2 ~ ~), 3 a second: the view follows by gliding.
-        float x0 = nav.View.x;
+        foreach (var kv in players) uuid = kv.Key;   // the only Java player online
+        follow.Start(player, uuid, Now());
+        // Walk the player east in 3-block steps, two a second (commands are limited to 2/s): the view glides after them.
         int shiftsBefore = nav.Requests;
-        for (int i = 0; i < 30; i++) { Cmd($"tp {player} ~2 ~ ~"); Pump(() => false, 0.2); }
+        for (int i = 0; i < 20; i++) { Cmd($"execute as {player} at @s run tp @s ~3 ~ ~"); Pump(() => false, 0.45); }
         Pump(() => false, 2.5);
+        Console.WriteLine($"live operator: {nav.Describe()} {nav.LastNote}; {follow.Describe()} target {follow.Target.x:F1},{follow.Target.y:F1},{follow.Target.z:F1} " +
+                          $"seen {follow.Seen(Now())} figures {players.Count} uuid {uuid}");
         float px = sp.x + 0.5f + 60;
-        check(Math.Abs(nav.View.x - px) < 4f && nav.Requests > shiftsBefore, $"live operator: the view followed 60 blocks east (view {nav.View.x:F1}, player {px:F1}, {nav.Requests - shiftsBefore} requests)");
+        check(Math.Abs(nav.View.x - px) < 4f && nav.Requests > shiftsBefore && follow.JumpCount == 0,
+              $"live operator: the view glided 60 blocks east after the player (view {nav.View.x:F1}, player {px:F1}, {nav.Requests - shiftsBefore} requests, {follow.JumpCount} jumps)");
         // Teleport 1000 blocks: a jump.
         int jumps = follow.JumpCount;
         Cmd($"tp {player} {sp.x + 1000.5} 120 {sp.z - 700.5}");
