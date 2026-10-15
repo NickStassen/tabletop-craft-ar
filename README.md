@@ -55,9 +55,9 @@ Gliding into the terrain: a lush cave with glow berries and a lava fall. It's li
 
 ### Both sides of the same world
 
-Picking a block from the block menu and building on the miniature. The menu floats by the left hand, you point the ray at a spot, and the selected block (here an oak door) goes in:
+Picking a block from the block menu on the headset (the menu floats by the left hand, and the ray selects the block), then a Java player placing doors in the hut, with the changes showing up live on the miniature:
 
-![Opening the block menu, picking an oak door and placing it on a hut on the miniature](docs/media/tabletop-build-select.gif)
+![Opening the block menu and picking an oak door on the headset, then a Java player placing doors in a hut that updates live on the miniature](docs/media/tabletop-build-select.gif)
 
 A Java player on the miniature, seen from the headset: the player's figure stands on the mountain next to a real terrarium, and a cat has come to look at the world.
 
