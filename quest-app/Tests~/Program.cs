@@ -168,8 +168,10 @@ static class Program
             var widths = wi >= 0 ? args[wi + 1].Split(',').Select(int.Parse).ToArray() : new[] { 64, 128, 256 };
             int ui = Array.IndexOf(args, "--mesh-utilisation");
             if (ui >= 0) MeshScope.Utilisation = float.Parse(args[ui + 1], inv);
+            int pj = Array.IndexOf(args, "--per-job-max");   // [mesh] 4 = the fixed jobs of 0.4.0
+            if (pj >= 0) MeshScope.MaxSectionsPerJob = int.Parse(args[pj + 1]);
             GlideTests.LiveGlide(args[glideIdx + 1], widths, si >= 0 ? float.Parse(args[si + 1], inv) : 8f,
-                                 !args.Contains("--no-mesh"), sl >= 0 ? float.Parse(args[sl + 1], inv) : 1f, Check);
+                                 !args.Contains("--no-mesh"), sl >= 0 ? float.Parse(args[sl + 1], inv) : 1f, Check, JarPath(args), args.Contains("--skirt"));
             Console.WriteLine(fails == 0 ? "ALL PASS" : $"{fails} FAILED");
             return fails == 0 ? 0 : 1;
         }

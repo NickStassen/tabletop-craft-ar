@@ -26,8 +26,13 @@ namespace TabletopCraft.World
 {
     public sealed class TabletopRenderer : MonoBehaviour
     {
-        public int MaxJobsInFlight = 3;          // worker threads meshing at once
-        public static int SectionsPerJob = 4;    // [nav] sections one job meshes in a row (tabletop.json "mesh_sections_per_job")
+        /// <summary>[mesh] Worker threads meshing at once (tabletop.json "mesh_workers"). The Quest 3 gives an app about
+        /// three cores and Unity's main and render threads use two, so more workers mostly steal frame time.</summary>
+        public static int Workers = 3;
+        public int MaxJobsInFlight = Workers;    // worker threads meshing at once
+        /// <summary>[nav] Fewest sections one job meshes in a row (tabletop.json "mesh_sections_per_job"). [mesh] A job takes
+        /// more when sections are cheap (MeshScope.SectionsPerJob): enough to keep its worker busy until the next frame.</summary>
+        public static int SectionsPerJob = 4;
         public float UploadBudgetMs = 3f;        // main-thread mesh upload budget per frame
         public Material OpaqueMaterial, TransparentMaterial;
         public WorldModel Model;
@@ -54,6 +59,10 @@ namespace TabletopCraft.World
         /// <summary>[nav] Measured meshing throughput (sections/s with every worker busy), for NavState.MeshCap.</summary>
         public float MeshRate => _meter.Rate;
         readonly MeshRateMeter _meter = new MeshRateMeter();
+        /// <summary>[mesh] A section's worker time (ms, EMA) and the sections the last dispatch gave each job (GLIDE log).</summary>
+        public float MsPerSection => _work.MsPerSection;
+        public int LastPerJob { get; private set; }
+        readonly MeshWorkMeter _work = new MeshWorkMeter();
         int _meshedNow; bool _saturated;
         bool _keepChecked;
         SectionBox _keptFor;
@@ -308,6 +317,7 @@ namespace TabletopCraft.World
             Upload();
             _meter.Frame(Time.unscaledDeltaTime, _saturated, _meshedNow);   // [nav] what meshing sustains, for the glide's MeshCap
             _meshedNow = 0;
+            _work.Frame();   // [mesh] worker time per section, for the job size
             DropOutsideKeep();   // [nav]
             UpdateBatches();   // [area]
             int urgent = DirtyIn(Scope);   // [nav] dirty sections near the window; the rest of the margin waits
@@ -325,10 +335,14 @@ namespace TabletopCraft.World
             bool lazy = urgent == 0;
             if (lazy && (_lazy.Count == 0 || _staging)) return;
             Prewarm();
-            // [nav] Each job meshes up to SectionsPerJob sections in a row: with one section per job a worker sat idle
-            // until the next frame handed it another, which capped meshing at 3 sections per frame (216/s at 72 Hz),
-            // too few for a 256-wide window entering at glide speed. Dealt round-robin so every job starts with an urgent one.
-            PickNearest(lazy ? _lazy : Model.DirtySections, slots * Mathf.Max(1, SectionsPerJob));
+            // [nav] Each job meshes several sections in a row: with one section per job a worker sat idle until the next
+            // frame handed it another, which capped meshing at 3 sections per frame (216/s at 72 Hz), too few for a
+            // 256-wide window entering at glide speed. Dealt round-robin so every job starts with an urgent one.
+            // [mesh] With fixed jobs of 4 the cap was 12 sections per frame (864/s) however cheap a section got; a job now
+            // takes about 1.5 frames of work at the measured cost per section (MeshScope.SectionsPerJob).
+            int perJob = MeshScope.SectionsPerJob(_work.MsPerSection, Time.unscaledDeltaTime * 1000f, Mathf.Max(1, SectionsPerJob));
+            LastPerJob = perJob;
+            PickNearest(lazy ? _lazy : Model.DirtySections, slots * perJob);
             var w = Model; int snap = Model.SnapshotId;
             int jobs = Mathf.Min(slots, _pick.Count);
             for (int j = 0; j < jobs; j++)
@@ -344,12 +358,14 @@ namespace TabletopCraft.World
                 }
                 Interlocked.Increment(ref _jobs);
                 IFaceSource faces = Atlas;
+                var work = _work;
                 Task.Run(() =>
                 {
                     var data = _pool.TryTake(out var d) ? d : new MeshData();
                     foreach (var s in list)
                     {
                         SectionMesh mesh = null;
+                        long t0 = Stopwatch.GetTimestamp();
                         try
                         {
                             var n = w.SectionCount;
@@ -358,6 +374,7 @@ namespace TabletopCraft.World
                                 GreedyMesher.Build(w, s, faces, data);
                                 GreedyMesher.BuildSpecials(w, s, faces, data);
                                 mesh = SectionMesh.From(data, s);   // [area] batch form (Unity space, normals) on the worker
+                                work.Add(Stopwatch.GetTimestamp() - t0);   // [mesh] stale sections (skipped) don't count
                             }
                         }
                         catch (System.Exception e) { mesh = null; UnityEngine.Debug.LogWarning($"[Tabletop] mesh {s}: {e.Message}"); }

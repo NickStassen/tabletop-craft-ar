@@ -19,9 +19,9 @@ static class MeshTests
     /// <summary>Flat colours cached per state, as ResourcePackAtlas.Face answers without a pack (one dictionary lookup).
     /// The colour is a stable hash of the state: BlockRules.FlatColor uses string.GetHashCode for unknown blocks, which
     /// .NET randomises per process, so its output can't be compared between two runs.</summary>
-    sealed class CachedFlat : IFaceSource
+    public sealed class CachedFlat : IFaceSource
     {
-        readonly Dictionary<string, FaceKey> _keys = new Dictionary<string, FaceKey>();
+        readonly System.Collections.Concurrent.ConcurrentDictionary<string, FaceKey> _keys = new System.Collections.Concurrent.ConcurrentDictionary<string, FaceKey>();
         public FaceKey Face(string s, int d)
         {
             if (!_keys.TryGetValue(s, out var k))

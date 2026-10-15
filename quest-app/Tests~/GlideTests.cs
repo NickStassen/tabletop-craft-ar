@@ -1,14 +1,19 @@
 // [nav] dotnet run -- --live-glide ws://host:port/tabletop [--widths 64,128,256] [--glide-seconds 8] [--no-mesh]
-//       [--mesh-slowdown 3]
+//       [--mesh-slowdown 3] [--jar client.jar] [--skirt]
 //
 // Glides across a live server the way the headset does, to measure the sustainable pan speed per width preset: for each
 // width it resizes the area (AreaSizing.Plan), fits the block size to a 0.8 x 0.6 m table, then holds the left stick at
 // full tilt along +x for the given time and back along -x. Every frame (72 Hz) runs NavState as NavController does
 // (Speed with the stream and mesh caps, Move, one region_request in flight), decodes snapshots on a worker
 // (SnapshotAssembler) and applies them, and meshes like TabletopRenderer (3 jobs of up to 4 sections, MeshScope's lazy
-// margin and order, the measured mesh rate; flat colours, the snapshot's light). x86 meshing is faster than the Quest's:
+// margin and order, the measured mesh rate; the snapshot's light). x86 meshing is faster than the Quest's:
 // --mesh-slowdown F holds each worker F times as long per section. Prints one GLIDE line per width and direction:
 // achieved blocks/s and table cm/s, the caps, stalled time, latencies, and frames with unmeshed sections on screen.
+// [mesh] Workers mesh exactly as TabletopRenderer's do (Build + BuildSpecials + SectionMesh.From), with the client jar's
+// models and textures with --jar (prewarmed on the main thread like the atlas), else stable flat colours cached per
+// state (the atlas without a pack). The old harness used BlockRules.FlatColor per face, string work the app never does.
+// Batches (BatchRules.Columns^2 columns) are tracked like the renderer's: rebuilds/s and MB/s re-uploaded while gliding.
+// --skirt also builds the low-detail surface (SurfaceSkirt) for the frames with holes on screen and reports its cost.
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -22,7 +27,6 @@ using UnityEngine;
 
 static class GlideTests
 {
-    sealed class Flat : IFaceSource { public FaceKey Face(string s, int d) => new FaceKey { Layer = -1, Color = BlockRules.FlatColor(s) }; }
 
     /// <summary>
     /// TabletopRenderer's meshing schedule without Unity: dirty sections, 3 jobs in flight, the same order (MeshScope.Score)
@@ -37,8 +41,15 @@ static class GlideTests
         int _inFlight;
         readonly HashSet<Vector3Int> _busy = new HashSet<Vector3Int>();
         readonly HashSet<Vector3Int> _meshes = new HashSet<Vector3Int>();
-        readonly ConcurrentQueue<(Vector3Int s, int snap)> _done = new ConcurrentQueue<(Vector3Int, int)>();
-        readonly Flat _faces = new Flat();
+        readonly ConcurrentQueue<(Vector3Int s, int snap, SectionMesh mesh)> _done = new ConcurrentQueue<(Vector3Int, int, SectionMesh)>();
+        public IFaceSource Faces = new MeshTests.CachedFlat();
+        // [mesh] Batches as TabletopRenderer keeps them: a section's mesh per key, dirty batches rebuilt (re-uploaded)
+        // once none of their sections is pending in scope, or after BatchMaxWait.
+        readonly Dictionary<Vector3Int, SectionMesh> _secMesh = new Dictionary<Vector3Int, SectionMesh>();
+        readonly Dictionary<Vector3Int, float> _dirtyBatches = new Dictionary<Vector3Int, float>();
+        BatchLayout _layout;
+        public long Rebuilds, RebuildBytes;
+        float _clock;
         public long Meshed, Dropped, MeshTicks;
         public double MeshMsPerSection => Meshed == 0 ? 0 : MeshTicks * 1000.0 / Stopwatch.Frequency / Meshed;
         public int Pending => W.DirtySections.Count(Scope.Contains) + _inFlight;
@@ -51,14 +62,21 @@ static class GlideTests
             var n = W.SectionCount;
             Vector3Int Sh(Vector3Int k) => new Vector3Int(k.x - plan.ShiftSections.x, k.y - plan.ShiftSections.y, k.z - plan.ShiftSections.z);
             bool In(Vector3Int k) => k.x >= 0 && k.y >= 0 && k.z >= 0 && k.x < n.x && k.y < n.y && k.z < n.z;
+            var layout = new BatchLayout(W.Origin, W.Dims, BatchRules.Columns);
             if (plan != null && plan.Rekey)
             {
                 W.DirtySections.Clear(); W.DirtySections.UnionWith(plan.Mesh);
                 W.DirtySections.UnionWith(_dropped.Select(Sh).Where(In));   // dropped after the plan was made (as TabletopRenderer)
                 var moved = _meshes.Select(Sh).Where(In).ToList();
                 _meshes.Clear(); _meshes.UnionWith(moved); _meshes.ExceptWith(plan.Mesh);
+                var (dirty, gone) = BatchRules.AfterRekey(_layout, layout, plan.ShiftSections, _secMesh.Keys, _dirtyBatches.Keys.Concat(_secMesh.Keys.Select(_layout.KeyOf)).Distinct());
+                var sm = _secMesh.Where(kv => In(Sh(kv.Key))).ToDictionary(kv => Sh(kv.Key), kv => kv.Value);
+                _secMesh.Clear(); foreach (var kv in sm) _secMesh[kv.Key] = kv.Value;
+                foreach (var g in gone) _dirtyBatches.Remove(g);
+                foreach (var k in dirty) if (!_dirtyBatches.ContainsKey(k)) _dirtyBatches[k] = _clock;
             }
-            else _meshes.Clear();
+            else { _meshes.Clear(); _secMesh.Clear(); _dirtyBatches.Clear(); }
+            _layout = layout;
             _dropped.Clear();
         }
         readonly HashSet<Vector3Int> _dropped = new HashSet<Vector3Int>();
@@ -70,27 +88,54 @@ static class GlideTests
 
         public void Update(Vector3 focus, float dt)
         {
+            _clock += dt;
             int done = 0;
             while (_done.TryDequeue(out var j))
             {
                 _inFlight--; _busy.Remove(j.s); Meshed++; done++;
                 if (j.snap != W.SnapshotId) continue;
-                if (Keep.Contains(j.s)) _meshes.Add(j.s); else { W.DirtySections.Add(j.s); _dropped.Add(j.s); }
+                if (Keep.Contains(j.s)) { _meshes.Add(j.s); SetMesh(j.s, j.mesh); }
+                else { W.DirtySections.Add(j.s); _dropped.Add(j.s); SetMesh(j.s, null); }
             }
             Meter.Frame(dt, _saturated, done);
-            foreach (var k in _meshes.Where(k => !Keep.Contains(k)).ToList()) { _meshes.Remove(k); W.DirtySections.Add(k); _dropped.Add(k); Dropped++; }
-            Dispatch(focus);
+            Work.Frame();
+            foreach (var k in _meshes.Where(k => !Keep.Contains(k)).ToList()) { _meshes.Remove(k); W.DirtySections.Add(k); _dropped.Add(k); Dropped++; SetMesh(k, null); }
+            RebuildBatches();
+            Dispatch(focus, dt);
             _saturated = _jobs >= MaxJobs;
         }
 
-        void Dispatch(Vector3 focus)
+        void SetMesh(Vector3Int s, SectionMesh m)
+        {
+            bool had = _secMesh.ContainsKey(s);
+            if (m == null && !had) return;
+            if (m == null) _secMesh.Remove(s); else _secMesh[s] = m;
+            var key = _layout.KeyOf(s);
+            if (!_dirtyBatches.ContainsKey(key)) _dirtyBatches[key] = _clock;
+        }
+
+        /// <summary>TabletopRenderer.UpdateBatches without Unity: what would be re-uploaded (sizes of the batches rebuilt).</summary>
+        void RebuildBatches()
+        {
+            foreach (var key in _dirtyBatches.Keys.ToList())
+            {
+                bool pending = _layout.SectionsOf(key).Any(s => _busy.Contains(s) || (W.DirtySections.Contains(s) && Scope.Contains(s)));
+                if (!BatchRules.Ready(pending, _dirtyBatches[key], _clock, 0.4f, false)) continue;
+                _dirtyBatches.Remove(key);
+                long bytes = 0;
+                foreach (var s in _layout.SectionsOf(key)) if (_secMesh.TryGetValue(s, out var m)) bytes += m.Bytes;
+                Rebuilds++; RebuildBytes += bytes;
+            }
+        }
+
+        void Dispatch(Vector3 focus, float dt)
         {
             int slots = MaxJobs - _jobs;
             if (slots <= 0 || W.DirtySections.Count == 0) return;
             var vis = Visible; var motion = Motion;
             var pick = W.DirtySections.Where(s => !_busy.Contains(s) && Scope.Contains(s))
                 .OrderBy(s => MeshScope.Score(s, vis, focus, motion))
-                .Take(slots * PerJob).ToList();
+                .Take(slots * (LastPerJob = MeshScope.SectionsPerJob(Work.MsPerSection, dt * 1000f, PerJob))).ToList();
             var w = W; int snap = W.SnapshotId;
             int jobs = Math.Min(slots, pick.Count);
             for (int j = 0; j < jobs; j++)
@@ -99,34 +144,58 @@ static class GlideTests
                 for (int i = j; i < pick.Count; i += jobs) list.Add(pick[i]);
                 foreach (var s in list) { W.DirtySections.Remove(s); _busy.Add(s); _inFlight++; }
                 Interlocked.Increment(ref _jobs);
+                var faces = Faces;
                 Task.Run(() =>
                 {
                     var data = new MeshData();
                     foreach (var s in list)
                     {
                         long t0 = Stopwatch.GetTimestamp();
-                        try { if (w.SnapshotId == snap) { GreedyMesher.Build(w, s, _faces, data); GreedyMesher.BuildSpecials(w, s, _faces, data); } }
+                        SectionMesh mesh = null;
+                        try
+                        {
+                            var n = w.SectionCount;
+                            if (w.SnapshotId == snap && s.x < n.x && s.y < n.y && s.z < n.z)
+                            {
+                                GreedyMesher.Build(w, s, faces, data); GreedyMesher.BuildSpecials(w, s, faces, data);
+                                mesh = SectionMesh.From(data, s);
+                            }
+                        }
                         catch (Exception) { }
                         data.Clear();
                         long took = Stopwatch.GetTimestamp() - t0;
+                        Interlocked.Add(ref MeshTicks, took);   // the real work (the slowdown below is a stand-in)
+                        if (mesh != null) Work.Add((long)(took * Math.Max(1f, Slowdown)));   // the job size sees the slower device
                         if (Slowdown > 1f) Thread.Sleep(TimeSpan.FromSeconds(took * (Slowdown - 1f) / Stopwatch.Frequency));
-                        Interlocked.Add(ref MeshTicks, Stopwatch.GetTimestamp() - t0);
-                        _done.Enqueue((s, snap));
+                        _done.Enqueue((s, snap, mesh));
                     }
                     Interlocked.Decrement(ref _jobs);
                 });
             }
         }
         int _jobs;
-        public int PerJob = 4;
+        public int PerJob = 4, LastPerJob;
+        public readonly MeshWorkMeter Work = new MeshWorkMeter();
     }
 
-    public static void LiveGlide(string url, int[] widths, float seconds, bool mesh, float slowdown, Action<bool, string> check)
+    public static void LiveGlide(string url, int[] widths, float seconds, bool mesh, float slowdown, Action<bool, string> check, string jar = null, bool skirt = false)
     {
         var link = new LinkClient(url, "");
         link.Start();
         var world = new WorldModel(); var nav = new NavState(); var asm = new SnapshotAssembler();
         var sim = new SimMesher { W = world, Slowdown = slowdown };
+        using var assets = jar != null ? new ZipAssets(jar) : null;
+        var pack = assets != null ? new PackFaces(assets) : null;
+        if (pack != null) sim.Faces = pack;
+        int prewarmed = 0, prewarmSnap = -1;
+        // The atlas prewarm (TabletopRenderer.Prewarm): new palette entries are baked on the main thread before meshing.
+        void Prewarm()
+        {
+            if (pack == null) return;
+            if (prewarmSnap != world.SnapshotId) { prewarmSnap = world.SnapshotId; prewarmed = 0; }
+            for (int d = 0; d < 6; d++) { pack.Face(FluidRules.WaterState, d); pack.Face(FluidRules.LavaState, d); }
+            for (; prewarmed < world.Palette.Count; prewarmed++) pack.Face(world.Palette[prewarmed], 0);
+        }
         var limits = RegionLimits.Default;
         var held = new Queue<Dictionary<string, object>>();
         var clock = Stopwatch.StartNew();
@@ -143,6 +212,7 @@ static class GlideTests
                 else
                 {
                     world.ApplySnapshot(r.Snapshot);
+                    Prewarm();
                     sim.OnSnapshot(r.Plan);
                     nav.OnRegion(world.World, world.Origin, world.Dims, r.ViewMargin, Now());
                     if (requestAt >= 0) { latencies.Add(Now() - requestAt); requestAt = -1; }
@@ -164,7 +234,7 @@ static class GlideTests
                         var bh = m.O("limits")?.A("build_height");
                         if (bh != null && bh.Count == 2) { nav.MinY = (int)(double)bh[0]; nav.MaxY = (int)(double)bh[1]; }
                         break;
-                    case "block_update": world.ApplyBlockUpdate(m); break;
+                    case "block_update": world.ApplyBlockUpdate(m); Prewarm(); break;
                     case "chunk_snapshot":
                         if (m.I("part") == 0) parts0++;
                         asm.Offer(m, world, mesh ? sim.Unsettled() : new HashSet<Vector3Int>()); break;
@@ -210,6 +280,7 @@ static class GlideTests
             foreach (int dir in new[] { +1, -1 })
             {
                 latencies.Clear(); listed = 0; requests = 0; sim.Meshed = 0; sim.Dropped = 0; sim.MeshTicks = 0; holeFrames = 0; gliding = true;
+                sim.Rebuilds = 0; sim.RebuildBytes = 0;
                 float held0 = 0, t0 = Now(), last = t0, x0 = nav.View.x, stalled = 0, capSum = 0, meshCapSum = 0; int frames = 0;
                 while (Now() - t0 < seconds)
                 {
@@ -236,8 +307,9 @@ static class GlideTests
                                   $"achieved_blocks_s={dist / secs:F1} table_cm_s={dist / secs * bs * 100:F2} wanted_blocks_s={nav.BaseSpeedM / bs * (1 + nav.RampGain):F0} " +
                                   $"mean_speed_setting={capSum / Math.Max(1, frames):F1} stalled_s={stalled:F2}/{secs:F1} requests={requests} latency_ms p50={P(0.5f)} p90={P(0.9f)} max={P(0.999f)} " +
                                   $"latency_ema_ms={nav.LatencyEma * 1000:F0} stream_cap={nav.StreamSpeedCap(Math.Min(nav.Margin.x, nav.Margin.z)):F0} mesh_rate_s={sim.Meter.Rate:F0} " +
-                                  $"mean_mesh_cap={meshCapSum / Math.Max(1, frames):F0} sections_listed={listed} meshed={sim.Meshed} mesh_ms_per_section={sim.MeshMsPerSection:F1} " +
-                                  $"dropped={sim.Dropped} hole_frames={holeFrames}/{frames}");
+                                  $"mean_mesh_cap={meshCapSum / Math.Max(1, frames):F0} sections_listed={listed} meshed={sim.Meshed} mesh_ms_per_section={sim.MeshMsPerSection:F2} per_job={sim.LastPerJob} " +
+                                  $"dropped={sim.Dropped} hole_frames={holeFrames}/{frames} faces={(pack != null ? "pack" : "flat")} slowdown={slowdown:F1} " +
+                                  $"batch_rebuilds_s={sim.Rebuilds / secs:F1} batch_upload_mb_s={sim.RebuildBytes / secs / 1048576.0:F1}");
                 WaitIdle(30);
             }
         }
