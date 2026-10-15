@@ -88,6 +88,11 @@ namespace UnityEngine
         public static float Sqrt(float v) => (float)Math.Sqrt(v);
         public static float Atan2(float y, float x) => (float)Math.Atan2(y, x);
         public static int FloorToInt(float v) => (int)Math.Floor(v);
+        // [motion] ambient particle slots and animation curves
+        public static int CeilToInt(float v) => (int)Math.Ceiling(v);
+        public static int RoundToInt(float v) => (int)Math.Round(v);
+        public static float Pow(float a, float b) => (float)Math.Pow(a, b);
+        public static float Exp(float v) => (float)Math.Exp(v);
         public static float Floor(float v) => (float)Math.Floor(v);
         public static float Round(float v) => (float)Math.Round(v);
         public static float Repeat(float t, float length) => Clamp(t - Floor(t / length) * length, 0f, length);
