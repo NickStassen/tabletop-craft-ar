@@ -53,6 +53,15 @@ public final class TabletopPlugin extends JavaPlugin {
     private final Set<Long> giantLoading = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final Map<String, Set<Long>> giantPending = new HashMap<>(); // loaded for the giant's next move, ticketed until it moves
     private boolean dirty;
+    // [nav] Incremental region moves (RegionMerge): while one is read, diffs of the shared region are held back (their
+    // result would change the base the move copies from) and the region is diffed again once the move is sent.
+    private int movesInFlight;
+    private boolean rediffAfterMove;
+    private final List<RegionSpec> moveTargets = new ArrayList<>();   // regions being read for a region_request
+    private long moveStartedMs;
+    private long lastDirtyNs = Long.MIN_VALUE;            // last markDirty inside a session's region (System.nanoTime)
+    private long sharedEstBytes = -1;                     // max_bytes estimate of the shared region (sharedEstRegion)
+    private RegionSpec sharedEstRegion;
     private long tickCount;
     private Session avatarOwner;
     private long avatarOwnerGoneMs = -1;
@@ -63,6 +72,7 @@ public final class TabletopPlugin extends JavaPlugin {
     static final int LIGHT_RECHECK_TICKS = 4, MAX_LIGHT_CHANGES = 16384;
     private final EntityStreamer entities = new EntityStreamer(this);   // entities_v1 (PROTOCOL.md 4.21)
     private final ActionListener actions = new ActionListener(this);    // actions_v1 (PROTOCOL.md 4.22)
+    private final BlockEntityStreamer blockEntities = new BlockEntityStreamer(this);   // [blocks] block_entities_v1 (PROTOCOL.md 4.29)
     // Block editing from the headset (block_edit, PROTOCOL.md 4.20), config section "edit". Read on websocket threads.
     private volatile boolean editEnabled = true, editRequireToken, editTokenSet, editPhysics = true;
     private volatile int editRate = 20;
@@ -82,16 +92,26 @@ public final class TabletopPlugin extends JavaPlugin {
         editWorld = new EditWorld(getLogger(), avatar::entities);
         getServer().getPluginManager().registerEvents(new BlockListener(this), this);
         getServer().getPluginManager().registerEvents(actions, this);
+        getServer().getPluginManager().registerEvents(blockEntities, this);   // [blocks] sign edits, interactions
         getServer().getPluginManager().registerEvents(control, this);   // [talk]
         interact.init(editWorld);                                        // [hands]
         getServer().getPluginManager().registerEvents(interact, this);   // [hands] unfreeze-all for mobs in chunks loading later
         start();
     }
 
-    @Override public void onDisable() { stop(); }
+    @Override public void onDisable() { stop(); reader.shutdown(); }
 
     private void start() {
         var c = getConfig();
+        // [nav] A config.yml written with the 0.3.0 caps (288 / 16777216) can't hold a 256-wide window with its glide
+        // margin: raise it to the new defaults (an operator's own values are left alone).
+        RegionCaps old = RegionCaps.OLD_DEFAULT;
+        if (c.getInt("max_region.x", -1) == old.maxX() && c.getInt("max_region.z", -1) == old.maxZ() && c.getLong("max_region.blocks", -1) == old.maxBlocks()) {
+            c.set("max_region.x", RegionCaps.DEFAULT.maxX()); c.set("max_region.z", RegionCaps.DEFAULT.maxZ()); c.set("max_region.blocks", RegionCaps.DEFAULT.maxBlocks());
+            saveConfig();
+            getLogger().info(String.format("config: max_region raised from the 0.3.0 defaults to %dx%dx%d, %d blocks (room for the glide margin)",
+                RegionCaps.DEFAULT.maxX(), c.getInt("max_region.y", 384), RegionCaps.DEFAULT.maxZ(), RegionCaps.DEFAULT.maxBlocks()));
+        }
         RegionCaps d0 = RegionCaps.DEFAULT;
         caps = new RegionCaps(c.getInt("max_region.x", d0.maxX()), c.getInt("max_region.y", d0.maxY()), c.getInt("max_region.z", d0.maxZ()),
             c.getLong("max_region.blocks", d0.maxBlocks()), c.getLong("max_region.bytes", d0.maxBytes()),
@@ -114,6 +134,7 @@ public final class TabletopPlugin extends JavaPlugin {
         biomesOn = c.getBoolean("stream.biomes", true);
         entities.configure(c.getBoolean("entities.enabled", true), c.getInt("entities.max", 256), c.getInt("entities.margin", 2));
         actions.enabled = c.getBoolean("actions.enabled", true);
+        blockEntities.configure(c.getBoolean("block-entities.enabled", true), c.getDouble("block-entities.budget-ms", 0.3), c.getInt("block-entities.rescan-ticks", 40));   // [blocks]
         editEnabled = c.getBoolean("edit.enabled", true);
         editRequireToken = c.getBoolean("edit.require-token", false);
         editTokenSet = !c.getString("auth.token", "").isEmpty();
@@ -159,6 +180,7 @@ public final class TabletopPlugin extends JavaPlugin {
         interact.shutdown();   // [hands] held mobs get their gravity and AI back
         if (beacon != null) { beacon.stop(); beacon = null; }
         if (configSaveAt >= 0) { configSaveAt = -1; saveConfig(); }
+        movesInFlight = 0; moveTargets.clear();   // [nav]
         avatar.remove();
         lastPose = null;
         giantPending.clear();
@@ -178,10 +200,16 @@ public final class TabletopPlugin extends JavaPlugin {
     boolean biomesEnabled() { return biomesOn; }
     boolean entitiesEnabled() { return entities.enabled; }
     boolean actionsEnabled() { return actions.enabled; }
+    boolean blockEntitiesEnabled() { return blockEntities.enabled; }   // [blocks]
     void send(Session s, JsonObject body) { if (outbound != null && !outbound.isShutdown()) outbound.execute(() -> s.send(body)); }
     /** Like send, adding the UTF-8 size to a counter (entities bytes/s). */
     void sendCounting(Session s, JsonObject body, java.util.concurrent.atomic.AtomicLong bytes, java.util.concurrent.atomic.AtomicLong total) {
         if (outbound != null && !outbound.isShutdown()) outbound.execute(() -> { int n = s.sendCounted(body); bytes.addAndGet(n); total.addAndGet(n); });
+    }
+
+    /** [blocks] Like sendCounting, building the body on the outbound thread too (big block_entities messages). */
+    void sendCountingLater(Session s, java.util.function.Supplier<JsonObject> body, java.util.concurrent.atomic.AtomicLong bytes, java.util.concurrent.atomic.AtomicLong total) {
+        if (outbound != null && !outbound.isShutdown()) outbound.execute(() -> { int n = s.sendCounted(body.get()); bytes.addAndGet(n); total.addAndGet(n); });
     }
 
     /** [talk] Every connected session, any state (thread-safe view). */
@@ -192,7 +220,10 @@ public final class TabletopPlugin extends JavaPlugin {
 
     void markDirty(String world, int x, int y, int z) {
         if (link == null) return;
-        for (Session s : link.sessions()) if (s.region != null && s.region.world().equals(world) && s.region.containsWorld(x, y, z)) { dirty = true; return; }
+        blockEntities.touch(world, x, z);   // [blocks] its chunk's block entities are read again next tick
+        for (Session s : link.sessions()) if (s.region != null && s.region.world().equals(world) && s.region.containsWorld(x, y, z)) { dirty = true; lastDirtyNs = System.nanoTime(); return; }
+        // [nav] A region being read for a move: note the change so the region is diffed again once the move is sent.
+        for (RegionSpec m : moveTargets) if (m.world().equals(world) && m.containsWorld(x, y, z)) { lastDirtyNs = System.nanoTime(); return; }
     }
 
     RegionSpec defaultRegion() {
@@ -221,10 +252,16 @@ public final class TabletopPlugin extends JavaPlugin {
         }
         if (tickCount % Math.max(1, getConfig().getInt("stream.players-every-ticks", 2)) == 0) { sendPlayers(); entities.tick(ready()); }
         actions.flush(ready());   // swings, digging, breaks, damage of this tick (PROTOCOL.md 4.22)
+        blockEntities.tick(ready());   // [blocks] sign text, banner patterns, heads... (PROTOCOL.md 4.29), budgeted
         control.tick(tickCount);  // [talk] late command output, server_status
         interact.tick();          // [hands] held mobs that got no update for 3 s are let go
         avatar.tickBubble();      // [talk] the giant's speech bubble follows the head and expires
         if (tickCount % 20 == 0) { timeouts(); onlinePlayers = Bukkit.getOnlinePlayers().size(); }
+        // [nav] A move read that never finished (a chunk load failed) must not hold diffs back forever.
+        if (movesInFlight > 0 && System.currentTimeMillis() - moveStartedMs > 15000) {
+            getLogger().warning("region move read did not finish; diffs resume");
+            movesInFlight = 0; moveTargets.clear(); rediffAfterMove = false; dirty = true;
+        }
         if (tickCount % 600 == 0) { String rs = reader.takeStats(); if (rs != null) getLogger().info("READS " + rs); }   // [area] main-thread cost of reads, per 30 s
         if (tickCount % 10 == 0) updateTickets();   // follow the giant
         // A headset gliding across the world changes the region every second or so: save the config at most every 5 s.
@@ -269,6 +306,7 @@ public final class TabletopPlugin extends JavaPlugin {
         if (sectionsFor(s)) sc.add(SectionCodec.ENCODING);
         if (s.wantsEntities) sc.add(Protocol.CAP_ENTITIES);   // entities (PROTOCOL.md 4.21)
         if (s.wantsActions) sc.add(Protocol.CAP_ACTIONS);     // actions (PROTOCOL.md 4.22)
+        if (s.wantsBlockEntities) sc.add(Protocol.CAP_BLOCK_ENTITIES);   // [blocks] block entity data (PROTOCOL.md 4.29)
         sc.add("view_margin");
         sc.add("pose_snapshot_id");
         if (s.canEdit) sc.add(Protocol.CAP_EDIT);   // block editing (PROTOCOL.md 4.20)
@@ -337,7 +375,7 @@ public final class TabletopPlugin extends JavaPlugin {
      */
     private void sendSnapshot(Session s, RegionData d, boolean forceFull) {
         long t0 = System.nanoTime();
-        long readNs = (long) ((reader.lastSnapMs + reader.lastWalkMs) * 1e6);
+        long readNs = (long) (d.stats().readMs() * 1e6);
         int[] grid = d.grid();
         byte[] light = s.wantsLight ? d.light() : null;
         BiomeGrid biomes = s.wantsBiomes ? d.biomes() : null;
@@ -351,10 +389,16 @@ public final class TabletopPlugin extends JavaPlugin {
         RegionSpec oldRegion = s.gridRegion;   // [area] may have other dims (a resize delta, PROTOCOL.md 4.25)
         int[] shift = sectioned && !forceFull && oldGrid != null && s.paletteSize < 4096 && (light == null || oldLight != null)
             ? SectionCodec.deltaShift(oldRegion, r) : null;
+        // [nav] An incremental read copied its kept sections from exactly what this client has (same arrays): the delta
+        // is just the sections it read, no O(volume) compare.
+        RegionMerge.Base rb = d.base();
+        List<int[]> exactKeys = shift != null && rb != null && rb.grid() == oldGrid && rb.region().equals(oldRegion)
+            && (light == null || rb.light() == oldLight) ? d.fresh() : null;
         s.lastGrid = grid;
         s.lastLight = light;
         s.lastBiomes = biomes;
         s.gridRegion = r;
+        s.lastGridNs = d.capturedNs();
         s.snapshotId++;
         s.rememberRegion(s.snapshotId, r);
         int id = s.snapshotId;
@@ -373,14 +417,29 @@ public final class TabletopPlugin extends JavaPlugin {
                 for (int g : grid) if (g == air) { hasAir = true; break; }
                 if (hasAir) s.localIndex(air, pal, null); // index 0 = air when present
             }
-            int[] map = new int[pal.size()];
+            int[] map = new int[pal.size()];   // the global palette only grows: every id in grid is below its size now
             java.util.Arrays.fill(map, -1);
-            int[] local = new int[grid.length];
-            for (int i = 0; i < grid.length; i++) {
-                int g = grid[i];
-                int l = g < map.length ? map[g] : -1;
-                if (l < 0) { l = s.localIndex(g, pal, null); if (g < map.length) map[g] = l; }
-                local[i] = l;
+            int dx = r.sx(), dy = r.sy(), dz = r.sz();
+            // [nav] Sectioned: work out the listed sections first and remap only their blocks (a one-section shift of a
+            // 288-wide region lists 180 of 3,240 sections). v1: the whole grid, as one message.
+            List<int[]> keys = !sectioned ? null : shift == null ? SectionCodec.allSections(dx, dy, dz) : exactKeys != null ? exactKeys
+                : SectionCodec.changedSections(oldGrid, grid, light != null ? oldLight : null, light,
+                    new int[] { oldRegion.sx(), oldRegion.sy(), oldRegion.sz() }, new int[] { dx, dy, dz }, shift);
+            int[] local = null;
+            if (sectioned) {
+                for (int[] k : keys) {
+                    int x0 = k[0] * 16, y0 = k[1] * 16, z0 = k[2] * 16, x1 = Math.min(dx, x0 + 16), y1 = Math.min(dy, y0 + 16), z1 = Math.min(dz, z0 + 16);
+                    for (int y = y0; y < y1; y++) for (int z = z0; z < z1; z++)
+                        for (int i = (y * dz + z) * dx + x0, e = i + x1 - x0; i < e; i++) { int g = grid[i]; if (map[g] < 0) map[g] = s.localIndex(g, pal, null); }
+                }
+            } else {
+                local = new int[grid.length];
+                for (int i = 0; i < grid.length; i++) {
+                    int g = grid[i];
+                    int l = map[g];
+                    if (l < 0) { l = s.localIndex(g, pal, null); map[g] = l; }
+                    local[i] = l;
+                }
             }
             List<String> palette = List.copyOf(s.palette);
             long remapNs = System.nanoTime() - m0 + mainNs;
@@ -389,17 +448,17 @@ public final class TabletopPlugin extends JavaPlugin {
             timing.addProperty("read_ms", Math.round(readNs / 1e4) / 100.0);
             timing.addProperty("remap_ms", Math.round(remapNs / 1e4) / 100.0);
             if (sectioned) {
-                int dx = r.sx(), dy = r.sy(), dz = r.sz();
-                List<int[]> keys = shift != null ? SectionCodec.changedSections(oldGrid, grid, light != null ? oldLight : null, light,
-                                                       new int[] { oldRegion.sx(), oldRegion.sy(), oldRegion.sz() }, new int[] { dx, dy, dz }, shift)
-                                                 : SectionCodec.allSections(dx, dy, dz);
                 List<SectionCodec.Section> secs = new ArrayList<>(keys.size());
                 for (int[] k : keys)
-                    secs.add(new SectionCodec.Section(k[0], k[1], k[2], SectionCodec.encodeSection(local, dx, dy, dz, k[0], k[1], k[2]),
+                    secs.add(new SectionCodec.Section(k[0], k[1], k[2], SectionCodec.encodeSection(grid, map, dx, dy, dz, k[0], k[1], k[2]),
                         light != null ? SectionCodec.encodeSectionLight(light, dx, dy, dz, k[0], k[1], k[2]) : null));
-                long fixed = 400 + (biomes != null ? 200 + biomes.palette.size() * 40L + biomes.cells.length * 4L : 0);
+                long fixed = 400;
                 for (String p : palette) fixed += p.length() + 3;
-                List<List<SectionCodec.Section>> parts = SectionCodec.split(secs, maxMsg, fixed);
+                // [nav] Biomes ride on part 0 only, RLE-encoded: estimate them as such. Counting 4 bytes per cell on every
+                // part made a 352-wide region (1.24 MB of cells, over max-message-bytes) send each section in its own part,
+                // the palette repeated 220 times: 6.8 MB for a one-section shift.
+                long biomeBytes = biomes != null ? 200 + biomes.palette.size() * 40L + BlockCodec.encode(biomes.cells).length * 6L : 0;
+                List<List<SectionCodec.Section>> parts = SectionCodec.split(secs, maxMsg, fixed, biomeBytes);
                 long encNs = System.nanoTime() - e0;
                 timing.addProperty("encode_ms", Math.round(encNs / 1e4) / 100.0);
                 long j0 = System.nanoTime(), bytes = 0, runs = 0, lightRuns = 0;
@@ -412,7 +471,8 @@ public final class TabletopPlugin extends JavaPlugin {
                 }
                 int total = SectionCodec.sections(dx) * SectionCodec.sections(dy) * SectionCodec.sections(dz);
                 getLogger().info(String.format("SNAPSHOT session=%s dims=%dx%dx%d blocks=%d palette=%d encoding=sections_v1 %s sections=%d/%d parts=%d runs=%d light_runs=%d biomes=%d bytes=%d read_ms=%.2f remap_ms=%.2f encode_ms=%.2f json_send_ms=%.2f",
-                    s.id, dx, dy, dz, r.volume(), palette.size(), shift != null ? "delta=" + shift[0] + "," + shift[1] + "," + shift[2] : "full", secs.size(), total, parts.size(), runs,
+                    s.id, dx, dy, dz, r.volume(), palette.size(), shift != null ? "delta=" + shift[0] + "," + shift[1] + "," + shift[2] + (exactKeys != null ? " listed=read" : " listed=compared") : "full",
+                    secs.size(), total, parts.size(), runs,
                     light != null ? lightRuns : -1, biomes != null ? biomes.palette.size() : -1, bytes, readNs / 1e6, remapNs / 1e6, encNs / 1e6, (System.nanoTime() - j0) / 1e6));
                 return;
             }
@@ -449,7 +509,7 @@ public final class TabletopPlugin extends JavaPlugin {
             // fresh read would race the update stream (changes not yet diffed would be in the resend and also in
             // nothing the client can check against). Newer changes follow as block_updates for the new snapshot id.
             getLogger().info("BAD_SNAPSHOT from session " + s.id + ": resending what it should have, in full");
-            sendSnapshot(s, new RegionData(s.lastGrid, s.lastLight, s.lastBiomes, 0), true);
+            sendSnapshot(s, new RegionData(s.lastGrid, s.lastLight, s.lastBiomes, 0, null, null, s.lastGridNs, RegionData.Stats.NONE), true);
             return;
         }
         getLogger().info("BAD_SNAPSHOT from session " + s.id + ": resending in full");
@@ -523,13 +583,18 @@ public final class TabletopPlugin extends JavaPlugin {
             // Drop results that started before a newer snapshot, a region change or another diff.
             if (s.state != Session.State.READY || !r.equals(s.region) || s.snapshotId != e.getValue() || s.lastGrid == null
                 || s.lastGrid != base.get(s) || s.lastLight != baseLight.get(s)) continue;
+            // [nav] A move of the shared region is being read from lastGrid: keep it as it is, diff again after the move.
+            if (movesInFlight > 0 && s.shared) { rediffAfterMove = true; continue; }
             int[] idx = diff.blocks.get(s.lastGrid);
             if (idx == null) continue;
+            // [blocks] /setblock, /fill, /data... fire no block events: the chunks the diff found changes in are read again.
+            if (idx.length <= 4096) for (int i : idx) blockEntities.touch(r.world(), r.ox() + i % r.sx(), r.oz() + (i / r.sx()) % r.sz());
             boolean withLight = s.wantsLight && d.light() != null;
             List<int[]> light = withLight && s.lastLight != null ? diff.light.getOrDefault(s.lastLight, List.of()) : List.of();
             // Many changes: a snapshot instead (a sectioned client gets only the changed sections, against lastGrid).
             if (idx.length > 4096 || light.size() > MAX_LIGHT_CHANGES) { sendSnapshot(s, d); continue; }
             s.lastGrid = g;
+            s.lastGridNs = d.capturedNs();
             if (withLight) s.lastLight = d.light();
             if (idx.length == 0 && light.isEmpty()) continue;
             int snap = s.snapshotId;
@@ -646,16 +711,34 @@ public final class TabletopPlugin extends JavaPlugin {
         long t0 = System.nanoTime();
         int extras = s.readExtras(); // every shared session gets this read: include what any of them wants
         for (Session o : ready()) if (o.shared) extras |= o.readExtras();
+        // [nav] Moving or resizing in the same world: read only the sections that weren't in the old region and copy
+        // the rest from what the headset has (RegionMerge). Diffs of the shared region wait until it is sent.
+        RegionMerge.Base base = moveBase(s, r, extras);
+        long prevEst = sharedEstBytes;
+        RegionSpec prevEstRegion = sharedEstRegion;
+        if (base != null) { movesInFlight++; moveTargets.add(r); moveStartedMs = System.currentTimeMillis(); }
         // Byte cap: estimate from the global-palette RLE (same run structure as each session's encoding), plus the
-        // light/biome fields (estimated by the reader), all off the main thread.
-        reader.readAsync(r, extras, d -> {
+        // light/biome fields (estimated by the reader), all off the main thread. [nav] An incremental read scales the
+        // previous region's estimate to the kept volume and adds the fresh sections' own estimate.
+        reader.readAsync(r, extras, base, d -> {
+            if (d.base() != null && prevEst >= 0 && d.base().region().equals(prevEstRegion)) {
+                long kept = r.volume() - RegionMerge.volume(d.fresh(), r);
+                long biomeBytes = d.biomes() == null ? 0 : 200 + d.biomes().palette.size() * 40L + BlockCodec.encode(d.biomes().cells).length * 4L;
+                return prevEst * kept / prevEstRegion.volume() + RegionMerge.estimateSectionBytes(d.grid(), d.light(), r, d.fresh()) + biomeBytes;
+            }
             int[] data = BlockCodec.encode(d.grid());
             java.util.Set<Integer> ids = new java.util.HashSet<>();
             for (int k = 0; k < data.length; k += 2) ids.add(data[k]);
             List<String> pal = new ArrayList<>();
             for (int id : ids) pal.add(reader.palette().state(id));
-            return RegionRequest.estimateSnapshotBytes(data, pal) + d.extraBytes();
+            long extra = d.extraBytes();
+            if (d.base() != null) {   // an incremental read without a previous estimate: the reader left the extras out
+                if (d.light() != null) extra += BlockCodec.estimateEncodedBytes(d.light()) + 40;
+                if (d.biomes() != null) extra += 200 + d.biomes().palette.size() * 40L + BlockCodec.encode(d.biomes().cells).length * 4L;
+            }
+            return RegionRequest.estimateSnapshotBytes(data, pal) + extra;
         }, (d, est) -> {
+            if (base != null) endMove(r, base);
             if (s.state != Session.State.READY) return;
             if (est > caps.maxBytes()) {
                 String msg = String.format("snapshot would be about %d bytes, over max %d (try a smaller region)", est, caps.maxBytes());
@@ -663,8 +746,11 @@ public final class TabletopPlugin extends JavaPlugin {
                 send(s, tooLarge(msg, refSeq));
                 return;
             }
-            getLogger().info(String.format("REGION_SET by=%s %s origin=%d,%d,%d dims=%dx%dx%d est_bytes=%d total_ms=%.1f chunk_load_ms=%.1f snapshot_main_ms=%.2f snapshot_ticks=%d walk_async_ms=%.1f",
-                s.id, wn, r.ox(), r.oy(), r.oz(), r.sx(), r.sy(), r.sz(), est, (System.nanoTime() - t0) / 1e6, reader.lastLoadMs, reader.lastSnapMs, reader.lastSnapTicks, reader.lastWalkMs));
+            RegionData.Stats st = d.stats();
+            getLogger().info(String.format("REGION_SET by=%s %s origin=%d,%d,%d dims=%dx%dx%d est_bytes=%d total_ms=%.1f chunk_load_ms=%.1f snapshot_main_ms=%.2f snapshot_ticks=%d walk_async_ms=%.1f read=%s sections_read=%d/%d chunks=%d copy_ms=%.1f",
+                s.id, wn, r.ox(), r.oy(), r.oz(), r.sx(), r.sy(), r.sz(), est, (System.nanoTime() - t0) / 1e6, st.loadMs(), st.snapMainMs(), st.snapTicks(), st.walkMs(),
+                d.base() != null ? "incremental" : "full", st.sectionsRead(), st.sectionsTotal(), st.chunks(), st.copyMs()));
+            sharedEstBytes = est; sharedEstRegion = r;
             getConfig().set("region.world", wn);
             getConfig().set("region.origin.x", r.ox()); getConfig().set("region.origin.y", r.oy()); getConfig().set("region.origin.z", r.oz());
             getConfig().set("region.dims.x", r.sx()); getConfig().set("region.dims.y", r.sy()); getConfig().set("region.dims.z", r.sz());
@@ -680,6 +766,31 @@ public final class TabletopPlugin extends JavaPlugin {
             }
             updateTickets();
         });
+    }
+
+    /**
+     * [nav] What an incremental read of r can copy its kept sections from: the requesting session's last grid (what its
+     * client has), else another shared session's; null (a full read) when none has a usable one.
+     */
+    private RegionMerge.Base moveBase(Session s, RegionSpec r, int extras) {
+        List<Session> order = new ArrayList<>();
+        order.add(s);
+        for (Session o : ready()) if (o != s && o.shared) order.add(o);
+        for (Session o : order) {
+            if (o.lastGrid == null || o.gridRegion == null || o.lastGrid.length != o.gridRegion.volume()) continue;
+            if (o.lastLight != null && o.lastLight.length != o.lastGrid.length) continue;
+            RegionMerge.Base b = new RegionMerge.Base(o.gridRegion, o.lastGrid, o.lastLight, o.lastBiomes, o.lastGridNs);
+            if (RegionMerge.usable(b, r, extras)) return b;
+        }
+        return null;
+    }
+
+    /** [nav] A move's read is done: once no other move is in flight, diff again if anything changed since its base. */
+    private void endMove(RegionSpec r, RegionMerge.Base base) {
+        movesInFlight = Math.max(0, movesInFlight - 1);
+        moveTargets.remove(r);
+        if (lastDirtyNs >= base.capturedNs()) rediffAfterMove = true;
+        if (movesInFlight == 0 && rediffAfterMove) { rediffAfterMove = false; dirty = true; }
     }
 
     void onRegionQuery(Session s, String playerName, Long refSeq) {
@@ -939,10 +1050,13 @@ public final class TabletopPlugin extends JavaPlugin {
         Set<RegionSpec> regions = new HashSet<>();
         regions.add(defaultRegion());
         for (Session s : ready()) regions.add(s.region);
+        // [nav] Plus a ring of chunks around each region (stream.ticket-ring): the next glide shift's chunks are then
+        // loaded already, so its read captures them in the same tick instead of loading them first.
+        int ring = Math.max(0, getConfig().getInt("stream.ticket-ring", 1));
         for (RegionSpec r : regions) {
             Set<Long> keys = want.computeIfAbsent(r.world(), k -> new HashSet<>());
-            for (int cx = r.ox() >> 4; cx <= (r.ox() + r.sx() - 1) >> 4; cx++)
-                for (int cz = r.oz() >> 4; cz <= (r.oz() + r.sz() - 1) >> 4; cz++) keys.add(chunkKey(cx, cz));
+            for (int cx = (r.ox() >> 4) - ring; cx <= ((r.ox() + r.sx() - 1) >> 4) + ring; cx++)
+                for (int cz = (r.oz() >> 4) - ring; cz <= ((r.oz() + r.sz() - 1) >> 4) + ring; cz++) keys.add(chunkKey(cx, cz));
         }
         if (giantWorld != null && avatar.spawned()) want.computeIfAbsent(giantWorld, k -> new HashSet<>()).addAll(giantChunks);
         if (avatar.spawned()) giantPending.forEach((name, keys) -> want.computeIfAbsent(name, k -> new HashSet<>()).addAll(keys));

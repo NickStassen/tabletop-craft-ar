@@ -7,6 +7,7 @@ import pytest
 from tabletop_protocol import (
     CAP_ACTIONS,
     CAP_BIOMES,
+    CAP_BLOCK_ENTITIES,
     CAP_CHAT,
     CAP_COMMAND,
     CAP_EDIT,
@@ -20,6 +21,7 @@ from tabletop_protocol import (
     ITEM_CATEGORIES,
     LIGHTNING_ITEM,
     REGISTRY_CATEGORIES,
+    BlockEntityMirror,
     EntityMirror,
     Envelope,
     WorldMirror,
@@ -365,6 +367,47 @@ def test_block_registry_rejects_bad_fields(patch):
     msg.update(patch)
     with pytest.raises(ValueError):
         validate(msg)
+
+
+def test_block_entities_fixture_and_mirror():
+    msg = json.loads((FIX / "block_entities.json").read_text())
+    validate(msg)
+    m = BlockEntityMirror()
+    m.entries[(100, 64, -35)] = {"kind": "sign"}
+    m.apply(msg)
+    assert CAP_BLOCK_ENTITIES == "block_entities_v1" and len(m.entries) == 12 and (100, 64, -35) not in m.entries
+    sign = m.entries[(106, 64, -35)]
+    assert sign["front"]["glowing"] and sign["front"]["color"] == "light_blue" and sign["back"]["lines"][0] == "Closed"
+    assert [p["pattern"] for p in m.of_kind("banner")[0]["patterns"]] == ["minecraft:stripe_bottom", "minecraft:creeper"]
+    assert m.of_kind("campfire")[0]["items"] == ["minecraft:beef", None, None, "minecraft:porkchop"]
+    m.prune((100, 0, -40), (10, 256, 10))
+    assert len(m.entries) == 5
+
+
+def test_block_entities_reset_forgets_what_was_held():
+    msg = json.loads((FIX / "block_entities_reset.json").read_text())
+    validate(msg)
+    m = BlockEntityMirror()
+    m.apply(json.loads((FIX / "block_entities.json").read_text()))
+    m.apply(msg)
+    assert m.resets == 1 and list(m.entries) == [(-12, 70, 40)]
+    with pytest.raises(ValueError):
+        validate(dict(msg, reset="yes"))
+
+
+@pytest.mark.parametrize("bad", [
+    {"kind": "chest", "pos": [1, 2, 3]},
+    {"kind": "sign", "pos": [1, 2, 3], "front": {"lines": ["a"], "color": "black", "glowing": False}},
+    {"kind": "banner", "pos": [1, 2, 3], "patterns": [{"pattern": "minecraft:cross", "color": "mauve"}]},
+    {"kind": "beacon", "pos": [1.5, 2, 3], "tier": 1},
+    {"kind": "beacon", "pos": [1, 2, 3], "tier": 5},
+    {"kind": "campfire", "pos": [1, 2, 3], "items": [None]},
+    {"kind": "decorated_pot", "pos": [1, 2, 3], "sherds": ["minecraft:brick"]},
+])
+def test_block_entities_rejects_bad_entries(bad):
+    msg = json.loads((FIX / "block_entities.json").read_text())
+    with pytest.raises(ValueError):
+        validate(dict(msg, entities=[bad]))
 
 
 # ---------- [talk] chat, commands, status (PROTOCOL.md 4.26-4.28) ----------

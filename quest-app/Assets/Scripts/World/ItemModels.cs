@@ -32,6 +32,8 @@ namespace TabletopCraft.World
         public readonly bool[] Tinted = new bool[6];
         /// <summary>Display transforms from the model chain: held in the right hand, lying on the ground, in a frame.</summary>
         public ItemDisplay ThirdPersonRight = ItemDisplay.Identity, Ground = ItemDisplay.Identity, Fixed = ItemDisplay.Identity;
+        /// <summary>[blocks] Items standing on a shelf (26.x "on_shelf"; unset = no transform).</summary>
+        public ItemDisplay OnShelf = ItemDisplay.Identity;
         /// <summary>[menu] The inventory view (block menu icons): "gui" from the model chain, unset for flat items.</summary>
         public ItemDisplay Gui = ItemDisplay.Identity;
         /// <summary>[menu] The model chain ends in builtin/entity (chests, beds, banners, heads): no geometry of its own.</summary>
@@ -123,6 +125,7 @@ namespace TabletopCraft.World
                     Display(disp.O("ground"), ref r.Ground);
                     Display(disp.O("fixed"), ref r.Fixed);
                     Display(disp.O("gui"), ref r.Gui);   // [menu]
+                    Display(disp.O("on_shelf"), ref r.OnShelf);   // [blocks]
                 }
                 if (m.O("textures") is Dictionary<string, object> t)
                     foreach (var kv in t) if (!textures.ContainsKey(kv.Key)) textures[kv.Key] = TextureRef(kv.Value);

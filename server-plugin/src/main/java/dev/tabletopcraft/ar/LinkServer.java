@@ -202,6 +202,7 @@ public final class LinkServer extends WebSocketServer {
                 else if (c.equals(Protocol.CAP_BIOMES)) s.wantsBiomes = plugin.biomesEnabled();
                 else if (c.equals(Protocol.CAP_ENTITIES)) s.wantsEntities = plugin.entitiesEnabled();
                 else if (c.equals(Protocol.CAP_ACTIONS)) s.wantsActions = plugin.actionsEnabled();
+                else if (c.equals(Protocol.CAP_BLOCK_ENTITIES)) s.wantsBlockEntities = plugin.blockEntitiesEnabled();   // [blocks]
                 else if (c.equals(Protocol.CAP_EDIT) && plugin.editAllowed()) { s.editLimiter = new EditLimiter(plugin.editRate()); s.canEdit = true; }
                 // [talk] PROTOCOL.md 4.26-4.28
                 else if (c.equals(ControlMessages.CAP_CHAT) && plugin.control.chatAllowed()) s.wantsChat = true;

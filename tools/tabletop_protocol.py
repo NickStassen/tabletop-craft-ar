@@ -33,6 +33,7 @@ REQUIRED = {
     "actions": ["actions"],
     "block_edit": ["op", "pos"],
     "block_registry": ["count", "categories"],
+    "block_entities": ["entities"],
 }
 # LAN discovery over UDP (PROTOCOL.md 7): not WebSocket messages, so no envelope. Required fields per type.
 DISCOVERY = {
@@ -58,6 +59,12 @@ PLAYER_POSES = {"standing", "sneaking", "swimming", "sleeping", "gliding", "ridi
 # Block editing from the headset (PROTOCOL.md 4.20): block_edit, granted in welcome.caps.
 CAP_EDIT = "edit_v1"
 FACES = ("west", "east", "down", "up", "north", "south")
+# Block entity data (PROTOCOL.md 4.29): sign text, banner patterns, heads, sherds, spawners, beacons, items, conduits.
+CAP_BLOCK_ENTITIES = "block_entities_v1"
+BLOCK_ENTITY_KINDS = {"sign", "banner", "skull", "decorated_pot", "spawner", "trial_spawner", "beacon", "campfire", "shelf",
+                      "vault", "conduit"}
+DYES = {"white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray", "light_gray", "cyan", "purple", "blue",
+        "brown", "green", "red", "black"}
 
 # [talk] Chat, commands and server status (PROTOCOL.md 4.26-4.28).
 CAP_CHAT, CAP_COMMAND, CAP_STATUS = "chat_v1", "command_v1", "status_v1"
@@ -167,6 +174,8 @@ def validate(msg: dict) -> None:
         validate_block_edit(msg)
     if t == "block_registry":
         validate_block_registry(msg)
+    if t == "block_entities":
+        validate_block_entities(msg)
     if t in CONTROL_REQUIRED:
         validate_control(msg)   # [talk]
     if t in INTERACT_REQUIRED:
@@ -244,6 +253,43 @@ def interact(pos, face: str, item: str | None = None, sneak: bool = False, hit=N
 def entity_op(uuid: str, op: str, **fields) -> dict:
     """[hands] entity_op payload (to, yaw, dir, item, text as keyword fields)."""
     return {"uuid": uuid, "op": op, **fields}
+
+
+def _int_pos(p) -> bool:
+    return isinstance(p, list) and len(p) == 3 and all(isinstance(v, int) for v in p)
+
+
+def validate_block_entities(msg: dict) -> None:
+    """block_entities (PROTOCOL.md 4.29): entries by kind with integer world positions, removed positions, reset."""
+    if "reset" in msg and not isinstance(msg["reset"], bool):
+        raise ValueError("block_entities reset must be a boolean")
+    for e in msg["entities"]:
+        k = e.get("kind")
+        if k not in BLOCK_ENTITY_KINDS:
+            raise ValueError(f"unknown block entity kind {k}")
+        if not _int_pos(e.get("pos")):
+            raise ValueError(f"{k} entry needs an integer world pos")
+        if k == "sign":
+            for side in ("front", "back"):
+                s = e.get(side)
+                if not isinstance(s, dict) or len(s.get("lines") or []) != 4 or not all(isinstance(x, str) for x in s["lines"]):
+                    raise ValueError(f"sign {side} needs 4 lines")
+                if s.get("color") not in DYES or not isinstance(s.get("glowing"), bool):
+                    raise ValueError(f"sign {side} needs a dye colour and glowing")
+        if k == "banner" and not all(isinstance(p.get("pattern"), str) and p.get("color") in DYES for p in e.get("patterns") or [None]):
+            raise ValueError("banner patterns need a pattern key and a dye colour")
+        if k == "decorated_pot" and (len(e.get("sherds") or []) != 4 or not all(isinstance(x, str) for x in e["sherds"])):
+            raise ValueError("decorated_pot needs 4 sherds (back, left, right, front)")
+        if k in ("spawner", "trial_spawner") and not isinstance(e.get("entity"), str):
+            raise ValueError(f"{k} needs an entity type")
+        if k == "beacon" and not 0 <= e.get("tier", -1) <= 4:
+            raise ValueError("beacon tier must be 0..4")
+        if k in ("campfire", "shelf") and (len(e.get("items") or []) != (4 if k == "campfire" else 3)):
+            raise ValueError(f"{k} needs one item (or null) per slot")
+        if k == "vault" and not isinstance(e.get("item"), str):
+            raise ValueError("vault needs an item")
+    if not all(_int_pos(p) for p in msg.get("removed") or []):
+        raise ValueError("block_entities removed must be integer positions")
 
 
 def _ints(v, n: int) -> bool:
@@ -677,6 +723,32 @@ def scripted_pose(t: float, center=(0.16, 0.0, 0.16), radius: float = 0.10, heig
         "left": {"p": [round(hx - 0.05, 4), height - 0.12 + sway, round(hz, 4)], "q": q, "tracked": True},
         "right": {"p": [round(hx + 0.05, 4), height - 0.12 - sway, round(hz, 4)], "q": q, "tracked": True},
     }
+
+
+class BlockEntityMirror:
+    """Client-side copy of the block entity data (PROTOCOL.md 4.29), by world position."""
+
+    def __init__(self) -> None:
+        self.entries: dict[tuple[int, int, int], dict] = {}
+        self.messages = 0
+        self.resets = 0
+
+    def apply(self, msg: dict) -> None:
+        self.messages += 1
+        if msg.get("reset"):
+            self.resets += 1
+            self.entries.clear()
+        for e in msg["entities"]:
+            self.entries[tuple(e["pos"])] = e
+        for p in msg.get("removed") or []:
+            self.entries.pop(tuple(p), None)
+
+    def prune(self, origin, dims) -> None:
+        """Drops entries outside a new region (the server forgets them too)."""
+        self.entries = {p: e for p, e in self.entries.items() if all(origin[i] <= p[i] < origin[i] + dims[i] for i in range(3))}
+
+    def of_kind(self, kind: str) -> list[dict]:
+        return [e for e in self.entries.values() if e["kind"] == kind]
 
 
 class EntityMirror:

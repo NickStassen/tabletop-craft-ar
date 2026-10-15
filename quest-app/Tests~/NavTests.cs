@@ -19,6 +19,7 @@ static class NavTests
     public static int Run(Func<string, string> fixture)
     {
         NavStateTests();
+        FastGlideTests();   // [nav] margins by width, lookahead, hysteresis, the lazy margin
         SectionPlanTests();
         SectionedTests(fixture);
         CapTests();
@@ -38,12 +39,10 @@ static class NavTests
         Check(req.HasValue && req.Value.Origin == new Vector3Int(16, 0, 0) && req.Value.Dims == n.Dims && req.Value.Margin == n.Margin && n.Pending,
               "nav: past the trigger -> request the region shifted by one section");
         Check(n.Move(new Vector3(30, 0, 0), 0.1f, 1.2f) == null && Near(n.View.x, 64), $"nav: clamped to the margin while pending (view {n.View.x})");
-        n.OnRegion("world", new Vector3Int(16, 0, 0), new Vector3Int(96, 64, 96), new Vector3Int(16, 16, 16), 1.5f);
+        n.OnRegion("world", new Vector3Int(16, 0, 0), new Vector3Int(96, 64, 96), new Vector3Int(16, 16, 16), 1.6f);
         Check(!n.Pending && Near(n.View.x, 64) && Near(n.Offset.x, 0), "nav: shifted snapshot keeps the view in the world (seamless)");
-        n.OnSettled(1.6f);   // the renderer finished meshing the new sections 0.5 s after the request
-        Check(n.LatencyEma > 0.49f && n.LatencyEma < 0.51f, $"nav: latency runs until the new terrain is meshed ({n.LatencyEma:F2} s)");
-        n.OnSettled(5f);
-        Check(n.LatencyEma < 0.51f, "nav: settling twice doesn't count twice");
+        // [nav] The round trip ends when the region is applied (0.5 s after the request); meshing is MeshCap's business.
+        Check(n.LatencyEma > 0.49f && n.LatencyEma < 0.51f, $"nav: latency runs from the request until the region is applied ({n.LatencyEma:F2} s)");
         var back = n.Move(new Vector3(-5, 0, 0), 0.1f, 2f);
         Check(back.HasValue && back.Value.Origin.x == 0, "nav: reversing past the trigger requests the way back");
         n.OnRegion("world", new Vector3Int(0, 0, 0), new Vector3Int(96, 64, 96), new Vector3Int(16, 16, 16), 2.2f);
@@ -153,6 +152,227 @@ static class NavTests
         a.OverrideBudget = true;
         Check(a.Blocker() == null, "area: hold B overrides the batch budget too");
         BatchRules.Columns = cols; a.SectionBudget = AreaMath.DefaultSectionBudget;
+    }
+
+    // ---------- [nav] faster gliding at wide areas ----------
+
+    static readonly RegionLimits NewCaps = new RegionLimits { MaxX = 352, MaxY = 384, MaxZ = 352, MaxBlocks = 24L << 20, MaxBytes = 32 << 20, MaxViewWidth = 256 };
+    static readonly RegionLimits OldCaps = new RegionLimits { MaxX = 288, MaxY = 384, MaxZ = 288, MaxBlocks = 1 << 24, MaxBytes = 32 << 20, MaxViewWidth = 256 };
+
+    sealed class GlideRun
+    {
+        public float Dist, Stalled, FirstRequestAt = -1;   // FirstRequestAt: blocks travelled when the first request went out
+        public int Requests, Flips; public float MaxBehind;
+        public readonly List<RegionMove> Moves = new List<RegionMove>();
+        public readonly List<int> ShiftsX = new List<int>();   // x shift of each region that arrived (blocks)
+    }
+
+    /// <summary>
+    /// Drives NavState like NavController at 72 Hz along dir at a fixed speed (blocks/s). Each request is answered after
+    /// `latency` s with the region it asked for (no mesh cap: meshing keeps up). Flips counts how
+    /// often the region's direction of travel reversed on an axis; MaxBehind the furthest the view sat behind the centre
+    /// (in the direction of motion) right after a shift arrived.
+    /// </summary>
+    static GlideRun Glide(NavState n, Vector3 dir, float speed, float latency, float seconds, ref float t)
+    {
+        const float dt = 1f / 72f;
+        var r = new GlideRun();
+        var pending = new Queue<(float at, RegionMove m)>();
+        var start = n.View; var lastSign = new int[3];
+        for (float end = t + seconds; t < end; t += dt)
+        {
+            while (pending.Count > 0 && pending.Peek().at <= t) Arrive(n, r, pending.Dequeue().m, dir, lastSign, t);
+            var before = n.View;
+            var mv = n.Move(dir * (speed * dt), dt, t);
+            var d = n.View - before;
+            if (speed > 0 && Math.Sqrt(d.x * d.x + d.y * d.y + d.z * d.z) < 0.5f * speed * dt) r.Stalled += dt;
+            if (mv.HasValue)
+            {
+                r.Requests++; r.Moves.Add(mv.Value); pending.Enqueue((t + latency, mv.Value));
+                if (r.FirstRequestAt < 0) { var sofar = n.View - start; r.FirstRequestAt = sofar.x * dir.x + sofar.y * dir.y + sofar.z * dir.z; }
+            }
+        }
+        // Let the last answer land so the next run starts from a settled region.
+        while (pending.Count > 0) { var (at, m) = pending.Dequeue(); t = Math.Max(t, at); Arrive(n, r, m, dir, lastSign, t); }
+        var moved = n.View - start;
+        r.Dist = moved.x * dir.x + moved.y * dir.y + moved.z * dir.z;
+        return r;
+    }
+
+    static void Arrive(NavState n, GlideRun r, RegionMove m, Vector3 dir, int[] lastSign, float t)
+    {
+        var old = n.Origin;
+        n.OnRegion("world", m.Origin, m.Dims, m.Margin, t);
+        var off = n.Offset;
+        r.ShiftsX.Add(m.Origin.x - old.x);
+        for (int a = 0; a < 3; a++)
+        {
+            int s = Math.Sign(m.Origin[a] - old[a]);
+            if (s == 0) continue;
+            if (lastSign[a] != 0 && s != lastSign[a]) r.Flips++;
+            lastSign[a] = s;
+            if (dir[a] != 0) r.MaxBehind = Math.Max(r.MaxBehind, -off[a] * Math.Sign(dir[a]));
+        }
+    }
+
+    static NavState Wide(int margin, RegionLimits caps, float latency = 0.3f)
+    {
+        var n = new NavState { CanPad = true, Caps = caps, LatencyEma = latency, MinY = -64, MaxY = 320 };
+        int d = 256 + 2 * margin;
+        n.OnRegion("world", new Vector3Int(-d / 2, 16, -d / 2), new Vector3Int(d, 128, d), new Vector3Int(margin, 16, margin), 0);
+        return n;
+    }
+
+    static void FastGlideTests()
+    {
+        // Margins grow with the width; presets are still sized with the smallest margin.
+        Check(AreaSizing.MarginFor(64) == 16 && AreaSizing.MarginFor(96) == 16 && AreaSizing.MarginFor(128) == 32 && AreaSizing.MarginFor(192) == 32 && AreaSizing.MarginFor(256) == 48,
+              "glide: margin 16 up to 96 wide, 32 at 128-192, 48 at 256");
+        var small = new NavState { CanPad = true };
+        small.OnRegion("world", new Vector3Int(0, 16, 0), new Vector3Int(96, 128, 96), new Vector3Int(16, 16, 16), 0);
+        bool sized = true;
+        foreach (int w in AreaSizing.All)
+        {
+            var p = AreaSizing.Plan(small, w, NewCaps);
+            int want = w == 64 ? 0 : w + 2 * AreaSizing.MarginFor(w);   // 64 is the current window: nothing to send
+            if (w == 64) sized &= p == null; else sized &= p.HasValue && p.Value.Dims.x == want && p.Value.Margin.x == AreaSizing.MarginFor(w) && p.Value.Margin.y == 16;
+        }
+        Check(sized && AreaSizing.Presets(NewCaps, small.MarginPref.x).SequenceEqual(AreaSizing.All), "glide: each preset gets its margin on a 352 server (256 -> 352 wide region)");
+        var oldPlan = AreaSizing.Plan(small, 256, OldCaps);
+        Check(AreaSizing.Presets(OldCaps, 16).Contains(256) && oldPlan.HasValue && oldPlan.Value.Margin.x == 16 && oldPlan.Value.Dims.x == 288,
+              "glide: a 0.3.0 server (288) keeps the 256 preset; the margin shrinks to fit");
+        var tight = NewCaps; tight.MaxBlocks = 300L * 300 * 128;
+        var tp = AreaSizing.Plan(small, 256, tight).Value;
+        Check(tp.Margin.x == 16 && (long)tp.Dims.x * tp.Dims.y * tp.Dims.z <= tight.MaxBlocks, $"glide: the block cap shrinks the margin, not the width ({tp.Margin.x})");
+
+        // A 256 window with the old 16-block margin grows its margin on the first push (a resize delta of the ring).
+        var g = Wide(16, NewCaps);
+        g.View = g.RegionCentre + new Vector3(3.3f, 0, -5.1f);
+        var grow = g.Move(new Vector3(0.5f, 0, 0), 1 / 72f, 1f);
+        bool aligned = grow.HasValue && (grow.Value.Origin.x - g.Origin.x) % 16 == 0 && (grow.Value.Origin.z - g.Origin.z) % 16 == 0 && grow.Value.Origin.y == g.Origin.y;
+        float gcx = grow.HasValue ? grow.Value.Origin.x + grow.Value.Dims.x / 2f : 0, gcz = grow.HasValue ? grow.Value.Origin.z + grow.Value.Dims.z / 2f : 0;
+        Check(grow.HasValue && grow.Value.Kind == "pad" && grow.Value.Dims == new Vector3Int(352, 128, 352) && grow.Value.Margin == new Vector3Int(48, 16, 48) && aligned &&
+              Math.Abs(gcx - g.View.x) <= 8 && Math.Abs(gcz - g.View.z) <= 8, $"glide: first push grows the margin to 48, same window, whole sections ({grow?.Origin} {grow?.Dims})");
+        var gv = g.View;
+        g.OnRegion("world", grow.Value.Origin, grow.Value.Dims, grow.Value.Margin, 1.4f);
+        Check(g.Window == new Vector3Int(256, 96, 256) && Near(g.View.x, gv.x) && Near(g.View.z, gv.z), "glide: the grown region keeps the window and the view");
+        Check(Near(g.LatencyEma, 0.3f, 0.2f), "glide: a pad counts towards the glide latency");
+        var g2 = Wide(16, OldCaps);
+        Check(g2.GrowMargin() == null && g2.Move(new Vector3(0.5f, 0, 0), 1 / 72f, 1f) == null, "glide: on a 288 server there is no room to grow, so no request");
+
+        // Runway per round trip and the speed cap.
+        var s = new NavState { LatencyEma = 0.3f };
+        Check(Near(s.Runway(16), 12f) && Near(s.Runway(32), 32 - (12 + 16) / 2f) && Near(s.Runway(48), 32f) && !s.CanLookahead(16) && s.CanLookahead(32),
+              $"glide: runway 12 / 18 / 32 blocks per round trip at margin 16 / 32 / 48 ({s.Runway(16)}, {s.Runway(32)}, {s.Runway(48)})");
+        Check(Near(s.StreamSpeedCap(48), 32f / 0.39f, 0.01f) && Near(s.StreamSpeedCap(16), 12f / 0.39f, 0.01f), $"glide: cap = runway / (1.3 x latency) ({s.StreamSpeedCap(48):F0} vs {s.StreamSpeedCap(16):F0} blocks/s)");
+
+        // Steady motion with lookahead: no stalls at the cap, the view stays a reserve away from the trailing edge.
+        float t = 0;
+        var la = Wide(48, NewCaps);
+        float cap48 = la.StreamSpeedCap(48);
+        var run = Glide(la, new Vector3(1, 0, 0), cap48, 0.3f, 10f, ref t);
+        Check(run.Stalled < 0.1f && run.Dist > cap48 * 9.8f && run.MaxBehind <= 48 - la.Reserve(48) + 0.01f && run.Flips == 0,
+              $"glide: lookahead sustains the cap ({cap48:F0} blocks/s at 0.3 s): {run.Dist:F0} blocks in 10 s, stalled {run.Stalled:F2} s, {run.Requests} requests, at most {run.MaxBehind:F1} behind");
+        Check(run.Moves.All(m => (m.Origin.x + 176) % 16 == 0 && m.Kind == "shift") && run.ShiftsX.Any(x => x >= 32), "glide: lookahead shifts are whole sections, several at once");
+        var flat = Wide(16, NewCaps); flat.CanPad = false;   // the 0.3.0 margin, not grown
+        float cap16 = flat.StreamSpeedCap(16);
+        var r16 = Glide(flat, new Vector3(1, 0, 0), cap16, 0.3f, 10f, ref t);
+        Check(r16.Stalled < 0.1f && cap48 > 2.5f * cap16, $"glide: the 16 margin sustains only {cap16:F0} blocks/s at the same latency ({r16.Dist:F0} blocks, stalled {r16.Stalled:F2} s)");
+        var over = Wide(48, NewCaps);
+        var ro = Glide(over, new Vector3(1, 0, 0), cap48 * 1.6f, 0.3f, 6f, ref t);
+        Check(ro.Stalled > 0.2f, $"glide: well above the cap the view does stall at the margin ({ro.Stalled:F2} s)");
+
+        // Stop: nothing more is asked for, and hovering with jitter never asks for the old region back.
+        var stop = Glide(la, new Vector3(0, 0, 0), 0, 0.3f, 2f, ref t);
+        int jitterReq = 0;
+        for (int i = 0; i < 120; i++, t += 1 / 72f) if (la.Move(new Vector3((i & 1) == 0 ? 0.3f : -0.3f, 0, 0), 1 / 72f, t).HasValue) jitterReq++;
+        Check(stop.Requests == 0 && jitterReq == 0, $"glide: stopping after lookahead asks for nothing, jitter neither ({stop.Requests}, {jitterReq})");
+
+        // Reverse: the region turns round once the view is back past where the last shift left it, then looks ahead the
+        // other way; it never goes back and forth.
+        float behind = -la.Offset.x;
+        var back = Glide(la, new Vector3(-1, 0, 0), 60f, 0.3f, 6f, ref t);
+        Check(back.Flips == 0 && back.ShiftsX.All(x => x < 0) && back.FirstRequestAt >= la.Hysteresis - 0.5f && back.Stalled < 0.15f && back.Dist > 350,
+              $"glide: reversing turns the region round after {back.FirstRequestAt:F1} blocks back (was {behind:F1} behind), then glides on ({back.Requests} requests, stalled {back.Stalled:F2} s)");
+        var la2 = Wide(48, NewCaps);
+        Glide(la2, new Vector3(1, 0, 0), 60f, 0.3f, 2f, ref t);
+        float x0 = la2.View.x; var wiggle = new List<int>();
+        for (int i = 0; i < 6; i++)   // back and forth by 6 blocks (less than SteadyBlocks): no lookahead, no ping-pong
+        {
+            wiggle.AddRange(Glide(la2, new Vector3(-1, 0, 0), 20f, 0.3f, 0.3f, ref t).ShiftsX);
+            wiggle.AddRange(Glide(la2, new Vector3(1, 0, 0), 20f, 0.3f, 0.3f, ref t).ShiftsX);
+        }
+        int turns = 0;
+        for (int i = 1; i < wiggle.Count; i++) if (Math.Sign(wiggle[i]) != Math.Sign(wiggle[i - 1])) turns++;
+        Check(turns == 0 && wiggle.Count <= 1 && Math.Abs(la2.View.x - x0) < 10, $"glide: wiggling back and forth 6 blocks never ping-pongs ({string.Join(",", wiggle)})");
+
+        // Diagonal: both axes look ahead.
+        var dg = Wide(48, NewCaps);
+        var rd = Glide(dg, new Vector3(0.7071f, 0, 0.7071f), 60f, 0.3f, 6f, ref t);
+        Check(rd.Stalled < 0.1f && dg.Origin.x - (-176) >= 192 && dg.Origin.z - (-176) >= 192 && rd.Dist > 350 && rd.Flips == 0,
+              $"glide: diagonal glide shifts x and z ahead ({rd.Requests} requests, {rd.Dist:F0} blocks, stalled {rd.Stalled:F2} s, origin {dg.Origin})");
+
+        // Vertical: lookahead with a tall margin stops at the build height; a 16 y margin glides as before.
+        var v = new NavState { CanPad = true, Caps = NewCaps, LatencyEma = 0.3f, MinY = -64, MaxY = 320 };
+        v.OnRegion("world", new Vector3Int(0, 96, 0), new Vector3Int(96, 160, 96), new Vector3Int(16, 48, 16), 0);
+        var up = Glide(v, new Vector3(0, 1, 0), 40f, 0.3f, 6f, ref t);
+        Check(up.Moves.All(m => m.Origin.y + m.Dims.y <= 320 && (m.Origin.y - 96) % 16 == 0) && v.Origin.y + v.Dims.y == 320 && up.Flips == 0,
+              $"glide: up with lookahead stops at the build height ({v.Origin.y}..{v.Origin.y + v.Dims.y}, {up.Requests} requests)");
+        var down = Glide(v, new Vector3(0, -1, 0), 40f, 0.3f, 12f, ref t);
+        Check(down.Moves.All(m => m.Origin.y >= -64) && v.Origin.y == -64, $"glide: and down to the bottom of the world ({v.Origin.y})");
+        var v16 = Wide(48, NewCaps);
+        var vu = Glide(v16, new Vector3(0, 1, 0), 20f, 0.3f, 3f, ref t);
+        Check(!v16.CanLookahead(16) && vu.Requests >= 2 && vu.Moves.All(m => m.Kind == "shift") && vu.Stalled < 0.1f && v16.Origin.y > 16,
+              $"glide: a 16 y margin still glides up a section at a time ({vu.Requests} requests)");
+
+        // The latency the cap uses comes from glide requests, not from a resize.
+        var lat = Wide(48, NewCaps, 0.3f);
+        var rs = AreaSizing.Plan(lat, 128, NewCaps).Value;
+        lat.TryIssue(rs, 10f);
+        lat.OnRegion("world", rs.Origin, rs.Dims, rs.Margin, 12f);
+        Check(Near(lat.LatencyEma, 0.3f), $"glide: a 2 s resize does not slow the glide down ({lat.LatencyEma:F2} s)");
+
+        // The lazy margin: only sections near the window are meshed; a delta's new sections arrive outside that.
+        var ms = Wide(48, NewCaps);   // region -176..176 on x/z (22 sections), window -128..128
+        var nsec = SectionPlan.Sections(ms.Dims);
+        var vis = MeshScope.Visible(ms, nsec); var act = MeshScope.Active(ms, nsec); var keep = MeshScope.Keep(ms, nsec);
+        Check(vis.Min.x == 3 && vis.Max.x == 19 && act.Min.x == 2 && act.Max.x == 20 && keep.Min.x == 1 && keep.Max.x == 21 && vis.Min.y == 1 && vis.Max.y == 7 && act.Min.y == 0,
+              $"scope: window sections {vis}, meshed {act}, kept {keep} of {nsec}");
+        ms.Velocity = new Vector3(60, 0, 0);
+        var ahead = MeshScope.Active(ms, nsec);
+        Check(ahead.Max.x == 22 && ahead.Min.x == 2, $"scope: moving +x meshes further ahead ({ahead})");
+        Check(MeshScope.Score(new Vector3Int(18, 2, 10), vis, ms.View - (Vector3)ms.Origin, ms.Velocity) < MeshScope.Score(new Vector3Int(19, 2, 10), vis, ms.View - (Vector3)ms.Origin, ms.Velocity) &&
+              MeshScope.Score(new Vector3Int(19, 2, 10), vis, ms.View - (Vector3)ms.Origin, ms.Velocity) < MeshScope.Score(new Vector3Int(2, 2, 10), vis, ms.View - (Vector3)ms.Origin, ms.Velocity),
+              "scope: on-screen sections first, then the ones ahead, then the rest");
+        var noMargin = new NavState(); noMargin.OnRegion("world", new Vector3Int(0, 0, 0), new Vector3Int(64, 64, 64), default, 0);
+        Check(MeshScope.Active(noMargin, new Vector3Int(4, 4, 4)).Count == 64, "scope: a region without a margin meshes everything");
+        var lk = Wide(48, NewCaps);
+        var pre = MeshScope.Active(lk, nsec);
+        var lr = Glide(lk, new Vector3(1, 0, 0), 60f, 0.3f, 1.2f, ref t);
+        var shiftX = lk.Origin.x - (-176);
+        Check(shiftX >= 32 && lr.Moves.Count > 0, $"scope: a lookahead glide moved the region {shiftX} blocks");
+        float gap = (nsec.x - 1) * 16 - (lk.View.x - lk.Origin.x + lk.Window.x / 2f);
+        lk.Velocity = new Vector3(0, 0, 0);
+        var post = MeshScope.Active(lk, nsec);
+        Check(gap >= 32 && !post.Contains(new Vector3Int(nsec.x - 1, 2, 10)) && !post.Contains(new Vector3Int(nsec.x - 2, 2, 10)),
+              $"scope: after a lookahead glide the newest sections are {gap:F0} blocks (over 0.5 s at 60 blocks/s) beyond the window, and not meshed at rest ({post})");
+
+        // Meshing limits the speed: every 16 blocks along x bring one y-z slice of the meshed box (8 x 18 sections here).
+        var box = MeshScope.Active(Wide(48, NewCaps), nsec);
+        float mc = MeshScope.MeshSpeedCap(600f, box, new Vector3(1, 0, 0));
+        Check(box.Max.y - box.Min.y == 8 && box.Max.z - box.Min.z == 18 && Near(mc, 600f * MeshScope.Utilisation * 16f / (8 * 18), 0.01f) &&
+              MeshScope.MeshSpeedCap(0, box, new Vector3(1, 0, 0)) == float.MaxValue && MeshScope.MeshSpeedCap(600f, box, new Vector3(0, 0, 0)) == float.MaxValue,
+              $"mesh cap: 600 sections/s keep up with {mc:F0} blocks/s along x at 256 wide; unknown rate or no motion = no cap");
+        float diag = MeshScope.MeshSpeedCap(600f, box, new Vector3(1, 0, 1));
+        Check(diag < mc && diag > mc / 2, $"mesh cap: a diagonal brings in two slices ({diag:F0} blocks/s)");
+        var capped = Wide(48, NewCaps); capped.MeshCap = 20f;
+        float sp = capped.Speed(0.0022f, 1f, 5f, 48);
+        capped.MeshCap = 1f;
+        Check(Near(sp, 20f) && Near(capped.Speed(0.0022f, 1f, 5f, 48), capped.MinMeshCap), $"mesh cap: Speed obeys it, but never below MinMeshCap ({sp:F0})");
+        var meter = new MeshRateMeter();
+        for (int i = 0; i < 80; i++) meter.Frame(1 / 72f, i % 2 == 0, 10);   // only the saturated half counts
+        meter.Frame(1 / 72f, false, 1000);
+        Check(Near(meter.Rate, 720f, 1f), $"mesh rate: sections per second of saturated time ({meter.Rate:F0})");
     }
 
     static WorldModel Terrain(Vector3Int origin, Vector3Int dims, string[] palette, Func<int, int, int, string> f, int id = 1)

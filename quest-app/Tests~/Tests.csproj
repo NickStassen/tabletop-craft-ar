@@ -14,6 +14,8 @@
     <Compile Include="../Assets/Scripts/World/NavState.cs;../Assets/Scripts/World/SectionPlan.cs;../Assets/Scripts/World/SnapshotAssembler.cs;../Assets/Scripts/World/CapMesher.cs;../Assets/Scripts/Net/SectionedSnapshot.cs" />
     <!-- [area] width presets and mesh batching -->
     <Compile Include="../Assets/Scripts/World/AreaSizing.cs;../Assets/Scripts/World/SectionBatches.cs" />
+    <!-- [nav] which sections are meshed: near the visible window only -->
+    <Compile Include="../Assets/Scripts/World/MeshScope.cs" />
     <Compile Include="../Assets/Scripts/World/BlockShading.cs;../Assets/Scripts/World/BiomeColors.cs" />
     <Compile Include="../Assets/Scripts/World/BlockModelBaker.cs;../Assets/Scripts/World/BlockModels.cs;../Assets/Scripts/World/PistonGhosts.cs;../Assets/Scripts/World/TextureMips.cs" />
     <Compile Include="../Assets/Scripts/World/PlayerModel.cs;../Assets/Scripts/World/PlayerAnimation.cs;../Assets/Scripts/World/SkinImage.cs" />
@@ -29,5 +31,7 @@
     <Compile Include="../Assets/Scripts/Net/InteractProtocol.cs;../Assets/Scripts/World/UseRules.cs;../Assets/Scripts/World/EntityRaycast.cs;../Assets/Scripts/World/EntityCardModel.cs" />
     <!-- [comfort] keyboard, prefs.json, LAN discovery, session helpers -->
     <Compile Include="../Assets/Scripts/World/KeyboardModel.cs;../Assets/Scripts/World/AppPrefs.cs;../Assets/Scripts/World/SessionState.cs;../Assets/Scripts/Net/LanDiscovery.cs" />
+    <!-- [blocks] block entities: catalog, baked models, block_entities data (PROTOCOL.md 4.29) -->
+    <Compile Include="../Assets/Scripts/World/BlockEntityCatalog.cs;../Assets/Scripts/World/BlockEntityModels.cs;../Assets/Scripts/Net/BlockEntityProtocol.cs;../Assets/Scripts/World/SignText.cs;../Assets/Scripts/World/BlockEntityExtras.cs" />
   </ItemGroup>
 </Project>
