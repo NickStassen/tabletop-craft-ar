@@ -50,22 +50,23 @@ Phases 0-3 were built and checked on Paper 1.21.11 / Java 21. The server pin has
   - The floating giant: a head and hands at the exact headset poses.
   - Skinned and animated player figures (now seen working on a Quest 3 headset).
   - The eye-in-fluid effects: underwater fog and tint, the surface seen from below, lava and powder snow.
-- **In progress:** entities (vehicles, mobs, dropped items, held items) and player actions (arm swing, digging cracks, break particles, hurt flash).
+  - Entities (vehicles, mobs, dropped items, held items) and player actions (arm swing, digging cracks, break particles, hurt flash), seen on a Quest 3.
 - **Built, waiting for headset measurements (2026-10-14):** area width presets 64–256 without reconnecting (resize deltas, re-keyed meshes, footprint kept) and mesh batching (roadmap item 7).
+- **Built and tested off the headset, waiting for a headset session (2026-10-15):** releases 0.3.1 to 0.7.0 (fixes and polish, fast gliding, chat and commands, block entities, using blocks/items/mobs, the living world, operator and power tools, faster meshing, sound, motion). Each part's headset checklist is in TESTING.md.
 
 ## Roadmap: "playing Minecraft as a god"
 Ordered by how much each adds to the feeling of a living world on the table that you can act on.
 
 **1. World manipulation.**
 - (Partly done) Two-hand grab: holding both grips drags the table and turns it with the right hand. Pulling the hands apart to zoom around their midpoint and grabbing the terrain itself aren't built yet (zoom is the right stick).
-- Follow a player: the area tracks them.
+- (Done, not yet tried on the headset) Follow a player (0.5.0; QUEST_SETUP.md Part N): the view glides after them and jumps through teleports and portals.
 
 **2. A living world.**
-- Day/night and weather from the server: sky light scaled by time, rain and snow particles, lightning flashes.
+- (Done, not yet tried on the headset) Day/night and weather from the server (0.5.0, `world_v1`): sky light scaled by time, rain and snow, lightning bolts and flashes.
 - Clouds at cloud height above the table.
-- Particles: torches, lava, splashes, explosions.
+- (Done, not yet tried on the headset) Ambient particles and explosions (0.7.0): torches, candles, campfires, lava, portals, falling leaves, fireflies, bubbles, drips, explosion clouds. Still open: splashes, furnaces, end rods, dripstone tips.
 - (Done, not yet tried on the headset) Block entities like vanilla (PROTOCOL.md 4.29): chests, shulker boxes, heads, banners with patterns, bells, pots with sherds, conduits, statues, lectern and enchanting books, end portals and gateways, sign text, beacon beams, spawner mobs, campfire, shelf and vault items.
-- Block entities still open: chests and shulker boxes opening (block events), the enchanting book opening toward players, banners swaying, maps in item frames.
+- Block entities still open: the enchanting book opening toward players, banners swaying, maps in item frames, styled sign text. (Chest and shulker lids and bell swings are done in 0.7.0.)
 
 **3. Presence in AR.**
 - Hand tracking: pinch to break or place, fist to grab.
@@ -83,9 +84,8 @@ Ordered by how much each adds to the feeling of a living world on the table that
 **5. God powers.**
 - (Done, not yet tried on the headset) A block palette, hotbar and creative inventory: the server's `block_registry` (PROTOCOL.md 4.24), the block menu on the left hand with categories, search and icons from the user's pack, a 9-slot hotbar (QUEST_SETUP.md Part J).
 - (Done, not yet tried on the headset) Using blocks, items and mobs (`interact_v1`, QUEST_SETUP.md Part M): the left trigger in vanilla's right-click order (doors, levers, buttons, note blocks...; bone meal, buckets, flint and steel and TNT, axes, hoes, shovels, shears, spawn eggs, a lightning wand), Use and Eggs tabs in the block menu, hitting, carrying (right grip), naming, freezing and removing mobs and players, an info card. Open: the container view and the sign editor (the hooks are there), more of vanilla's right clicks (anvils, beds, cauldrons, item frames, trading).
-- Undo.
+- (Done, not yet tried on the headset) Undo/redo (0.5.0, `power_v1`; hold B), box tools (fill, replace, walls, hollow, clone) and brushes (QUEST_SETUP.md Part O).
 - Lightning, time and weather gestures. (Buttons done, not yet tried on the headset: the operator panel's World tab, with lightning at the pointer; QUEST_SETUP.md Part L.)
-- Terraform brushes.
 - (Done, not yet tried on the headset) Chat to and from players and server commands: `chat_v1`, `command_v1`, `status_v1` (PROTOCOL.md 4.26–4.28), the operator panel on X with Chat, Console, Players, World and Server tabs, chat on the wrist and bubbles over players, the giant's speech bubble for Java players (QUEST_SETUP.md Part L). Open: dictation in.
 
 **6. Multiple headsets.**
@@ -103,11 +103,11 @@ Ordered by how much each adds to the feeling of a living world on the table that
 
 **Edge cases to keep covered:**
 - **Area edges:** fluids at the cut edges and the region top.
-- **Players:** riding, sleeping, swimming, gliding, invisible or in spectator mode, near the region edge, or in another dimension.
+- **Players:** riding, sleeping, swimming, gliding, invisible or in spectator mode (hidden since 0.3.1), near the region edge, or in another dimension.
 - **Edits:**
-  - placing into players or water
-  - orientation and two-block items
+  - placing into players or water (handled in 0.3.1)
+  - orientation and two-block items (handled in 0.3.1: vanilla placement rules, both halves)
   - gravity blocks
-  - griefing limits and undo
+  - griefing limits and undo (undo in 0.5.0; per-user rights still open)
 - **Streaming:** into ungenerated chunks, at build-height limits and the world border, and big diffs (explosions, floods) falling back to a snapshot.
-- **Pause and reconnect** when the headset is taken off.
+- **Pause and reconnect** when the headset is taken off (handled in 0.3.1: the giant despawns and the link pauses; not yet tried on the headset).
