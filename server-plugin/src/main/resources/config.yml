@@ -103,14 +103,17 @@ debug:
   avatar-state: false
   log-poses: false
 # Server caps for region_request / subscribe / setsize (PROTOCOL.md 4.13).
-# Sized for a 256-block visible box plus the headset's 16-block view margin (docs/TESTING.md "Navigation and bigger
-# areas": a 288x160x288 region reads in ~170 ms off the main thread and pans in ~0.4 MB deltas).
+# Sized for a 256-block visible box plus the headset's view margin, which grows with the width so gliding has runway
+# (48 blocks per side at 256: 352; docs/TESTING.md "Faster gliding"). A one-section glide shift reads only the new
+# sections (about 50 ms at 352x160x352) and sends a 0.2-0.9 MB delta. Servers set up with the 0.3.0 defaults
+# (288 / 16777216) are raised to these on start.
 max_region:
-  x: 288
+  x: 352
   y: 384
-  z: 288
-  # Max blocks in one region (dx*dy*dz). 16M ids are 64 MB per copy on the server.
-  blocks: 16777216
+  z: 352
+  # Max blocks in one region (dx*dy*dz). 24M ids are 100 MB as ids plus 25 MB of light per copy on the server (a
+  # moving region holds two or three copies), and 75 MB per copy on the headset. 352x160x352 is 19.8M.
+  blocks: 25165824
   # Max estimated snapshot JSON size in bytes, all parts together. One message is at most 4 MiB, so a client
   # without "sections_v1" gets region_too_large for anything bigger than that.
   bytes: 33554432
@@ -118,5 +121,6 @@ max_region:
   # (PROTOCOL.md 4.25). The headset's width presets are 64/96/128/192/256 (left stick click); a wider request is
   # narrowed to this around its centre (moved by whole 16-block sections, so the reply is still a delta) instead of
   # refused, and the reply carries the accepted size. Keep it a multiple of 32 so a narrowed preset stays exactly
-  # centred, and keep view_width + 2 * 16 (the headset's margin) within x/z above: 256 + 32 = 288.
+  # centred, and keep view_width + 2 * 16 (the headset's smallest margin) within x/z above; with + 2 * 48 the widest
+  # preset also gets the full glide margin: 256 + 96 = 352.
   view_width: 256

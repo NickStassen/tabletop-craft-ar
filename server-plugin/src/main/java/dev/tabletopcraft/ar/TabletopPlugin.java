@@ -91,6 +91,15 @@ public final class TabletopPlugin extends JavaPlugin {
 
     private void start() {
         var c = getConfig();
+        // [nav] A config.yml written with the 0.3.0 caps (288 / 16777216) can't hold a 256-wide window with its glide
+        // margin: raise it to the new defaults (an operator's own values are left alone).
+        RegionCaps old = RegionCaps.OLD_DEFAULT;
+        if (c.getInt("max_region.x", -1) == old.maxX() && c.getInt("max_region.z", -1) == old.maxZ() && c.getLong("max_region.blocks", -1) == old.maxBlocks()) {
+            c.set("max_region.x", RegionCaps.DEFAULT.maxX()); c.set("max_region.z", RegionCaps.DEFAULT.maxZ()); c.set("max_region.blocks", RegionCaps.DEFAULT.maxBlocks());
+            saveConfig();
+            getLogger().info(String.format("config: max_region raised from the 0.3.0 defaults to %dx%dx%d, %d blocks (room for the glide margin)",
+                RegionCaps.DEFAULT.maxX(), c.getInt("max_region.y", 384), RegionCaps.DEFAULT.maxZ(), RegionCaps.DEFAULT.maxBlocks()));
+        }
         RegionCaps d0 = RegionCaps.DEFAULT;
         caps = new RegionCaps(c.getInt("max_region.x", d0.maxX()), c.getInt("max_region.y", d0.maxY()), c.getInt("max_region.z", d0.maxZ()),
             c.getLong("max_region.blocks", d0.maxBlocks()), c.getLong("max_region.bytes", d0.maxBytes()),
