@@ -141,6 +141,25 @@ public final class LinkServer extends WebSocketServer {
                     if (!limited(s, s.completeLimiter, "queries", refSeq)) plugin.enqueue(() -> plugin.control.onWorldQuery(s, world, refSeq));
                 }
                 case "players_query" -> { if (!limited(s, s.completeLimiter, "queries", refSeq)) plugin.enqueue(() -> plugin.control.onPlayersQuery(s, refSeq)); }
+                // [hands] using blocks, items and mobs (interact_v1): parsed and rate-limited here, applied on the main thread
+                case "interact" -> {
+                    InteractMessages.Interact in = InteractMessages.interact(m);
+                    if (s.canInteract && s.interactLimiter != null && !s.interactLimiter.tryAcquire(System.nanoTime())) {
+                        s.send(in.error("rate_limited", "more than " + (int) plugin.interact.rate + " uses per second (interact.max-per-second)", refSeq));
+                        return;
+                    }
+                    plugin.enqueue(() -> plugin.interact.onInteract(s, in, refSeq));
+                }
+                case "entity_op" -> {
+                    InteractMessages.EntityOp op = InteractMessages.entityOp(m);
+                    // Holding sends up to 10 moves a second: its own bucket, so it never starves the other actions.
+                    EditLimiter lim = op.op().equals("hold") || op.op().equals("drop") ? s.holdLimiter : s.interactLimiter;
+                    if (s.canInteract && lim != null && !lim.tryAcquire(System.nanoTime())) {
+                        s.send(op.error("rate_limited", "too many mob actions per second (interact.max-per-second)", refSeq));
+                        return;
+                    }
+                    plugin.enqueue(() -> plugin.interact.onEntityOp(s, op, refSeq));
+                }
                 case "ping" -> {
                     JsonObject p = Protocol.body("pong");
                     if (m.has("id")) p.add("id", m.get("id"));
@@ -188,6 +207,7 @@ public final class LinkServer extends WebSocketServer {
                 else if (c.equals(ControlMessages.CAP_CHAT) && plugin.control.chatAllowed()) s.wantsChat = true;
                 else if (c.equals(ControlMessages.CAP_COMMAND) && plugin.control.commandsAllowed()) s.canCommand = true;
                 else if (c.equals(ControlMessages.CAP_STATUS) && plugin.control.statusAllowed()) s.wantsStatus = true;
+                else if (c.equals(InteractMessages.CAP) && plugin.interact.allowed()) plugin.interact.grant(s);   // [hands]
             }
         ControlService cs = plugin.control;   // [talk] rate limits (token buckets) and the chat name
         s.chatLimiter = new EditLimiter(cs.chatRate, cs.chatBurst);

@@ -1,0 +1,19 @@
+{
+ "v": 1,
+ "type": "interact",
+ "seq": 91,
+ "t": 1760370004100,
+ "pos": [
+  105,
+  63,
+  -35
+ ],
+ "face": "up",
+ "item": "minecraft:bone_meal",
+ "sneak": false,
+ "dir": [
+  0.0,
+  -0.9,
+  0.44
+ ]
+}

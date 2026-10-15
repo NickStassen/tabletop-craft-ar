@@ -1,0 +1,26 @@
+{
+ "v": 1,
+ "type": "entity_info",
+ "seq": 120,
+ "t": 1760370005310,
+ "ref_seq": 99,
+ "uuid": "3c1e5f7a-2b4d-4e6f-8a9b-0c1d2e3f4a5b",
+ "id": 104,
+ "entity_type": "minecraft:wolf",
+ "name": "Rex",
+ "pos": [
+  108.7,
+  64.0,
+  -28.0
+ ],
+ "health": [
+  14.0,
+  20.0
+ ],
+ "owner": "Alex",
+ "age": -2400,
+ "baby": true,
+ "ai": true,
+ "frozen": false,
+ "glowing": false
+}

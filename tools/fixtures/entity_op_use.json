@@ -1,0 +1,9 @@
+{
+ "v": 1,
+ "type": "entity_op",
+ "seq": 97,
+ "t": 1760370005200,
+ "uuid": "3c1e5f7a-2b4d-4e6f-8a9b-0c1d2e3f4a5b",
+ "op": "use",
+ "item": "minecraft:shears"
+}
