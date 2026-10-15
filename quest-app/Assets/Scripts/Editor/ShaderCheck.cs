@@ -18,7 +18,9 @@ namespace TabletopCraft.EditorTools
         static readonly string[][] Keywords = { new string[0], new[] { "STEREO_MULTIVIEW_ON" }, new[] { "STEREO_INSTANCING_ON" }, new[] { "INSTANCING_ON" }, new[] { "UNITY_SINGLE_PASS_STEREO" },
                                                 // [gpu] the block shaders' variants (BlockKeywords, TabletopRenderer.SolidMaterial)
                                                 new[] { "STEREO_MULTIVIEW_ON", "TABLETOP_SOLID", "TABLETOP_CLIP_PLANES" }, new[] { "STEREO_MULTIVIEW_ON", "TABLETOP_FOG", "TABLETOP_DAYLIGHT" },
-                                                new[] { "STEREO_MULTIVIEW_ON", "TABLETOP_SOLID", "TABLETOP_FOG", "TABLETOP_DAYLIGHT", "TABLETOP_CLIP_PLANES" } };
+                                                new[] { "STEREO_MULTIVIEW_ON", "TABLETOP_SOLID", "TABLETOP_FOG", "TABLETOP_DAYLIGHT", "TABLETOP_CLIP_PLANES" },
+                                                new[] { "STEREO_MULTIVIEW_ON", "TABLETOP_PACKED", "TABLETOP_SOLID", "TABLETOP_CLIP_PLANES" },
+                                                new[] { "STEREO_MULTIVIEW_ON", "TABLETOP_PACKED", "TABLETOP_FOG", "TABLETOP_DAYLIGHT" } };
 
         public static void Run()
         {
@@ -98,7 +100,9 @@ namespace TabletopCraft.EditorTools
 
         /// <summary>Keyword sets Stats compiles (STEREO_MULTIVIEW_ON is always on, as on the Quest).</summary>
         public static string[][] StatKeywords = { new string[0], new[] { "TABLETOP_CLIP_PLANES" }, new[] { "TABLETOP_SOLID" }, new[] { "TABLETOP_SOLID", "TABLETOP_CLIP_PLANES" },
-                                                  new[] { "TABLETOP_DAYLIGHT", "TABLETOP_CLIP_PLANES" }, new[] { "TABLETOP_SOLID", "TABLETOP_FOG", "TABLETOP_DAYLIGHT", "TABLETOP_CLIP_PLANES" } };
+                                                  new[] { "TABLETOP_DAYLIGHT", "TABLETOP_CLIP_PLANES" }, new[] { "TABLETOP_SOLID", "TABLETOP_FOG", "TABLETOP_DAYLIGHT", "TABLETOP_CLIP_PLANES" },
+                                                  new[] { "TABLETOP_PACKED", "TABLETOP_SOLID", "TABLETOP_CLIP_PLANES" }, new[] { "TABLETOP_PACKED", "TABLETOP_DAYLIGHT", "TABLETOP_CLIP_PLANES" },
+                                                  new[] { "TABLETOP_PACKED", "TABLETOP_CLIP_PLANES" } };
 
         static int Count(string s, string what)
         {

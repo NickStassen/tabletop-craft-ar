@@ -110,6 +110,39 @@ namespace TabletopCraft.EditorTools
             var lo = refVerts[0]; var hi = refVerts[0];
             foreach (var p in refVerts) { lo = Vector3.Min(lo, p); hi = Vector3.Max(hi, p); }
             if ((b.min - lo).sqrMagnitude > 1e-6f || (b.max - hi).sqrMagnitude > 1e-6f) { errors++; Debug.LogError($"BATCHCHECK bounds {b.min}..{b.max} vs {lo}..{hi}"); }
+
+            // [gpu] The same batch packed (PackedVertex, 20 bytes) and read back through Unity: positions within 1/128 block,
+            // uv within 1/2048, the colour times vanilla's face shade of the classic normal, layer/table as uv.z encodes them,
+            // the same triangles and bounds.
+            var pdata = BatchData.Assemble(parts, true);
+            var pm = new Mesh();
+            TabletopRenderer.Fill(pm, pdata);
+            int packedErrors = 0;
+            if (pdata.Packed == null || pm.GetVertexAttributeFormat(UnityEngine.Rendering.VertexAttribute.Position) != UnityEngine.Rendering.VertexAttributeFormat.SNorm16 || pm.GetVertexBufferStride(0) != PackedVertex.Size)
+            { packedErrors++; Debug.LogError($"BATCHCHECK packed: not packed (stride {pm.GetVertexBufferStride(0)})"); }
+            else
+            {
+                var pv = pm.vertices; var pc = pm.colors32; var pu = new List<Vector4>(); pm.GetUVs(0, pu);
+                for (int i = 0; i < Mathf.Min(pv.Length, refVerts.Count); i++)
+                {
+                    var n = bn[i];
+                    float shade = Mathf.Abs(n.y) > 0.9f ? (n.y > 0 ? 1f : 0.5f) : Mathf.Abs(n.z) > 0.9f ? 0.8f : Mathf.Abs(n.x) > 0.9f ? 0.6f : 1f;
+                    var rc = refColors[i];
+                    var want = new Color32((byte)Mathf.RoundToInt(rc.r * shade), (byte)Mathf.RoundToInt(rc.g * shade), (byte)Mathf.RoundToInt(rc.b * shade), rc.a);
+                    int z = Mathf.RoundToInt(refUvs[i].z), table = z < 0 ? 0 : z / RandomUv.LayerStride, layer = z < 0 ? -1 : z - table * RandomUv.LayerStride;
+                    var pos = pv[i] * (32767f / 64f); var u = pu[i];
+                    bool ok = (pos - refVerts[i]).sqrMagnitude < 1e-4f && Mathf.Abs(u.x * 32767f / 1024f - refUvs[i].x) < 5e-4f && Mathf.Abs(u.y * 32767f / 1024f - refUvs[i].y) < 5e-4f
+                              && Mathf.RoundToInt(u.z * 32767f) == layer && Mathf.RoundToInt(u.w * 32767f) == table && Mathf.Abs(pc[i].r - want.r) <= 1 && Mathf.Abs(pc[i].g - want.g) <= 1
+                              && Mathf.Abs(pc[i].b - want.b) <= 1 && pc[i].a == want.a;
+                    if (!ok && packedErrors++ < 10) Debug.LogError($"BATCHCHECK packed vertex {i}: {pos} uv {u} colour {pc[i]} vs {refVerts[i]} {refUvs[i]} {want}");
+                }
+                for (int sub = 0; sub < 4; sub++) if (!System.Linq.Enumerable.SequenceEqual(pm.GetTriangles(sub), batch.GetTriangles(sub))) { packedErrors++; Debug.LogError($"BATCHCHECK packed submesh {sub} differs"); }
+                if ((pm.bounds.min - lo).sqrMagnitude > 1e-6f || (pm.bounds.max - hi).sqrMagnitude > 1e-6f) { packedErrors++; Debug.LogError($"BATCHCHECK packed bounds {pm.bounds.min}..{pm.bounds.max}"); }
+            }
+            errors += packedErrors;
+            Debug.Log($"BATCHCHECK packed: {pdata.VertCount} vertices, {pdata.Bytes / 1024} KB vs {data.Bytes / 1024} KB, {packedErrors} errors");
+            pdata.Release();
+            Object.DestroyImmediate(pm);
             Debug.Log($"BATCHCHECK done: {parts.Count} sections, {checkedVerts} vertices ({zeroNormals} with zero normals), submeshes {data.Solid / 3}/{(data.Opaque - data.Solid) / 3}/{data.Transparent / 3}/{data.WaterBack / 3} triangles (solid/cutout/transparent/water back), {errors} errors");
             data.Release();
             Object.DestroyImmediate(batch);
@@ -157,7 +190,8 @@ namespace TabletopCraft.EditorTools
             {
                 var m = mf.sharedMesh; if (m == null || m.vertexCount == 0) continue;
                 var p = mf.transform.localPosition;
-                foreach (var q in m.vertices) { sx += q.x + p.x; sy += q.y + p.y; sz += q.z + p.z; }
+                float k = m.GetVertexAttributeFormat(UnityEngine.Rendering.VertexAttribute.Position) == UnityEngine.Rendering.VertexAttributeFormat.SNorm16 ? 32767f / 64f : 1f;   // [gpu] PackedVertex
+                foreach (var q in m.vertices) { sx += q.x * k + p.x; sy += q.y * k + p.y; sz += q.z * k + p.z; }
                 v += m.vertexCount;
                 for (int s = 0; s < Mathf.Min(3, m.subMeshCount); s++) t += m.GetIndexCount(s) / 3;   // [gpu] solid, cutout, transparent
             }

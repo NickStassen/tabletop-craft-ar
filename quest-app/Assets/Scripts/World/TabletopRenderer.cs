@@ -137,7 +137,7 @@ namespace TabletopCraft.World
         sealed class Batch
         {
             public Vector3Int Key; public GameObject Go; public Mesh Mesh; public MeshRenderer Renderer;
-            public int Y0; public bool Assembling, Dead;
+            public int Y0; public bool Assembling, Dead, Packed;
             public List<(Vector3Int, int)> Fresh;   // [mesh] the fresh section stamps this assembly covers (skirt)
             public int Verts, Indices, Opaque, Solid, Transparent, WaterBack, Sections;
             public long Bytes;
@@ -167,8 +167,9 @@ namespace TabletopCraft.World
 
         // Water faces seen from inside (MeshData.WaterBack) are a third submesh. A renderer draws only as many submeshes as
         // it has materials, so they are switched on by giving every batch a third material while the eye is under water.
-        Material[] _mats2, _mats3;
+        Material[] _mats2, _mats3, _pmats2, _pmats3;
         Material _solid;   // [gpu] OpaqueMaterial without the alpha test (TABLETOP_SOLID), drawn first (Geometry queue)
+        Material _pSolid, _pCutout, _pTransparent;   // [gpu] the same three for PackedVertex batches (TABLETOP_PACKED)
         bool _underwater;
 
         /// <summary>Draw the water's inside faces (EyeEffects sets this while the eye is in water).</summary>
@@ -179,15 +180,33 @@ namespace TabletopCraft.World
             {
                 if (_underwater == value) return;
                 _underwater = value;
-                foreach (var b in _batches.Values) b.Renderer.sharedMaterials = Materials();
-                foreach (var b in _retired) if (b.Go) b.Renderer.sharedMaterials = Materials();   // old region while staging
+                foreach (var b in _batches.Values) b.Renderer.sharedMaterials = Materials(b.Packed);
+                foreach (var b in _retired) if (b.Go) b.Renderer.sharedMaterials = Materials(b.Packed);   // old region while staging
             }
         }
 
         // Submeshes (Fill): solid, cutout, transparent, water seen from inside (only drawn underwater).
-        Material[] Materials() => _underwater
-            ? _mats3 ?? (_mats3 = new[] { SolidMaterial, OpaqueMaterial, TransparentMaterial, TransparentMaterial })
-            : _mats2 ?? (_mats2 = new[] { SolidMaterial, OpaqueMaterial, TransparentMaterial });
+        Material[] Materials(bool packed)
+        {
+            if (packed)
+            {
+                PackedMaterials();
+                return _underwater ? _pmats3 ?? (_pmats3 = new[] { _pSolid, _pCutout, _pTransparent, _pTransparent })
+                                   : _pmats2 ?? (_pmats2 = new[] { _pSolid, _pCutout, _pTransparent });
+            }
+            return _underwater ? _mats3 ?? (_mats3 = new[] { SolidMaterial, OpaqueMaterial, TransparentMaterial, TransparentMaterial })
+                               : _mats2 ?? (_mats2 = new[] { SolidMaterial, OpaqueMaterial, TransparentMaterial });
+        }
+
+        /// <summary>[gpu] Copies of the block materials that read PackedVertex (TABLETOP_PACKED). Only batches use them: the
+        /// other meshes drawn with OpaqueMaterial/TransparentMaterial (caps, skirt, entities, previews) keep Unity's layout.</summary>
+        void PackedMaterials()
+        {
+            if (_pSolid != null || OpaqueMaterial == null) return;
+            _pSolid = new Material(SolidMaterial) { name = "blocks solid packed", renderQueue = (int)RenderQueue.Geometry }; _pSolid.EnableKeyword("TABLETOP_PACKED");
+            _pCutout = new Material(OpaqueMaterial) { name = "blocks packed" }; _pCutout.EnableKeyword("TABLETOP_PACKED");
+            _pTransparent = new Material(TransparentMaterial) { name = "blocks transparent packed" }; _pTransparent.EnableKeyword("TABLETOP_PACKED");
+        }
 
         /// <summary>[gpu] The material of the solid submesh: a copy of OpaqueMaterial with TABLETOP_SOLID (no discard, so the
         /// GPU keeps early depth rejection) in the Geometry queue, so it is drawn before the alpha-tested faces.</summary>
@@ -349,6 +368,8 @@ namespace TabletopCraft.World
             {
                 OpaqueMaterial.SetTexture("_Blocks", Atlas.Array); OpaqueMaterial.SetFloat("_HasTex", 1);
                 SolidMaterial.SetTexture("_Blocks", Atlas.Array); SolidMaterial.SetFloat("_HasTex", 1);   // [gpu]
+                PackedMaterials();
+                foreach (var m in new[] { _pSolid, _pCutout, _pTransparent }) { m.SetTexture("_Blocks", Atlas.Array); m.SetFloat("_HasTex", 1); }
                 TransparentMaterial.SetTexture("_Blocks", Atlas.Array); TransparentMaterial.SetFloat("_HasTex", 1);
             }
             if (_randomVersion != RandomUv.Version) UploadRandomTables();
@@ -521,7 +542,7 @@ namespace TabletopCraft.World
                 Task.Run(() =>
                 {
                     BatchData d;
-                    try { d = BatchData.Assemble(parts); }
+                    try { d = BatchData.Assemble(parts, BatchRules.PackedVertices); }
                     catch (System.Exception e) { d = new BatchData(); UnityEngine.Debug.LogWarning($"[Tabletop] batch {b.Key}: {e.Message}"); }
                     _assembled.Enqueue((b, d));
                 });
@@ -548,7 +569,7 @@ namespace TabletopCraft.World
             b.Mesh = new Mesh { name = go.name, indexFormat = IndexFormat.UInt32 };
             b.Mesh.MarkDynamic();
             go.GetComponent<MeshFilter>().sharedMesh = b.Mesh;
-            b.Renderer.sharedMaterials = Materials();
+            b.Renderer.sharedMaterials = Materials(b.Packed);
             b.Renderer.shadowCastingMode = ShadowCastingMode.Off; b.Renderer.receiveShadows = false;
             b.Renderer.lightProbeUsage = LightProbeUsage.Off; b.Renderer.reflectionProbeUsage = ReflectionProbeUsage.Off;
             // [random] World block of the mesh origin: Blocks-local (x, y, -z) is region-local, plus the region origin. Batch
@@ -570,7 +591,15 @@ namespace TabletopCraft.World
             new VertexAttributeDescriptor(VertexAttribute.TexCoord0, VertexAttributeFormat.Float32, 3),
         };
 
-        /// <summary>Copies an assembled batch into a Mesh: one vertex buffer (BatchVertex layout), 32-bit indices, four
+        /// <summary>[gpu] PackedVertex: 20 bytes (TABLETOP_PACKED decodes it).</summary>
+        static readonly VertexAttributeDescriptor[] PackedLayout =
+        {
+            new VertexAttributeDescriptor(VertexAttribute.Position, VertexAttributeFormat.SNorm16, 4),
+            new VertexAttributeDescriptor(VertexAttribute.Color, VertexAttributeFormat.UNorm8, 4),
+            new VertexAttributeDescriptor(VertexAttribute.TexCoord0, VertexAttributeFormat.SNorm16, 4),
+        };
+
+        /// <summary>Copies an assembled batch into a Mesh: one vertex buffer (BatchVertex or [gpu] PackedVertex layout), 32-bit indices, four
         /// submeshes (solid, alpha-tested, transparent, water seen from inside), bounds from the assembly. Public for Editor
         /// checks.</summary>
         public static void Fill(Mesh m, BatchData d)
@@ -578,8 +607,16 @@ namespace TabletopCraft.World
             const MeshUpdateFlags F = MeshUpdateFlags.DontValidateIndices | MeshUpdateFlags.DontRecalculateBounds | MeshUpdateFlags.DontResetBoneBounds;
             m.Clear();
             if (d.VertCount == 0) return;
-            m.SetVertexBufferParams(d.VertCount, VertexLayout);
-            m.SetVertexBufferData(d.Verts, 0, 0, d.VertCount, 0, F);
+            if (d.Packed != null)
+            {
+                m.SetVertexBufferParams(d.VertCount, PackedLayout);
+                m.SetVertexBufferData(d.Packed, 0, 0, d.VertCount, 0, F);
+            }
+            else
+            {
+                m.SetVertexBufferParams(d.VertCount, VertexLayout);
+                m.SetVertexBufferData(d.Verts, 0, 0, d.VertCount, 0, F);
+            }
             m.SetIndexBufferParams(d.IndexCount, IndexFormat.UInt32);
             m.SetIndexBufferData(d.Indices, 0, 0, d.IndexCount, F);
             var bounds = new Bounds((d.Min + d.Max) * 0.5f, d.Max - d.Min);
@@ -596,6 +633,8 @@ namespace TabletopCraft.World
             Fill(b.Mesh, d);
             b.Verts = d.VertCount; b.Indices = d.IndexCount; b.Opaque = d.Opaque; b.Solid = d.Solid; b.Transparent = d.Transparent; b.WaterBack = d.WaterBack;
             b.Sections = d.Sections; b.Bytes = d.Bytes;
+            bool packed = d.Packed != null;
+            if (packed != b.Packed) { b.Packed = packed; b.Renderer.sharedMaterials = Materials(packed); }   // [gpu]
             b.Go.SetActive(d.VertCount > 0 && !_staging);
         }
 

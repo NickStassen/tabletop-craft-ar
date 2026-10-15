@@ -14,6 +14,7 @@
 //   BatchLayout  which batch a section belongs to, where a batch sits under "Blocks", and a section's offset in it.
 //   BatchData    one batch's vertices and indices (solid, cutout, transparent, water-back submeshes), assembled on a
 //                worker from its sections' SectionMeshes with pooled arrays; the main thread only copies it into a Mesh.
+//   PackedVertex [gpu] the 20-byte form a batch is uploaded in (SNorm16 position and uv, face shade in the colour).
 //   SolidLayers  [gpu] which texture layers are fully opaque: their faces are drawn without the alpha test ("solid"),
 //                so the GPU keeps early depth rejection for most of the terrain (a shader with discard loses it).
 using System;
@@ -34,6 +35,60 @@ namespace TabletopCraft.World
         public Color32 Color;
         public Vector3 Uv;
         public const int Size = 32;
+    }
+
+    /// <summary>
+    /// [gpu] A batch vertex as uploaded (TABLETOP_PACKED in the block shaders; 20 bytes instead of BatchVertex's 32, to cut the
+    /// vertex fetch at 256 wide): position as SNorm16 in 1/64 block steps (|p| under 512 blocks, exact for the mesher's
+    /// integer and 1/16 coordinates) with w = light code + 256 * face direction (0..5: +x, -x, +y, -y, +z, -z in Unity
+    /// space; 6: none), the colour with vanilla's face shade multiplied in (the vertex shader no longer needs a normal), uv
+    /// as SNorm16 in 1/1024 block steps (|uv| under 32) with the texture layer (-1 = flat colour) and the random/flow table.
+    /// The shader multiplies SNorm16 values back by 32767/64 and 32767/1024.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PackedVertex
+    {
+        public short X, Y, Z, Meta;
+        public Color32 Color;
+        public short U, V, Layer, Table;
+        public const int Size = 20;
+        public const float PosScale = 64f, UvScale = 1024f;
+
+        public Vector3 Position => new Vector3(X / PosScale, Y / PosScale, Z / PosScale);
+        public Vector2 Uv => new Vector2(U / UvScale, V / UvScale);
+        public int Light => Meta & 255;
+        public int Dir => Meta >> 8;
+
+        /// <summary>Vanilla's face shade (CardinalLighting.DEFAULT) and the face direction from a batch normal, as the classic
+        /// shader decides them: up 1.0, down 0.5, north/south 0.8, east/west 0.6, unshaded when no axis is within 0.9.</summary>
+        public static float Shade(sbyte nx, sbyte ny, sbyte nz, out int dir)
+        {
+            float x = Math.Max(-1f, nx / 127f), y = Math.Max(-1f, ny / 127f), z = Math.Max(-1f, nz / 127f);
+            if (Math.Abs(y) > 0.9f) { dir = y > 0 ? 2 : 3; return y > 0 ? 1f : 0.5f; }
+            if (Math.Abs(z) > 0.9f) { dir = z > 0 ? 4 : 5; return 0.8f; }
+            if (Math.Abs(x) > 0.9f) { dir = x > 0 ? 0 : 1; return 0.6f; }
+            dir = 6; return 1f;
+        }
+
+        /// <summary>Packs a batch vertex at batch position p; false if p or the uv is out of the SNorm16 range.</summary>
+        public static bool TryPack(in BatchVertex v, float px, float py, float pz, out PackedVertex o)
+        {
+            o = default;
+            float x = (float)Math.Round(px * PosScale), y = (float)Math.Round(py * PosScale), z = (float)Math.Round(pz * PosScale);
+            float u = (float)Math.Round(v.Uv.x * UvScale), w = (float)Math.Round(v.Uv.y * UvScale);
+            const float M = 32767f;
+            if (x > M || x < -M || y > M || y < -M || z > M || z < -M || u > M || u < -M || w > M || w < -M) return false;
+            float shade = Shade(v.Nx, v.Ny, v.Nz, out int dir);
+            var c = v.Color;
+            o.X = (short)x; o.Y = (short)y; o.Z = (short)z;
+            o.Meta = (short)(LightCode.FromSnorm(v.Nw) + 256 * dir);
+            o.Color = new Color32((byte)Math.Round(c.r * shade), (byte)Math.Round(c.g * shade), (byte)Math.Round(c.b * shade), c.a);
+            o.U = (short)u; o.V = (short)w;
+            int t = (int)Math.Round(v.Uv.z);
+            if (t < 0) { o.Layer = -1; o.Table = 0; }
+            else { int table = t / RandomUv.LayerStride; o.Layer = (short)(t - table * RandomUv.LayerStride); o.Table = (short)table; }
+            return true;
+        }
     }
 
     /// <summary>
@@ -251,14 +306,17 @@ namespace TabletopCraft.World
     public sealed class BatchData
     {
         public BatchVertex[] Verts = Array.Empty<BatchVertex>();
+        /// <summary>[gpu] The vertices in upload form when the batch was assembled packed (then Verts is empty), else null.</summary>
+        public PackedVertex[] Packed;
         public int[] Indices = Array.Empty<int>();
         /// <summary>Opaque counts all opaque indices; the first Solid of them are drawn without alpha test ([gpu]).</summary>
         public int VertCount, IndexCount, Opaque, Solid, Transparent, WaterBack, Quads, Sections;
         public Vector3 Min, Max;
         public double Ms;
 
-        /// <summary>Concatenates sections (each with its offset in the batch). Runs on a worker; SectionMeshes are immutable.</summary>
-        public static BatchData Assemble(IReadOnlyList<(SectionMesh mesh, Vector3 offset)> parts)
+        /// <summary>Concatenates sections (each with its offset in the batch). Runs on a worker; SectionMeshes are immutable.
+        /// pack: [gpu] PackedVertex form, unless a coordinate is out of its range (then BatchVertex as before).</summary>
+        public static BatchData Assemble(IReadOnlyList<(SectionMesh mesh, Vector3 offset)> parts, bool pack = false)
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
             var b = new BatchData();
@@ -266,15 +324,41 @@ namespace TabletopCraft.World
             foreach (var p in parts) { nv += p.mesh.Verts.Length; ni += p.mesh.Indices.Length; b.Opaque += p.mesh.Opaque; b.Solid += p.mesh.Solid; b.Transparent += p.mesh.Transparent; b.WaterBack += p.mesh.WaterBack; b.Quads += p.mesh.Quads; }
             b.VertCount = nv; b.IndexCount = ni; b.Sections = parts.Count;
             if (nv == 0) { b.Ms = sw.Elapsed.TotalMilliseconds; return b; }
-            b.Verts = ArrayPool<BatchVertex>.Shared.Rent(nv);
             b.Indices = ArrayPool<int>.Shared.Rent(ni);
             float minX = float.MaxValue, minY = float.MaxValue, minZ = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue, maxZ = float.MinValue;
+            if (pack)
+            {
+                // [gpu] Packed: bounds from the float positions, every vertex range-checked; one miss and the batch is classic.
+                var pv = ArrayPool<PackedVertex>.Shared.Rent(nv);
+                int at = 0; bool ok = true;
+                foreach (var (m, off) in parts)
+                {
+                    var src = m.Verts;
+                    for (int i = 0; i < src.Length && ok; i++)
+                    {
+                        float x = src[i].Pos.x + off.x, y = src[i].Pos.y + off.y, z = src[i].Pos.z + off.z;
+                        if (x < minX) minX = x; if (x > maxX) maxX = x;
+                        if (y < minY) minY = y; if (y > maxY) maxY = y;
+                        if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+                        ok = PackedVertex.TryPack(src[i], x, y, z, out pv[at + i]);
+                    }
+                    if (!ok) break;
+                    at += src.Length;
+                }
+                if (ok) b.Packed = pv;
+                else
+                {
+                    ArrayPool<PackedVertex>.Shared.Return(pv);
+                    minX = minY = minZ = float.MaxValue; maxX = maxY = maxZ = float.MinValue;
+                }
+            }
+            if (b.Packed == null) b.Verts = ArrayPool<BatchVertex>.Shared.Rent(nv);
             int vAt = 0;
             int sAt = 0, oAt = b.Solid, tAt = b.Opaque, wAt = b.Opaque + b.Transparent;
             foreach (var (m, off) in parts)
             {
                 var src = m.Verts;
-                for (int i = 0; i < src.Length; i++)
+                for (int i = 0; i < src.Length && b.Packed == null; i++)
                 {
                     var v = src[i];
                     v.Pos = new Vector3(v.Pos.x + off.x, v.Pos.y + off.y, v.Pos.z + off.z);
@@ -297,6 +381,7 @@ namespace TabletopCraft.World
 
         public void Release()
         {
+            if (Packed != null) { ArrayPool<PackedVertex>.Shared.Return(Packed); Packed = null; }
             if (Verts.Length > 0) ArrayPool<BatchVertex>.Shared.Return(Verts);
             if (Indices.Length > 0) ArrayPool<int>.Shared.Return(Indices);
             Verts = Array.Empty<BatchVertex>(); Indices = Array.Empty<int>();
@@ -304,7 +389,7 @@ namespace TabletopCraft.World
 
         /// <summary>Draw calls this batch costs per eye pass: one per non-empty submesh that has a material.</summary>
         public int DrawCalls(bool underwater) => (Solid > 0 ? 1 : 0) + (Opaque > Solid ? 1 : 0) + (Transparent > 0 ? 1 : 0) + (underwater && WaterBack > 0 ? 1 : 0);
-        public long Bytes => (long)VertCount * BatchVertex.Size + (long)IndexCount * 4;
+        public long Bytes => (long)VertCount * (Packed != null ? PackedVertex.Size : BatchVertex.Size) + (long)IndexCount * 4;
     }
 
     /// <summary>[area] Engine-free rules for when batches are rebuilt (TabletopRenderer); tested in Tests~/AreaTests.cs.</summary>
@@ -318,6 +403,10 @@ namespace TabletopCraft.World
         /// re-uploads 5-9 MB. tabletop.json "batch_columns" overrides it for headset comparisons.
         /// </summary>
         public static int Columns = 2;
+
+        /// <summary>[gpu] Upload batches as 20-byte PackedVertex (tabletop.json "packed_vertices", default on); off: the
+        /// 32-byte BatchVertex of 0.8.0.</summary>
+        public static bool PackedVertices = true;
 
         /// <summary>
         /// Rebuild a dirty batch now? Right away when none of its sections is waiting to be meshed. While some are, wait

@@ -462,6 +462,7 @@ namespace TabletopCraft
                 SurfaceSkirt.Enabled = c.B("surface_skirt", SurfaceSkirt.Enabled);                                            // [mesh] low-detail surface ahead
                 SurfaceSkirt.SpeedFactor = Mathf.Clamp((float)c.D("skirt_speed", SurfaceSkirt.SpeedFactor), 1f, 4f);          // [mesh] glide past meshing
                 SolidLayers.Enabled = c.B("solid_pass", SolidLayers.Enabled);                 // [gpu] opaque faces without alpha test
+                BatchRules.PackedVertices = c.B("packed_vertices", BatchRules.PackedVertices);   // [gpu] 20-byte batch vertices
                 BlockKeywords.UseClipPlanes = c.B("clip_planes", BlockKeywords.UseClipPlanes);   // [gpu] hardware clip planes for the window
             }
             catch (Exception e) { Debug.LogWarning("[Tabletop] bad tabletop.json: " + e.Message); }
