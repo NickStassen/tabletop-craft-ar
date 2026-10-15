@@ -19,7 +19,7 @@ namespace TabletopCraft.Net
                 ["protocols"] = new List<object> { Version }, ["token"] = token ?? "",
                 ["caps"] = new List<object> { "rle_palette_v1", "avatar", CapLight, CapBiomes, SectionedSnapshot.Cap, CapEdit, CapEntities, CapActions,
                                               ControlProtocol.CapChat, ControlProtocol.CapCommand, ControlProtocol.CapStatus, CapBlockEntities,   // [talk], [blocks]
-                                              InteractProtocol.Cap, CapWorld, OperatorProtocol.CapMarks },   // [hands], [living], [operator]
+                                              InteractProtocol.Cap, CapWorld, OperatorProtocol.CapMarks, PowerProtocol.Cap },   // [hands], [living], [operator], [power]
             };
             if (!string.IsNullOrEmpty(OperatorName)) d["operator_name"] = OperatorName;   // [talk] the name in chat (PROTOCOL.md 4.26)
             return d;

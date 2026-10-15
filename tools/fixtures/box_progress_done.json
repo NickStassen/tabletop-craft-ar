@@ -1,0 +1,22 @@
+{
+ "v": 1,
+ "type": "box_progress",
+ "seq": 151,
+ "t": 1760370006110,
+ "op": "undo",
+ "group": 7,
+ "ref_seq": 120,
+ "phase": "done",
+ "processed": 14,
+ "total": 14,
+ "changed": 12,
+ "skipped": 2,
+ "outside": 0,
+ "finished": true,
+ "skipped_pos": [
+  [106, 64, -35],
+  [107, 64, -35]
+ ],
+ "ms": 3.2,
+ "ticks": 1
+}

@@ -1,5 +1,6 @@
 // The creative-style block menu (docs/QUEST_SETUP.md "Block menu"): a panel beside the left hand with the server's
-// block categories, [hands] Use and Eggs tabs (item_registry), search and an Info tab, a 9-slot hotbar of blocks and
+// block categories, [hands] Use and Eggs tabs (item_registry), [power] a Tools tab (wand, brushes, undo and redo,
+// World/PowerTools.cs), search and an Info tab, a 9-slot hotbar of blocks and
 // items, and (when the app wires it) an area-size row. The logic
 // is engine-free in World/BlockMenuModel.cs; this draws it (meshes with Sprites/Default, TextMesh, no uGUI) and maps
 // the controllers onto it:
@@ -38,6 +39,8 @@ namespace TabletopCraft.XR
         public Action<string> ServerConnect;
         /// <summary>[comfort] The line under the small hotbar: coordinates and facing (shown while the menu is closed).</summary>
         public Func<string> Readout;
+        /// <summary>[power] A Tools tab button was pressed (a ToolButton); the app runs it (XR/PowerToolMode.cs).</summary>
+        public Action<int> ToolPressed;
         public BlockIconAtlas Icons;
         public float MaxRayM = 1.5f;
         public int UploadsPerFrame = 6;
@@ -203,6 +206,7 @@ namespace TabletopCraft.XR
                 case MenuActionKind.ResetView: ResetView?.Invoke(); Haptic(0.35f); break;
                 case MenuActionKind.ServerEdit: case MenuActionKind.ServerFind: ServerFind?.Invoke(); Haptic(0.2f); break;   // opening the field searches at once
                 case MenuActionKind.ServerConnect: ServerConnect?.Invoke(a.State); Haptic(0.35f); break;
+                case MenuActionKind.Tool: ToolPressed?.Invoke(a.Value); Haptic(0.3f); break;   // [power]
                 case MenuActionKind.None: break;
                 default: Haptic(0.15f); break;
             }
@@ -360,6 +364,13 @@ namespace TabletopCraft.XR
                         Box(_b, it.R, hover ? SlotHover : Slot, 0, 0.001f);
                         Label("serverfield", Short(it.Label, 60), it.R.X + 0.004f, it.R.CY, 0.0015f, TextAnchor.MiddleLeft, TextMain);
                         break;
+                    case MenuPart.Tool:   // [power] lit when it shows the current choice (wand on, the brush's op...)
+                    {
+                        bool lit = Model.Tools != null && Model.Tools.Active((ToolButton)it.Index);
+                        Box(_b, it.R, lit ? TabActive : hover ? SlotHover : Tab, 0, 0.001f);
+                        Label("tool" + it.Index, Short(it.Label, 24), it.R.CX, it.R.CY, 0.0016f, TextAnchor.MiddleCenter, TextMain);
+                        break;
+                    }
                 }
             }
             if (Lo.ServerText.W > 0)
@@ -389,6 +400,9 @@ namespace TabletopCraft.XR
                 Label("nametag", "Name tag: " + nt, Lo.NameTagField.X + 0.004f, Lo.NameTagField.CY, 0.0017f, TextAnchor.MiddleLeft, Model.NameTagKeys.Text.Length == 0 ? TextDim : TextMain);
             }
             if (Model.Tab == Model.InfoTab) Label("info", _info, Lo.Info.X + 0.002f, Lo.Info.Y + 0.002f, 0.00135f, TextAnchor.UpperLeft, TextMain);
+            else if (Model.Tab == Model.ToolsTab && Model.Tools != null)   // [power] box, block, filter, brush, history, the running job
+                Label("toolsinfo", string.Join("\n", Model.Tools.Lines(Model.Selected, Model.LabelOf, Time.unscaledTimeAsDouble)),
+                      Lo.ToolsInfo.X + 0.002f, Lo.ToolsInfo.Y + 0.002f, 0.00135f, TextAnchor.UpperLeft, TextMain);
             else if (_registry == null) Label("wait", "waiting for the server's block list...", Lo.Grid.CX, Lo.Grid.CY, 0.0018f, TextAnchor.MiddleCenter, TextDim);
             Label("name", Short(Model.NameLine(), 48), Lo.Name.X + 0.002f, Lo.Name.CY, 0.0019f, TextAnchor.MiddleLeft, TextMain);
             if (Lo.AreaLabel.W > 0) Label("arealabel", "Area", Lo.AreaLabel.X + 0.002f, Lo.AreaLabel.CY, 0.0018f, TextAnchor.MiddleLeft, TextDim);

@@ -191,6 +191,7 @@ static class Program
         MenuTests.Run(Check, Fixture, JarPath(args), args);   // [menu] block registry, menu model, hotbar, HUD toasts, icons (MenuTests.cs)
         ControlTests.Run(Check, Fixture);   // [talk] chat, console, operator panel, status (ControlTests.cs)
         InteractTests.Run(Check, Fixture);  // [hands] using blocks, items and mobs (InteractTests.cs)
+        PowerTests.Run(Check, Fixture);     // [power] undo/redo, box edits, brushes (PowerTests.cs)
         OperatorTests.Run(Check, Fixture);  // [operator] follow, marks, containers, signs (OperatorTests.cs)
         EyeTests.Run(Check);            // eye in water/lava/powder snow/blocks, water inside faces (EyeTests.cs)
         ComfortTests.Run(Check, Fixture, args);   // [comfort] keyboard, Info tab, prefs.json, discovery, link health (ComfortTests.cs)
@@ -225,6 +226,8 @@ static class Program
         if (liveEditIdx >= 0) EditTests.Live(args[liveEditIdx + 1], Check);
         int liveInteractIdx = Array.IndexOf(args, "--live-interact");   // [hands] --live-interact URL (a flat world)
         if (liveInteractIdx >= 0) InteractTests.Live(args[liveInteractIdx + 1], Check);
+        int livePowerIdx = Array.IndexOf(args, "--live-power");   // [power] --live-power URL [TOKEN] (a flat world)
+        if (livePowerIdx >= 0) PowerTests.Live(args[livePowerIdx + 1], livePowerIdx + 2 < args.Length && !args[livePowerIdx + 2].StartsWith("--") ? args[livePowerIdx + 2] : "", Check);
         int liveOpIdx = Array.IndexOf(args, "--live-operator");   // [operator] --live-operator URL TOKEN PLAYER
         if (liveOpIdx >= 0) OperatorTests.Live(args[liveOpIdx + 1], args[liveOpIdx + 2], args[liveOpIdx + 3], Check);
         int liveControlIdx = Array.IndexOf(args, "--live-control");   // [talk] --live-control URL TOKEN

@@ -269,7 +269,7 @@ final class OperatorService {
                 done = "set slot " + e.slot() + " " + e.item() + " x" + n + (n < e.count() ? " (stack size " + n + ")" : "") + (curId == null ? "" : " (was " + curCount + " " + curId + ")");
             }
         }
-        // TODO(power): record the slot's old and new stack in the undo journal once it exists (PROTOCOL.md "Containers").
+        // [power] journalled for undo by PowerService.journalledTiles, which LinkServer wraps around this call (both chest halves).
         edits++;
         Watch w = watches.get(s);
         if (w != null) w.dirty = true;
@@ -432,7 +432,7 @@ final class OperatorService {
         if (e.color() != null) ss.setColor(DyeColor.valueOf(e.color().toUpperCase(Locale.ROOT)));
         if (e.glowing() != null) ss.setGlowingText(e.glowing());
         live.update(true, false);
-        // TODO(power): record the sign's old text in the undo journal once it exists (PROTOCOL.md "Signs").
+        // [power] journalled for undo by PowerService.journalledTiles, which LinkServer wraps around this call.
         signEdits++;
         plugin.markDirty(w.getName(), p[0], p[1], p[2]);   // block_entities reads the chunk again next tick
         plugin.getLogger().info(String.format("SIGN session=%s %s %d,%d,%d %s %s%s%s (%.2f ms)", s.id, w.getName(), p[0], p[1], p[2], e.side(),

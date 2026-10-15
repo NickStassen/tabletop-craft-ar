@@ -15,12 +15,14 @@ from tabletop_protocol import (
     CAP_INTERACT,
     CAP_LIGHT,
     CAP_MARKS,
+    CAP_POWER,
     CAP_STATUS,
     CHAT_KINDS,
     DISCOVERY_PORT,
     ENTITY_OPS,
     ITEM_CATEGORIES,
     LIGHTNING_ITEM,
+    POWER_LIMITS,
     REGISTRY_CATEGORIES,
     BlockEntityMirror,
     EntityMirror,
@@ -28,6 +30,8 @@ from tabletop_protocol import (
     WorldMirror,
     block_edit,
     bookmark,
+    box_edit_msg,
+    brush_msg,
     container_edit,
     container_slots,
     decode_light,
@@ -580,6 +584,73 @@ def test_interact_error_codes():
     for op in ENTITY_OPS:
         extra = {"to": [1.5, 64, 2.5]} if op in ("move", "hold") else {"text": ""} if op == "name" else {}
         validate(Envelope().wrap("entity_op", **entity_op("3c1e5f7a-2b4d-4e6f-8a9b-0c1d2e3f4a5b", op, **extra)))
+
+
+# [power] undo/redo, box edits and brushes (PROTOCOL.md "Undo and redo", "Box edits", "Brushes")
+POWER_FIXTURES = ("hello_power", "welcome_power", "block_edit_group", "interact_group", "undo", "redo", "history", "box_edit_fill",
+                  "box_edit_replace", "box_edit_clone", "box_progress", "box_progress_done", "brush", "brush_replace", "error_box_denied")
+
+
+def test_power_fixtures_exist_and_validate():
+    for name in POWER_FIXTURES:
+        validate(json.loads((FIX / f"{name}.json").read_text()))
+
+
+def test_power_caps_and_limits():
+    hello = json.loads((FIX / "hello_power.json").read_text())
+    welcome = json.loads((FIX / "welcome_power.json").read_text())
+    assert CAP_POWER in hello["caps"] and CAP_POWER in welcome["caps"] and CAP_EDIT in welcome["caps"]
+    assert {k: welcome["limits"][k] for k in POWER_LIMITS} == {"undo_depth": 10000, "box_max_blocks": 32768, "brush_max_radius": 8,
+                                                                "brush_blocks_per_second": 20000}
+    del welcome["limits"]["undo_depth"]
+    with pytest.raises(ValueError):
+        validate(welcome)
+
+
+def test_power_builders_match_the_fixtures():
+    env = Envelope()
+    fill = json.loads((FIX / "box_edit_fill.json").read_text())
+    built = env.wrap("box_edit", **box_edit_msg("fill", fill["from"], fill["to"], state=fill["state"], group=fill["group"]))
+    validate(built)
+    keys = ("op", "from", "to", "state", "group")
+    assert {k: built[k] for k in keys} == {k: fill[k] for k in keys}
+    clone = json.loads((FIX / "box_edit_clone.json").read_text())
+    built = env.wrap("box_edit", **box_edit_msg("clone", clone["from"], clone["to"], dest=clone["dest"], rotate=1, group=11))
+    validate(built)
+    assert built["dest"] == clone["dest"] and built["rotate"] == 1 and "state" not in built
+    br = json.loads((FIX / "brush_replace.json").read_text())
+    built = env.wrap("brush", **brush_msg("replace", br["center"], 4, "cylinder", state=br["state"], filter=br["filter"], height=1,
+                                          group=13))
+    validate(built)
+    assert {k: built[k] for k in br if k not in ("seq", "t")} == {k: br[k] for k in br if k not in ("seq", "t")}
+    done = json.loads((FIX / "box_progress_done.json").read_text())
+    assert done["finished"] and done["changed"] + done["skipped"] + done["outside"] == done["processed"]
+
+
+@pytest.mark.parametrize("name,patch", [
+    ("block_edit_group", {"group": -1}),
+    ("block_edit_group", {"group": 1.5}),
+    ("interact_group", {"group": "eight"}),
+    ("box_edit_fill", {"op": "melt"}),
+    ("box_edit_fill", {"state": None}),
+    ("box_edit_fill", {"from": [1, 2]}),
+    ("box_edit_replace", {"filter": None}),
+    ("box_edit_clone", {"rotate": 4}),
+    ("box_edit_clone", {"dest": None}),
+    ("box_progress", {"processed": 40000}),
+    ("box_progress", {"op": "brush"}),
+    ("box_progress_done", {"skipped_pos": [[1, 2]]}),
+    ("brush", {"shape": "cube"}),
+    ("brush", {"radius": -1}),
+    ("brush", {"state": None}),
+    ("brush_replace", {"filter": None}),
+    ("history", {"undo": -1}),
+])
+def test_power_validation_rejects(name, patch):
+    msg = json.loads((FIX / f"{name}.json").read_text())
+    msg.update(patch)
+    with pytest.raises(ValueError):
+        validate(msg)
 
 
 def test_world_state_fixture_and_rules():
