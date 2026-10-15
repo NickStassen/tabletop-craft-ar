@@ -117,6 +117,37 @@ namespace TabletopCraft.World
         public static Color32 Average(Color32 a, Color32 b) => new Color32((byte)((a.r + b.r) / 2), (byte)((a.g + b.g) / 2), (byte)((a.b + b.b) / 2), 255);
     }
 
+    /// <summary>
+    /// One-block previews (the hand preview and the placement ghost, XR/BlockEditMode) run the terrain mesher, which
+    /// leaves code-drawn block entities to BlockEntityRenderer: this adds their simple placeholder boxes (a chest box,
+    /// a banner on its pole, a head, a bell's body under its modelled frame) so the preview isn't empty. Main thread.
+    /// </summary>
+    public static class BlockEntityPreview
+    {
+        static BlockModelBaker _baker;
+        static IModelAssets _for;
+
+        /// <summary>Appends the boxes of every code-drawn block in a small world (block units, cell corners). False when none.</summary>
+        public static bool AddBoxes(WorldModel w, MeshData data, IModelAssets assets)
+        {
+            if (w == null || assets == null) return false;
+            bool any = false;
+            for (int y = 0; y < w.Dims.y; y++)
+                for (int z = 0; z < w.Dims.z; z++)
+                    for (int x = 0; x < w.Dims.x; x++)
+                    {
+                        string state = w.State(w.Get(x, y, z));
+                        if (!BlockEntityCatalog.CodeDrawn(BlockRules.Path(state))) continue;
+                        if (_baker == null || !ReferenceEquals(_for, assets)) { _baker = new BlockModelBaker(assets) { OnlyEntityBoxes = true }; _for = assets; }
+                        var m = _baker.Bake(state);
+                        if (m == null) continue;
+                        foreach (var q in m.Quads) BlockModelMesher.AddQuad(data, new Vector3(x, y, z), q);
+                        any |= m.Quads.Length > 0;
+                    }
+            return any;
+        }
+    }
+
     /// <summary>Finds the cells that hold block entities BlockEntityRenderer draws (any thread; reads the grid only).</summary>
     public static class BlockEntityScan
     {

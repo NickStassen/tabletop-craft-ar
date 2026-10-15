@@ -293,6 +293,16 @@ static class BlockEntityTests
               $"terrain baker: no placeholder boxes for code-drawn block entities (chest {Q(with, chest)} -> {Q(without, chest)} quads)");
         check(Q(without, bell) > 0 && Q(without, bell) < Q(with, bell) && Q(without, sign) == Q(with, sign) && Q(without, sign) > 0,
               $"terrain baker: the bell keeps its frame (body drawn by code), signs keep their 26.x models ({Q(with, bell)} -> {Q(without, bell)})");
+        // The hand preview and the placement ghost (one-block worlds through the terrain mesher) get the boxes back.
+        int Boxes(string s)
+        {
+            var w = new WorldModel { SnapshotId = 0, Dims = new Vector3Int(1, 1, 1) };
+            w.Palette.Add("minecraft:air"); w.Palette.Add(s); w.Grid = new ushort[] { 1 };
+            var md = new MeshData();
+            return BlockEntityPreview.AddBoxes(w, md, assets) ? md.Verts.Count / 4 : 0;
+        }
+        check(Boxes(chest) == Q(with, chest) && Boxes(bell) == Q(with, bell) - Q(without, bell) && Boxes(sign) == 0 && Boxes(shulker) == 6,
+              $"previews: code-drawn blocks get their placeholder box (chest {Boxes(chest)} quads, bell body {Boxes(bell)}, sign none)");
         BlockRules.ResetShapes();
     }
 

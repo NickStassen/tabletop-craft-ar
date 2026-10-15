@@ -793,6 +793,9 @@ namespace TabletopCraft.World
         /// <summary>[blocks] Placeholder boxes for block entities (chests, banners, heads...). The terrain sets this to
         /// false when BlockEntityRenderer draws them; the block menu's icon baker keeps them.</summary>
         public bool EntityBoxes = true;
+        /// <summary>[blocks] Only the placeholder boxes, none of the model's own elements (one-block previews of code-drawn
+        /// block entities next to the terrain mesher's output, BlockEntityPreview).</summary>
+        public bool OnlyEntityBoxes;
     }
 
     /// <summary>Block entities are drawn by code in vanilla; their block models only name a particle texture.
@@ -827,6 +830,7 @@ namespace TabletopCraft.World
 
         public static void Add(BlockModelBaker b, string path, Dictionary<string, string> p, object model, string state, List<BakedQuad> q)
         {
+            if (b.OnlyEntityBoxes) q.Clear();   // [blocks] previews: the boxes alone
             if (!Wanted(b, path)) return;   // [blocks] drawn by BlockEntityRenderer
             if (path == "bell")
             {
