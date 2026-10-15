@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -79,6 +80,21 @@ REQUIRED.update(CONTROL_REQUIRED)
 ERROR_CODES |= {"chat_denied", "command_denied"}
 WEATHERS = ("clear", "rain", "thunder")
 
+# [hands] Using blocks, items and mobs (PROTOCOL.md "Using blocks and items", "Acting on mobs"; cap interact_v1).
+CAP_INTERACT = "interact_v1"
+ENTITY_OPS = ("attack", "kill", "remove", "use", "name", "move", "hold", "drop", "freeze", "unfreeze", "glow", "info")
+ITEM_CATEGORIES = ("use", "spawn_eggs")
+LIGHTNING_ITEM = "tabletop:lightning"
+INTERACT_REQUIRED = {
+    "interact": ["pos", "face"],
+    "item_registry": ["count", "categories"],
+    "entity_op": ["uuid", "op"],
+    "entity_info": ["uuid", "id", "entity_type", "pos"],
+}
+REQUIRED.update(INTERACT_REQUIRED)
+ERROR_CODES |= {"interact_denied", "not_found"}
+_ID = re.compile(r"^[a-z0-9_.\-]+:[a-z0-9_./\-]+$")
+
 
 def validate(msg: dict) -> None:
     t = msg.get("type")
@@ -153,6 +169,81 @@ def validate(msg: dict) -> None:
         validate_block_registry(msg)
     if t in CONTROL_REQUIRED:
         validate_control(msg)   # [talk]
+    if t in INTERACT_REQUIRED:
+        validate_interact(msg)   # [hands]
+    if t == "welcome" and "interact" in msg and not isinstance(msg["interact"], dict):
+        raise ValueError("welcome interact must be an object")
+
+
+def _vec(v) -> bool:
+    return isinstance(v, list) and len(v) == 3 and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in v)
+
+
+def validate_interact(msg: dict) -> None:
+    """[hands] interact, item_registry, entity_op and entity_info."""
+    t = msg["type"]
+    if t == "interact":
+        if not _ints(msg["pos"], 3):
+            raise ValueError("interact pos must be [x, y, z] integers")
+        if msg["face"] not in FACES:
+            raise ValueError(f"interact face must be one of {FACES}")
+        item = msg.get("item")
+        if item is not None and not (isinstance(item, str) and _ID.match(item)):
+            raise ValueError(f"interact item must be a namespaced item id, got {item!r}")
+        hit = msg.get("hit")
+        if hit is not None and not (_vec(hit) and all(-0.01 <= v <= 1.01 for v in hit)):
+            raise ValueError("interact hit must be [x, y, z] inside the block")
+        if msg.get("dir") is not None and not _vec(msg["dir"]):
+            raise ValueError("interact dir must be [x, y, z]")
+    elif t == "item_registry":
+        cats = msg["categories"]
+        if [c.get("id") for c in cats] != list(ITEM_CATEGORIES):
+            raise ValueError(f"item_registry categories must be {ITEM_CATEGORIES}")
+        seen: set[str] = set()
+        for c in cats:
+            if not _strings(c.get("items")) or not all(_ID.match(i) for i in c["items"]):
+                raise ValueError(f"item_registry {c['id']} needs a list of item ids")
+            for i in c["items"]:
+                if i in seen:
+                    raise ValueError(f"item_registry lists {i} twice")
+                seen.add(i)
+        if not all(i.endswith("_spawn_egg") for i in cats[1]["items"]):
+            raise ValueError("item_registry spawn_eggs must only list spawn eggs")
+        if msg["count"] != len(seen):
+            raise ValueError(f"item_registry count {msg['count']} but {len(seen)} items listed")
+    elif t == "entity_op":
+        if not isinstance(msg["uuid"], str) or len(msg["uuid"]) != 36:
+            raise ValueError("entity_op uuid must be a UUID string")
+        op = msg["op"]
+        if op not in ENTITY_OPS:
+            raise ValueError(f"entity_op op must be one of {ENTITY_OPS}")
+        if op in ("move", "hold") and not _vec(msg.get("to")):
+            raise ValueError(f"entity_op {op} needs to [x, y, z]")
+        if op == "name" and not isinstance(msg.get("text"), str):
+            raise ValueError("entity_op name needs text")
+        if msg.get("item") is not None and not (isinstance(msg["item"], str) and _ID.match(msg["item"])):
+            raise ValueError("entity_op item must be a namespaced item id")
+    elif t == "entity_info":
+        if not _vec(msg["pos"]) or not isinstance(msg["entity_type"], str):
+            raise ValueError("entity_info needs entity_type and pos [x, y, z]")
+        h = msg.get("health")
+        if h is not None and not (isinstance(h, list) and len(h) == 2):
+            raise ValueError("entity_info health must be [health, max]")
+
+
+def interact(pos, face: str, item: str | None = None, sneak: bool = False, hit=None, dir=None) -> dict:
+    """[hands] interact payload; wrap it with Envelope.wrap("interact", **payload)."""
+    d: dict = {"pos": [int(v) for v in pos], "face": face, "item": item, "sneak": sneak}
+    if hit is not None:
+        d["hit"] = [float(v) for v in hit]
+    if dir is not None:
+        d["dir"] = [float(v) for v in dir]
+    return d
+
+
+def entity_op(uuid: str, op: str, **fields) -> dict:
+    """[hands] entity_op payload (to, yaw, dir, item, text as keyword fields)."""
+    return {"uuid": uuid, "op": op, **fields}
 
 
 def _ints(v, n: int) -> bool:

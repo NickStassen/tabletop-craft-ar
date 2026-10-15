@@ -74,6 +74,8 @@ import java.util.UUID;
  */
 final class InteractService implements Listener {
     static final long HOLD_TIMEOUT_MS = 3000;
+    /** Refusals sent as out_of_region rather than interact_denied. */
+    static final String OUTSIDE_CELL = "that would change a block outside the table's region", OUTSIDE_TO = "that's outside the table's region";
 
     private final TabletopPlugin plugin;
     private EditWorld editWorld;
@@ -195,7 +197,7 @@ final class InteractService implements Listener {
             : InteractRules.useItem(state, in.item(), in.face(), in.dir(), flags, (dx, dy, dz) -> cell(w, b, dx, dy, dz),
                                     id -> Registry.BLOCK.get(NamespacedKey.fromString(id)) != null, w.isUltraWarm());
         String why = fx.ok() ? apply(s, w, r, b, state, in, fx) : fx.denied();
-        if (why != null) { deny(s, in, "interact_denied", why, refSeq); return; }
+        if (why != null) { deny(s, in, why.equals(OUTSIDE_CELL) ? "out_of_region" : "interact_denied", why, refSeq); return; }
         interacts++;
         plugin.getLogger().info(String.format("INTERACT session=%s %s %s %d,%d,%d face=%s %s -> %s (%.2f ms)", s.id, in.item() == null ? "hand" : in.item(),
             EditRules.label(state), in.x(), in.y(), in.z(), in.face(), fx.extra() == InteractRules.Extra.NONE ? "" : fx.extra().name().toLowerCase(Locale.ROOT),
@@ -321,7 +323,7 @@ final class InteractService implements Listener {
 
     /** Why a cell can't change: outside the region, the build height, the border, or an unloaded chunk; null if fine. */
     private static String cellProblem(World w, RegionSpec r, Block t) {
-        if (!r.containsWorld(t.getX(), t.getY(), t.getZ()) || t.getY() < w.getMinHeight() || t.getY() >= w.getMaxHeight()) return "that would change a block outside the table's region";
+        if (!r.containsWorld(t.getX(), t.getY(), t.getZ()) || t.getY() < w.getMinHeight() || t.getY() >= w.getMaxHeight()) return OUTSIDE_CELL;
         if (!w.isChunkLoaded(t.getX() >> 4, t.getZ() >> 4)) return "chunk not loaded";
         if (!EditWorld.insideBorder(w, t.getX(), t.getY(), t.getZ())) return "outside the world border";
         return null;
@@ -419,7 +421,7 @@ final class InteractService implements Listener {
         RegionSpec r = s.region;
         if (r == null || !nearRegion(r, e)) { if (op.op().equals("drop")) restore(op.uuid()); denyOp(s, op, "out_of_region", "the entity is outside the table's region", refSeq); return; }
         String why = entityOp(s, e, r, op, refSeq);
-        if (why != null) { denyOp(s, op, "interact_denied", why, refSeq); return; }
+        if (why != null) { denyOp(s, op, why.equals(OUTSIDE_TO) ? "out_of_region" : "interact_denied", why, refSeq); return; }
         entityOps++;
         if (!op.op().equals("hold") && !op.op().equals("info"))
             plugin.getLogger().info(String.format("ENTITY session=%s %s %s %s%s", s.id, op.op(), e.getType().getKey().getKey(), e.getUniqueId(),
@@ -510,7 +512,7 @@ final class InteractService implements Listener {
     /** Teleports to op.to (which must be in the region), keeping passengers; players by TeleportCause.PLUGIN. */
     private String teleport(Entity e, RegionSpec r, InteractMessages.EntityOp op, boolean turn) {
         double[] to = op.to();
-        if (!r.containsWorld((int) Math.floor(to[0]), (int) Math.floor(to[1]), (int) Math.floor(to[2]))) return "that's outside the table's region";
+        if (!r.containsWorld((int) Math.floor(to[0]), (int) Math.floor(to[1]), (int) Math.floor(to[2]))) return OUTSIDE_TO;
         World w = Bukkit.getWorld(r.world());
         if (w == null) return "no world " + r.world();
         Location loc = new Location(w, to[0], to[1], to[2], turn && op.yaw() != null ? op.yaw() : e.getYaw(), e.getPitch());
