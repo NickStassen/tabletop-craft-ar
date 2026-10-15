@@ -27,7 +27,7 @@ namespace TabletopCraft.World
     public sealed class TabletopRenderer : MonoBehaviour
     {
         public int MaxJobsInFlight = 3;          // worker threads meshing at once
-        public int SectionsPerJob = 4;           // [nav] sections one job meshes in a row (tabletop.json "mesh_sections_per_job")
+        public static int SectionsPerJob = 4;    // [nav] sections one job meshes in a row (tabletop.json "mesh_sections_per_job")
         public float UploadBudgetMs = 3f;        // main-thread mesh upload budget per frame
         public Material OpaqueMaterial, TransparentMaterial;
         public WorldModel Model;

@@ -32,6 +32,18 @@ namespace TabletopCraft.XR
 
         static readonly int ClipId = Shader.PropertyToID("_TabletopClip");
         float _held;
+        float _logT, _logDist, _logWant, _logHoles, _logStream;   // [nav] GLIDE log line over 5 s of stick time
+
+        /// <summary>[nav] logcat: how fast the glide really went over the last 5 s of stick time, and what limited it.</summary>
+        void LogGlide(float bs)
+        {
+            float v = _logDist / _logT;
+            Debug.Log($"[Tabletop] GLIDE width={Mathf.Max(State.Window.x, State.Window.z)} margin={State.Margin.x} blocks_s={v:F1} table_cm_s={v * bs * 100:F1} " +
+                      $"asked_blocks_s={_logWant / _logT:F1} stream_cap={_logStream:F0} mesh_cap={(State.MeshCap > 1e6f ? "-" : State.MeshCap.ToString("F0"))} " +
+                      $"mesh_rate_s={(Renderer ? Renderer.MeshRate : 0):F0} latency_ms={State.LatencyEma * 1000:F0} holes_s={_logHoles:F1} " +
+                      $"pending={(Renderer ? Renderer.Pending : 0)} requests={State.Requests}");
+            _logT = _logDist = _logWant = _logHoles = 0;
+        }
 
         void OnDisable() => Shader.SetGlobalMatrix(ClipId, Matrix4x4.zero);
 
@@ -91,10 +103,18 @@ namespace TabletopCraft.XR
                     float speed = State.Speed(bs, rescaled, _held, m);
                     Vector3 u = dir * speed * dt;                    // anchor-local Unity axes, in blocks
                     delta = new Vector3(u.x, u.y, -u.z);              // -> world blocks (Z mirrored)
+                    _logT += dt; _logWant += speed * dt; _logStream = State.StreamSpeedCap(m);
                 }
                 else _held = 0;
             }
+            var before = State.View;
             var move = State.Move(delta, dt, Time.unscaledTime);
+            if (delta != Vector3.zero)
+            {
+                _logDist += (State.View - before).magnitude;
+                if (Renderer && Renderer.PendingVisible > 0) _logHoles += dt;   // sections on screen not meshed yet
+            }
+            if (_logT >= 5f) LogGlide(bs);
             if (move.HasValue)
             {
                 var mv = move.Value;

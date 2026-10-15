@@ -6,6 +6,7 @@
 //   {"server":"ws://192.168.1.50:8765/tabletop","token":"","skin_player":""}
 // [area] optional: "area_width": 192 (start at that width preset, block size fitted to the table),
 //   "batch_columns": 4 (sections per mesh batch side, TabletopRenderer)
+// [nav] optional: "mesh_sections_per_job": 4 (sections a meshing job takes in a row; lower it if gliding costs frames)
 // [talk] optional: "operator_name": "Nick" (the name in chat, else skin_player), "quick_commands": ["time set day"]
 // [comfort] prefs.json next to it (World/AppPrefs.cs) remembers block size, table placement, hotbar, selected block,
 //   menu tab and Show HUD; without a saved or configured block size the area is fitted to the table. The link stops
@@ -273,6 +274,7 @@ namespace TabletopCraft
                 _operatorName = c.S("operator_name");                                           // [talk] the name in chat
                 foreach (var q in c.A("quick_commands") ?? new List<object>()) if (q is string qs) _quickCommands.Add(qs);   // [talk] Console quick buttons
                 BatchRules.Columns = Math.Max(1, c.I("batch_columns", BatchRules.Columns));     // [area] sections per batch side
+                TabletopRenderer.SectionsPerJob = Math.Max(1, c.I("mesh_sections_per_job", TabletopRenderer.SectionsPerJob));   // [nav] meshing throughput
             }
             catch (Exception e) { Debug.LogWarning("[Tabletop] bad tabletop.json: " + e.Message); }
         }
