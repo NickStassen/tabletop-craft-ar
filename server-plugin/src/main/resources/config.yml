@@ -121,6 +121,11 @@ avatar:
   skin-player: ""
   # Teleport/transform interpolation of the head and hand displays, in ticks.
   interpolation-ticks: 2
+  # Bedrock players (Geyser + Floodgate, docs/QUEST_SETUP.md Part Q): Geyser can't show item displays, so with auto a
+  # floating giant also gets a Mannequin with its eyes at the head, shown only to Bedrock players (in place of the
+  # head) and hidden from Java players. Needs Floodgate or Geyser on this server; off = Bedrock players see no giant
+  # in floating mode (ground/exact Mannequins are visible to them either way, without the hands).
+  bedrock: auto
   # Spawn the giant when poses arrive even if no avatar_config was sent.
   spawn-on-first-pose: true
   despawn-after-disconnect-ms: 10000

@@ -426,6 +426,36 @@ Server options (config.yml `edit`): `power`, `power-require-token`, `undo-depth`
 3. Start the app. Only headsets on the LAN (private, link-local or loopback addresses) that presented the token are offered the files. Files that differ from the headset's copy (size or SHA-256) download one after another (a `Downloading sounds.zip 34% (23/67 MB, 7.9 MB/s)` toast, the Info tab's `ASSETS` line); a dropped link resumes where it stopped, and only a file whose SHA-256 matches replaces the old one. New sounds and entity models load at once; a new `pack.zip` restarts the scene a couple of seconds later to load the textures (`"reload_after_pack": false` in tabletop.json asks you to restart the app instead). `"download_assets": false` turns downloading off on the headset.
 4. Speed: `assets.max-mb-per-second` (8 by default, per headset) keeps the world stream smooth while a big file downloads. The server logs each file sent (`ASSETS session=… sent sounds.zip 67.0 MB in 8.5 s`) and `/tabletop status` the totals.
 
+## Part Q: Bedrock players (Geyser and Floodgate)
+
+Bedrock Edition players (phones, tablets, consoles, Minecraft for Windows) can join the same Paper server through [GeyserMC](https://geysermc.org) and Floodgate. They show up on the table, chat with the headset, and see the giant. Nothing changes on the headset: the app still loads the Java game's files (Part E). A Bedrock Dedicated Server can't host the table, because the plugin needs Paper.
+
+1. **Install.** Download **Geyser** and **Floodgate** for Spigot/Paper from https://geysermc.org/download. The builds you get must list your Java version (checked: Geyser 2.12.0 build 1258 and Floodgate 2.2.5 build 141 on Paper 26.3, which accept Bedrock 26.30-26.52). Put both jars in the server's `plugins` folder, start the server once, then stop it.
+2. **Configure Geyser** (`plugins/Geyser-Spigot/config.yml`): under `java:` set `auth-type: floodgate`. The `bedrock:` `port` is 19132 by default. Floodgate writes `plugins/floodgate/key.pem` on its first start, and Geyser on the same server reads it. If Geyser runs on a proxy instead, copy that key to every Floodgate. Keep the key private: anyone who has it can log in as any Bedrock player.
+3. **Firewall: UDP 19132.** In an admin PowerShell: `New-NetFirewallRule -DisplayName "bedrock 19132" -Direction Inbound -Protocol UDP -LocalPort 19132 -Action Allow -Profile Private`. Forward the port on the router only for players outside your network.
+4. **Online mode stays on.** With Floodgate, `online-mode=true` keeps working:
+   - Bedrock players sign in with their Microsoft account on their device, Geyser checks it, and Floodgate lets them in without a Java account.
+   - Their names get Floodgate's `username-prefix` (`.` by default, so a gamertag `Steve` plays as `.Steve`; spaces become `_`).
+   - Whitelist them with `fwhitelist add <gamertag>` (Floodgate) or `whitelist add .Steve`.
+   - If Bedrock players are kicked for chat validation when they chat, set `enforce-secure-profile=false` in `server.properties`. Bedrock clients can't sign Java chat. The offline test server can't show this case.
+5. **Account linking (optional).** A player who owns both editions can link them with Floodgate's global linking (`/linkaccount`, see https://link.geysermc.org). They're then the same player (UUID, inventory, Java skin) whichever edition they join from. `player-link.require-link: true` in `plugins/floodgate/config.yml` only lets linked players in.
+6. **Bring a Bedrock world.** A Java server runs Java worlds. Convert yours with [Chunker](https://chunker.app): it runs in the browser and takes a world folder or `.mcworld`. Pick Java Edition, ideally 26.3. If Chunker doesn't offer 26.3 yet, pick its newest Java version: Paper upgrades the world on its first start. Stop the server, keep a backup, and put the converted folder in place of `world` (or set `level-name`). Look around in a Java client before you rely on it: some blocks and entities don't convert exactly.
+7. **Joining.** On phones, tablets and Windows: Servers > Add Server, with the PC's IP (Part A step 6) and port 19132. Consoles can't add servers. On the same network the server usually shows in Friends > LAN Games; otherwise see Geyser's guide for consoles.
+8. **What Bedrock players see.**
+   - Other players and mobs as usual.
+   - The giant in `floating` mode (the default): a Mannequin wearing the headset user's skin, its eyes where the floating head is, turning with the headset. It is scaled up to 16x, so an 8-block head instead of 25 blocks. The hands aren't shown: Geyser can't show item displays, so neither the floating head nor the hands reach Bedrock. The plugin spawns that Mannequin for Bedrock players only (Java players keep the head and hands) when Floodgate or Geyser is installed and `avatar.bedrock` is `auto` (config.yml, the default; `off` turns it off).
+   - In `ground`/`exact` mode: the same Mannequin as Java players, without the hands.
+   - The giant's speech bubble shows as a floating name tag.
+   - `/tabletop status` says `bedrock floodgate, N online; giant's Bedrock body on`.
+9. **What the headset shows.**
+   - Bedrock players on the table, named `.Steve`.
+   - Their skin, once Floodgate has converted it through the GeyserMC global API (a few seconds after they join; until then the figure has a default skin).
+   - Their chat in the chat panel. Your chat reaches them as `[Giant] Name: ...`.
+   - The operator panel's player buttons (tp, gamemode, kick) take the `.` names.
+10. **Known limits.**
+    - The server runs Java game rules, so redstone, farms, combat and some movement behave the Java way. Bedrock players see Geyser's translation of Java blocks and items.
+    - The headset's textures, models and sounds come from the **Java** game files (Part E). PC players have them: Minecraft for Windows has included both editions (Java & Bedrock) since 2022, so launch Java 26.3 once in the launcher. Phone- and console-only players need someone who owns the Java game for the headset's files.
+
 ## Logs
 
 ```

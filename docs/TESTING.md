@@ -1253,3 +1253,44 @@ Same quads and vertices in every snapshot; 81 sections with fluids hash differen
 - Pistons still jump instead of sliding over 2 ticks (the moving cells keep drawing the moved block, `PistonGhosts`): a slide needs the moving blocks drawn outside the section meshes.
 - Particles not done: furnaces, smokers, blast furnaces, brewing stands, end rods, spore blossoms, crying obsidian, dripstone tips, enchanting glyphs, signal fire smoke; redstone torch dust uses the smoke sprites tinted red; particles don't collide (leaves and drips stop at the floor found by the scan).
 - Parrots and camels don't sit; sleeping mobs lie down only in a bed.
+
+## Bedrock players (Geyser + Floodgate; Paper 26.3, seed 12345, 2026-10-15, no headset)
+
+Setup (QUEST_SETUP.md Part Q): Geyser-Spigot 2.12.0 build 1258 (`/geyser version`: Java 26.3, Bedrock 26.30-26.52) and Floodgate 2.2.5 build 141 from download.geysermc.org (SHA-256 checked against the API), on our own test server: ports 25627, WS 8827, Bedrock UDP 19142, `online-mode=false`, Geyser `java.auth-type: floodgate`. For the bot only, Geyser's `advanced.bedrock.validate-bedrock-login` is set to `false`: `bedrock-protocol` logs in offline, without Xbox auth. Never do this on a real server: anyone could log in as anyone. ViaVersion and ViaBackwards 5.12.0 let the mineflayer Java bot join.
+
+### Tests
+- `./gradlew build`: `BedrockTest` covers `avatar.bedrock` parsing, when the giant gets its Bedrock Mannequin (auto + a bridge), the Mannequin's scale (its head as big as the floating head, capped at 16 or `max-scale`, at least 0.0625), and `skin` being sent again when a player's skin URL changes. All plugin tests pass.
+- Engine-free: the operator panel's player buttons already take Floodgate's `.` prefix (`SafeName`). `Tests~` ControlTests now checks `tp .Steve ~ ~1 ~`.
+
+### Live server (`tools/bedrock_check.py --java`, 13/13 PASS)
+The Bedrock bot is `tools/bedrock/bedrock_player.js`: PrismarineJS `bedrock-protocol` 3.60.1 speaking Bedrock 1.26.51 (protocol 2193) through Geyser. The run, step by step:
+- **Joining.** The bot joins through Geyser. Floodgate names it `.Bedrock<n>`, and the plugin logs `BEDROCK players detected through floodgate`.
+- **On the table.** Put in creative in the middle of the region, the bot is listed in `player_positions` under that name. Its first entry carries a `skin` URL: Floodgate had already applied a converted skin.
+- **Chat.** The bot's chat reaches the headset as `chat` kind `chat` from `.Bedrock<n>`. The headset's `chat_send` reaches the bot as `[Giant] BedrockCheck: ...`.
+- **Floating giant.** The bot receives an `add_player` (Geyser's translation of the Mannequin), `set_entity_data` scale 16, and moves that follow the poses. The Java bot receives the `item_display`s and no Mannequin.
+- **Speech bubble.** The giant's bubble reaches the bot as an armour stand whose name tag is the line.
+- **Ground giant.** The bot receives the Mannequin.
+- **Leaving.** After the bot quits, it drops out of `player_positions`. Geyser notices by timeout, about 10 s later.
+
+```
+cd tools/bedrock && npm install && cd ../bot && npm install && cd ..
+python tools/bedrock_check.py --url ws://127.0.0.1:8827/tabletop --console tools/run/bedrock/server/stdin.fifo \
+    --bedrock-port 19142 --java --mc-port 25627 [--trace]
+```
+
+What Geyser sends a Bedrock client, for each part of the giant (seen with `--trace`):
+
+| Giant part (Java entity) | Bedrock client gets |
+|---|---|
+| Floating head, hands (`item_display`) | nothing: Geyser 2.12 has no item display translation |
+| Mannequin (ground/exact, and the Bedrock-only one) | `add_player` with an empty name, then `set_entity_data` scale 16 (a `player_list` packet arrives too, which is where Bedrock carries skins; its content wasn't inspected) |
+| Speech bubble (`text_display`) | `add_entity` `minecraft:armor_stand` (scale 0) with the text as its name tag |
+
+### Not verified
+- **With a real Bedrock client** (phone, Windows, console): the Mannequin's look and skin, its scale on Bedrock, and how its head pitch reads. Also Xbox sign-in with `online-mode=true`, and chat with `enforce-secure-profile` on.
+- **The Floodgate skin path with a real Xbox account**: the global API conversion, and the figure on the headset switching from the default skin. The plugin now re-sends `skin` when it changes (PROTOCOL 4.6 always said so, but it was sent only once).
+- **Account linking and Chunker conversion**: documented, not exercised here.
+
+### Known gaps
+- Bedrock players never see the giant's hands: Geyser drops every item display. The Bedrock Mannequin's arms hang still.
+- At the default block size the Bedrock Mannequin's head is 8 blocks against the 25-block floating head, because 16 is the `SCALE` maximum.

@@ -5,7 +5,6 @@ import org.java_websocket.WebSocket;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -31,7 +30,7 @@ public final class Session {
     // The session palette and its map are used only on the outbound executor thread (message order).
     public final List<String> palette = new ArrayList<>();
     private final Map<Integer, Integer> globalToLocal = new HashMap<>();
-    public final Set<UUID> skinSent = new HashSet<>();
+    public final Map<UUID, String> skinSent = new HashMap<>();   // skin URL last sent per player ("" for none)
     public boolean lastPlayersNonEmpty;
     /** True while following the server's shared region (default); false after a private subscribe. */
     public volatile boolean shared = true;

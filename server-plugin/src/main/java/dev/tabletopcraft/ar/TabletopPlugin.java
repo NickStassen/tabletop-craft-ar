@@ -34,6 +34,8 @@ public final class TabletopPlugin extends JavaPlugin {
     private final RegionReader reader = new RegionReader(this);
     private final java.util.Set<RegionSpec> diffInFlight = new java.util.HashSet<>();
     private final GiantAvatar avatar = new GiantAvatar();
+    // [bedrock] Geyser/Floodgate players: optional detection and the giant's Bedrock Mannequin (config avatar.bedrock).
+    private final BedrockSupport bedrock = new BedrockSupport(avatar);
     private EditWorld editWorld;                          // applies block_edit (onEnable: needs the logger)
     private final ConcurrentLinkedQueue<Runnable> queue = new ConcurrentLinkedQueue<>();
     private record PoseSet(Session s, Pose head, Pose left, Pose right, long seq, int snapshotId) {}
@@ -107,6 +109,9 @@ public final class TabletopPlugin extends JavaPlugin {
         interact.init(editWorld);                                        // [hands]
         power.init(editWorld);                                           // [power]
         getServer().getPluginManager().registerEvents(interact, this);   // [hands] unfreeze-all for mobs in chunks loading later
+        getServer().getPluginManager().registerEvents(bedrock, this);    // [bedrock] show the giant's Bedrock body on join
+        avatar.owner = this;
+        avatar.bedrockViewer = bedrock::isBedrock;
         start();
     }
 
@@ -140,6 +145,8 @@ public final class TabletopPlugin extends JavaPlugin {
         avatar.maxHeadBlocks = c.getDouble("avatar.max-head-blocks", 64);
         avatar.handBlockSetting = c.getString("avatar.hand-block", "auto");
         avatar.smoothing = c.getDouble("avatar.smoothing", 0.5);
+        bedrock.detect(getServer().getPluginManager(), getLogger());   // [bedrock]
+        avatar.bedrockBodyOn = BedrockSupport.wantBody(BedrockSupport.Mode.parse(c.getString("avatar.bedrock", "auto")), bedrock.detected());
         reader.snapshotBudgetMs = Math.max(0, c.getDouble("stream.snapshot-budget-ms", 1.5));   // [area] spread big reads over ticks
         lightOn = c.getBoolean("stream.light", true);
         biomesOn = c.getBoolean("stream.biomes", true);
@@ -685,10 +692,12 @@ public final class TabletopPlugin extends JavaPlugin {
                 e.addProperty("yaw", Math.round(l.getYaw() * 10) / 10.0);
                 e.addProperty("pitch", Math.round(l.getPitch() * 10) / 10.0);
                 e.addProperty("sneaking", p.isSneaking());
-                if (s.skinSent.add(p.getUniqueId())) {
-                    PlayerProfile prof = p.getPlayerProfile();
-                    var textures = prof.getTextures();
-                    var skin = textures.getSkin();
+                // First time per connection, and again when it changes: Floodgate gives Bedrock players their skin a
+                // few seconds after they join, once the GeyserMC global API has converted it ([bedrock]).
+                PlayerProfile prof = p.getPlayerProfile();
+                var textures = prof.getTextures();
+                var skin = textures.getSkin();
+                if (SkinLookup.changed(s.skinSent, p.getUniqueId(), skin == null ? null : skin.toString())) {
                     e.addProperty("skin", skin == null ? null : skin.toString());
                     // Additive (PROTOCOL.md 4.6): arm width from the textures payload's metadata.
                     if (skin != null) e.addProperty("skin_model", SkinLookup.model(textures.getSkinModel() == PlayerTextures.SkinModel.SLIM));
@@ -1176,6 +1185,8 @@ public final class TabletopPlugin extends JavaPlugin {
                         : "hashing..."));
                 sender.sendMessage("[tabletop] " + power.stats());      // [power]
                 sender.sendMessage("[tabletop] " + operator.stats());   // [operator]
+                sender.sendMessage(String.format("[tabletop] bedrock %s, %d online; giant's Bedrock body %s", bedrock.source(), bedrock.online(),   // [bedrock]
+                    avatar.bedrockBodyOn ? "on" : "off"));
             }
             case "unfreeze-all" -> {   // [hands] every mob a headset froze (frozen.txt), also ones in chunks loaded later
                 int[] r = interact.unfreezeAll();
