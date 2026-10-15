@@ -264,6 +264,7 @@ final class InteractService implements Listener {
         }
         Location centre = b.getLocation().add(0.5, 0.5, 0.5);
         if (fx.sound() != null) w.playSound(centre, "minecraft:" + fx.sound(), SoundCategory.BLOCKS, 1f, fx.pitch());
+        plugin.soundAt(centre, fx.sound(), 1f, fx.pitch());   // [sound] the headset hears its own use too (sound_v1)
         switch (fx.extra()) {
             case NEIGHBOURS_BEHIND -> neighbours(w, b.getRelative(at[0], at[1], at[2]), b.getBlockData());
             case RELEASE_LATER -> {
@@ -283,12 +284,14 @@ final class InteractService implements Listener {
                 if (b.getBlockData() instanceof NoteBlock nb && b.getRelative(BlockFace.UP).getType().isAir()) {
                     w.playNote(b.getLocation(), nb.getInstrument(), nb.getNote());
                     w.spawnParticle(Particle.NOTE, b.getLocation().add(0.5, 1.2, 0.5), 0, nb.getNote().getId() / 24.0, 0, 0, 1);
+                    plugin.soundAt(centre, SoundGroups.id(nb.getInstrument().getSound()), 3f, SoundRules.notePitch(nb.getNote().getId()));   // [sound] World#playNote fires no NotePlayEvent
                 }
             }
             case BELL -> {
                 if (b.getState() instanceof Bell bell) {
                     BlockFace f = face(fx.arg());
                     if (f == null || f == BlockFace.UP || f == BlockFace.DOWN || !bell.ring(f)) bell.ring();
+                    plugin.soundAt(centre, SoundRules.bell().sound(), SoundRules.bell().volume(), 1f);   // [sound] collapses with BellRingEvent's
                 }
             }
             case EJECT -> { if (b.getState() instanceof Jukebox j) j.eject(); }
@@ -298,6 +301,7 @@ final class InteractService implements Listener {
             }
             case BONE_MEAL -> {
                 w.spawnParticle(Particle.HAPPY_VILLAGER, centre, 12, 0.4, 0.4, 0.4, 0);
+                plugin.soundAt(centre, SoundRules.boneMeal().sound(), 1f, 1f);   // [sound]
                 markAround(w, b, 3);
             }
             case SPAWN -> {

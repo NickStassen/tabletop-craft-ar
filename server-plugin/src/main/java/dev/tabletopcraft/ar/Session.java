@@ -88,6 +88,14 @@ public final class Session {
     // and entity_op share one bucket; holds have their own; spawn eggs are counted per minute).
     public volatile boolean canInteract;
     public volatile EditLimiter interactLimiter, holdLimiter, spawnLimiter;
+    // [sound] sound_v1: sound_groups once after the registries, sound actions in "actions" (PROTOCOL.md "Sound").
+    public volatile boolean wantsSound;
+    // [sound] assets_v1: the operator's own pack.zip, entity_models.json and sounds.zip offered and served in binary
+    // frames (AssetService, PROTOCOL.md "Asset delivery"); its pacing and in-flight count (asset worker thread).
+    public volatile boolean canAssets, assetsOffered;
+    final java.util.concurrent.atomic.AtomicInteger assetsInFlight = new java.util.concurrent.atomic.AtomicInteger();
+    long assetsNextNs;
+    final Map<String, Long> assetsStartNs = new java.util.concurrent.ConcurrentHashMap<>();
 
     /** RegionReader extras this session needs in its snapshots and diffs. */
     public int readExtras() { return (wantsLight ? RegionReader.LIGHT : 0) | (wantsBiomes ? RegionReader.BIOMES : 0); }

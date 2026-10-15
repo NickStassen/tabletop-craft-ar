@@ -1,0 +1,11 @@
+{
+ "v": 1,
+ "type": "assets",
+ "seq": 4,
+ "t": 1760370000016,
+ "chunk": 262144,
+ "files": [
+  {"name": "entity_models.json", "size": 91234, "sha256": "5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef"},
+  {"name": "sounds.zip", "size": 67012345, "sha256": "0263829989b6fd954f72baaf2fc64bc2e2f01d692d4de72986ea808f6e99813f"}
+ ]
+}

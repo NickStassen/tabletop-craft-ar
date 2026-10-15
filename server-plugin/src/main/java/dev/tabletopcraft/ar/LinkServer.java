@@ -160,6 +160,8 @@ public final class LinkServer extends WebSocketServer {
                     }
                     plugin.enqueue(() -> plugin.interact.onEntityOp(s, op, refSeq));
                 }
+                // [sound] asset delivery (PROTOCOL.md "Asset delivery"): checked here, read and paced on the asset worker
+                case "asset_get" -> plugin.assets.onGet(s, m, refSeq);
                 case "ping" -> {
                     JsonObject p = Protocol.body("pong");
                     if (m.has("id")) p.add("id", m.get("id"));
@@ -210,6 +212,8 @@ public final class LinkServer extends WebSocketServer {
                 else if (c.equals(ControlMessages.CAP_STATUS) && plugin.control.statusAllowed()) s.wantsStatus = true;
                 else if (c.equals(InteractMessages.CAP) && plugin.interact.allowed()) plugin.interact.grant(s);   // [hands]
                 else if (c.equals(Protocol.CAP_WORLD)) s.wantsWorld = plugin.worldStateEnabled();   // [living] world_state
+                else if (c.equals(Protocol.CAP_SOUND)) s.wantsSound = plugin.soundEnabled();        // [sound]
+                else if (c.equals(AssetService.CAP)) plugin.assets.grant(s);   // [sound] only with auth.token set, from the LAN
             }
         ControlService cs = plugin.control;   // [talk] rate limits (token buckets) and the chat name
         s.chatLimiter = new EditLimiter(cs.chatRate, cs.chatBurst);

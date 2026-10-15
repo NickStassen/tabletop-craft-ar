@@ -73,6 +73,25 @@ block-entities:
 # miniature at night and in storms like vanilla's lightmap and draws rain, snow and lightning. About 150 bytes a second.
 world-state:
   enabled: true
+# [sound] Spatial sound on the headset (sound_v1, PROTOCOL.md "Sound"). The headset plays the user's own game sounds
+# (sounds.zip, QUEST_SETUP.md Part E) and works out most of them itself (breaking, placing, steps, mobs, doors, rain);
+# the server sends each block's sound group once (sound_groups, about 30 KB) and, inside "actions", the sounds it can't
+# work out: note blocks, bells, containers, jukebox songs, explosions, fire lit, buckets and bone meal. Needs actions.
+sound:
+  enabled: true
+# [sound] Opt-in asset delivery (PROTOCOL.md "Asset delivery", QUEST_SETUP.md Part N): headsets download the operator's
+# OWN pack.zip, entity_models.json and sounds.zip from this server instead of over USB (adb). Off by default.
+#   - Only serve copies made from your own Minecraft install, and only to your own headsets. This project ships no
+#     Mojang assets and the files stay yours: don't put the server on the internet with this on.
+#   - Needs auth.token (above): only headsets that present it can download. Only private, link-local and loopback
+#     addresses (the LAN) are served; the link is plain ws://, so anyone on the LAN who has the token could download too.
+#   - Only these three names are read from dir; nothing else in it is ever served.
+assets:
+  serve: false
+  # Folder on this PC holding pack.zip, entity_models.json and/or sounds.zip (absolute, or relative to the server folder).
+  dir: ""
+  # Download speed per headset (MB/s), so a 70 MB sounds.zip doesn't crowd out the world stream.
+  max-mb-per-second: 8
 avatar:
   # Real metres per block on the table; the Quest overrides it with avatar_config.
   block-size-m: 0.01

@@ -12,6 +12,8 @@ public final class Protocol {
     public static final int VERSION = 1;
     /** [living] Time of day and weather (world_state, PROTOCOL.md "World state: time and weather"). */
     public static final String CAP_WORLD = "world_v1";
+    /** [sound] Block sound groups and the sounds a headset can't infer (PROTOCOL.md "Sound"). */
+    public static final String CAP_SOUND = "sound_v1";
     public static final Gson GSON = new GsonBuilder().disableHtmlEscaping().serializeNulls().create();
 
     public static final int CLOSE_VERSION = 4001, CLOSE_HELLO_TIMEOUT = 4002, CLOSE_AUTH = 4003, CLOSE_IDLE = 4004, CLOSE_SHUTDOWN = 4005;
