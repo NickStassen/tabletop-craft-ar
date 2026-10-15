@@ -1,0 +1,6 @@
+{
+  "name": "tabletop-bedrock-player",
+  "private": true,
+  "description": "bedrock-protocol bot used as a Bedrock player (through Geyser and Floodgate) in tools/bedrock_check.sh",
+  "dependencies": { "bedrock-protocol": "^3.60.1" }
+}

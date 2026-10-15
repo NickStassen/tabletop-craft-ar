@@ -273,6 +273,7 @@ static class ControlTests
               OperatorCommands.Heal("Alex") == "effect give Alex minecraft:instant_health 1 10" && OperatorCommands.Feed(".BedrockGuy") == "effect give .BedrockGuy minecraft:saturation 1 10" &&
               OperatorCommands.Kick("Alex", " griefing\n") == "kick Alex griefing" && OperatorCommands.Kick("Alex", "") == "kick Alex", "templates: player commands");
         check(OperatorCommands.TeleportHere("Al ex") == null && OperatorCommands.Kick("@a", "x") == null && OperatorCommands.SafeName("Steve_1") == "Steve_1", "templates: unsafe names refused");
+        check(OperatorCommands.TeleportHere(".Steve") == "tp .Steve ~ ~1 ~" && OperatorCommands.Kick(".Steve", "") == "kick .Steve", "templates: Floodgate (Bedrock) names with the . prefix");
         check(OperatorCommands.GameRule("advance_time", false) == "gamerule advance_time false" && OperatorCommands.GameRule("random_tick_speed", 3.0) == "gamerule random_tick_speed 3" &&
               OperatorCommands.Time("midnight") == "time set midnight" && OperatorCommands.Weather("thunder") == "weather thunder" && OperatorCommands.Difficulty("hard") == "difficulty hard",
               "templates: world commands");
