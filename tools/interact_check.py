@@ -115,7 +115,8 @@ class Client:
         return None
 
     def errors(self, code: str | None = None, ref_seq: int | None = None) -> list[dict]:
-        return [m for m in self.msgs if m["type"] == "error" and (code is None or m["code"] == code) and (ref_seq is None or m.get("ref_seq") == ref_seq)]
+        return [m for m in self.msgs if m["type"] == "error" and (code is None or m["code"] == code)
+                and (ref_seq is None or m.get("ref_seq") == ref_seq)]
 
     def reply(self, type_: str, ref_seq: int) -> dict | None:
         return next((m for m in self.msgs if m["type"] == type_ and m.get("ref_seq") == ref_seq), None)
@@ -137,13 +138,14 @@ async def run(a: argparse.Namespace) -> dict:
     await c.open()
     await c.until(lambda: c.mirror.loaded and c.welcome and c.items)
     caps = (c.welcome or {}).get("caps") or []
-    check(CAP_INTERACT in caps and isinstance((c.welcome or {}).get("interact"), dict), "welcome grants interact_v1 with the interact switches",
-          interact=(c.welcome or {}).get("interact"))
+    switches = (c.welcome or {}).get("interact")
+    check(CAP_INTERACT in caps and isinstance(switches, dict), "welcome grants interact_v1 with the interact switches", interact=switches)
     check(c.order[:3] == ["welcome", "block_registry", "item_registry"], "item_registry follows welcome and block_registry", order=c.order)
     use = c.items["categories"][0]["items"] if c.items else []
     eggs = c.items["categories"][1]["items"] if c.items else []
     check("minecraft:bone_meal" in use and "minecraft:bucket" in use and LIGHTNING_ITEM in use and "minecraft:pig_spawn_egg" in eggs
-          and "minecraft:wither_spawn_egg" not in eggs, "item_registry lists usable items and spawn eggs minus deny-spawn", use=len(use), eggs=len(eggs))
+          and "minecraft:wither_spawn_egg" not in eggs, "item_registry lists usable items and spawn eggs minus deny-spawn",
+          use=len(use), eggs=len(eggs))
 
     # The region onto the flat world's surface (grass at y = -61).
     X0, Z0 = a.at
@@ -152,7 +154,8 @@ async def run(a: argparse.Namespace) -> dict:
     ok = await c.until(lambda: c.mirror.loaded and c.mirror.origin == (X0, -64, Z0) and c.mirror.at_world(X0 + 1, G, Z0 + 1), 15)
     if not check(ok, "region moved to the surface", origin=c.mirror.origin):
         return rep
-    check(name(c.mirror.at_world(X0 + 4, G, Z0 + 4)) == "grass_block", "flat world grass at y=-61", got=c.mirror.at_world(X0 + 4, G, Z0 + 4))
+    grass = c.mirror.at_world(X0 + 4, G, Z0 + 4)
+    check(name(grass) == "grass_block", "flat world grass at y=-61", got=grass)
     Y = G + 1
 
     def P(x: int, z: int, y: int = Y) -> tuple[int, int, int]:
@@ -174,7 +177,8 @@ async def run(a: argparse.Namespace) -> dict:
         await c.send("block_edit", **block_edit("place", pos, st, "up"))
         await asyncio.sleep(0.06)
     built = await c.until(lambda: all(name(c.mirror.at_world(*p)) == name(s) for p, s in bench.items()), 8)
-    if not check(built, "test bench placed with block_edit", missing=[f"{p}={s}" for p, s in bench.items() if name(c.mirror.at_world(*p)) != name(s)]):
+    missing = [f"{p}={s}" for p, s in bench.items() if name(c.mirror.at_world(*p)) != name(s)]
+    if not check(built, "test bench placed with block_edit", missing=missing):
         return rep
 
     async def use(pos, face: str, item: str | None = None, dir=None) -> int:
@@ -213,16 +217,16 @@ async def run(a: argparse.Namespace) -> dict:
 
     # 3. bone meal, axe, buckets
     sapling = P(12, 4)
-    grown = None
-    for i in range(16):
+    grown, tries = None, 0
+    while not grown and tries < 16:
+        tries += 1
         await use(sapling, "up", "minecraft:bone_meal")
         grown = await c.until(lambda: c.mirror.at_world(*sapling) != "minecraft:oak_sapling[stage=0]", 0.6)
-        if grown:
-            break
-    check(grown, "bone meal grows the sapling", now=c.mirror.at_world(*sapling), tries=i + 1)
+    check(grown, "bone meal grows the sapling", now=c.mirror.at_world(*sapling), tries=tries)
     log = P(16, 4)
     await use(log, "north", "minecraft:iron_axe")
-    check(await c.until(lambda: c.mirror.at_world(*log) == "minecraft:stripped_oak_log[axis=x]"), "the axe strips the log", now=c.mirror.at_world(*log))
+    check(await c.until(lambda: c.mirror.at_world(*log) == "minecraft:stripped_oak_log[axis=x]"), "the axe strips the log",
+          now=c.mirror.at_world(*log))
     ground, cell = P(20, 20, G), P(20, 20)
     await use(ground, "up", "minecraft:water_bucket")
     check(await c.until(lambda: c.mirror.at_world(*cell) == "minecraft:water[level=0]"), "the water bucket pours a source on the grass",
@@ -249,24 +253,25 @@ async def run(a: argparse.Namespace) -> dict:
         await op("name", text="Rex")
         check(await c.until(lambda: c.ents.entities.get(pid, {}).get("name") == "Rex"), "the pig is named Rex")
         i0 = await info()
-        check(i0 and i0["entity_type"] == "minecraft:pig" and i0.get("name") == "Rex" and i0["health"][0] == i0["health"][1], "entity_info: a healthy pig named Rex",
-              info=i0)
+        check(i0 and i0["entity_type"] == "minecraft:pig" and i0.get("name") == "Rex" and i0["health"][0] == i0["health"][1],
+              "entity_info: a healthy pig named Rex", info=i0)
         await asyncio.sleep(0.6)   # past the spawn's invulnerable ticks
         await op("attack", dir=[1.0, -0.2, 0.0])
         check(await c.until(lambda: pid in c.hurt, 3), "a hit flashes it red (actions hurt)")
         i1 = await info()
         check(i1 and i1["health"][0] < i0["health"][0], "the hit took health", health=i1 and i1["health"])
         lift = [X0 + 26.5, Y + 2.0, Z0 + 18.5]
-        for k in range(5):
+        for _ in range(5):
             await op("hold", to=lift)
             await asyncio.sleep(0.1)
         i2 = await info()
-        check(i2 and i2.get("held") and i2.get("ai") is False and abs(i2["pos"][1] - lift[1]) < 0.3, "held: it hangs where the hand says, AI off", info=i2)
+        check(i2 and i2.get("held") and i2.get("ai") is False and abs(i2["pos"][1] - lift[1]) < 0.3,
+              "held: it hangs where the hand says, AI off", info=i2)
         await op("drop", to=[X0 + 26.5, float(Y), Z0 + 18.5])
         await asyncio.sleep(0.2)
         i3 = await info()
-        check(i3 and not i3.get("held") and i3.get("ai") is True and abs(i3["pos"][0] - (X0 + 26.5)) < 0.3, "dropped: AI back, on the ground where it was put",
-              info=i3)
+        check(i3 and not i3.get("held") and i3.get("ai") is True and abs(i3["pos"][0] - (X0 + 26.5)) < 0.3,
+              "dropped: AI back, on the ground where it was put", info=i3)
         await op("hold", to=lift)
         await asyncio.sleep(3.6)   # no drop: the server lets go after 3 s
         it = await info()
@@ -298,7 +303,8 @@ async def run(a: argparse.Namespace) -> dict:
     tnt = P(28, 28)
     known = set(c.ents.entities)
     await use(tnt, "up", "minecraft:flint_and_steel")
-    primed = await c.until(lambda: name(c.mirror.at_world(*tnt)) == "air" and next((e for e in c.ents.of_type("minecraft:tnt") if e["id"] not in known), None))
+    primed = await c.until(lambda: name(c.mirror.at_world(*tnt)) == "air"
+                           and next((e for e in c.ents.of_type("minecraft:tnt") if e["id"] not in known), None))
     if check(primed, "flint and steel lights the TNT (block gone, primed TNT entity)"):
         await c.send("entity_op", **entity_op(primed["uuid"], "remove"))
         check(await c.until(lambda: primed["id"] not in c.ents.entities), "entity_op remove takes the primed TNT away")
