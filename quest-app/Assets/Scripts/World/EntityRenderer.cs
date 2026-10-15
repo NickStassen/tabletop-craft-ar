@@ -151,7 +151,7 @@ namespace TabletopCraft.World
             return new Vector3(l.x, l.y, -l.z) * BlockSizeM;
         }
 
-        void Update()
+        void LateUpdate()   // after input and zoom (TablePlacement), so positions use this frame's block size and region root
         {
             // entity_models.json loads on a worker after start: rebuild the boxes drawn before it arrived as models.
             if (_generation != EntityModels.Generation)

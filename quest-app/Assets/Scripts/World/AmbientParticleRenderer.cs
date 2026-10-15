@@ -52,7 +52,7 @@ namespace TabletopCraft.World
             _renderer.enabled = false;
         }
 
-        void Update()
+        void LateUpdate()   // after input and zoom (TablePlacement), so positions use this frame's block size and region root
         {
             bool on = Enabled && _mat != null && Model != null && Model.Loaded && Atlas != null && Atlas.HasPack && Sprites();
             _renderer.enabled = on && Particles > 0;

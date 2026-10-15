@@ -48,7 +48,7 @@ namespace TabletopCraft.World
             _renderer.enabled = false;
         }
 
-        void Update()
+        void LateUpdate()   // after input and zoom (TablePlacement), so positions use this frame's block size and region root
         {
             if (_mat == null || Model == null || Light == null) return;
             var clock = Light.Clock;

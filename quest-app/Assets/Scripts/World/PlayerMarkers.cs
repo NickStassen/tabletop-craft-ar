@@ -137,7 +137,7 @@ namespace TabletopCraft.World
             return new Vector3(l.x, l.y, -l.z) * BlockSizeM;
         }
 
-        void Update()
+        void LateUpdate()   // after input and zoom (TablePlacement), so positions use this frame's block size and region root
         {
             var cam = Camera.main;
             float dt = Time.deltaTime, k = 1 - Mathf.Exp(-LerpRate * dt);

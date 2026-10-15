@@ -419,6 +419,17 @@ static class OperatorTests
         empty.Begin(new Vector3Int(0, 0, 0), "minecraft:oak_hanging_sign[attached=false,rotation=0,waterlogged=false]", null);
         check(empty.Hanging && empty.Front.Lines.All(l => l == "") && empty.Front.Color == "black" && empty.Save().Count == 0, "sign: an empty hanging sign");
         check(Click(p, PanelPart.Button, OperatorPanelModel.BtnClose).Kind == PanelActionKind.Tab && p.Mode == PanelMode.Tabs && !p.Sign.Open, "sign: Close");
+        // Opened by the left trigger with the panel closed: Close goes straight back to the world (found on the headset).
+        var w = Panel(fixture);
+        w.SetOpen(false);
+        w.OpenContainer(new Vector3Int(1, 64, 2));
+        w.OnContainer(ContainerView.From(Fx(fixture, "container")));
+        check(w.Open && Click(w, PanelPart.Button, OperatorPanelModel.BtnClose).Kind == PanelActionKind.Tab && !w.Open && w.Mode == PanelMode.Tabs,
+              "container: Close after the left trigger opened it closes the panel");
+        w.SetOpen(true);
+        w.OpenContainer(new Vector3Int(1, 64, 2));
+        check(Click(w, PanelPart.Button, OperatorPanelModel.BtnClose).Kind == PanelActionKind.Tab && w.Open && w.Mode == PanelMode.Tabs,
+              "container: Close with the panel already open returns to the tabs");
     }
 
     static void Layouts(Action<bool, string> check, Func<string, string> fixture)

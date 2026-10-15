@@ -213,6 +213,7 @@ namespace TabletopCraft.World
         public void OpenContainer(Vector3Int pos)
         {
             LeaveMode();
+            _modeFromWorld = !Open;   // opened by the left trigger with the panel closed: Close goes back to the world
             SetOpen(true);
             Mode = PanelMode.Container; Note = "";
             Outbox.Add(Container.Begin(pos));
@@ -223,10 +224,23 @@ namespace TabletopCraft.World
         public void OpenSign(Vector3Int pos, string state, BlockEntityData data)
         {
             LeaveMode();
+            _modeFromWorld = !Open;
             SetOpen(true);
             Mode = PanelMode.Sign; Note = "";
             Sign.Begin(pos, state, data);
             Version++;
+        }
+
+        bool _modeFromWorld;
+
+        /// <summary>The container view's or sign editor's Close: back to the world when the left trigger opened it with the
+        /// panel closed, else back to the tabs.</summary>
+        PanelAction CloseMode()
+        {
+            bool toWorld = _modeFromWorld;
+            _modeFromWorld = false;
+            if (toWorld) SetOpen(false); else LeaveMode();
+            return new PanelAction { Kind = PanelActionKind.Tab };
         }
 
         /// <summary>Back to the tabs: an open container view ends (container_close in the Outbox). True when a mode was left.</summary>
@@ -466,7 +480,7 @@ namespace TabletopCraft.World
                 case BtnPut: m = Container.Put(ContainerModel.ItemOf(HotbarSelection, Registry), out why); break;
                 case BtnClear: m = Container.Clear(out why); break;
                 case BtnSort: m = Container.Sort(out why); break;
-                case BtnClose: LeaveMode(); return new PanelAction { Kind = PanelActionKind.Tab };
+                case BtnClose: return CloseMode();
                 default: return default;
             }
             if (m == null) return Refuse(why ?? "not available");
@@ -481,7 +495,7 @@ namespace TabletopCraft.World
                 case BtnFront: Sign.SetSide(false); return new PanelAction { Kind = PanelActionKind.Toggled };
                 case BtnBack: Sign.SetSide(true); return new PanelAction { Kind = PanelActionKind.Toggled };
                 case BtnGlow: Sign.ToggleGlow(); return new PanelAction { Kind = PanelActionKind.Toggled };
-                case BtnClose: LeaveMode(); return new PanelAction { Kind = PanelActionKind.Tab };
+                case BtnClose: return CloseMode();
                 case BtnSave:
                 {
                     if (!Connected) return Refuse("not connected");
