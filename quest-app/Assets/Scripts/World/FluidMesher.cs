@@ -208,7 +208,7 @@ namespace TabletopCraft.World
                 if (kind == (int)FluidKind.Water) key.Color = WaterColor(w, pos.x, pos.y, pos.z, key.Color);
                 // Light (vanilla LiquidBlockRenderer: one value per face), folded into the key so the greedy merge of
                 // flat fluid faces only joins equally lit cells.
-                key.Color = BlockShading.Fluid(w, key.Color, pos.x, pos.y, pos.z, dir);
+                key.Color = BlockShading.Fluid(w, key.Color, pos.x, pos.y, pos.z, dir, out key.Light);   // [living] and its light code
                 return key;
             }
 
@@ -354,7 +354,7 @@ namespace TabletopCraft.World
             int s = m.Verts.Count;
             m.Verts.Add(p0 + b0); m.Verts.Add(p1 + b0); m.Verts.Add(p2 + b0); m.Verts.Add(p3 + b0);
             m.Uvs.Add(Uv(dir, p0, key.Layer)); m.Uvs.Add(Uv(dir, p1, key.Layer)); m.Uvs.Add(Uv(dir, p2, key.Layer)); m.Uvs.Add(Uv(dir, p3, key.Layer));
-            for (int i = 0; i < 4; i++) m.Colors.Add(key.Color);   // tint x light, set in Key() (BlockShading.Fluid)
+            m.AddColors(new Quad4(key.Color, key.Light));   // tint x light and the light code, set in Key() (BlockShading.Fluid)
             var t = key.Transparent ? m.Transparent : m.Opaque;
             t.Add(s); t.Add(s + 1); t.Add(s + 2); t.Add(s); t.Add(s + 2); t.Add(s + 3);
             // The same face seen from inside the water (looking up at the surface, the region's cut walls as an aquarium
@@ -364,7 +364,7 @@ namespace TabletopCraft.World
             if (key.Transparent)
             {
                 int b = m.Verts.Count;
-                for (int i = 0; i < 4; i++) { m.Verts.Add(m.Verts[s + i]); m.Uvs.Add(m.Uvs[s + i]); m.Colors.Add(m.Colors[s + i]); }
+                for (int i = 0; i < 4; i++) { m.Verts.Add(m.Verts[s + i]); m.Uvs.Add(m.Uvs[s + i]); m.CopyColor(s + i); }
                 var wb = m.WaterBack;
                 wb.Add(b); wb.Add(b + 2); wb.Add(b + 1); wb.Add(b); wb.Add(b + 3); wb.Add(b + 2);
             }

@@ -95,6 +95,23 @@ namespace TabletopCraft
         ChatView _chatView;
         string _operatorName;
         readonly List<string> _quickCommands = new List<string>();
+        // [living] time of day and weather (WorldLight), rain, snow and lightning (WeatherRenderer), leads (LeashRenderer)
+        WorldLight _light;
+        WeatherRenderer _weather;
+
+        /// <summary>[living] The living-world parts: the light follows world_state, weather and leads are drawn on the table.</summary>
+        void SetupLiving()
+        {
+            _light = gameObject.AddComponent<WorldLight>();
+            _entities.Light = _light;
+            _entityTex.BlockOpaque = OpaqueMaterial; _entityTex.BlockTransparent = TransparentMaterial;   // blocks on entities, block displays
+            var weatherT = new GameObject("Weather").transform; weatherT.SetParent(_regionRoot, false);
+            _weather = weatherT.gameObject.AddComponent<WeatherRenderer>();
+            _weather.Model = _world; _weather.Light = _light; _weather.Textures = _entityTex; _weather.Nav = _nav.State; _weather.Head = Head;
+            _entities.Weather = _weather;
+            var leash = _entitiesRoot.gameObject.AddComponent<LeashRenderer>();
+            leash.Entities = _entities; leash.Players = _players; leash.Textures = _entityTex;
+        }
 
         void Start()
         {
@@ -164,6 +181,7 @@ namespace TabletopCraft
             _nav.BlockSize = () => BlockSizeM; _nav.Suspended = () => _area.Active; _nav.Send = b => _link.Send(b);
             _area.Nav = _nav.State;
             eye.Caps = _caps;   // water cuts of the visible window get inside faces too (EyeEffects.cs)
+            SetupLiving();   // [living] needs the entities and the nav window
             // [area] width presets: left stick click, or a menu through Presets/Current/Request (XR/AreaSizeControl.cs)
             AreaSize = gameObject.AddComponent<AreaSizeControl>();
             AreaSize.Nav = _nav.State; AreaSize.Renderer = _renderer; AreaSize.Blocked = () => _area.Active; AreaSize.Send = b => _link.Send(b);
@@ -269,6 +287,7 @@ namespace TabletopCraft
                 BlockShading.MinLight = (float)c.D("min_light", BlockShading.MinLight);         // brightness of light level 0
                 GreedyMesher.LeavesInner = c.B("leaves_inner", true);                           // faces between leaves, like vanilla
                 ResourcePackAtlas.Mipmaps = c.B("mipmaps", true);                               // mip-mapped block textures
+                WorldLight.WeatherFx = c.B("weather_fx", true);                                 // [living] rain, snow, lightning
                 // [menu] show_hud, [area] area_width and block_size_m are shared with prefs.json: see LoadPrefs
                 _operatorName = c.S("operator_name");                                           // [talk] the name in chat
                 foreach (var q in c.A("quick_commands") ?? new List<object>()) if (q is string qs) _quickCommands.Add(qs);   // [talk] Console quick buttons
@@ -453,6 +472,7 @@ namespace TabletopCraft
             _blocks.localScale = Vector3.one * bs;
             _players.BlockSizeM = bs;
             _entities.BlockSizeM = bs;   // [entities]
+            if (_weather != null) _weather.BlockSizeM = bs;   // [living]
             RecenterRegion();
             _avatarConfigAt = Time.unscaledTime + 0.3f;
         }
@@ -573,6 +593,7 @@ namespace TabletopCraft
                     // [comfort] a new session lists its players and entities afresh (stale ones were hidden while offline)
                     _players.Apply(new List<PlayerInfo>());
                     _entities.Clear();
+                    _light.Reset();   // [living] noon until this server's world_state
                     if (_announce) { _announce = false; _hud.Toast("Connected to " + ServerAddress.HostOf(_link.Url), ToastKind.Info); }
                     break;
                 case "region_info":
@@ -603,6 +624,7 @@ namespace TabletopCraft
                     _players.Apply(list);
                     break;
                 case "entities": _entities.Apply(m); break;   // [entities] PROTOCOL.md 4.21
+                case "world_state": _light.Apply(m); break;   // [living] time of day and weather
                 case "actions":                                  // [entities] PROTOCOL.md 4.22
                     _actions.Clear();
                     GameAction.Parse(m, _actions);

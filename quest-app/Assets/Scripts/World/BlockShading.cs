@@ -21,8 +21,19 @@ namespace TabletopCraft.World
     public struct Quad4
     {
         public Color32 C0, C1, C2, C3;
-        public Quad4(Color32 c) { C0 = C1 = C2 = C3 = c; }
+        /// <summary>[living] The light each corner was lit with (LightCode: rounded sky * 16 + block). The shaders look up
+        /// the time of day and weather (DayLight) by it; faces merge only when these match too.</summary>
+        public byte L0, L1, L2, L3;
+        public Quad4(Color32 c) : this(c, LightCode.OpenSky) { }
+        public Quad4(Color32 c, byte light) { C0 = C1 = C2 = C3 = c; L0 = L1 = L2 = L3 = light; }
         public Color32 this[int i] => i == 0 ? C0 : i == 1 ? C1 : i == 2 ? C2 : C3;
+        public byte L(int i) => i == 0 ? L0 : i == 1 ? L1 : i == 2 ? L2 : L3;
+        /// <summary>Corners i and j have the same colour and light (greedy merging along an edge).</summary>
+        public bool Same(int i, int j)
+        {
+            Color32 a = this[i], b = this[j];
+            return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a && L(i) == L(j);
+        }
     }
 
     public static class BlockShading
@@ -54,50 +65,92 @@ namespace TabletopCraft.World
         /// </summary>
         static void BuildLightmap()
         {
-            float floor = 0;
-            float amb = 10f / 255f;
-            float tr = 1f, tg = 216f / 255f, tb = 140f / 255f;
+            _floor = RawLightmap(LightEnv.Noon, 0, 0).y;   // ambient only: grey, the darkest entry of the reference
             for (int sky = 0; sky < 16; sky++)
                 for (int block = 0; block < 16; block++)
                 {
-                    float bl = block / 15f, sl = sky / 15f;
-                    float bb = Curve(bl) * 1.4f, sb = Curve(sl) * 1f;
-                    float mix = 0.9f * (2f * bl - 1f) * (2f * bl - 1f);
-                    float r = amb + sb + Mathf.Lerp(tr, 1f, mix) * bb;
-                    float g = amb + sb + Mathf.Lerp(tg, 1f, mix) * bb;
-                    float b = amb + sb + Mathf.Lerp(tb, 1f, mix) * bb;
-                    r = Mathf.Clamp01(r); g = Mathf.Clamp01(g); b = Mathf.Clamp01(b);
-                    float max = Mathf.Max(r, Mathf.Max(g, b));
-                    if (max > 0)
-                    {
-                        float inv = 1f - max, scaled = 1f - inv * inv * inv * inv, k = scaled / max; // notGamma
-                        r = Mathf.Lerp(r, r * k, _brightness); g = Mathf.Lerp(g, g * k, _brightness); b = Mathf.Lerp(b, b * k, _brightness);
-                    }
-                    if (sky == 0 && block == 0) floor = g;   // ambient only: grey, the darkest entry
-                    if (_minLight >= 0 && floor < 1)
-                    {
-                        float k = (1f - _minLight) / (1f - floor);
-                        r = _minLight + (r - floor) * k; g = _minLight + (g - floor) * k; b = _minLight + (b - floor) * k;
-                    }
+                    var c = Rescale(RawLightmap(LightEnv.Noon, sky, block));
                     int i = sky * 16 + block;
-                    LmR[i] = r; LmG[i] = g; LmB[i] = b;
+                    LmR[i] = c.x; LmG[i] = c.y; LmB[i] = c.z;
+                }
+            BuildLive();
+        }
+
+        static float _floor;
+
+        /// <summary>
+        /// [living] 26.x lightmap.fsh for one (sky, block) entry of any environment (LightmapRenderState: sky factor and
+        /// colour from the time of day and weather, ambient colour from the dimension, block factor and tint), then the
+        /// Brightness setting's notGamma mix; no MinLight rescale yet. The reference lightmap the meshers bake into the
+        /// vertex colours is LightEnv.Noon (the overworld at noon in clear weather).
+        /// </summary>
+        public static Vector3 RawLightmap(in LightEnv env, int sky, int block)
+        {
+            float bl = block / 15f, sl = sky / 15f;
+            float bb = Curve(bl) * env.BlockFactor, sb = Curve(sl) * env.SkyFactor;
+            float mix = 0.9f * (2f * bl - 1f) * (2f * bl - 1f);
+            float r = env.Ambient.x + env.SkyColor.x * sb + Mathf.Lerp(env.BlockTint.x, 1f, mix) * bb;
+            float g = env.Ambient.y + env.SkyColor.y * sb + Mathf.Lerp(env.BlockTint.y, 1f, mix) * bb;
+            float b = env.Ambient.z + env.SkyColor.z * sb + Mathf.Lerp(env.BlockTint.z, 1f, mix) * bb;
+            r = Mathf.Clamp01(r); g = Mathf.Clamp01(g); b = Mathf.Clamp01(b);
+            float max = Mathf.Max(r, Mathf.Max(g, b));
+            if (max > 0)
+            {
+                float inv = 1f - max, scaled = 1f - inv * inv * inv * inv, k = scaled / max; // notGamma
+                r = Mathf.Lerp(r, r * k, _brightness); g = Mathf.Lerp(g, g * k, _brightness); b = Mathf.Lerp(b, b * k, _brightness);
+            }
+            return new Vector3(r, g, b);
+        }
+
+        /// <summary>The MinLight rescale (the reference's level-0 value lands on MinLight, full light stays 1), the same
+        /// linear map for every environment so night stays darker than noon.</summary>
+        static Vector3 Rescale(Vector3 c)
+        {
+            if (_minLight < 0 || _floor >= 1) return c;
+            float k = (1f - _minLight) / (1f - _floor);
+            return new Vector3(_minLight + (c.x - _floor) * k, _minLight + (c.y - _floor) * k, _minLight + (c.z - _floor) * k);
+        }
+
+        /// <summary>[living] The lightmap entry the miniature shows for an environment (RawLightmap + the MinLight rescale).</summary>
+        public static Vector3 LightmapFor(in LightEnv env, int sky, int block) => Rescale(RawLightmap(env, sky, block));
+
+        /// <summary>[living] The environment the miniature is shown in now (time of day, weather, dimension, lightning
+        /// flash; DayLight), main thread. Entities and players take their light from it (LightmapLive); block faces keep
+        /// the noon colours they were meshed with and the shaders scale them by DayLight's ratio table.</summary>
+        public static LightEnv Environment { get => _env; set { _env = value; BuildLive(); } }
+        static LightEnv _env = LightEnv.Noon;
+        static readonly float[] LiveR = new float[256], LiveG = new float[256], LiveB = new float[256];
+
+        static void BuildLive()
+        {
+            for (int sky = 0; sky < 16; sky++)
+                for (int block = 0; block < 16; block++)
+                {
+                    var c = LightmapFor(_env, sky, block);
+                    int i = sky * 16 + block;
+                    LiveR[i] = c.x; LiveG[i] = c.y; LiveB[i] = c.z;
                 }
         }
+
+        /// <summary>[living] Lightmap colour in the current Environment for fractional sky and block levels (entities).</summary>
+        public static Vector3 LightmapLive(float sky, float block) => Bilinear(LiveR, LiveG, LiveB, sky, block);
 
         /// <summary>Vanilla light level curve: level / (4 - 3 level) for level in 0..1.</summary>
         public static float Curve(float level) => level / (4f - 3f * level);
 
         /// <summary>Lightmap colour for (possibly fractional, smooth-lit) sky and block levels 0..15.</summary>
-        public static Vector3 Lightmap(float sky, float block)
+        public static Vector3 Lightmap(float sky, float block) => Bilinear(LmR, LmG, LmB, sky, block);
+
+        static Vector3 Bilinear(float[] R, float[] G, float[] B, float sky, float block)
         {
             sky = Mathf.Clamp(sky, 0, 15); block = Mathf.Clamp(block, 0, 15);
             int s0 = (int)sky, b0 = (int)block, s1 = Mathf.Min(s0 + 1, 15), b1 = Mathf.Min(b0 + 1, 15);
             float fs = sky - s0, fb = block - b0;
             int i00 = s0 * 16 + b0, i01 = s0 * 16 + b1, i10 = s1 * 16 + b0, i11 = s1 * 16 + b1;
             float w00 = (1 - fs) * (1 - fb), w01 = (1 - fs) * fb, w10 = fs * (1 - fb), w11 = fs * fb;
-            return new Vector3(LmR[i00] * w00 + LmR[i01] * w01 + LmR[i10] * w10 + LmR[i11] * w11,
-                               LmG[i00] * w00 + LmG[i01] * w01 + LmG[i10] * w10 + LmG[i11] * w11,
-                               LmB[i00] * w00 + LmB[i01] * w01 + LmB[i10] * w10 + LmB[i11] * w11);
+            return new Vector3(R[i00] * w00 + R[i01] * w01 + R[i10] * w10 + R[i11] * w11,
+                               G[i00] * w00 + G[i01] * w01 + G[i10] * w10 + G[i11] * w11,
+                               B[i00] * w00 + B[i01] * w01 + B[i10] * w10 + B[i11] * w11);
         }
 
         /// <summary>Full cubes (opaque or not) occlude for AO: vanilla's shade brightness 0.2 for full collision shapes.</summary>
@@ -125,18 +178,18 @@ namespace TabletopCraft.World
             var light = w.Light;
             if (light == null) return new Quad4(tint);
             // Emissive rendering (magma, an active sculk sensor): LightCoordsUtil.FULL_BRIGHT, no AO.
-            if (key.Shade == BakedModel.ShadeFullBright) return new Quad4(Shade(tint, Lightmap(15, 15), 1f));
+            if (key.Shade == BakedModel.ShadeFullBright) return new Quad4(Shade(tint, Lightmap(15, 15), 1f), LightCode.FullBright);
             var n = Dir[dir];
             var p = new Vector3Int(x, y, z);
             var f = cubic ? p + n : p;
-            if (!w.InBounds(f.x, f.y, f.z)) return new Quad4(Shade(tint, Lightmap(15, floor), 1f)); // cut face at the region edge
+            if (!w.InBounds(f.x, f.y, f.z)) return new Quad4(Shade(tint, Lightmap(15, floor), 1f), LightCode.Of(15, floor)); // cut face at the region edge
             int axis = dir >> 1, ua = (axis + 1) % 3, va = (axis + 2) % 3;
             var u = new Vector3Int(); u[ua] = 1;
             var v = new Vector3Int(); v[va] = 1;
             Cell(w, light, f, out int cSky, out int cBlk, out var cShape);
             // "ambientocclusion": false (BlockModelLighter.prepareQuadFlat): one light, the cell in front for a face on
             // the block's side, else the block's own; no AO. floor: the face's light_emission (lightCoordsWithEmission).
-            if (key.Shade == BakedModel.ShadeFlat) return new Quad4(Shade(tint, Lightmap(Mathf.Max(cSky, floor), Mathf.Max(cBlk, floor)), 1f));
+            if (key.Shade == BakedModel.ShadeFlat) return Lit(tint, Mathf.Max(cSky, floor), Mathf.Max(cBlk, floor));
             if (!cubic)
             {
                 // Vanilla: a face inside the block takes the light of the cell in front unless that cell is opaque.
@@ -144,7 +197,7 @@ namespace TabletopCraft.World
                 Cell(w, light, front, out int fs, out int fb, out var fShape);
                 if (w.InBounds(front.x, front.y, front.z) && Permeable(fShape)) { cSky = fs; cBlk = fb; }
             }
-            if (!SmoothLighting) return new Quad4(Shade(tint, Lightmap(Mathf.Max(cSky, floor), Mathf.Max(cBlk, floor)), 1f));
+            if (!SmoothLighting) return Lit(tint, Mathf.Max(cSky, floor), Mathf.Max(cBlk, floor));
             float cAo = AoOccluder(cShape) ? 0.2f : 1f;
             var q = new Quad4();
             for (int c = 0; c < 4; c++)
@@ -159,11 +212,16 @@ namespace TabletopCraft.World
                 if (Permeable(aOut) || Permeable(bOut)) Cell(w, light, a + v * sv, out kSky, out kBlk, out kShape);
                 float ao = ((AoOccluder(aShape) ? 0.2f : 1f) + (AoOccluder(bShape) ? 0.2f : 1f) + (AoOccluder(kShape) ? 0.2f : 1f) + cAo) * 0.25f;
                 SmoothBlend(aSky, aBlk, bSky, bBlk, kSky, kBlk, cSky, cBlk, out float sky, out float blk);
-                var col = Shade(tint, Lightmap(Mathf.Max(sky, floor), Mathf.Max(blk, floor)), ao);
-                if (c == 0) q.C0 = col; else if (c == 1) q.C1 = col; else if (c == 2) q.C2 = col; else q.C3 = col;
+                sky = Mathf.Max(sky, floor); blk = Mathf.Max(blk, floor);
+                var col = Shade(tint, Lightmap(sky, blk), ao);
+                byte code = LightCode.Of(sky, blk);
+                if (c == 0) { q.C0 = col; q.L0 = code; } else if (c == 1) { q.C1 = col; q.L1 = code; } else if (c == 2) { q.C2 = col; q.L2 = code; } else { q.C3 = col; q.L3 = code; }
             }
             return q;
         }
+
+        /// <summary>One light for the whole face: its colour and its light code.</summary>
+        static Quad4 Lit(Color32 tint, int sky, int block) => new Quad4(Shade(tint, Lightmap(sky, block), 1f), LightCode.Of(sky, block));
 
         /// <summary>
         /// THE helper for any axis-aligned quad of block b facing dir (slab faces, model elements, fluid surfaces): smooth
@@ -177,20 +235,29 @@ namespace TabletopCraft.World
             bool cubic = (dir & 1) == 1 ? plane >= 0.999f : plane <= 0.001f;
             var c = FaceCorners(w, key, b.x, b.y, b.z, dir, cubic, floor);
             if (w.Light == null) return c;
-            return new Quad4 { C0 = Bilerp(c, p0[ua] - b[ua], p0[va] - b[va]), C1 = Bilerp(c, p1[ua] - b[ua], p1[va] - b[va]),
-                               C2 = Bilerp(c, p2[ua] - b[ua], p2[va] - b[va]), C3 = Bilerp(c, p3[ua] - b[ua], p3[va] - b[va]) };
+            float u0 = p0[ua] - b[ua], v0 = p0[va] - b[va], u1 = p1[ua] - b[ua], v1 = p1[va] - b[va];
+            float u2 = p2[ua] - b[ua], v2 = p2[va] - b[va], u3 = p3[ua] - b[ua], v3 = p3[va] - b[va];
+            return new Quad4 { C0 = Bilerp(c, u0, v0), C1 = Bilerp(c, u1, v1), C2 = Bilerp(c, u2, v2), C3 = Bilerp(c, u3, v3),
+                               L0 = LightCode.Bilerp(c, u0, v0), L1 = LightCode.Bilerp(c, u1, v1), L2 = LightCode.Bilerp(c, u2, v2), L3 = LightCode.Bilerp(c, u3, v3) };
         }
 
         /// <summary>Quads that aren't axis-aligned (cross plants, rotated elements): the block's own light, no AO (vanilla
         /// renders cross models with ambientocclusion=false).</summary>
-        public static Color32 Flat(WorldModel w, FaceKey key, Vector3Int b, int floor = 0)
+        public static Color32 Flat(WorldModel w, FaceKey key, Vector3Int b, int floor = 0) => Flat(w, key, b, out _, floor);
+
+        /// <summary>Flat with the light code it was lit with ([living] LightCode).</summary>
+        public static Color32 Flat(WorldModel w, FaceKey key, Vector3Int b, out byte code, int floor = 0)
         {
             Color32 tint = Tint(w, key, b.x, b.y, b.z);
             var light = w.Light;
+            code = LightCode.OpenSky;
             if (light == null) return tint;
+            code = LightCode.FullBright;
             if (key.Shade == BakedModel.ShadeFullBright) return Shade(tint, Lightmap(15, 15), 1f);
             Cell(w, light, b, out int sky, out int blk, out _);
-            return Shade(tint, Lightmap(Mathf.Max(sky, floor), Mathf.Max(blk, floor)), 1f);
+            sky = Mathf.Max(sky, floor); blk = Mathf.Max(blk, floor);
+            code = LightCode.Of(sky, blk);
+            return Shade(tint, Lightmap(sky, blk), 1f);
         }
 
         /// <summary>
@@ -205,7 +272,7 @@ namespace TabletopCraft.World
             var key = new FaceKey { Color = q.Color, Tint = q.Tint, Shade = shade };
             var b = new Vector3Int(x, y, z);
             if (w.Light == null && (q.Tint == TintKind.None || w.Tints == null)) return new Quad4(q.Color);
-            if (q.Dir < 0) return new Quad4(Flat(w, key, b, q.Emission));
+            if (q.Dir < 0) { var flat = Flat(w, key, b, out byte code, q.Emission); return new Quad4(flat, code); }
             var o = new Vector3(x, y, z);
             return Quad(w, key, b, q.Dir, o + q.P0, o + q.P1, o + q.P2, o + q.P3, q.Emission);
         }
@@ -216,15 +283,21 @@ namespace TabletopCraft.World
         /// and top of the miniature) is lit as open sky, like the cube faces there. tint already holds the
         /// (biome) colour and its alpha.
         /// </summary>
-        public static Color32 Fluid(WorldModel w, Color32 tint, int x, int y, int z, int dir)
+        public static Color32 Fluid(WorldModel w, Color32 tint, int x, int y, int z, int dir) => Fluid(w, tint, x, y, z, dir, out _);
+
+        /// <summary>Fluid with the light code it was lit with ([living] LightCode; FluidMesher keeps it in FaceKey.Light).</summary>
+        public static Color32 Fluid(WorldModel w, Color32 tint, int x, int y, int z, int dir, out byte code)
         {
             var light = w.Light;
+            code = LightCode.OpenSky;
             if (light == null) return tint;
             var n = Dir[dir];
             if (!w.InBounds(x + n.x, y + n.y, z + n.z)) return Shade(tint, Lightmap(15, 0), 1f);
             Cell(w, light, new Vector3Int(x, y, z), out int s0, out int b0, out _);
             Cell(w, light, new Vector3Int(x, y + 1, z), out int s1, out int b1, out _);   // above the region: open sky
-            return Shade(tint, Lightmap(Mathf.Max(s0, s1), Mathf.Max(b0, b1)), 1f);
+            int s = Mathf.Max(s0, s1), b = Mathf.Max(b0, b1);
+            code = LightCode.Of(s, b);
+            return Shade(tint, Lightmap(s, b), 1f);
         }
 
         /// <summary>26.x LightCoordsUtil.smoothBlend on (sky, block) pairs; d is the centre.</summary>

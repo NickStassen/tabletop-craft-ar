@@ -165,6 +165,7 @@ static class Program
         if (jar != null) ModelTests(jar);
         else Console.WriteLine("SKIP block model tests: set MC_CLIENT_JAR or pass --jar PATH (a client jar or resource pack zip)");
         RenderTests.Run(Check, jar);   // 0.3.1 vanilla look: randomness, offsets, random UV tables (RenderTests.cs)
+        LivingTests.Run(Check, Fixture, jar);   // [living] time of day, weather, leads, bolts, rain, displays, gear (LivingTests.cs)
 
         int sceneIdx = Array.IndexOf(args, "--scene");
         if (sceneIdx >= 0 && jar != null) SceneDump.Run(jar, args[sceneIdx + 1], args);

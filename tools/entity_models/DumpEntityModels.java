@@ -52,6 +52,14 @@ public class DumpEntityModels {
         "shulker", "armor_stand", "armor_stand_small", "arrow", "trident", "end_crystal", "leash_knot",
         // armour worn by players and humanoid mobs (equipment/humanoid and humanoid_leggings textures)
         "player#helmet", "player#chestplate", "player#leggings", "player#boots",
+        // [living] the rest of the entities (LivingLooks.cs) and what mobs wear: saddles, armour, carpets, harnesses,
+        // collars, tropical fish patterns (textures: assets/minecraft/equipment + entity textures of your pack)
+        "ender_dragon", "wither", "giant", "evoker_fangs", "shulker_bullet", "wither_skull", "llama_spit", "cushion",
+        "sulfur_cube", "sulfur_cube#inner", "sulfur_cube_small", "sulfur_cube_small#inner",
+        "pig#saddle", "strider#saddle", "horse#saddle", "donkey#saddle", "mule#saddle", "skeleton_horse#saddle", "zombie_horse#saddle",
+        "camel#saddle", "camel_husk#saddle", "nautilus#saddle",
+        "horse_armor", "undead_horse_armor", "wolf_armor", "nautilus_armor", "happy_ghast_harness", "happy_ghast_baby_harness",
+        "llama#decor", "llama_baby#decor", "cat#collar", "cat_baby#collar", "tropical_fish_small#pattern", "tropical_fish_large#pattern",
     };
 
     static Object f(Object o, String name) throws Exception {

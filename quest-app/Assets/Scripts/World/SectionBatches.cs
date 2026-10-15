@@ -22,7 +22,8 @@ using UnityEngine;
 
 namespace TabletopCraft.World
 {
-    /// <summary>One batch vertex, in Unity's attribute order: position (float3), normal (snorm8 x4), colour (unorm8 x4), uv0 (float3: u, v, layer). 32 bytes.</summary>
+    /// <summary>One batch vertex, in Unity's attribute order: position (float3), normal (snorm8 x4; [living] w = the
+    /// vertex's LightCode for the time of day, DayLight.cs), colour (unorm8 x4), uv0 (float3: u, v, layer). 32 bytes.</summary>
     [StructLayout(LayoutKind.Sequential)]
     public struct BatchVertex
     {
@@ -59,12 +60,14 @@ namespace TabletopCraft.World
             float bx = section.x * S, by = section.y * S, bz = section.z * S;
             var v = new BatchVertex[n];
             var acc = new float[n * 3];
+            bool lit = d.Light.Count == n;   // [living] every emitter filled the light codes (else: open sky)
             for (int i = 0; i < n; i++)
             {
                 var p = d.Verts[i];
                 v[i].Pos = new Vector3(p.x - bx, p.y - by, bz - p.z);
                 v[i].Color = d.Colors[i];
                 v[i].Uv = d.Uvs[i];
+                v[i].Nw = LightCode.ToSnorm(lit ? d.Light[i] : LightCode.OpenSky);   // [living] the time-of-day lookup (DayLight.cs)
             }
             int o = d.Opaque.Count, t = d.Transparent.Count, w = d.WaterBack.Count;
             var idx = new int[o + t + w];

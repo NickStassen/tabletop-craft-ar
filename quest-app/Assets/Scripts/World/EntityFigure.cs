@@ -8,7 +8,7 @@ using UnityEngine;
 
 namespace TabletopCraft.World
 {
-    public sealed class EntityFigure
+    public sealed partial class EntityFigure
     {
         public readonly GameObject Root;
         public readonly EntityLook Look;
@@ -49,9 +49,13 @@ namespace TabletopCraft.World
                 case EntityKind.Block: BuildBlock(look.Item, tex, 16f, new Vector3(0, 8, 0)); TopPx = 16; break;
                 case EntityKind.Frame: BuildFrame(e, tex); break;
                 case EntityKind.Painting: BuildPainting(e, tex); break;
+                case EntityKind.Orb: case EntityKind.Billboard: BuildBillboard(e, tex); break;   // [living]
+                case EntityKind.Lightning: BuildLightning(e, tex); break;
+                case EntityKind.Display: _info = e; BuildDisplay(e, tex); break;
                 default: BuildBox(e, tex); break;
             }
-            if (!string.IsNullOrEmpty(e.Name)) AddLabel(e.Name);
+            // [living] vanilla shows a custom name over a mob only while CustomNameVisible (or under the crosshair)
+            if (look.NameShown) AddLabel(e.Name);
         }
 
         // ---------- box models ----------
@@ -94,6 +98,7 @@ namespace TabletopCraft.World
                 t.localScale = new Vector3(p.Sx, p.Sy, p.Sz);
                 _parts[p.Index] = t;
                 bool hidden = Look.HideArms && (p.Name == "right_arm" || p.Name == "left_arm");
+                if (Look.Hidden != null && Look.Hidden.Contains(p.Name)) hidden = true;   // [living] a donkey's chests without one
                 // Armour stands: arms and base plate only when the stand has them, never the humanoid hat.
                 if (Look.ArmorStand && EntityCatalog.StandPart(_info, p.Name, 0, out _, out bool shown) && !shown) hidden = true;
                 var mesh = EntityMeshes.Part(_model, p);
@@ -123,6 +128,22 @@ namespace TabletopCraft.World
                     }
             }
             if (Look.Contents != null) BuildBlock(Look.Contents, tex, 12f, new Vector3(0, 10.5f, 0));
+            // [living] saddles, armour, carpets, harnesses, collars, patterns; pumpkins, mushrooms, carried blocks
+            if (Look.Layers != null)
+                foreach (var g in Look.Layers)
+                {
+                    var gm = EntityModels.Get(g.Model);
+                    var gt = tex.Get(g.Texture, g.Overlays, g.Tint.r == 255 && g.Tint.g == 255 && g.Tint.b == 255 ? (Color32?)null : g.Tint);
+                    if (gm == null || gt == null) continue;
+                    AttachLayer(gm, tex.Material(gt, (g.Translucent ? 1 : 0) | (g.Over ? 4 : 0)));
+                }
+            if (Look.Blocks != null)
+                foreach (var b in Look.Blocks)
+                {
+                    var host = b.Part == null ? _modelRoot : Part(b.Part);
+                    if (host != null) AttachBlock(host, b, tex);
+                }
+            if (Look.Root == RootKind.Living && _info.Path == "shulker" && _info.Attach != null) AttachFace(_info.Attach);
             if (Look.ArmorStand) PoseStand(0);
             TopPx = Look.Root == RootKind.Living ? Height() : 16;
             // LivingEntityRenderer: an invisible mob's model and its layers (wool, clothes, slime shell) aren't drawn;
@@ -209,6 +230,7 @@ namespace TabletopCraft.World
                 _spin.localPosition = new Vector3(0, bob, 0);
                 _spin.localRotation = Quaternion.AngleAxis(-a.AgeTicks / 20f * Mathf.Rad2Deg, Vector3.up);
             }
+            AnimateLiving(a, pitchDeg);   // [living] shulker lid, wither skull, bullet spin, orb pulse (EntityFigure.Living.cs)
         }
 
         // ---------- items, blocks, frames, paintings, boxes ----------
@@ -375,7 +397,7 @@ namespace TabletopCraft.World
         /// <summary>Tint (world light; box colour) and overlay (hurt flash). Only touches the renderers when it changes.</summary>
         public void SetColors(Color light, Color overlay)
         {
-            var c = new Color(light.r * _base.r, light.g * _base.g, light.b * _base.b, 1);
+            var c = new Color(light.r * _base.r, light.g * _base.g, light.b * _base.b, _base.a);   // [living] orbs are half see-through
             if (c == _color && overlay == _overlay && _applied) return;
             _color = c; _overlay = overlay; _applied = true;
             _mpb.Clear();
@@ -383,6 +405,7 @@ namespace TabletopCraft.World
             _mpb.SetColor(EntityTextures.OverlayId, overlay);
             foreach (var r in _renderers) if (r != null) r.SetPropertyBlock(_mpb);
             _gear?.SetColors(c, overlay);
+            LivingColors(light);   // [living] block models on the figure take the light as the block shaders' _Tint
         }
         bool _applied;
         Color _boxColor = Color.white;

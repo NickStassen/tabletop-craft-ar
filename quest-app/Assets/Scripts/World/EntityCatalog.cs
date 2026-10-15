@@ -8,13 +8,19 @@ using UnityEngine;
 
 namespace TabletopCraft.World
 {
-    public enum EntityKind { Model, Item, Block, Frame, Painting, Box }
+    /// <summary>[living] Orb: an experience orb's billboard; Billboard: a camera-facing sprite (dragon fireball);
+    /// Lightning: the bolt mesh (LightningBolt.cs); Display: block, item and text displays (DisplayTransform).</summary>
+    public enum EntityKind { Model, Item, Block, Frame, Painting, Box, Orb, Billboard, Lightning, Display }
 
     /// <summary>How the model root sits in the entity's frame (the game renderer's transforms before the model).
     /// Origin: the renderer only flips the model (scale -1, -1, 1), so its origin is the entity position (LeashKnotRenderer).
     /// Projectile: ArrowRenderer, rotY(yRot - 90) * rotZ(xRot), no flip, no lift. Trident: ThrownTridentRenderer,
     /// rotY(yRot - 90) * rotZ(xRot + 90). Crystal: EndCrystalRenderer, scale 2, translate (0, -0.5, 0), no flip, no yaw.</summary>
-    public enum RootKind { Living, Boat, Minecart, Origin, Projectile, Trident, Crystal }
+    /// [living] Dragon: EnderDragonRenderer, rotY(-yaw), 1 block forward, then the living flip and lift. Fangs:
+    /// EvokerFangsRenderer, rotY(90 - yaw), flip and lift. Spit: LlamaSpitRenderer, 0.15 up then like a projectile.
+    /// Bullet: ShulkerBulletRenderer, 0.15 up, spinning, flipped at half size. Cushion: CushionRenderer, rotY(180 -
+    /// facing), rotX(180), 0.25 down. Skull: WitherSkullRenderer, the flip only (the head part turns with yaw and pitch).
+    public enum RootKind { Living, Boat, Minecart, Origin, Projectile, Trident, Crystal, Dragon, Fangs, Spit, Bullet, Cushion, Skull }
 
     public sealed class EntityLook
     {
@@ -33,6 +39,13 @@ namespace TabletopCraft.World
         public string Item;                        // Item/Block/Frame: what to show; minecart contents
         public string Contents;                    // minecart display block (item id)
         public Color32 BoxColor = White;           // fallback box
+        // [living] gear and collars (more layers on the same parts), parts not drawn, block models on the figure
+        public List<GearLayer> Layers;
+        public HashSet<string> Hidden;
+        public List<BlockAttach> Blocks;
+        public int Orb = -1;                       // experience orb icon (LivingLooks.OrbIcon)
+        public string State;                       // block display: its block state
+        public bool NameShown;                     // name label: CustomNameVisible
 
         /// <summary>Texture cache key: base + overlays + tint.</summary>
         public string TextureKey => Texture + (Overlays == null ? "" : "+" + string.Join("+", Overlays));
@@ -49,9 +62,13 @@ namespace TabletopCraft.World
         {
             switch (k)
             {
-                case RootKind.Living: return new Vector3(0, 24.016f, 0);
+                case RootKind.Living: case RootKind.Fangs: return new Vector3(0, 24.016f, 0);
                 case RootKind.Boat: case RootKind.Minecart: return new Vector3(0, 6, 0);
                 case RootKind.Crystal: return new Vector3(0, -8, 0);
+                case RootKind.Dragon: return new Vector3(0, 24.016f, -16);             // [living] 1 block forward
+                case RootKind.Spit: return new Vector3(0, 2.4f, 0);                    // 0.15 up
+                case RootKind.Bullet: return new Vector3(0, 4.8f, 0);                  // 0.15 up inside the half-size root
+                case RootKind.Cushion: return new Vector3(0, 4, 0);                    // 0.25 down after the flip
                 default: return new Vector3(0, 0, 0);
             }
         }
@@ -69,9 +86,10 @@ namespace TabletopCraft.World
             {
                 case RootKind.Boat: yaw = 90; break;                                  // AbstractBoatRenderer: turned 90 degrees
                 case RootKind.Minecart: roll = -pitch; break;
-                case RootKind.Projectile: yaw = -90; roll = pitch + 180; break;       // rotY(yRot - 90) * rotZ(xRot), unflipped
+                case RootKind.Projectile: case RootKind.Spit: yaw = -90; roll = pitch + 180; break;   // rotY(yRot - 90) * rotZ(xRot), unflipped
                 case RootKind.Trident: yaw = -90; roll = pitch + 270; break;          // rotY(yRot - 90) * rotZ(xRot + 90), unflipped
                 case RootKind.Crystal: roll = 180; break;                             // unflipped, no yaw
+                case RootKind.Cushion: yaw = 180; break;                              // [living] rotX(180) = the flip turned 180
             }
         }
 
@@ -82,8 +100,11 @@ namespace TabletopCraft.World
         {
             switch (k)
             {
-                case RootKind.Projectile: case RootKind.Trident: return 180 - yaw;
-                case RootKind.Origin: case RootKind.Crystal: return 0;
+                case RootKind.Projectile: case RootKind.Trident: case RootKind.Spit: return 180 - yaw;
+                case RootKind.Origin: case RootKind.Crystal: case RootKind.Bullet: case RootKind.Skull: return 0;
+                case RootKind.Dragon: return yaw;                                    // [living] rotY(-yaw): the living turn + 180
+                case RootKind.Fangs: return yaw - 90;                                // rotY(90 - yaw)
+                case RootKind.Cushion: return 180 + Mathf.Round(yaw / 90f) * 90f;    // its facing, a horizontal direction
                 default: return 180 + yaw;
             }
         }
@@ -132,8 +153,18 @@ namespace TabletopCraft.World
             ["tnt_minecart"] = "minecraft:tnt", ["spawner_minecart"] = "minecraft:spawner", ["command_block_minecart"] = "minecraft:command_block",
         };
 
-        /// <summary>The look of an entity (always non-null; unknown types get a coloured box of their size).</summary>
+        /// <summary>The look of an entity (always non-null; unknown types get a coloured box of their size). [living] The
+        /// types this file doesn't know (dragon, wither, orbs, displays...) and the gear, collars, chests and blocks on
+        /// known ones come from LivingLooks.</summary>
         public static EntityLook Resolve(EntityInfo e)
+        {
+            var special = LivingLooks.Resolve(e);
+            var look = special ?? ResolveVanilla(e);
+            LivingLooks.Dress(e, look);
+            return look;
+        }
+
+        static EntityLook ResolveVanilla(EntityInfo e)
         {
             string t = e.Path ?? "";
             string v = e.Variant;
