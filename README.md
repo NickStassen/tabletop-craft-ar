@@ -41,6 +41,7 @@ Java players (LAN) ──game protocol──▶ Paper 26.3 + tabletop plugin ◀
 | 0.4.0: fast gliding, chat and commands, block entities | Incremental region reads and lookahead; the operator panel on X (chat, console with completion, players, world, server); chests, signs, banners, heads, books, beacons. Tested off the headset; not yet tried on a headset |
 | 0.5.0 / 0.5.1: hands, living world, operator and power tools, faster meshing | Using blocks, items and mobs; day/night, weather, leads, mob gear; follow, bookmarks, worlds, containers, signs; undo, box tools, brushes; meshing 3.5x faster and a surface skirt. Tested off the headset; not yet tried on a headset |
 | 0.6.0 / 0.7.0: sound, motion | Spatial sound from your own launcher files, opt-in asset delivery; flowing fluids, ambient particles, lids, bells, explosions, poses. Tested off the headset; not yet tried on a headset |
+| Bedrock players (Geyser + Floodgate) | Tested with a Bedrock bot on the 26.3 test server: joins, appears on the table, chats both ways, sees the giant (a Mannequin shown only to Bedrock players) and its speech bubble. Not yet tried with a real Bedrock device; see [TESTING](docs/TESTING.md) "Bedrock players" |
 
 ## Screenshots
 
@@ -96,6 +97,10 @@ Copy the jar into a Paper **26.3** server's `plugins/`, start the server once, t
 ```
 
 Fake headset: `pip install -r tools/requirements.txt && python tools/fake_quest.py --url ws://SERVER:8765/tabletop --avatar -v`.
+
+## Does it work with Bedrock?
+
+Yes, for the players: add [GeyserMC](https://geysermc.org) and Floodgate to the Paper server, and Bedrock players on phones, consoles or Windows join it alongside Java players. They show up on the table, their chat reaches the headset, and they see the giant. Geyser can't show the floating head and hands, so for Bedrock players the plugin shows a giant Mannequin with its eyes where the head is. The server is still a Java server (Java game rules). To play a Bedrock world, convert it with [Chunker](https://chunker.app). The headset still loads its textures from the Java game files, which come with Minecraft for Windows (it has included both editions since 2022). A Bedrock Dedicated Server can't host the table. Setup: [QUEST_SETUP Part Q](docs/QUEST_SETUP.md#part-q-bedrock-players-geyser-and-floodgate).
 
 ## Legal
 
