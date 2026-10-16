@@ -63,6 +63,7 @@ What has been tested and verified, and where. Each entry is backed by the sessio
 | 0.5.0 / 0.5.1: hands, living world, operator and power tools, faster meshing | Verified on a Quest 3 (2026-10-15): items, mobs, night and weather, horse gear and leads, Marks, follow, chest and sign editing, wand fill and undo. Brushes and clone not tried yet |
 | 0.6.0 / 0.7.0: sound, motion | Verified on a Quest 3 (2026-10-15): sound, opt-in asset delivery (41.5 MB pack.zip in 6 s, 67 MB sounds.zip in 8 s, scene reload clean), flowing fluids, particles, lids, bells, explosions |
 | 1.1.0: server starter, pairing, automatic game files | Tested on a test server: `tools/pair_check.py` (with and without required pairing), and the app's own code paired, then downloaded and checked all three files from a server made by `start.sh`. Not yet checked on a headset; `start.ps1` not yet run on Windows |
+| 1.2.0: mute, block and report players | Unit tests (Java, C#, Python) and a fake headset against a test server: reports saved to `reports.log`, rate limit, refusals. Not yet checked on a headset |
 | Bedrock players (Geyser + Floodgate) | Verified with Minecraft on a phone (2026-10-15): joins through Geyser, appears on the table with its skin, chats both ways with the headset, and sees the giant as a large Mannequin wearing the headset user's skin (Bedrock cannot show the floating head and hands) |
 
 ## Versions

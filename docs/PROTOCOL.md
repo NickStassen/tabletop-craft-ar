@@ -1,4 +1,4 @@
-# PROTOCOL.md — Tabletop link protocol, v1.1.0
+# PROTOCOL.md — Tabletop link protocol, v1.2.0
 
 The project version (repo `VERSION` file) versions the plugin, the Quest app and this protocol together. From 1.0.0 the version follows semantic versioning: a plugin and an app with the same major version work together, new optional fields and messages come in minor versions, and a breaking change needs a new major version. (Before 1.0 there was no backwards compatibility: plugin, app and tools of the same 0.X version went together.) The wire field `v` stays `1`.
 
@@ -86,7 +86,7 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 | `sound_groups` | S→C | every block's break, step, place, hit and fall sounds, once after the registries ("Sound", needs `sound_v1`) |
 | `assets` / `asset_get` | S→C / C→S | the operator's own pack.zip, entity_models.json and sounds.zip on offer; a chunk of one, answered by a binary frame ("Asset delivery", needs `assets_v1`) |
 | `pair_request` / `pair_code` / `paired` | C→S / S→C / S→C | ask for a pairing code; the code to show; the device token once an operator typed the code ("Pairing", needs `pair_v1`; 1.1.0) |
-| `report` / `report_ack` | C→S / S→C | report a player to the server's operators; the report's id once it is saved ("Chat safety: mute, block, report", needs `report_v1`; next version, 1.2.0) |
+| `report` / `report_ack` | C→S / S→C | report a player to the server's operators; the report's id once it is saved ("Chat safety: mute, block, report", needs `report_v1`; 1.2.0) |
 
 ### 4.1 `hello` (C→S)
 
@@ -412,7 +412,7 @@ So the headset can find a server without typing its address (QUEST_SETUP.md Part
 - **v0.8.1: no message changes.** When one headset has several `region_request`s in flight, the server applies only the newest one's read (an older one finishing later is dropped and logged `REGION_SUPERSEDED`), so a slow link can't flip the area back to an older size or place.
 - **v1.0.0: first stable release, no message changes since v0.8.1.** From here the version is semantic: plugins and apps with the same major version work together, additions come in minor versions, breaking changes need 2.0.0.
 - **v1.1.0: pairing ("Pairing").** Additive: cap `pair_v1`; `hello.device_token` and `device_name`; `welcome.server_id` (every client) and `welcome.pairing`; messages `pair_request`, `pair_code`, `paired`; error `pair_denied`; a session state "waiting for pairing" on servers that need a credential (`pair_v1` clients only; others still get 4003); the discovery reply's `id` and `pair`; the require-token switches mean "trusted session" (shared token or paired headset); a 4003 to a hello with a `device_token` makes the client drop the token and reconnect. Fixtures `hello_pair.json`, `welcome_pair.json`, `pair_request.json`, `pair_code.json`, `paired.json`, `error_pair_denied.json`, `discovery_reply_pair.json`.
-- **Next version (1.2.0): chat safety ("Chat safety: mute, block, report").** Additive: cap `report_v1` (config.yml `reports`); messages `report` (C→S) and `report_ack` (S→C); error `report_denied`; errors about a report carry `op: "report"`. Mute and block are client-side (no messages). Old peers: a 1.1.x plugin doesn't grant `report_v1` (the app greys Report, mute and block still work); a 1.1.x app never asks for it. Fixtures `hello_report.json`, `welcome_report.json`, `report.json`, `report_ack.json`, `error_report_denied.json`.
+- **v1.2.0: chat safety ("Chat safety: mute, block, report").** Additive: cap `report_v1` (config.yml `reports`); messages `report` (C→S) and `report_ack` (S→C); error `report_denied`; errors about a report carry `op: "report"`. Mute and block are client-side (no messages). Old peers: a 1.1.x plugin doesn't grant `report_v1` (the app greys Report, mute and block still work); a 1.1.x app never asks for it. Fixtures `hello_report.json`, `welcome_report.json`, `report.json`, `report_ack.json`, `error_report_denied.json`.
 - **v1.1.0: automatic game files ("Asset delivery").** Additive: asset delivery is on by default for trusted sessions (paired headsets or the `auth.token`) on the LAN, with files the plugin builds from the server PC's own Minecraft install (config.yml `assets.auto`, `assets.minecraft-dir`); the `assets` offer gains optional `state` and `note`. Fixture `assets_building.json` (Java `GameAssetsTest`, Python `test_assets_offer_state_and_note`, C# `SetupTests`).
 
 ## 4.13–4.16 Runtime region control (v1, additive)
@@ -1333,7 +1333,7 @@ So a headset needs nothing typed or pushed: instead of a shared token in tableto
 
 Fixtures `hello_pair.json`, `welcome_pair.json`, `pair_request.json`, `pair_code.json`, `paired.json`, `error_pair_denied.json`, `discovery_reply_pair.json`. Java `PairingTest` (codes, tokens, devices.yml, revoking, limits, the messages against the fixtures), Python `test_pairing_fixtures`, `test_pairing_rejects_bad_fields`, C# `Tests~/SetupTests.cs` (the token store, codes, welcome, old plugins, and LinkClient against a fake server: pings while waiting, an unpaired token). Live: `tools/pair_check.py` (pairs through the server console, then checks the game-file offer and an unpair).
 
-## Chat safety: mute, block, report (next version, 1.2.0; cap `report_v1`)
+## Chat safety: mute, block, report (1.2.0; cap `report_v1`)
 
 The headset user can stop seeing a player's chat, and tell the server's operators about a player. The people who can act on a report are the server's operators (kick, ban, whitelist), so reports go to them, not to the app's developer. Docs: QUEST_SETUP.md Part L ("Mute, block and report").
 
