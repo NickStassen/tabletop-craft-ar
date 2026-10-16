@@ -824,6 +824,38 @@ def test_asset_messages_and_frame():
         parse_asset_frame(b"XXXX" + raw[4:])
 
 
+PAIR_FIXTURES = ("hello_pair", "welcome_pair", "pair_request", "pair_code", "paired", "error_pair_denied", "discovery_reply_pair")
+
+
+def test_pairing_fixtures():
+    """[setup] next version: pairing with a 6-digit code (PROTOCOL.md "Pairing")."""
+    for name in PAIR_FIXTURES:
+        validate(json.loads((FIX / f"{name}.json").read_text()))
+    hello = json.loads((FIX / "hello_pair.json").read_text())
+    welcome = json.loads((FIX / "welcome_pair.json").read_text())
+    paired = json.loads((FIX / "paired.json").read_text())
+    reply = json.loads((FIX / "discovery_reply_pair.json").read_text())
+    assert "pair_v1" in hello["caps"] and "pair_v1" in welcome["caps"]
+    assert hello["device_token"] == paired["token"], "the headset presents the token it was given"
+    assert welcome["server_id"] == paired["server_id"] == reply["id"], "one server id in discovery, welcome and paired"
+    assert welcome["pairing"]["device"] == paired["device"]
+    err = json.loads((FIX / "error_pair_denied.json").read_text())
+    assert err["op"] == "pair_request" and err["fatal"] is False
+
+
+@pytest.mark.parametrize("name,patch", [
+    ("pair_code", {"code": "48291"}), ("pair_code", {"code": 482913}), ("pair_code", {"expires_s": 0}), ("pair_code", {"required": "yes"}),
+    ("paired", {"token": "short"}), ("paired", {"device": "A1B2C3D4"}), ("welcome_pair", {"server_id": "nope"}),
+    ("welcome_pair", {"pairing": {"paired": True, "required": False}}), ("discovery_reply_pair", {"pair": "yes"}),
+    ("hello_pair", {"device_token": 5}),
+])
+def test_pairing_rejects_bad_fields(name, patch):
+    msg = json.loads((FIX / f"{name}.json").read_text())
+    msg.update(patch)
+    with pytest.raises(ValueError):
+        validate(msg)
+
+
 def test_assets_offer_state_and_note():
     """[setup] next version: the offer says what the automatic game files are doing (PROTOCOL.md "Asset delivery")."""
     offer = json.loads((FIX / "assets_building.json").read_text())

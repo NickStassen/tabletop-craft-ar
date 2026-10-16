@@ -367,7 +367,7 @@ static class ControlTests
         var LW = n.Layout();
         check(LW.Items.Where(i => i.Part == PanelPart.Button).All(i => !i.Enabled), "panel: no command_v1 -> command buttons greyed");
         n.Point(new PanelHit(PanelPart.Button, OperatorPanelModel.BtnTime), true);
-        check(n.Click(LW, 0).Kind == PanelActionKind.Refused && n.Note.Contains("needs auth.token"), "panel: a greyed button says needs auth.token");
+        check(n.Click(LW, 0).Kind == PanelActionKind.Refused && n.Note.Contains("needs a paired headset"), "panel: a greyed button says it needs a paired headset");
         n.SetTab(OpTab.Console);
         n.Type("list", 0);
         check(n.Enter(0).Kind == PanelActionKind.Refused, "panel: console refuses without command_v1");

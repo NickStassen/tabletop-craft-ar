@@ -85,6 +85,7 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 | `sign_edit` | C→S | one side of a sign: four lines, dye colour, glowing ink ("Signs", needs `interact_v1`) |
 | `sound_groups` | S→C | every block's break, step, place, hit and fall sounds, once after the registries ("Sound", needs `sound_v1`) |
 | `assets` / `asset_get` | S→C / C→S | the operator's own pack.zip, entity_models.json and sounds.zip on offer; a chunk of one, answered by a binary frame ("Asset delivery", needs `assets_v1`) |
+| `pair_request` / `pair_code` / `paired` | C→S / S→C / S→C | ask for a pairing code; the code to show; the device token once an operator typed the code ("Pairing", needs `pair_v1`; next version) |
 
 ### 4.1 `hello` (C→S)
 
@@ -101,6 +102,7 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 - `token`: shared secret from the plugin `config.yml` (`auth.token`). If it's empty in config, auth is disabled (LAN dev only). A wrong token gets `error` `auth_failed` and then close code 4003.
 - `caps`: capability strings. v1 defines `rle_palette_v1` (required) and `avatar` (client will send poses). Optional extras: `light_v1` and `biomes_v1` (§4.5.1), `edit_v1` (§4.20), `entities_v1` (§4.21), `actions_v1` (§4.22), `chat_v1`, `command_v1` and `status_v1` (§4.26–4.28), `block_entities_v1` (§4.29), `interact_v1` ("Using blocks and items"), `world_v1` ("World state: time and weather"), `marks_v1` ("Marks: bookmarks, spawn and worlds"), `power_v1` ("Undo, box edits and brushes"); unknown caps are ignored.
 - `operator_name` (optional string): the name the headset wants in game chat (§4.26). The server keeps `[A-Za-z0-9_]`, at most 16 characters.
+- Next version (1.1.0), with the cap `pair_v1`: `device_token` (optional string), the token this server gave the headset when it was paired, and `device_name` (optional string, e.g. "Quest 3"). A valid `device_token` counts like the shared `token`; on a server that needs a credential, a `pair_v1` client without one is shown a code instead of being refused ("Pairing").
 - The client MUST NOT send anything else before it gets `welcome`. The server closes with 4002 if `hello` doesn't arrive within 5 s.
 
 ### 4.2 `welcome` (S→C)
@@ -120,6 +122,7 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 - `caps` (optional): the optional features granted to this session (§4.5.1). Missing or empty means none (e.g. an older server).
 - `region`: the default region from config. The server immediately follows `welcome` with a `chunk_snapshot` for it unless the client sends `subscribe` first. (Send order: `welcome`, then a snapshot, which the server builds async, so a `subscribe` arriving in the meantime replaces it.)
 - `limits.max_dims`: the largest `dims` the server accepts in `subscribe`.
+- Next version (1.1.0): `server_id` (string, 16 hex digits), a random id the server keeps; and for `pair_v1` sessions `pairing` (`paired`, `device`, `name`, `required`, `token_rejected`; "Pairing").
 
 ### 4.3 `subscribe` (C→S)
 
@@ -333,7 +336,8 @@ Codes (strings, closed set in v1):
 | `interact_denied` | no | an `interact` or `entity_op` without `interact_v1`, with a family switched off, or that does nothing there ("Using blocks and items"); a `container_query`, `container_edit` or `sign_edit` that isn't allowed or valid there ("Containers", "Signs") |
 | `not_found` | no | an `entity_op` whose entity is gone (died, despawned, unloaded) ("Acting on mobs") |
 | `mark_denied` | no | a `bookmark` without `marks_v1`, on a read-only server (`marks.edit`), over `marks.max`, or removing a name that doesn't exist ("Marks: bookmarks, spawn and worlds") |
-| `asset_denied` | no | an `asset_get` without `assets_v1` (asset delivery off, no `auth.token`, not from the LAN, or not asked for) ("Asset delivery"); `not_found` also answers an `asset_get` for a name that isn't offered 
+| `asset_denied` | no | an `asset_get` without `assets_v1` (nothing to serve, an untrusted session, not from the LAN, or not asked for) ("Asset delivery"); `not_found` also answers an `asset_get` for a name that isn't offered |
+| `pair_denied` | no (yes while waiting for pairing) | a `pair_request` refused: pairing off, already paired, too many requests from this address or too many headsets waiting ("Pairing"; next version) |
 
 `ref_seq` is the `seq` of the offending message, if any. When `fatal` is true, the sender closes the socket right after.
 
@@ -356,7 +360,7 @@ Then it closes with code 1000. When the Quest client disconnects (with or withou
 | 4004 | idle timeout |
 | 4005 | server shutting down / plugin disabled |
 
-A client SHOULD NOT reconnect by itself after 4001 or 4003: nothing changes until the app, the plugin, the token or the address does. The Quest app stops retrying and shows its setup card (QUEST_SETUP.md Part D); it reconnects with backoff after every other close.
+A client SHOULD NOT reconnect by itself after 4001 or 4003: nothing changes until the app, the plugin, the token or the address does. The Quest app stops retrying and shows its setup card (QUEST_SETUP.md Part D); it reconnects with backoff after every other close. Next version: after a 4003 to a `hello` that carried a `device_token` (the headset was unpaired), the client drops that token and reconnects without it, which shows a new code ("Pairing").
 
 ## 6. Implementation notes (non-normative)
 
@@ -379,6 +383,7 @@ So the headset can find a server without typing its address (QUEST_SETUP.md Part
 - The plugin answers only probes with `v` 1 from private (10/8, 172.16/12, 192.168/16), link-local or loopback addresses, at most 20 replies a second, and ignores everything else. `discovery.enabled: false` turns it off.
 - Why a probe and not a periodic beacon: an Android app receives broadcast or multicast only while it holds a `WifiManager.MulticastLock` (with the `CHANGE_WIFI_MULTICAST_STATE` permission), while sending a broadcast and receiving a unicast reply need neither. The Quest app's manifest is unchanged.
 - **Fallback (client only).** If nothing answers (a firewall that lets only TCP 8765 through), the Quest app connects to TCP 8765 on every host of its /24 (400 ms each, 48 at a time) and lists the hosts that accept as "port open". It never sends `hello` to them; connecting is the user's choice.
+- Next version (1.1.0): the reply also carries `id` (the server's `server_id`, so a headset recognises a paired server whose address changed) and `pair` (true when it pairs headsets: no token to type even if `token` is true). Fixture `discovery_reply_pair.json`.
 - Fixtures: `tools/fixtures/discovery_probe.json`, `discovery_reply.json` (Java `LanBeaconTest`, Python `test_discovery_*`, C# `Tests~/ComfortTests.cs`).
 
 ## Changelog
@@ -404,6 +409,7 @@ So the headset can find a server without typing its address (QUEST_SETUP.md Part
 - **v0.8.0: no message changes.** Bedrock players joining through Geyser/Floodgate are ordinary players here (names may start with `.`); the plugin now re-sends a player's `skin` when it changes, as §4.6 always said (Floodgate applies Bedrock skins after the join).
 - **v0.8.1: no message changes.** When one headset has several `region_request`s in flight, the server applies only the newest one's read (an older one finishing later is dropped and logged `REGION_SUPERSEDED`), so a slow link can't flip the area back to an older size or place.
 - **v1.0.0: first stable release, no message changes since v0.8.1.** From here the version is semantic: plugins and apps with the same major version work together, additions come in minor versions, breaking changes need 2.0.0.
+- **next version (1.1.0): pairing ("Pairing").** Additive: cap `pair_v1`; `hello.device_token` and `device_name`; `welcome.server_id` (every client) and `welcome.pairing`; messages `pair_request`, `pair_code`, `paired`; error `pair_denied`; a session state "waiting for pairing" on servers that need a credential (`pair_v1` clients only; others still get 4003); the discovery reply's `id` and `pair`; the require-token switches mean "trusted session" (shared token or paired headset); a 4003 to a hello with a `device_token` makes the client drop the token and reconnect. Fixtures `hello_pair.json`, `welcome_pair.json`, `pair_request.json`, `pair_code.json`, `paired.json`, `error_pair_denied.json`, `discovery_reply_pair.json`.
 - **next version (1.1.0): automatic game files ("Asset delivery").** Additive: asset delivery is on by default for trusted sessions (paired headsets or the `auth.token`) on the LAN, with files the plugin builds from the server PC's own Minecraft install (config.yml `assets.auto`, `assets.minecraft-dir`); the `assets` offer gains optional `state` and `note`. Fixture `assets_building.json` (Java `GameAssetsTest`, Python `test_assets_offer_state_and_note`, C# `SetupTests`).
 
 ## 4.13–4.16 Runtime region control (v1, additive)
@@ -1283,6 +1289,46 @@ A server hands its operator's own headsets the files the app reads from its file
 - **Why binary frames over the same WebSocket** and not an HTTP GET with the token: the session is already authenticated and LAN-checked, no second port or firewall rule is needed, Java-WebSocket can't serve plain HTTP on its port, and pulling chunk by chunk gives flow control and resuming for free.
 
 Fixtures `assets.json`, `asset_get.json`, `error_asset_denied.json`, `asset_chunk.bin` (one frame). Java `SoundTest` (frame byte for byte, LAN check), Python `test_asset_messages_and_frame`, C# `Tests~/SoundTests.cs` (offer, frame, a download against an in-memory server with resume and a checksum mismatch). Live: `tools/sound_check.py --assets-dir DIR`, `Tests~ --live-assets URL TOKEN` (the app's own classes; dummy files).
+
+## Pairing (next version, 1.1.0; cap `pair_v1`)
+
+So a headset needs nothing typed or pushed: instead of a shared token in tabletop.json, an operator who can see the headset approves it once with a 6-digit code, and the server gives that headset its own device token. QUEST_SETUP.md "Store install" shows the steps; the plugin side is `PairingService.java`, the app side `Net/Pairing.cs`.
+
+**Flow.**
+
+1. The client asks for `pair_v1` in `hello.caps` and, if it was paired with this server before, sends `device_token`. It also sends `device_name` (what the server lists it as, e.g. "Quest 3"; at most 32 printable characters are kept).
+2. The server decides at `hello`:
+   - a valid `auth.token` or a known `device_token`: the session is **trusted** and goes on as usual (`welcome`);
+   - neither, on an **open** server (no `auth.token`, config.yml `auth.require-pairing` false): `welcome` as usual, untrusted. The client then sends `pair_request` to get a code (the Quest app does so by itself when it has no token for this server);
+   - neither, on a **closed** server (`auth.token` set, or `auth.require-pairing`): a `pair_v1` client gets `pair_code` at once and the session waits (state "pairing", no `welcome` yet). A client without `pair_v1` gets `auth_failed` and close 4003, as before.
+3. The client shows the code. The server never prints it: its console and online operators see `Headset "Quest 3" (192.168.1.23) wants to pair: type the 6-digit code it shows, /tabletop pair <code>`. Typing the code proves the operator can see that headset.
+4. An operator runs `/tabletop pair <code> [player]` (console, or `tabletop.admin`). The server sends `paired` with a new token. `player` (optional) is the Java account whose skin the giant wears and whose name is used in chat when the headset names none (`avatar_config.skin_player`, `hello.operator_name`).
+5. A waiting session (closed server) then continues on the same connection: `welcome` and everything after it, as a trusted session. A session that already had `welcome` (open server) keeps going untrusted; the client reconnects with its new `device_token` to get the trusted features.
+
+```json
+{"v":1,"type":"pair_code","seq":1,"t":1760370000014,"code":"482913","expires_s":300,"required":true}
+{"v":1,"type":"pair_request","seq":3,"t":1760370000200,"device_name":"Quest 3"}
+{"v":1,"type":"paired","seq":2,"t":1760370031000,"token":"q1mTq3z9yZQ0nI5c1o0m8m3rT9JdY0cB7v1hJ3zK2xA","device":"a1b2c3d4","name":"Quest 3","server_id":"3f9c2a7e1b4d5c6a"}
+```
+
+- **`pair_code` (S→C)**: `code` (6 digits, a string), `expires_s` (300), `required` (true: the world waits for it), optional `token_rejected` (the `device_token` in `hello` is unknown: unpaired, or the server lost devices.yml; the client drops it). A new `pair_request` replaces the session's code. A code works once.
+- **`pair_request` (C→S)**, optional `device_name`: allowed while waiting (a fresh code when the old one expired) and on an open server's untrusted session. Refused with `error` `pair_denied` (`op: "pair_request"`) when pairing is off (config.yml `auth.pairing`), the headset is already paired, more than 6 requests came from its address in a minute, or 16 headsets are waiting; while waiting, that error is fatal and the server closes with 4003. Without `pair_v1` the answer is `unsupported`.
+- **`paired` (S→C)**: `token` (256 random bits, base64url, 43 characters), `device` (8 hex digits, the server's id for this headset), `name`, `server_id`. The token is sent this once; the server stores only its SHA-256 (plugins/TabletopCraftAR/devices.yml) and the client keeps it per server (the Quest app in `pairings.json` in its files folder, keyed by `server_id`).
+- **While waiting** the server accepts only `ping`, `pong`, `bye` and `pair_request` (anything else: `bad_message`) and closes after 15 s without a message (4004), so the client pings as usual (the Quest app does from the `pair_code` on). The 5 s hello timeout doesn't apply.
+- **`welcome`** (to every client) gains `server_id`: a random id the server keeps (16 hex digits), also in the discovery reply (§7). To `pair_v1` sessions it adds `pairing`: `paired` (bool), `device` and `name` when paired, `required` (whether this server needs a credential), optional `token_rejected`. `welcome.caps` lists `pair_v1` when the server pairs.
+
+```json
+"server_id":"3f9c2a7e1b4d5c6a",
+"pairing":{"paired":true,"device":"a1b2c3d4","name":"Quest 3","required":false}
+```
+
+- **Trusted sessions** may have what the config.yml switches `edit.require-token`, `edit.power-require-token`, `interact.require-token`, `marks.require-token` and `commands.require-token` keep for them (each "requires a token" means "requires a trusted session": the shared token or a paired headset), and the game files ("Asset delivery"). Up to 1.0.x those switches meant "the server has an `auth.token`"; on a server with a token every session is trusted, so that case is unchanged.
+- **Revoking.** `/tabletop devices` lists paired headsets (id, name, player, when paired, last seen) and the ones waiting with a code (never the code). `/tabletop unpair <id|name|all>` removes them; a connected one gets `error` `auth_failed` "this headset was unpaired on the server" and close 4003. A client that presented a `device_token` and gets 4003 forgets that token and connects again without it (so it shows a new code) instead of stopping (§5).
+- **Security.** The link is plain `ws://`: device tokens travel in clear like the shared token, so this suits a trusted LAN (ARCHITECTURE.md 6). The code itself never leaves the headset and the operator's keyboard; a code is only useful to the headset that asked for it.
+
+**Older peers.** A 1.0.x plugin ignores `pair_v1`, `device_token` and `device_name`: the client sees no `welcome.pairing` and keeps working without pairing (the Quest app says once that a plugin update to 1.1.0 adds pairing and automatic game files, with the releases link). A 1.0.x app never asks for `pair_v1`: on an open server it works as before; on a server with `auth.require-pairing` it gets 4003.
+
+Fixtures `hello_pair.json`, `welcome_pair.json`, `pair_request.json`, `pair_code.json`, `paired.json`, `error_pair_denied.json`, `discovery_reply_pair.json`. Java `PairingTest` (codes, tokens, devices.yml, revoking, limits, the messages against the fixtures), Python `test_pairing_fixtures`, `test_pairing_rejects_bad_fields`, C# `Tests~/SetupTests.cs` (the token store, codes, welcome, old plugins, and LinkClient against a fake server: pings while waiting, an unpaired token). Live: `tools/pair_check.py` (pairs through the server console, then checks the game-file offer and an unpair).
 
 ## Block animations (v0.7.0; `actions_v1`, `entities_v1`)
 

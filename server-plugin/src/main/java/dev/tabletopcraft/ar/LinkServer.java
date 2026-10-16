@@ -82,6 +82,11 @@ public final class LinkServer extends WebSocketServer {
                 s.send(Protocol.error("bad_message", "send hello first", refSeq, false));
                 return;
             }
+            // [setup] waiting for /tabletop pair: nothing but keep-alive, goodbye and a fresh code
+            if (s.state == Session.State.PAIRING && !(type.equals("ping") || type.equals("pong") || type.equals("bye") || type.equals("pair_request"))) {
+                s.send(Protocol.error("bad_message", "pair this headset first (/tabletop pair <code> on the server)", refSeq, false));
+                return;
+            }
             switch (type) {
                 case "hello" -> onHello(s, m, refSeq);
                 case "subscribe" -> {
@@ -213,6 +218,7 @@ public final class LinkServer extends WebSocketServer {
                     s.send(p);
                 }
                 case "pong" -> { /* server-initiated pings are not used in v0.1 */ }
+                case "pair_request" -> onPairRequest(s, m, refSeq);   // [setup] PROTOCOL.md "Pairing"
                 case "bye" -> s.conn.close(1000, "bye");
                 case "error" -> {
                     plugin.getLogger().warning("Client error from " + s.client + ": " + m);
@@ -233,8 +239,28 @@ public final class LinkServer extends WebSocketServer {
             for (var e : m.getAsJsonArray("protocols")) if (e.getAsInt() == Protocol.VERSION) speaks = true;
         if (!speaks) { fatal(s, "version_mismatch", "server speaks protocols [" + Protocol.VERSION + "]", refSeq, Protocol.CLOSE_VERSION); return; }
         String t = m.has("token") && !m.get("token").isJsonNull() ? m.get("token").getAsString() : "";
-        if (!token.isEmpty() && !tokenMatches(token, t)) { fatal(s, "auth_failed", "bad or missing token", refSeq, Protocol.CLOSE_AUTH); return; }
-        s.trusted = !token.isEmpty();   // [setup] it matched
+        boolean tokenOk = !token.isEmpty() && tokenMatches(token, t);
+        // [setup] Pairing (PROTOCOL.md "Pairing"): a paired headset's device token counts like the shared token.
+        PairingService pairing = plugin.pairing;
+        s.pairCap = pairing.enabled() && hasCap(m, PairingService.CAP);
+        s.deviceName = PairingService.cleanName(str(m, "device_name"));
+        String dt = str(m, "device_token");
+        PairingService.Device d = dt == null || dt.isEmpty() ? null : pairing.check(dt);
+        s.deviceTokenRejected = dt != null && !dt.isEmpty() && d == null;
+        if (d != null) { s.deviceId = d.id(); s.devicePlayer = d.player(); }
+        s.trusted = tokenOk || d != null;
+        boolean closed = !token.isEmpty() || pairing.required();
+        if (closed && !s.trusted) {
+            if (s.pairCap) { s.hello = m; s.state = Session.State.PAIRING; sendCode(s, true, refSeq); return; }
+            fatal(s, "auth_failed", token.isEmpty() ? "this server pairs its headsets: update the app to 1.1 or newer" : "bad or missing token", refSeq, Protocol.CLOSE_AUTH);
+            return;
+        }
+        finishHello(s, m);
+    }
+
+    /** [setup] The rest of hello, once the session may have the world: caps, limits, READY. Also after /tabletop pair. */
+    void finishHello(Session s, JsonObject m) {
+        s.hello = null;
         s.client = m.has("client") ? m.get("client").getAsString() : "unknown";
         if (m.has("caps") && m.get("caps").isJsonArray()) {
             java.util.Set<String> caps = new java.util.HashSet<>();
@@ -251,28 +277,67 @@ public final class LinkServer extends WebSocketServer {
                 else if (c.equals(Protocol.CAP_ENTITIES)) s.wantsEntities = plugin.entitiesEnabled();
                 else if (c.equals(Protocol.CAP_ACTIONS)) s.wantsActions = plugin.actionsEnabled();
                 else if (c.equals(Protocol.CAP_BLOCK_ENTITIES)) s.wantsBlockEntities = plugin.blockEntitiesEnabled();   // [blocks]
-                else if (c.equals(Protocol.CAP_EDIT) && plugin.editAllowed()) { s.editLimiter = new EditLimiter(plugin.editRate()); s.canEdit = true; }
+                else if (c.equals(Protocol.CAP_EDIT) && plugin.editAllowed(s)) { s.editLimiter = new EditLimiter(plugin.editRate()); s.canEdit = true; }
                 // [talk] PROTOCOL.md 4.26-4.28
                 else if (c.equals(ControlMessages.CAP_CHAT) && plugin.control.chatAllowed()) s.wantsChat = true;
-                else if (c.equals(ControlMessages.CAP_COMMAND) && plugin.control.commandsAllowed()) s.canCommand = true;
+                else if (c.equals(ControlMessages.CAP_COMMAND) && plugin.control.commandsAllowed(s)) s.canCommand = true;
                 else if (c.equals(ControlMessages.CAP_STATUS) && plugin.control.statusAllowed()) s.wantsStatus = true;
-                else if (c.equals(InteractMessages.CAP) && plugin.interact.allowed()) plugin.interact.grant(s);   // [hands]
+                else if (c.equals(InteractMessages.CAP) && plugin.interact.allowed(s)) plugin.interact.grant(s);   // [hands]
                 else if (c.equals(PowerMessages.CAP)) wantsPower = true;
                 else if (c.equals(Protocol.CAP_WORLD)) s.wantsWorld = plugin.worldStateEnabled();   // [living] world_state
                 else if (c.equals(Protocol.CAP_SOUND)) s.wantsSound = plugin.soundEnabled();        // [sound]
                 else if (c.equals(AssetService.CAP)) plugin.assets.grant(s);   // [sound] only with auth.token set, from the LAN
-                else if (c.equals(OperatorMessages.CAP_MARKS) && plugin.operator.marksAllowed()) s.wantsMarks = true;   // [operator]
+                else if (c.equals(OperatorMessages.CAP_MARKS) && plugin.operator.marksAllowed(s)) s.wantsMarks = true;   // [operator]
             }
-        if (wantsPower && s.canEdit && plugin.power.allowed()) plugin.power.grant(s);   // [power]
+        if (wantsPower && s.canEdit && plugin.power.allowed(s)) plugin.power.grant(s);   // [power]
         ControlService cs = plugin.control;   // [talk] rate limits (token buckets) and the chat name
         s.chatLimiter = new EditLimiter(cs.chatRate, cs.chatBurst);
         s.commandLimiter = new EditLimiter(cs.commandRate, cs.commandBurst);
         s.completeLimiter = new EditLimiter(cs.completeRate, cs.completeRate);
-        s.operatorName = ChatText.name(m.has("operator_name") && m.get("operator_name").isJsonPrimitive() ? m.get("operator_name").getAsString() : null, cs.defaultName);
+        s.operatorName = ChatText.name(m.has("operator_name") && m.get("operator_name").isJsonPrimitive() ? m.get("operator_name").getAsString() : null,
+            s.devicePlayer != null ? s.devicePlayer : cs.defaultName);   // [setup] a paired headset's player
         s.state = Session.State.READY;
         plugin.getLogger().info("Hello from " + s.client + " (session " + s.id + ") @ " + s.conn.getRemoteSocketAddress());
         plugin.enqueue(() -> plugin.onReady(s));
     }
+
+    /** [setup] pair_request: a fresh code for a headset without a credential (READY on an open server, or PAIRING). */
+    private void onPairRequest(Session s, JsonObject m, Long refSeq) {
+        if (!s.pairCap) { s.send(pairError("unsupported", plugin.pairing.enabled() ? "ask for pair_v1 in hello.caps" : "pairing is off on this server (auth.pairing)", refSeq, false)); return; }
+        if (s.deviceId != null) { s.send(pairError("pair_denied", "this headset is already paired with this server", refSeq, false)); return; }
+        if (m.has("device_name") && m.get("device_name").isJsonPrimitive()) s.deviceName = PairingService.cleanName(m.get("device_name").getAsString());
+        sendCode(s, s.state == Session.State.PAIRING, refSeq);
+    }
+
+    /** [setup] Ask PairingService for a code and show it on the headset (never on the server: typing it proves you see the headset). */
+    private void sendCode(Session s, boolean required, Long refSeq) {
+        String addr = s.conn.getRemoteSocketAddress() instanceof InetSocketAddress isa ? isa.getAddress().getHostAddress() : "?";
+        long now = System.currentTimeMillis();
+        PairingService.Pending p = plugin.pairing.request(s, s.deviceName, addr, now);
+        if (p == null) {
+            String why = plugin.pairing.refusal(addr, now);
+            plugin.getLogger().info("PAIR refused for " + addr + ": " + why);
+            if (required) { s.send(pairError("pair_denied", why, refSeq, true)); s.conn.close(Protocol.CLOSE_AUTH, "pair_denied"); }
+            else s.send(pairError("pair_denied", why, refSeq, false));
+            return;
+        }
+        s.send(PairingService.codeMessage(p, required, s.deviceTokenRejected));
+        plugin.enqueue(() -> plugin.announcePairing(s.deviceName, addr));
+    }
+
+    static JsonObject pairError(String code, String message, Long refSeq, boolean fatal) {
+        JsonObject o = Protocol.error(code, message, refSeq, fatal);
+        o.addProperty("op", "pair_request");
+        return o;
+    }
+
+    private static boolean hasCap(JsonObject m, String cap) {
+        if (!m.has("caps") || !m.get("caps").isJsonArray()) return false;
+        for (var e : m.getAsJsonArray("caps")) if (e.isJsonPrimitive() && e.getAsString().equals(cap)) return true;
+        return false;
+    }
+
+    private static String str(JsonObject m, String k) { return m.has(k) && m.get(k).isJsonPrimitive() ? m.get(k).getAsString() : null; }
 
     /** [talk] True (and an error rate_limited sent) when the session's bucket is empty. */
     private boolean limited(Session s, EditLimiter lim, String what, Long refSeq) {

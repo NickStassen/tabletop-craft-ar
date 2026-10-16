@@ -257,6 +257,8 @@ static class Program
         if (liveControlIdx >= 0) ControlTests.Live(args[liveControlIdx + 1], liveControlIdx + 2 < args.Length ? args[liveControlIdx + 2] : "", Check);
         int liveAssetsIdx = Array.IndexOf(args, "--live-assets");   // [sound] --live-assets URL TOKEN (assets.serve on, dummy files)
         if (liveAssetsIdx >= 0) SoundTests.LiveAssets(args[liveAssetsIdx + 1], liveAssetsIdx + 2 < args.Length ? args[liveAssetsIdx + 2] : "", Check);
+        int livePairIdx = Array.IndexOf(args, "--live-pair");   // [setup] --live-pair URL CONSOLE_FIFO (pairing + automatic game files)
+        if (livePairIdx >= 0) SetupTests.LivePair(args[livePairIdx + 1], args[livePairIdx + 2], Check);
         Console.WriteLine(fails == 0 ? "ALL PASS" : $"{fails} FAILED");
         return fails == 0 ? 0 : 1;
     }

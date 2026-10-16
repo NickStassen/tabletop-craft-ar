@@ -1,0 +1,11 @@
+{
+ "v": 1,
+ "type": "error",
+ "seq": 4,
+ "t": 1760370000210,
+ "code": "pair_denied",
+ "message": "too many pairing requests from this address: try again in a minute",
+ "ref_seq": 3,
+ "fatal": false,
+ "op": "pair_request"
+}

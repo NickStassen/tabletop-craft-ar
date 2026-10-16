@@ -73,7 +73,7 @@ final class GameAssets {
     /** Start (or reload): auto off = nothing; else find the game and build what is missing or stale on a worker. */
     synchronized void configure(boolean auto, Path cacheDir, String mcVersion, Path override, String pluginVersion, String classpath, String javaCmd) {
         stop();
-        this.dir = cacheDir;
+        this.dir = cacheDir.toAbsolutePath().normalize();   // the tools run in another working directory
         this.version = mcVersion;
         this.override = override;
         this.pluginVersion = pluginVersion;
@@ -213,7 +213,7 @@ final class GameAssets {
         int code = runChild(cmd, dir, tail);
         if (code != 0 || !Files.isRegularFile(tmp) || Files.size(tmp) == 0) {
             Files.deleteIfExists(tmp);
-            throw new IOException(main + " exited " + code + (tail.isEmpty() ? "" : ": " + tail.peekLast()));
+            throw new IOException(main + " exited " + code + (tail.isEmpty() ? "" : ": " + firstError(tail)));
         }
         for (String l : tail) if (l.startsWith("WARN")) log.fine("ASSETS " + main + ": " + l);
         Files.move(tmp, out, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
@@ -239,6 +239,14 @@ final class GameAssets {
         } finally {
             child = null;
             if (p.isAlive()) p.destroyForcibly();
+        }
+    }
+
+    /** The line that says what went wrong (an exception's message, not its stack frames), else the last line. */
+    static String firstError(Deque<String> tail) {
+        synchronized (tail) {
+            for (String l : tail) if (!l.isBlank() && !l.startsWith("\t") && !l.startsWith("    at ") && !l.startsWith("WARN")) return l.trim();
+            return tail.isEmpty() ? "" : tail.peekLast().trim();
         }
     }
 

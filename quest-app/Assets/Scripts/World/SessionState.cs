@@ -2,6 +2,8 @@
 // when to hide the stale players and entities, the "Loading area" progress, and the A-button hold that re-places the
 // table. TabletopApp, XR/SetupCard.cs, XR/TableMarkers.cs and XR/TablePlacement.cs draw and wire them.
 using System;
+using System.Collections.Generic;
+using TabletopCraft.Net;
 
 namespace TabletopCraft.World
 {
@@ -40,11 +42,13 @@ namespace TabletopCraft.World
     public static class SetupCard
     {
         public const string Title = "Can't reach the Minecraft server";
+        /// <summary>[setup] Minecraft's usage guidelines: shown prominently (first-run card, Info tab, store listing).</summary>
+        public const string Disclaimer = "NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.";
 
         /// <summary>The card's text: what was tried, what happened, where the settings file is and what to do.</summary>
         public static string Text(string url, string status, int fatalCode, string fatalReason, string configPath, bool paused = false)
         {
-            string title = fatalCode == 4003 ? "The server refused the token"
+            string title = fatalCode == 4003 ? "The server refused this headset"
                          : fatalCode == 4001 ? "App and server don't match"
                          : fatalCode == 1 ? "The server address isn't valid"
                          : Title;
@@ -60,6 +64,59 @@ namespace TabletopCraft.World
         }
 
         static string Short(string s, int n) => string.IsNullOrEmpty(s) ? "-" : s.Length <= n ? s : s.Substring(0, n - 1) + "…";
+
+        /// <summary>[setup] The pairing card: the code in large type and where to type it (QUEST_SETUP.md "Store install").</summary>
+        public static string PairText(PairCode code, double now, string host)
+        {
+            int s = code.SecondsLeft(now);
+            return "Pair this headset with your server\n\n" +
+                   $"<size=110>{code.Spaced}</size>\n\n" +
+                   "In the server window on your PC, type:\n" +
+                   $"   tabletop pair {code.Code}\n" +
+                   "(in game, as an operator: /tabletop pair " + code.Code + ")\n\n" +
+                   $"Server: {Short(host, 48)}   code valid {s / 60}:{s % 60:00}\n" +
+                   (code.Required ? "The world loads once the server knows this headset."
+                                  : "The world works meanwhile; pairing adds the game's textures and sounds.");
+        }
+
+        /// <summary>[setup] First run (no server chosen yet): looking for servers on the LAN, or how to start one.</summary>
+        public static string FirstRunText(FirstRun run)
+        {
+            string found = run.Searches == 0 ? "Looking for your Minecraft server on this Wi-Fi..."
+                         : run.Candidates == 0 ? $"No server found on this Wi-Fi yet (searched {run.Searches}x, again every {run.Interval:F0} s)."
+                         : $"Found {run.Candidates} servers: pick yours in the menu (left menu button) > Info > Server.";
+            return "Welcome to Tabletop Craft AR\n\n" + found + "\n\n" +
+                   "1. On your PC, start Minecraft: Java Edition once (same version as the server).\n" +
+                   "2. Run the server starter there (start.bat / start.sh, see the setup guide).\n" +
+                   "3. This headset finds it on the same Wi-Fi and asks to pair.\n\n" +
+                   "Or type its address: menu button (left) > Info > Server.\n\n" + Disclaimer;
+        }
+    }
+
+    /// <summary>
+    /// [setup] The first start without a server (no tabletop.json "server"): search the LAN every Interval seconds and
+    /// connect by itself when exactly one plugin answers; with several, the user picks one on the Info tab.
+    /// </summary>
+    public sealed class FirstRun
+    {
+        public bool Active;
+        public double Interval = 8;
+        public int Searches, Candidates;
+        double _next;
+
+        public bool ShouldSearch(double now, bool searching) => Active && !searching && now >= _next;
+
+        /// <summary>A search finished: the URL to connect to by itself (exactly one plugin answered), else null.</summary>
+        public string Searched(List<FoundServer> found, double now)
+        {
+            Searches++;
+            _next = now + Interval;
+            var real = found == null ? new List<FoundServer>() : found.FindAll(f => !f.PortOnly);
+            Candidates = real.Count;
+            return Active && real.Count == 1 ? real[0].Url : null;
+        }
+
+        public void Done() => Active = false;
     }
 
     /// <summary>"Loading area 40 %" while a big area change is meshed (a resize, a jump elsewhere or a full snapshot).</summary>

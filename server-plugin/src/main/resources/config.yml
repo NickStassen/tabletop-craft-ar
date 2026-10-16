@@ -4,8 +4,19 @@ bind:
   port: 8765
   path: /tabletop
 auth:
-  # Shared secret the headset sends in hello. Empty = auth disabled (LAN dev only). [talk] Server commands from the
-  # headset (commands below) need it by default; it travels in clear on the LAN (ws://).
+  # [setup] Pairing (PROTOCOL.md "Pairing", QUEST_SETUP.md "Store install"): a headset without a credential shows a
+  # 6-digit code; type /tabletop pair <code> here (console, or in game with tabletop.admin) and it gets its own device
+  # token, kept on the headset. /tabletop devices lists paired headsets, /tabletop unpair <id|name|all> revokes them
+  # (plugins/TabletopCraftAR/devices.yml holds only hashes). A paired headset is "trusted": it gets the game files
+  # (assets below) and everything the require-token switches keep for trusted headsets (commands, by default).
+  pairing: true
+  # true: a headset must be paired (or present the token below) before it sees anything; unpaired headsets wait on
+  # their code. false: unpaired headsets still see and edit the world, but get no game files and no trusted features.
+  # Headset apps older than 1.1 can't pair: they need the token below, or this false.
+  require-pairing: false
+  # Shared secret a headset can send in hello instead of pairing (tabletop.json "token"; for scripts and old apps).
+  # Empty = no shared secret. With a token set, every headset must present it or be paired. It travels in clear on
+  # the LAN (ws://), like the device tokens.
   token: ""
 # LAN discovery (PROTOCOL.md 7): the headset's "Find servers" (block menu > Info > Server) broadcasts a small UDP probe
 # and this server answers with its name, the WebSocket port and path above, and whether a token is needed. Only
@@ -143,7 +154,7 @@ edit:
   # Break and place blocks from the headset (block_edit, PROTOCOL.md 4.20). Headsets that ask for edit_v1 in hello.caps
   # get it in welcome.caps; edits are only applied inside the table's region. On by default for a LAN dev server.
   enabled: true
-  # true: only allow editing when auth.token is set above (then every connected headset presented the token).
+  # true: only trusted headsets (paired, or presenting auth.token above) may edit.
   require-token: false
   # Edits per second per headset (token bucket); more get error rate_limited.
   max-per-second: 20
@@ -161,7 +172,7 @@ edit:
   # [power] Undo/redo, box tools and brushes for headsets that ask for power_v1 (PROTOCOL.md "Undo and redo", "Box
   # edits", "Brushes"). Needs edit_v1 above. Only inside the table's region and the world border, like block editing.
   power: true
-  # true: only when auth.token above is set (every connected headset presented the token).
+  # true: only trusted headsets (paired, or presenting auth.token above).
   power-require-token: false
   # Blocks of undo history per headset (the oldest edits are forgotten first; the newest edit is always kept whole,
   # so a box bigger than this can be undone until the next edit). 0 = no undo.
@@ -186,7 +197,7 @@ edit:
 # entities.margin), like block editing; protection plugins are not consulted. Fire and lava can spread beyond the region.
 interact:
   enabled: true
-  # true: only when auth.token above is set (every connected headset presented the token).
+  # true: only trusted headsets (paired, or presenting auth.token above).
   require-token: false
   # Uses and mob actions per second per headset (a token bucket); more get error rate_limited. Carrying a mob sends up
   # to 10 moves a second on a bucket of its own.
@@ -223,7 +234,7 @@ interact:
 # coordinates are ordinary region_requests, so they need nothing here.
 marks:
   enabled: true
-  # true: only when auth.token above is set (every connected headset presented the token).
+  # true: only trusted headsets (paired, or presenting auth.token above).
   require-token: false
   # false: headsets see and use the bookmarks but can't add or remove them.
   edit: true
@@ -249,12 +260,13 @@ chat:
   # The headset's line floats above the giant's head for Java players for this many seconds (0 = off).
   bubble-seconds: 5
 # [talk] Server commands from the headset (command_v1, PROTOCOL.md 4.27). A headset command runs with operator
-# rights (like the console), so by default it needs auth.token: without a token there is no command_v1 at all.
-# SECURITY: the link is plain ws:// on the LAN. The token and every command travel unencrypted, and anyone who can
-# sniff the LAN can replay the token. Use it only on a network you trust; ARCHITECTURE.md 6 has wss:// beyond that.
+# rights (like the console), so by default only trusted headsets get it: paired ones (/tabletop pair) or ones that
+# present auth.token.
+# SECURITY: the link is plain ws:// on the LAN. Tokens and every command travel unencrypted, and anyone who can sniff
+# the LAN can replay a token. Use it only on a network you trust; ARCHITECTURE.md 6 has wss:// beyond that.
 commands:
   enabled: true
-  # true: commands only when auth.token above is set (every connected headset presented it).
+  # true: commands only for trusted headsets (paired, or presenting auth.token above).
   require-token: true
   # Commands per second per headset (a token bucket of "burst"). Tab completions and the world/players queries share
   # their own limit (completions-per-second).

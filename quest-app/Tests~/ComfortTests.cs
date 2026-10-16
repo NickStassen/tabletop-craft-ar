@@ -396,7 +396,7 @@ static class ComfortTests
     }
 
     /// <summary>A tiny WebSocket server on loopback (RFC 6455 handshake + WebSocket.CreateFromStream).</summary>
-    sealed class FakeServer : IDisposable
+    internal sealed class FakeServer : IDisposable
     {
         readonly TcpListener _l = new TcpListener(IPAddress.Loopback, 0);
         readonly Func<WebSocket, int, Task> _session;
@@ -440,7 +440,7 @@ static class ComfortTests
 
     const string Welcome = "{\"v\":1,\"type\":\"welcome\",\"seq\":0,\"t\":0,\"session\":\"s\"}";
 
-    static bool Until(Func<bool> cond, int ms)
+    internal static bool Until(Func<bool> cond, int ms)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
         while (sw.ElapsedMilliseconds < ms) { if (cond()) return true; Thread.Sleep(20); }
@@ -517,7 +517,7 @@ static class ComfortTests
         none.Shutdown("test", 50);
     }
 
-    static async Task<Dictionary<string, object>> srvNext(WebSocket ws)
+    internal static async Task<Dictionary<string, object>> srvNext(WebSocket ws)
     {
         var buf = new byte[65536];
         try
@@ -552,7 +552,7 @@ static class ComfortTests
         check(card.StartsWith(SetupCard.Title) && card.Contains("ws://192.168.1.50:8765/tabletop") && card.Contains("Connection refused") && card.Contains("tabletop.json")
               && card.Contains("Info > Server") && card.Contains("QUEST_SETUP.md Part D") && card.Contains("Retrying"), "setup card: URL, status, settings file, what to do");
         string tok = SetupCard.Text("ws://x:1/t", "closed 4003", 4003, "wrong token: ...", "/p/tabletop.json");
-        check(tok.StartsWith("The server refused the token") && tok.Contains("wrong token") && tok.Contains("Not retrying"), "setup card: 4003 says token, no retry");
+        check(tok.StartsWith("The server refused this headset") && tok.Contains("wrong token") && tok.Contains("Not retrying"), "setup card: 4003 says token, no retry");
 
         var lp = new LoadProgress();
         lp.Begin(10);

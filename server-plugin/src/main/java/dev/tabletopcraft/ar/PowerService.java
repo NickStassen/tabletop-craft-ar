@@ -110,6 +110,8 @@ final class PowerService {
 
     /** power_v1 is granted with edit_v1, when edit.power is on and, with edit.power-require-token, auth.token is set. */
     boolean allowed() { return enabled && plugin.editAllowed() && (!requireToken || tokenSet); }
+    /** [setup] power_v1 for this session: with edit.power-require-token only for trusted sessions (auth.token or paired). */
+    boolean allowed(Session s) { return enabled && plugin.editAllowed(s) && (!requireToken || s.trusted); }
 
     /** Called at hello (websocket thread) for a session that asked for power_v1 and got edit_v1. */
     void grant(Session s) { sessions.put(s, new PS(s)); }
@@ -259,9 +261,9 @@ final class PowerService {
     }
 
     private String offReason(Session s) {
-        if (!s.canEdit) return plugin.editAllowed() ? "ask for edit_v1 and power_v1 in hello.caps" : "block editing is off on this server (edit.enabled / edit.require-token)";
+        if (!s.canEdit) return plugin.editAllowed(s) ? "ask for edit_v1 and power_v1 in hello.caps" : "block editing is off on this server, or needs a paired headset (edit.enabled / edit.require-token)";
         if (!enabled) return "power tools are off on this server (edit.power)";
-        if (requireToken && !tokenSet) return "power tools need auth.token (edit.power-require-token)";
+        if (requireToken && !s.trusted) return "power tools need a paired headset or auth.token (edit.power-require-token)";
         return "ask for power_v1 in hello.caps";
     }
 

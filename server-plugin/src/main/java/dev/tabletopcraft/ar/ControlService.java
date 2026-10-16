@@ -64,7 +64,7 @@ final class ControlService implements Listener {
     volatile String chatFormat = ChatText.DEFAULT_FORMAT, meFormat = ChatText.DEFAULT_ME_FORMAT, defaultName = "Tabletop";
     volatile int chatMaxLen = 256, bubbleSeconds = 5;
     volatile double chatRate = 2, chatBurst = 5;
-    volatile boolean commandsEnabled = true, requireToken = true, tokenSet, notifyOps = true;
+    volatile boolean commandsEnabled = true, requireToken = true, tokenSet, pairingOn = true, notifyOps = true;
     volatile int commandMaxLen = 256;
     volatile double commandRate = 2, commandBurst = 5, completeRate = 10;
     volatile CommandPolicy policy = new CommandPolicy(List.of(), CommandPolicy.DEFAULT_DENY, l -> l);
@@ -91,6 +91,7 @@ final class ControlService implements Listener {
         commandsEnabled = c.getBoolean("commands.enabled", true);
         requireToken = c.getBoolean("commands.require-token", true);
         tokenSet = !c.getString("auth.token", "").isEmpty();
+        pairingOn = c.getBoolean("auth.pairing", true);   // [setup]
         notifyOps = c.getBoolean("commands.notify-ops", true);
         commandMaxLen = Math.max(1, Math.min(32000, c.getInt("commands.max-length", 256)));
         commandRate = Math.max(0.1, c.getDouble("commands.max-per-second", 2));
@@ -111,9 +112,11 @@ final class ControlService implements Listener {
 
     boolean chatAllowed() { return chatEnabled; }
     /** command_v1: commands.enabled and, with commands.require-token (the default), an auth.token is set. */
-    boolean commandsAllowed() { return commandsEnabled && (!requireToken || tokenSet); }
+    boolean commandsAllowed() { return commandsEnabled && (!requireToken || tokenSet || pairingOn); }
+    /** [setup] command_v1 for this session: with commands.require-token only for trusted sessions (auth.token or paired). */
+    boolean commandsAllowed(Session s) { return commandsEnabled && (!requireToken || s.trusted); }
     String commandsOffReason() {
-        return !commandsEnabled ? "commands are off on this server (commands.enabled)" : "commands need auth.token set on the server (commands.require-token)";
+        return !commandsEnabled ? "commands are off on this server (commands.enabled)" : "commands need a paired headset (/tabletop pair <code>) or auth.token (commands.require-token)";
     }
     boolean statusAllowed() { return statusEnabled; }
 
@@ -261,7 +264,7 @@ final class ControlService implements Listener {
     void onCommand(Session s, ControlMessages.CommandRequest r, Long refSeq) {
         if (s.state != Session.State.READY) return;
         long ref = refSeq == null ? -1 : refSeq;
-        if (!s.canCommand) { plugin.send(s, Protocol.error("command_denied", commandsAllowed() ? "ask for command_v1 in hello.caps" : commandsOffReason(), refSeq, false)); return; }
+        if (!s.canCommand) { plugin.send(s, Protocol.error("command_denied", commandsAllowed(s) ? "ask for command_v1 in hello.caps" : commandsOffReason(), refSeq, false)); return; }
         CommandPolicy.Decision d = policy.check(r.line());
         if (!d.allowed()) {
             plugin.getLogger().info("CMD_DENIED session=" + s.id + " /" + CommandPolicy.strip(r.line()) + ": " + d.reason());
@@ -327,7 +330,7 @@ final class ControlService implements Listener {
 
     void onComplete(Session s, String line, Long refSeq) {
         if (s.state != Session.State.READY) return;
-        if (!s.canCommand) { plugin.send(s, Protocol.error("command_denied", commandsAllowed() ? "ask for command_v1 in hello.caps" : commandsOffReason(), refSeq, false)); return; }
+        if (!s.canCommand) { plugin.send(s, Protocol.error("command_denied", commandsAllowed(s) ? "ask for command_v1 in hello.caps" : commandsOffReason(), refSeq, false)); return; }
         String bare = line.startsWith("/") ? line.substring(1) : line;
         List<String> raw;
         try { raw = Bukkit.getCommandMap().tabComplete(Bukkit.createCommandSender(c -> {}), bare); }

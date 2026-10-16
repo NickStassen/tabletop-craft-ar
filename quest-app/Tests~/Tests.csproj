@@ -42,6 +42,7 @@
     <Compile Include="../Assets/Scripts/Net/OperatorProtocol.cs;../Assets/Scripts/World/FollowState.cs;../Assets/Scripts/World/MarksModel.cs;../Assets/Scripts/World/ContainerModel.cs;../Assets/Scripts/World/SignEditorModel.cs" />
     <!-- [comfort] keyboard, prefs.json, LAN discovery, session helpers -->
     <Compile Include="../Assets/Scripts/World/KeyboardModel.cs;../Assets/Scripts/World/AppPrefs.cs;../Assets/Scripts/World/SessionState.cs;../Assets/Scripts/Net/LanDiscovery.cs" />
+    <Compile Include="../Assets/Scripts/Net/Pairing.cs" />
     <!-- [blocks] block entities: catalog, baked models, block_entities data (PROTOCOL.md 4.29) -->
     <Compile Include="../Assets/Scripts/World/BlockEntityCatalog.cs;../Assets/Scripts/World/BlockEntityModels.cs;../Assets/Scripts/Net/BlockEntityProtocol.cs;../Assets/Scripts/World/SignText.cs;../Assets/Scripts/World/BlockEntityExtras.cs" />
     <!-- [sound] sounds.json, block sound groups, inference, voices, sounds.zip; asset delivery (PROTOCOL.md "Sound", "Asset delivery") -->

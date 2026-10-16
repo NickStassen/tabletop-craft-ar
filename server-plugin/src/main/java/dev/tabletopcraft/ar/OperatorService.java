@@ -99,6 +99,8 @@ final class OperatorService {
 
     /** marks_v1 is granted when marks.enabled and, with marks.require-token, the server has an auth.token. */
     boolean marksAllowed() { return marksEnabled && (!marksRequireToken || tokenSet); }
+    /** [setup] marks_v1 for this session: with marks.require-token only for trusted sessions (auth.token or paired). */
+    boolean marksAllowed(Session s) { return marksEnabled && (!marksRequireToken || s.trusted); }
 
     /** welcome additions: every client gets the worlds; marks_v1 sessions the bookmark limit and whether they may edit. */
     void welcome(Session s, JsonObject w) {
@@ -138,7 +140,7 @@ final class OperatorService {
 
     void onBookmark(Session s, OperatorMessages.BookmarkOp b, Long refSeq) {
         if (s.state != Session.State.READY) return;
-        if (!s.wantsMarks) { denyMark(s, b, marksAllowed() ? "ask for marks_v1 in hello.caps" : "bookmarks are off on this server (marks.enabled / marks.require-token)", refSeq); return; }
+        if (!s.wantsMarks) { denyMark(s, b, marksAllowed(s) ? "ask for marks_v1 in hello.caps" : "bookmarks are off on this server (marks.enabled / marks.require-token)", refSeq); return; }
         if (!marksEdit) { denyMark(s, b, "bookmarks are read-only on this server (marks.edit)", refSeq); return; }
         if (b.op().equals("remove")) {
             if (!bookmarks.remove(b.name())) { denyMark(s, b, "no bookmark named " + b.name(), refSeq); return; }
@@ -187,7 +189,7 @@ final class OperatorService {
 
     /** Why this session can't see (or edit) containers now, or null. */
     private String containerGate(Session s, boolean edit) {
-        if (!s.canInteract) return plugin.interact.allowed() ? "ask for interact_v1 in hello.caps" : plugin.interact.offReason();
+        if (!s.canInteract) return plugin.interact.allowed(s) ? "ask for interact_v1 in hello.caps" : plugin.interact.offReason();
         if (containers.equals("off")) return "containers are off on this server (interact.containers)";
         if (edit && !containers.equals("edit")) return "containers are view-only on this server (interact.containers: view)";
         return null;
@@ -405,7 +407,7 @@ final class OperatorService {
     void onSignEdit(Session s, OperatorMessages.SignEdit e, Long refSeq) {
         if (s.state != Session.State.READY) return;
         int[] p = e.pos();
-        if (!s.canInteract) { deny(s, "sign_edit", "interact_denied", plugin.interact.allowed() ? "ask for interact_v1 in hello.caps" : plugin.interact.offReason(), refSeq, p); return; }
+        if (!s.canInteract) { deny(s, "sign_edit", "interact_denied", plugin.interact.allowed(s) ? "ask for interact_v1 in hello.caps" : plugin.interact.offReason(), refSeq, p); return; }
         if (!signs) { deny(s, "sign_edit", "interact_denied", "editing signs is off on this server (interact.signs)", refSeq, p); return; }
         RegionSpec r = s.region;
         if (r == null || !r.containsWorld(p[0], p[1], p[2])) { deny(s, "sign_edit", "out_of_region", "position is outside the table's region", refSeq, p); return; }

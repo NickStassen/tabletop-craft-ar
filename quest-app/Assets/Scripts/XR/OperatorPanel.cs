@@ -442,7 +442,7 @@ namespace TabletopCraft.XR
                 int chars = OperatorPanelModel.CharsFor(Lo.Field.W - 0.006f) - prefix.Length - 1;
                 string shown = text.Length > chars ? "…" + text.Substring(text.Length - chars + 1) : text;
                 string ph = Model.Focus == OperatorPanelModel.Field.Chat ? (Model.ChatOn ? "say something..." : "chat is read-only") :
-                            Model.Focus == OperatorPanelModel.Field.Console ? (Model.CommandsOn ? "type a command..." : "commands need auth.token") : "reason (optional)";
+                            Model.Focus == OperatorPanelModel.Field.Console ? (Model.CommandsOn ? "type a command..." : "commands need pairing") : "reason (optional)";
                 bool empty = text.Length == 0;
                 Label("field", empty ? prefix + ph : prefix + shown + "_", Lo.Field.X + 0.003f, Lo.Field.CY, 0.0015f, TextAnchor.MiddleLeft, empty ? TextDim : TextMain);
             }
@@ -470,8 +470,8 @@ namespace TabletopCraft.XR
                 case OpTab.Marks: return !Model.Marks.Welcome.Marks ? "jumps work; bookmarks need marks_v1 on the server" : "a world, Spawn, a bookmark or typed x z: the view jumps there (same width)";
                 case OpTab.Chat: return Model.ChatOn ? $"as {Model.Welcome.ChatName} (Java players see [Giant] {Model.Welcome.ChatName})" : "chat: " + (Model.Connected ? "read-only" : "not connected");
                 case OpTab.Console: return Model.CommandsOn ? $"stick click = tab   pointer {ptr}" : "commands " + Model.CommandsOffWhy;
-                case OpTab.Players: return Model.CommandsOn ? $"pointer {ptr}" : "buttons need auth.token on the server";
-                case OpTab.World: return Model.CommandsOn ? $"pointer {ptr}" : "buttons need auth.token on the server";
+                case OpTab.Players: return Model.CommandsOn ? $"pointer {ptr}" : "buttons need a paired headset";
+                case OpTab.World: return Model.CommandsOn ? $"pointer {ptr}" : "buttons need a paired headset";
                 default: return Model.Welcome.Status ? "updates every 2 s" : "the server sends no status (status_v1)";
             }
         }
@@ -532,7 +532,7 @@ namespace TabletopCraft.XR
                                   l.Kind == ConsoleLineKind.Note ? TextNote : TextOk;
                         TextRow("con" + i, l.Text, Lo, i, c);
                     }
-                    if (Model.Console.Entries.Count == 0) Label("empty", Model.CommandsOn ? "run a command: type it, or a quick button" : "commands need auth.token on the server", Lo.Text.CX, Lo.Text.CY, 0.0014f, TextAnchor.MiddleCenter, TextDim);
+                    if (Model.Console.Entries.Count == 0) Label("empty", Model.CommandsOn ? "run a command: type it, or a quick button" : "commands need a paired headset (or the server's token)", Lo.Text.CX, Lo.Text.CY, 0.0014f, TextAnchor.MiddleCenter, TextDim);
                     break;
                 }
                 case OpTab.Players:

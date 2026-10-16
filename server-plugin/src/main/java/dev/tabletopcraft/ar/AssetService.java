@@ -189,7 +189,12 @@ final class AssetService {
     /** asset_get (websocket thread): checked, then paced onto the worker. */
     void onGet(Session s, JsonObject m, Long refSeq) {
         String name = m.has("name") && m.get("name").isJsonPrimitive() ? m.get("name").getAsString() : "";
-        if (!s.canAssets) { s.send(error("asset_denied", why() == null ? "ask for assets_v1 in hello.caps (a paired headset on the LAN)" : why(), name, refSeq)); return; }
+        if (!s.canAssets) {
+            String why = why() != null ? why() : !s.trusted ? "this headset isn't paired: pair it (/tabletop pair <code>) to get the game files"
+                : "ask for assets_v1 in hello.caps (from the LAN)";
+            s.send(error("asset_denied", why, name, refSeq));
+            return;
+        }
         FileInfo f = files.get(name);
         if (f == null) { s.send(error("not_found", "no " + name + " offered", name, refSeq)); return; }
         long offset = m.has("offset") ? m.get("offset").getAsLong() : -1;

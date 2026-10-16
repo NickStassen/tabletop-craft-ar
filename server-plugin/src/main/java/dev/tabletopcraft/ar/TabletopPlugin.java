@@ -99,12 +99,14 @@ public final class TabletopPlugin extends JavaPlugin {
     private volatile boolean soundEnabled = true;
     AssetService assets;   // onEnable (needs the logger)
     GameAssets gameAssets;   // [setup] zero-config game files from this PC's Minecraft install (config assets.auto)
+    PairingService pairing;  // [setup] headsets paired with a 6-digit code (devices.yml)
 
     @Override public void onEnable() {
         saveDefaultConfig();
         editWorld = new EditWorld(getLogger(), avatar::entities);
         assets = new AssetService(getLogger(), this::send, this::allSessions);   // [sound]
         gameAssets = new GameAssets(getLogger(), () -> assets.rescan());       // [setup]
+        pairing = new PairingService(getLogger());                              // [setup]
         getServer().getPluginManager().registerEvents(new BlockListener(this), this);
         getServer().getPluginManager().registerEvents(actions, this);
         getServer().getPluginManager().registerEvents(blockEntities, this);   // [blocks] sign edits, interactions
@@ -165,6 +167,7 @@ public final class TabletopPlugin extends JavaPlugin {
         Set<String> deny = new HashSet<>();
         for (String id : c.getStringList("edit.deny")) deny.add(BlockEdit.blockId(id));
         editDeny = Set.copyOf(deny);
+        pairing.configure(getDataFolder().toPath(), c.getBoolean("auth.pairing", true), c.getBoolean("auth.require-pairing", false));   // [setup]
         buildBlockRegistry();   // [menu]
         control.configure(c);   // [talk]
         interact.configure(c);  // [hands]
@@ -198,7 +201,9 @@ public final class TabletopPlugin extends JavaPlugin {
         String shown = name;
         onlinePlayers = Bukkit.getOnlinePlayers().size();
         try {
-            beacon = LanBeacon.start(getLogger(), udp, () -> LanBeacon.reply(shown, wsPort, path, token, version, mc, onlinePlayers));
+            String id = pairing.serverId();
+            boolean pair = pairing.enabled();
+            beacon = LanBeacon.start(getLogger(), udp, () -> LanBeacon.reply(shown, wsPort, path, token, version, mc, onlinePlayers, id, pair));
             getLogger().info("LAN discovery on UDP " + udp + " as \"" + shown + "\" (headset: menu > Info > Server > Find servers)");
         } catch (java.net.SocketException e) {
             getLogger().warning("LAN discovery off: UDP " + udp + " unavailable (" + e.getMessage() + "); set discovery.port or discovery.enabled in config.yml");
@@ -324,6 +329,8 @@ public final class TabletopPlugin extends JavaPlugin {
         w.addProperty("server_version", getPluginMeta().getVersion());
         w.addProperty("mc_version", Bukkit.getMinecraftVersion());
         w.addProperty("session", s.id);
+        w.addProperty("server_id", pairing.serverId());   // [setup] the headset keys its device token by it
+        if (s.pairCap) w.add("pairing", pairingInfo(s));   // [setup] PROTOCOL.md "Pairing"
         RegionSpec r = defaultRegion();
         w.addProperty("world", r.world());
         JsonObject reg = new JsonObject();
@@ -359,6 +366,7 @@ public final class TabletopPlugin extends JavaPlugin {
         if (s.canInteract) sc.add(InteractMessages.CAP);   // [hands]
         if (s.wantsSound) sc.add(Protocol.CAP_SOUND);      // [sound]
         if (s.canAssets) sc.add(AssetService.CAP);
+        if (s.pairCap) sc.add(PairingService.CAP);   // [setup]
         if (power.granted(s)) sc.add(PowerMessages.CAP);   // [power]
         if (s.wantsMarks) sc.add(OperatorMessages.CAP_MARKS);   // [operator]
         w.add("caps", sc);
@@ -723,7 +731,7 @@ public final class TabletopPlugin extends JavaPlugin {
         long now = System.currentTimeMillis();
         if (link != null) for (Session s : link.sessions()) {
             if (s.state == Session.State.AWAIT_HELLO && now - s.openedMs > 5000) s.conn.close(Protocol.CLOSE_HELLO_TIMEOUT, "hello timeout");
-            else if (s.state == Session.State.READY && now - s.lastInboundMs > 15000) s.conn.close(Protocol.CLOSE_IDLE, "idle timeout");
+            else if ((s.state == Session.State.READY || s.state == Session.State.PAIRING) && now - s.lastInboundMs > 15000) s.conn.close(Protocol.CLOSE_IDLE, "idle timeout");
         }
         if (avatarOwnerGoneMs > 0 && now - avatarOwnerGoneMs > getConfig().getLong("avatar.despawn-after-disconnect-ms", 10000)) {
             avatarOwnerGoneMs = -1;
@@ -732,6 +740,7 @@ public final class TabletopPlugin extends JavaPlugin {
     }
 
     void onSessionClosed(Session s) {
+        pairing.closed(s);   // [setup] its code stops working
         if (s == avatarOwner) avatarOwnerGoneMs = System.currentTimeMillis();
         interact.onSessionClosed(s);   // [hands] let go of what it held
         power.onSessionClosed(s);      // [power] its journal and jobs go
@@ -908,7 +917,9 @@ public final class TabletopPlugin extends JavaPlugin {
 
     // ---------- block editing from the headset (PROTOCOL.md 4.20) ----------
     /** edit_v1 is granted when edit.enabled and, with edit.require-token, the server has an auth.token (so every headset had to present it). */
-    boolean editAllowed() { return editEnabled && (!editRequireToken || editTokenSet); }
+    boolean editAllowed() { return editEnabled && (!editRequireToken || editTokenSet || pairing.enabled()); }
+    /** [setup] edit_v1 for this session: with edit.require-token only for trusted sessions (auth.token or a paired headset). */
+    boolean editAllowed(Session s) { return editEnabled && (!editRequireToken || s.trusted); }
     int editRate() { return editRate; }
 
     /** [power] Why a box edit or brush may not place this block id (edit.deny, or not in block_registry); null if it may. */
@@ -930,7 +941,7 @@ public final class TabletopPlugin extends JavaPlugin {
      */
     void onBlockEdit(Session s, BlockEdit e, Long refSeq) {
         if (s.state != Session.State.READY) return;
-        if (!s.canEdit) { denyEdit(s, e, "edit_denied", editAllowed() ? "ask for edit_v1 in hello.caps" : "block editing is off on this server (edit.enabled / edit.require-token)", refSeq); return; }
+        if (!s.canEdit) { denyEdit(s, e, "edit_denied", editAllowed(s) ? "ask for edit_v1 in hello.caps" : "block editing is off on this server, or needs a paired headset (edit.enabled / edit.require-token)", refSeq); return; }
         RegionSpec r = s.region;
         if (r == null || !r.containsWorld(e.x(), e.y(), e.z())) { denyEdit(s, e, "out_of_region", "position is outside the table's region", refSeq); return; }
         World w = Bukkit.getWorld(r.world());
@@ -967,12 +978,13 @@ public final class TabletopPlugin extends JavaPlugin {
     void onAvatarConfig(Session s, AvatarConfig c, Long refSeq) {
         // Block size / max_scale changes (the headset sends them while scaling) only rescale the spawned giant;
         // new entities are needed only when its appearance changes.
-        boolean looks = (c.skinPlayer() != null && !(c.skinPlayer().isBlank() ? defaultSkinPlayer() : c.skinPlayer()).equals(avatar.skinPlayer))
+        boolean looks = (c.skinPlayer() != null && !(c.skinPlayer().isBlank() ? defaultSkinPlayer(s) : c.skinPlayer()).equals(avatar.skinPlayer))
             || (c.model() != null && !c.model().equals(avatar.model))
             || (c.showHands() != null && c.showHands() != avatar.showHands)
             || (c.nameTagPresent() && !java.util.Objects.equals(c.nameTag(), avatar.nameTag));
-        // A blank skin_player falls back to the plugin default (config.yml avatar.skin-player); missing keeps the current one.
-        if (c.skinPlayer() != null) avatar.skinPlayer = c.skinPlayer().isBlank() ? defaultSkinPlayer() : c.skinPlayer();
+        // A blank skin_player falls back to the paired headset's player ([setup] /tabletop pair <code> <player>), else the
+        // plugin default (config.yml avatar.skin-player); missing keeps the current one.
+        if (c.skinPlayer() != null) avatar.skinPlayer = c.skinPlayer().isBlank() ? defaultSkinPlayer(s) : c.skinPlayer();
         if (c.model() != null) avatar.model = c.model();
         if (c.blockSizeM() != null) avatar.blockSizeM = c.blockSizeM();
         if (c.maxScale() != null) avatar.maxScale = c.maxScale();
@@ -988,6 +1000,9 @@ public final class TabletopPlugin extends JavaPlugin {
     }
 
     private String defaultSkinPlayer() { return getConfig().getString("avatar.skin-player", ""); }
+
+    /** [setup] The skin for a headset that names none: its pairing's player, else config.yml avatar.skin-player. */
+    private String defaultSkinPlayer(Session s) { return s.devicePlayer != null ? s.devicePlayer : defaultSkinPlayer(); }
 
     private void spawnAvatarAtAnchor() {
         RegionSpec r = defaultRegion();
@@ -1272,9 +1287,91 @@ public final class TabletopPlugin extends JavaPlugin {
             case "entities" -> sender.sendMessage("[tabletop] " + entities.lastStats + "; actions messages=" + actions.sent + " bytes=" + actions.bytes.get() + " dropped=" + actions.dropped);
             case "reload" -> { reloadConfig(); stop(); start(); sender.sendMessage("[tabletop] reloaded"); }
             case "assets" -> assetsCommand(sender, args);   // [setup]
+            case "pair" -> pairCommand(sender, args);         // [setup]
+            case "devices" -> devicesCommand(sender);         // [setup]
+            case "unpair" -> unpairCommand(sender, args);     // [setup]
             default -> { return false; }
         }
         return true;
+    }
+
+    /** [setup] welcome.pairing for a pair_v1 session. */
+    private JsonObject pairingInfo(Session s) {
+        JsonObject p = new JsonObject();
+        p.addProperty("paired", s.deviceId != null);
+        if (s.deviceId != null) { p.addProperty("device", s.deviceId); p.addProperty("name", s.deviceName); }
+        p.addProperty("required", pairing.required() || !getConfig().getString("auth.token", "").isEmpty());
+        if (s.deviceTokenRejected) p.addProperty("token_rejected", true);
+        return p;
+    }
+
+    /** [setup] A headset shows a code: tell the console and the online operators how to pair it (never the code itself). */
+    void announcePairing(String name, String address) {
+        String line = "Headset \"" + name + "\" (" + address + ") wants to pair: type the 6-digit code it shows, /tabletop pair <code>";
+        getLogger().info("PAIR " + line);
+        for (Player p : Bukkit.getOnlinePlayers()) if (p.hasPermission("tabletop.admin")) p.sendMessage("[tabletop] " + line);
+    }
+
+    /** [setup] /tabletop pair &lt;code&gt; [player]: approve the headset showing that code. */
+    private void pairCommand(CommandSender sender, String[] args) {
+        if (args.length < 2) { sender.sendMessage("[tabletop] usage: /tabletop pair <the 6-digit code on the headset> [the Java player whose skin it wears]"); return; }
+        String code = args[1].replaceAll("[^0-9]", "");
+        String player = args.length > 2 ? args[2] : null;
+        PairingService.Issued is = pairing.approve(code, null, player, System.currentTimeMillis());
+        if (is == null) {
+            int n = pairing.waiting(System.currentTimeMillis()).size();
+            sender.sendMessage("[tabletop] no headset is waiting with code " + code + (n == 0 ? " (none is waiting: codes last 5 minutes;"
+                + " the headset shows a new one at its next connection, or menu > Info > Pair)" : " (" + n + " waiting; check the code on the headset)"));
+            return;
+        }
+        PairingService.Device d = is.device();
+        getLogger().info("PAIRED headset \"" + d.name() + "\" as " + d.id() + (d.player() != null ? " (player " + d.player() + ")" : "") + " by " + sender.getName());
+        sender.sendMessage("[tabletop] paired \"" + d.name() + "\" (" + d.id() + "). /tabletop devices lists headsets, /tabletop unpair " + d.id() + " revokes it.");
+        Session target = is.session();
+        target.send(PairingService.pairedMessage(is, pairing.serverId()));
+        target.deviceId = d.id();
+        target.devicePlayer = d.player();
+        target.deviceTokenRejected = false;
+        if (target.state == Session.State.PAIRING && target.hello != null) {   // the world follows on this connection
+            target.trusted = true;
+            link.finishHello(target, target.hello);
+        }
+        // READY on an open server: the headset reconnects with its token, so the trusted features are granted at hello.
+    }
+
+    /** [setup] /tabletop devices: paired headsets and the ones waiting with a code. */
+    private void devicesCommand(CommandSender sender) {
+        var list = pairing.devices();
+        long now = System.currentTimeMillis();
+        sender.sendMessage("[tabletop] " + list.size() + " paired headset" + (list.size() == 1 ? "" : "s") + (pairing.enabled() ? "" : " (pairing is off: auth.pairing)"));
+        java.text.SimpleDateFormat f = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm");
+        for (PairingService.Device d : list) {
+            boolean online = false;
+            for (Session s : allSessions()) if (d.id().equals(s.deviceId) && s.state == Session.State.READY) online = true;
+            sender.sendMessage(String.format("  %s  %s%s, paired %s, last seen %s%s", d.id(), d.name(), d.player() != null ? " (" + d.player() + ")" : "",
+                f.format(new Date(d.pairedMs())), f.format(new Date(d.lastSeenMs())), online ? ", connected" : ""));
+        }
+        for (PairingService.Pending p : pairing.waiting(now))
+            sender.sendMessage(String.format("  waiting: \"%s\" (%s), its code works for %d s more", p.name(), p.address(), Math.max(0, (p.expiresMs() - now) / 1000)));
+    }
+
+    /** [setup] /tabletop unpair &lt;id|name|all&gt;: revoke; connected headsets are disconnected (they show a new code). */
+    private void unpairCommand(CommandSender sender, String[] args) {
+        if (args.length < 2) { sender.sendMessage("[tabletop] usage: /tabletop unpair <id | name | all> (see /tabletop devices)"); return; }
+        String key = String.join(" ", Arrays.copyOfRange(args, 1, args.length));
+        var gone = pairing.unpair(key);
+        if (gone.isEmpty()) { sender.sendMessage("[tabletop] no paired headset matches " + key + " (/tabletop devices)"); return; }
+        Set<String> ids = new HashSet<>();
+        for (PairingService.Device d : gone) ids.add(d.id());
+        int kicked = 0;
+        for (Session s : allSessions())
+            if (s.deviceId != null && ids.contains(s.deviceId) && s.state != Session.State.CLOSED) {
+                s.send(Protocol.error("auth_failed", "this headset was unpaired on the server", null, true));
+                s.conn.close(Protocol.CLOSE_AUTH, "unpaired");
+                kicked++;
+            }
+        getLogger().info("UNPAIRED " + ids + " by " + sender.getName());
+        sender.sendMessage("[tabletop] unpaired " + gone.size() + " headset" + (gone.size() == 1 ? "" : "s") + (kicked > 0 ? ", disconnected " + kicked : ""));
     }
 
     /** [setup] /tabletop assets [rebuild | dir &lt;launcher folder&gt;]: the automatic game files (GameAssets). */
@@ -1311,9 +1408,14 @@ public final class TabletopPlugin extends JavaPlugin {
 
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
-        if (args.length == 1) return sender.hasPermission("tabletop.admin") ? List.of("status", "setorigin", "setsize", "avatar", "entities", "reload", "tell", "unfreeze-all", "assets") : List.of("tell");
+        if (args.length == 1) return sender.hasPermission("tabletop.admin") ? List.of("status", "setorigin", "setsize", "avatar", "entities", "reload", "tell", "unfreeze-all", "assets", "pair", "devices", "unpair") : List.of("tell");
         if (args.length == 2 && args[0].equalsIgnoreCase("avatar")) return List.of("status", "spawn", "remove", "blocksize", "placement", "skin");
         if (args.length == 2 && args[0].equalsIgnoreCase("assets")) return List.of("rebuild", "dir");   // [setup]
+        if (args.length == 2 && args[0].equalsIgnoreCase("unpair") && sender.hasPermission("tabletop.admin")) {   // [setup]
+            List<String> l = new ArrayList<>(List.of("all"));
+            for (PairingService.Device d : pairing.devices()) l.add(d.id());
+            return l;
+        }
         if (args.length == 3 && args[0].equalsIgnoreCase("avatar") && args[1].equalsIgnoreCase("placement")) return List.of("floating", "ground", "exact");
         return List.of();
     }
