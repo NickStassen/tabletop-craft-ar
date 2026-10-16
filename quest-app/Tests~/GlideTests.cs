@@ -116,10 +116,11 @@ static class GlideTests
             }
             if (!Skirt || Scope.Equals(SectionBox.All)) return;
             if (_planner.Tiles.Count == 0 && Motion.sqrMagnitude < 0.01f) return;
-            _pend.Reset(Scope, W.SectionCount);   // as TabletopRenderer: the active box
+            _pend.Reset(Scope, W.SectionCount, Visible.Min.y, Visible.Max.y);   // as TabletopRenderer: the active box
             foreach (var s in W.DirtySections) _pend.Mark(s);
             foreach (var s in _busy) _pend.Mark(s);
             foreach (var s in _fresh) _pend.Mark(s);
+            foreach (var s in _secMesh.Keys) if (!_fresh.Contains(s)) _pend.MarkShown(s);   // [smooth]
             _planner.Frame(_pend, _skirtBusy ? 0 : 32, _skirtBuild);
             _planner.Dropped.Clear();
             if (_skirtBuild.Count == 0) return;
@@ -213,7 +214,7 @@ static class GlideTests
             bool had = _secMesh.ContainsKey(s);
             if (m == null && !had) return;
             if (m == null) _secMesh.Remove(s); else _secMesh[s] = m;
-            if (m != null) _fresh.Add(s);
+            if (m != null && !had) _fresh.Add(s);   // [smooth] as TabletopRenderer.Apply: a redone mesh keeps its old one on screen
             var key = _layout.KeyOf(s);
             if (m == null && !OldBatchRules) { if (!_dirtyBatches.ContainsKey(key) && !_trail.ContainsKey(key)) _trail[key] = _clock; return; }   // TabletopRenderer.Drop
             if (!_dirtyBatches.ContainsKey(key)) _dirtyBatches[key] = _clock;

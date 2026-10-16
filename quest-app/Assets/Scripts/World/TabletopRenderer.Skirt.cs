@@ -67,7 +67,9 @@ namespace TabletopCraft.World
             // Only while the view moves or tiles are up: at rest the window fills in from meshing within frames.
             if (_skirt.Tiles.Count == 0 && Motion.sqrMagnitude < 0.01f) return;
             // What isn't on screen yet, from the few pending sets (not by asking every section of the window).
-            _pending.Reset(Scope, Model.SectionCount);   // the active box: tiles are ready before their columns show
+            // The active box: tiles are ready before their columns show. [smooth] A column with any section of the window on
+            // screen gets no tile (MarkShown), so detail and skirt are never drawn together.
+            _pending.Reset(Scope, Model.SectionCount, VisibleScope.Min.y, VisibleScope.Max.y);
             foreach (var s in Model.DirtySections) _pending.Mark(s);
             foreach (var s in _busy) _pending.Mark(s);
             if (_fresh.Count > 0)
@@ -75,6 +77,8 @@ namespace TabletopCraft.World
                 var o = Model.Origin; int S = WorldModel.Section;
                 foreach (var c in _fresh.Keys) _pending.Mark(new Vector3Int((c.x - o.x) / S, (c.y - o.y) / S, (c.z - o.z) / S));
             }
+            foreach (var s in _secs.Keys)
+                if (_fresh.Count == 0 || !_fresh.ContainsKey(CornerOf(s))) _pending.MarkShown(s);
             _skirt.Frame(_pending, _skirtBusy ? 0 : SkirtTilesPerJob, _skirtBuild);
             FreeDropped();
             if (_skirtBuild.Count == 0) return;

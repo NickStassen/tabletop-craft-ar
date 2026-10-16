@@ -297,11 +297,13 @@ static class MeshTests
         var want = BlockShading.Flat(grass, faces.Face("minecraft:grass_block[snowy=false]", 3), new Vector3Int(0, 3, 0), out byte code);
         check(md.Colors.Count == 4 && E(md.Colors[0], want) && md.Light[0] == code && md.Uvs[0].z == 3, "skirt: top colour = tint x light of the cell above, with its light code");
 
-        // Planner: tiles for pending columns, dropped when their surface sections are on screen or the column leaves.
+        // Planner: a tile per box column with a pending section and nothing of it in the window on screen; [smooth] dropped
+        // as soon as any of its window sections is on screen, and not planned again while that holds (no toggling).
         var p = new SkirtPlanner(); var pend = new SkirtPlanner.Pending(); var build = new List<Vector2Int>();
         var box = new SectionBox { Min = new Vector3Int(0, 0, 0), Max = new Vector3Int(4, 4, 4) };
         var pending = new HashSet<Vector3Int> { new Vector3Int(1, 2, 1), new Vector3Int(3, 0, 2), new Vector3Int(9, 1, 1) };
-        void Frame(int max) { pend.Reset(box, new Vector3Int(10, 6, 10)); foreach (var s in pending) pend.Mark(s); p.Frame(pend, max, build); }
+        var shown = new HashSet<Vector3Int>();
+        void Frame(int max) { pend.Reset(box, new Vector3Int(10, 6, 10), 1, 3); foreach (var s in pending) pend.Mark(s); foreach (var s in shown) pend.MarkShown(s); p.Frame(pend, max, build); }
         Frame(8);
         check(build.Count == 2 && build.Contains(new Vector2Int(1, 1)) && build.Contains(new Vector2Int(3, 2)), $"skirt plan: a tile per box column with a pending section ({build.Count})");
         Frame(8);
@@ -309,12 +311,21 @@ static class MeshTests
         p.Built(new Vector2Int(1, 1), 30, 33);   // surface in section 1, things standing on it in section 2
         p.Built(new Vector2Int(3, 2), -1, -1);   // no surface below the window top
         Frame(8);
-        check(p.Tiles.Count == 2 && p.Dropped.Count == 0, "skirt plan: built tiles stay while their surface (or, without one, their column) is pending");
-        pending.Remove(new Vector3Int(1, 2, 1)); pending.Add(new Vector3Int(1, 0, 1));
+        check(p.Tiles.Count == 2 && p.Dropped.Count == 0, "skirt plan: built tiles stay while their column is pending and nothing of it is on screen");
+        shown.Add(new Vector3Int(1, 0, 1));   // below the window's rows (1..2)
         Frame(8);
-        check(!p.Tiles.ContainsKey(new Vector2Int(1, 1)) && p.Dropped.Count == 1 && build.Count == 0, "skirt plan: a tile goes when its surface sections are on screen (a pending section deep below doesn't keep it)");
+        check(p.Tiles.ContainsKey(new Vector2Int(1, 1)) && p.Dropped.Count == 0, "skirt plan: a section on screen below the window doesn't drop the tile");
+        shown.Add(new Vector3Int(1, 1, 1));
         Frame(8);
-        check(build.Count == 1 && build[0] == new Vector2Int(1, 1), "skirt plan: ...and comes back if that column is still pending and has no tile");
+        check(!p.Tiles.ContainsKey(new Vector2Int(1, 1)) && p.Dropped.Count == 1 && build.Count == 0, "skirt plan: a tile goes as soon as any section of its column in the window is on screen");
+        Frame(8);
+        check(build.Count == 0 && !p.Tiles.ContainsKey(new Vector2Int(1, 1)), "skirt plan: ...and doesn't come back while its column is still pending (no flicker)");
+        pending.Remove(new Vector3Int(3, 0, 2));
+        Frame(8);
+        check(!p.Tiles.ContainsKey(new Vector2Int(3, 2)) && p.Dropped.Count == 1, "skirt plan: a tile goes when nothing of its column is pending");
+        shown.Clear(); pending.Add(new Vector3Int(3, 0, 2));
+        Frame(8);
+        check(build.Count == 2 && p.Tiles.Count == 2, "skirt plan: columns that are wholly pending again get tiles again");
         p.Shift(new Vector3Int(1, 0, 0), new Vector3Int(10, 6, 10));
         check(p.Tiles.ContainsKey(new Vector2Int(2, 2)) && p.Tiles.ContainsKey(new Vector2Int(0, 1)) && p.Dropped.Count == 0, "skirt plan: a shift re-keys tiles (new key = old - shift)");
         p.Shift(new Vector3Int(1, 0, 0), new Vector3Int(10, 6, 10));

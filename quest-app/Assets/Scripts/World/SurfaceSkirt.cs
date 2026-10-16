@@ -1,14 +1,18 @@
 // [mesh] Low-detail surface skirt (PLAN.md roadmap 7; ARCHITECTURE.md "Surface skirt"). Engine-free: built on the meshing
-// workers, tested in Tests~ (MeshTests).
+// workers, tested in Tests~ (MeshTests, SmoothTests).
 //
 // While gliding faster than the headset meshes, the leading strip of the visible window has sections that aren't
 // meshed yet: holes. The skirt fills them from data the client already has (the region snapshot): per 16x16 column
-// tile, the top block of every column (the first block below the window top that isn't air or a plant) as one textured
-// top face, greedy-merged, plus a side face wherever the next column is lower, lit like a flat face (the cell above;
+// tile, the top block of every column (the first full block or fluid below the window top) as one textured top face,
+// greedy-merged, plus a side face wherever the next column is lower, lit like a flat face (the cell above;
 // BlockShading.Flat, biome tint, light code for the time of day). A tile costs about 1/30 of meshing its sections. It
 // is drawn with the block materials (so the nav clip box, fog and day light apply) a hair inside the real surface
-// (Inset), so where detail has arrived the detail wins the depth test, and it is dropped as soon as the tile's surface
-// sections are on screen (SkirtPlanner).
+// (Inset).
+// [smooth] It never draws where there is air: leaves, glass, plants, slabs and model blocks are see-through for it (it
+// shows the ground or trunk under a canopy, never a face at the canopy), a fluid's top sits at the fluid's height, and a
+// side face only covers the column's own solid run from its top down (an overhang's side is the overhang, not a wall
+// down to the next column). SkirtPlanner keeps a tile only while none of its column's sections in the window is on
+// screen, so detail and skirt are never drawn together. Off by default (tabletop.json "surface_skirt").
 using System;
 using System.Collections.Generic;
 using UnityEngine;
@@ -17,8 +21,10 @@ namespace TabletopCraft.World
 {
     public static class SurfaceSkirt
     {
-        /// <summary>tabletop.json "surface_skirt".</summary>
-        public static bool Enabled = true;
+        /// <summary>tabletop.json "surface_skirt" ([smooth] off by default until it is checked on the headset again).</summary>
+        public static bool Enabled = false;
+        /// <summary>[smooth] Height of a fluid's top face in its block (still water's surface sits at 8/9).</summary>
+        public const float FluidTop = 0.875f;
         /// <summary>tabletop.json "skirt_speed": with the skirt on, a glide may go this much faster than meshing keeps up
         /// (MeshScope.SkirtFactor): the leading strip shows the skirt and detail fills in behind. 1 = as fast as detail.</summary>
         public static float SpeedFactor = 2f;
@@ -44,6 +50,7 @@ namespace TabletopCraft.World
             if (yTop <= yBottom) return;
             var tops = _tops ?? (_tops = new int[(S + 2) * (S + 2)]);
             var ids = _ids ?? (_ids = new ushort[(S + 2) * (S + 2)]);
+            var runs = _runs ?? (_runs = new int[(S + 2) * (S + 2)]);
             int x0 = sx * S, z0 = sz * S;
             var grid = w.Grid;
             int layer = d.x * d.z;
@@ -53,14 +60,20 @@ namespace TabletopCraft.World
                 {
                     int x = x0 + cx, z = z0 + cz, k = (cz + 1) * (S + 2) + cx + 1;
                     if (x < 0 || z < 0 || x >= d.x || z >= d.z) { tops[k] = Outside; continue; }
-                    int top = None; ushort id = 0;
+                    int top = None, run = None; ushort id = 0;
                     for (int y = yTop - 1, i = (y * d.z + z) * d.x + x; y >= yBottom; y--, i -= layer)
                     {
                         if ((uint)i >= (uint)grid.Length) continue;
                         id = grid[i];
                         if (Surface(w.ShapeOf(id))) { top = y; break; }
                     }
-                    tops[k] = top; ids[k] = id;
+                    // [smooth] The column's solid run from its top down (side faces stop where air or a canopy starts).
+                    if (top >= 0)
+                    {
+                        run = top;
+                        for (int y = top - 1, i = (y * d.z + z) * d.x + x; y >= yBottom && (uint)i < (uint)grid.Length && Surface(w.ShapeOf(grid[i])); y--, i -= layer) run = y;
+                    }
+                    tops[k] = top; ids[k] = id; runs[k] = run;
                 }
             var b0 = new Vector3Int(x0, 0, z0);
             int nx = Math.Min(S, d.x - x0), nz = Math.Min(S, d.z - z0);
@@ -83,8 +96,8 @@ namespace TabletopCraft.World
                         if (ok) wid++;
                     }
                     for (int a = 0; a < wid; a++) for (int j = 0; j < len; j++) done[(cz + j) * S + cx + a] = true;
-                    // Up: plane y, u along z, v along x (GreedyMesher's axes for dir 3).
-                    Face(m, b0, 3, top + 1 - Inset, cz, cx, cz + len, cx + wid, key, new Quad4(col, code));
+                    // Up: plane y, u along z, v along x (GreedyMesher's axes for dir 3). [smooth] A fluid's top at its height.
+                    Face(m, b0, 3, top + Height(w, ids[k]) - Inset, cz, cx, cz + len, cx + wid, key, new Quad4(col, code));
                     minTop = minTop < 0 ? top : Math.Min(minTop, top); maxTop = Math.Max(maxTop, top);
                     cz += len;
                 }
@@ -100,7 +113,9 @@ namespace TabletopCraft.World
                         int ox = dir == 0 ? -1 : dir == 1 ? 1 : 0, oz = dir == 4 ? -1 : dir == 5 ? 1 : 0;
                         int hn = tops[k + oz * (S + 2) + ox];
                         if (hn == Outside || hn >= top) continue;
-                        float lo = Math.Max(hn + 1, yBottom), hi = top + 1 - Inset;
+                        // [smooth] Down to the neighbour's top or the end of this column's solid run, whichever is higher:
+                        // never a wall under an overhang or a canopy.
+                        float lo = Math.Max(Math.Max(hn + 1, runs[k]), yBottom), hi = top + Height(w, ids[k]) - Inset;
                         if (hi <= lo) continue;
                         var key = SideKey(w, faces, ids[k], dir);
                         int fx = x0 + cx + ox, fz = z0 + cz + oz;
@@ -134,8 +149,15 @@ namespace TabletopCraft.World
                     }
         }
 
-        /// <summary>A block that makes the surface: anything but air and plants (crosses: grass, flowers).</summary>
-        public static bool Surface(BlockShape s) => s != BlockShape.Air && s != BlockShape.Cross;
+        /// <summary>A block that makes the skirt's surface: [smooth] a full opaque block or a fluid. Air, plants, leaves and
+        /// glass (see-through), slabs and model blocks (not a full block) are skipped, so the skirt shows what is under them
+        /// instead of a face where there is air (the phantom blocks under canopies).</summary>
+        public static bool Surface(BlockShape s) => s == BlockShape.Cube || s == BlockShape.Fluid;
+
+        /// <summary>[smooth] Where a column's top face sits in its block: 1, or FluidTop for water and lava.</summary>
+        static float Height(WorldModel w, ushort id) => w.ShapeOf(id) == BlockShape.Fluid ? FluidTop : 1f;
+
+        [ThreadStatic] static int[] _runs;
 
         static bool Same(WorldModel w, IFaceSource faces, int[] tops, ushort[] ids, bool[] done, int cx, int cz, int top, FaceKey key, Color32 col, byte code, int x0, int z0, Vector3Int d)
         {
@@ -189,11 +211,14 @@ namespace TabletopCraft.World
     }
 
     /// <summary>
-    /// [mesh] Which skirt tiles exist (engine-free; TabletopRenderer and the Tests~ glide harness drive it). Per frame:
-    /// every section column of the visible box with a section on screen that isn't meshed and uploaded yet gets a tile;
-    /// a built tile stays while any of its surface sections (the section rows holding its top blocks, within the
-    /// visible box) is still pending, and is dropped when they are all on screen or the column leaves the box.
-    /// Keys are region-local section columns (x, z); Shift re-keys them when the region moves by whole sections.
+    /// [mesh] Which skirt tiles exist (engine-free; TabletopRenderer and the Tests~ glide harness drive it). Per frame,
+    /// [smooth] one rule both ways, so tiles don't toggle as detail arrives: a section column of the box has a tile while
+    /// it has a pending section (dirty, being meshed, or newly meshed and its batch not uploaded) and none of its sections
+    /// in the window is on screen (Pending.MarkShown). The first batch upload that puts any of them on screen drops the
+    /// tile in that frame, so detail and skirt are never drawn together (no z-fighting, no skirt faces through cutout
+    /// leaves). (It used to stay until the column's surface rows were on screen and was planned again from any pending
+    /// section, so it flickered while deeper sections were meshed.) Keys are region-local section columns (x, z); Shift
+    /// re-keys them when the region moves by whole sections.
     /// </summary>
     public sealed class SkirtPlanner
     {
@@ -211,17 +236,21 @@ namespace TabletopCraft.World
         /// </summary>
         public sealed class Pending
         {
-            bool[] _p = new bool[0];
-            int _x0, _y0, _z0, _nx, _ny, _nz;
+            bool[] _p = new bool[0], _shown = new bool[0];
+            int _x0, _y0, _z0, _nx, _ny, _nz, _sy0, _sy1;
             public SectionBox Box { get; private set; }
 
-            public void Reset(SectionBox visible, Vector3Int sections)
+            /// <summary>box: the columns and rows to plan for; shownY0..shownY1 (section rows, end exclusive): the window's
+            /// rows, where a section on screen means its column needs no tile (default: the box's rows).</summary>
+            public void Reset(SectionBox visible, Vector3Int sections, int shownY0 = int.MinValue, int shownY1 = int.MaxValue)
             {
                 _x0 = Math.Max(0, visible.Min.x); _y0 = Math.Max(0, visible.Min.y); _z0 = Math.Max(0, visible.Min.z);
                 _nx = Math.Max(0, Math.Min(sections.x, visible.Max.x) - _x0); _ny = Math.Max(0, Math.Min(sections.y, visible.Max.y) - _y0);
                 _nz = Math.Max(0, Math.Min(sections.z, visible.Max.z) - _z0);
                 int n = _nx * _ny * _nz;
                 if (_p.Length < n) _p = new bool[n]; else Array.Clear(_p, 0, n);
+                if (_shown.Length < _nx * _nz) _shown = new bool[_nx * _nz]; else Array.Clear(_shown, 0, _nx * _nz);
+                _sy0 = shownY0 == int.MinValue ? _y0 : shownY0; _sy1 = shownY1 == int.MaxValue ? _y0 + _ny : shownY1;
                 Box = new SectionBox { Min = new Vector3Int(_x0, _y0, _z0), Max = new Vector3Int(_x0 + _nx, _y0 + _ny, _z0 + _nz) };
             }
 
@@ -229,6 +258,29 @@ namespace TabletopCraft.World
             {
                 int x = s.x - _x0, y = s.y - _y0, z = s.z - _z0;
                 if ((uint)x < (uint)_nx && (uint)y < (uint)_ny && (uint)z < (uint)_nz) _p[(y * _nz + z) * _nx + x] = true;
+            }
+
+            /// <summary>[smooth] Section s has geometry on screen (meshed, its batch uploaded; an old mesh being redone counts).</summary>
+            public void MarkShown(Vector3Int s)
+            {
+                int x = s.x - _x0, z = s.z - _z0;
+                if ((uint)x < (uint)_nx && (uint)z < (uint)_nz && s.y >= _sy0 && s.y < _sy1) _shown[z * _nx + x] = true;
+            }
+
+            /// <summary>[smooth] Any section of column (x, z) in the window is on screen.</summary>
+            public bool Shown(int x, int z)
+            {
+                x -= _x0; z -= _z0;
+                return (uint)x < (uint)_nx && (uint)z < (uint)_nz && _shown[z * _nx + x];
+            }
+
+            /// <summary>Any section of column (x, z) in the box is pending.</summary>
+            public bool AnyPending(int x, int z)
+            {
+                x -= _x0; z -= _z0;
+                if ((uint)x >= (uint)_nx || (uint)z >= (uint)_nz) return false;
+                for (int y = 0; y < _ny; y++) if (_p[(y * _nz + z) * _nx + x]) return true;
+                return false;
             }
 
             public bool Get(int x, int y, int z)
@@ -248,14 +300,9 @@ namespace TabletopCraft.World
             _gone.Clear();
             foreach (var kv in Tiles)
             {
-                var c = kv.Key; var t = kv.Value;
+                var c = kv.Key;
                 if (c.x < x0 || c.x >= x1 || c.y < z0 || c.y >= z1) { _gone.Add(c); continue; }
-                if (!t.Built) continue;
-                // A tile without surface (all air below the window top) stays until its whole column is on screen.
-                int lo = t.MinSec >= 0 ? Math.Max(y0, t.MinSec) : y0, hi = t.MinSec >= 0 ? Math.Min(y1 - 1, t.MaxSec) : y1 - 1;
-                bool any = false;
-                for (int y = lo; y <= hi && !any; y++) any = pending.Get(c.x, y, c.y);
-                if (!any) _gone.Add(c);
+                if (!Wanted(pending, c.x, c.y)) _gone.Add(c);   // [smooth] detail on screen (or nothing left to wait for)
             }
             foreach (var c in _gone) { Dropped.Add(Tiles[c]); Tiles.Remove(c); }
             if (maxBuild <= 0 || x1 <= x0 || y1 <= y0 || z1 <= z0) return;
@@ -263,14 +310,14 @@ namespace TabletopCraft.World
                 for (int z = z0; z < z1 && build.Count < maxBuild; z++)
                 {
                     var c = new Vector2Int(x, z);
-                    if (Tiles.ContainsKey(c) || _gone.Contains(c)) continue;
-                    bool any = false;
-                    for (int y = y0; y < y1 && !any; y++) any = pending.Get(x, y, z);
-                    if (!any) continue;
+                    if (Tiles.ContainsKey(c) || !Wanted(pending, x, z)) continue;
                     Tiles[c] = new Tile();
                     build.Add(c);
                 }
         }
+
+        /// <summary>[smooth] A column wants a tile while something in it is pending and nothing of it in the window is on screen.</summary>
+        static bool Wanted(Pending p, int x, int z) => !p.Shown(x, z) && p.AnyPending(x, z);
 
         /// <summary>A tile's build finished: its surface section rows (minTopBlock -1: it has no surface).</summary>
         public Tile Built(Vector2Int c, int minTopBlock, int maxTopBlock)

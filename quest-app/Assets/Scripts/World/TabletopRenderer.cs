@@ -524,7 +524,9 @@ namespace TabletopCraft.World
             Quads += (mesh?.Quads ?? 0) - (old?.Quads ?? 0);
             if (mesh == null) _secs.Remove(s); else _secs[s] = mesh;
             MarkBatch(_layout.KeyOf(s));
-            MarkFresh(s);   // [mesh] not on screen until its batch is uploaded (the skirt covers it meanwhile)
+            // [mesh] Not on screen until its batch is uploaded (the skirt covers it meanwhile). [smooth] Only a section that had
+            // no mesh: one being redone keeps its old mesh on screen, so its column needs no skirt.
+            if (old == null) MarkFresh(s);
         }
 
         void MarkBatch(Vector3Int key)

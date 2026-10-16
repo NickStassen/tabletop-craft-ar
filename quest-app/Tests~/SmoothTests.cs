@@ -14,6 +14,71 @@ static class SmoothTests
         Hitch(check);
         Apply(check);
         Shifts(check);
+        Skirt(check);
+    }
+
+    sealed class FlatFaces : IFaceSource
+    {
+        public FaceKey Face(string s, int d) => new FaceKey { Layer = s.Contains("water") ? 4 : s.Contains("log") ? 3 : 1, Color = new Color32(200, 200, 200, 255) };
+    }
+
+    static WorldModel Box(Func<int, int, int, int> f, params string[] palette)
+    {
+        var w = new WorldModel { SnapshotId = 1, Dims = new Vector3Int(16, 20, 16) };
+        w.Palette.AddRange(palette);
+        w.Grid = new ushort[16 * 20 * 16];
+        for (int y = 0; y < 20; y++) for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) w.Grid[w.Index(x, y, z)] = (ushort)f(x, y, z);
+        w.Light = new byte[w.Grid.Length]; for (int i = 0; i < w.Light.Length; i++) w.Light[i] = 15 << 4;
+        return w;
+    }
+
+    /// <summary>Quads of a skirt build: (min y, max y, vertical?) per quad.</summary>
+    static List<(float lo, float hi, bool side, float x, float z)> Quads(MeshData md)
+    {
+        var r = new List<(float, float, bool, float, float)>();
+        for (int i = 0; i + 3 < md.Verts.Count; i += 4)
+        {
+            float lo = float.MaxValue, hi = float.MinValue, x = 0, z = 0;
+            for (int k = 0; k < 4; k++) { var v = md.Verts[i + k]; lo = Math.Min(lo, v.y); hi = Math.Max(hi, v.y); x += v.x / 4; z += v.z / 4; }
+            r.Add((lo, hi, hi - lo > 0.01f, x, z));
+        }
+        return r;
+    }
+
+    /// <summary>The surface skirt never draws where there is air (overhangs, canopies, fluids), and is off by default.</summary>
+    static void Skirt(Action<bool, string> check)
+    {
+        BlockRules.ResetShapes();
+        var faces = new FlatFaces(); var md = new MeshData();
+        check(!SurfaceSkirt.Enabled, "skirt: off by default (tabletop.json surface_skirt)");
+        // A stone floor (top block y 5) and an overhang: a 2-block slab of stone at y 10-11 over (8, 8), air under it.
+        var over = Box((x, y, z) => y <= 5 || (x == 8 && z == 8 && (y == 10 || y == 11)) ? 1 : 0, "minecraft:air", "minecraft:stone");
+        SurfaceSkirt.Build(over, 0, 0, 0, 20, faces, md, out _, out _);
+        var q = Quads(md);
+        float sideLo = 99; int sides = 0;
+        foreach (var t in q) if (t.side) { sides++; sideLo = Math.Min(sideLo, t.lo); }
+        check(sides == 4 && Math.Abs(sideLo - 10) < 1e-4f, $"skirt: an overhang's sides cover its own 2 blocks, not a wall down to the floor ({sides} sides from y {sideLo})");
+        // A tree: a log trunk at (8, 8) y 6-8 under a leaf canopy at y 9-10 over a 5x5 area; the floor at 5.
+        var tree = Box((x, y, z) => y <= 5 ? 1 : x == 8 && z == 8 && y <= 8 ? 2 : Math.Abs(x - 8) <= 2 && Math.Abs(z - 8) <= 2 && (y == 9 || y == 10) ? 3 : 0,
+                       "minecraft:air", "minecraft:stone", "minecraft:oak_log[axis=y]", "minecraft:oak_leaves[distance=1]");
+        SurfaceSkirt.Build(tree, 0, 0, 0, 20, faces, md, out int lo, out int hi);
+        q = Quads(md);
+        float maxY = 0; int trunkSides = 0; bool wallUnderLeaves = false;
+        foreach (var t in q)
+        {
+            maxY = Math.Max(maxY, t.hi);
+            bool atTrunk = Math.Abs(t.x - 8.5f) <= 0.6f && Math.Abs(t.z - 8.5f) <= 0.6f;
+            if (t.side && atTrunk) trunkSides++;
+            else if (t.side) wallUnderLeaves = true;
+        }
+        check(maxY <= 9f && trunkSides == 4 && !wallUnderLeaves && lo == 5 && hi == 8,
+              $"skirt: under a leaf canopy it shows the floor and the trunk, no face at the leaves and no walls under them (top {maxY}, trunk sides {trunkSides}, tops {lo}..{hi})");
+        // Water (y 3-5) over stone: the top face at the water's height, below the real surface.
+        var pond = Box((x, y, z) => y <= 2 ? 1 : y <= 5 ? 2 : 0, "minecraft:air", "minecraft:stone", "minecraft:water[level=0]");
+        SurfaceSkirt.Build(pond, 0, 0, 0, 20, faces, md, out lo, out _);
+        q = Quads(md);
+        check(q.Count == 1 && lo == 5 && Math.Abs(q[0].hi - (5 + SurfaceSkirt.FluidTop - SurfaceSkirt.Inset)) < 1e-4f, $"skirt: a pond's top sits at the water's height ({(q.Count > 0 ? q[0].hi : -1)})");
+        BlockRules.ResetShapes();
     }
 
     static NavState Region(int window, int margin)
