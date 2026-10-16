@@ -47,6 +47,10 @@ namespace TabletopCraft.World
         /// <summary>A file was replaced and verified (raised by Pump on the caller's thread).</summary>
         public Action<string> Completed;
         public bool Offered { get; private set; }
+        /// <summary>[setup] The offer's optional state ("building", "ready", "missing", "failed"; "" from an older plugin) and
+        /// note (what the server is missing and how to fix it), PROTOCOL.md "Asset delivery".</summary>
+        public string ServerState { get; private set; } = "";
+        public string ServerNote { get; private set; } = "";
         public int Downloaded { get; private set; }
         public long BytesReceived { get; private set; }
 
@@ -74,6 +78,8 @@ namespace TabletopCraft.World
             lock (_lock)
             {
                 Offered = true;
+                ServerState = m.S("state") ?? "";
+                ServerNote = m.S("note") ?? "";
                 _chunk = chunk;
                 var keep = new List<Item>();
                 foreach (var f in offer)
@@ -293,7 +299,8 @@ namespace TabletopCraft.World
                 lock (_lock)
                 {
                     if (!Offered) return _items.Count == 0 ? "not offered by this server" : "waiting for the server";
-                    if (_items.Count == 0) return "the server offers nothing";
+                    if (_items.Count == 0) return (ServerState == "building" ? "the server is preparing the game files" : "the server offers nothing")
+                                                  + (ServerNote.Length > 0 ? ": " + ServerNote : "");
                     if (_checking > 0) return "checking local copies...";
                     var cur = _current;
                     if (cur != null) return Progress(cur);

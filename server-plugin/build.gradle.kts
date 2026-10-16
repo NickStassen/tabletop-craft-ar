@@ -25,6 +25,10 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
+// [setup] The asset tools run in a child JVM from the plugin jar (GameAssets): DumpEntityModels loads the user's own
+// client classes, which must stay out of the server's JVM. Same sources as the stand-alone tools (default package).
+sourceSets { main { java { srcDir("../tools/entity_models"); srcDir("../tools/sounds") } } }
+
 tasks.test { useJUnitPlatform() }
 
 tasks.processResources {

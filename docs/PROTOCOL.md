@@ -404,6 +404,7 @@ So the headset can find a server without typing its address (QUEST_SETUP.md Part
 - **v0.8.0: no message changes.** Bedrock players joining through Geyser/Floodgate are ordinary players here (names may start with `.`); the plugin now re-sends a player's `skin` when it changes, as §4.6 always said (Floodgate applies Bedrock skins after the join).
 - **v0.8.1: no message changes.** When one headset has several `region_request`s in flight, the server applies only the newest one's read (an older one finishing later is dropped and logged `REGION_SUPERSEDED`), so a slow link can't flip the area back to an older size or place.
 - **v1.0.0: first stable release, no message changes since v0.8.1.** From here the version is semantic: plugins and apps with the same major version work together, additions come in minor versions, breaking changes need 2.0.0.
+- **next version (1.1.0): automatic game files ("Asset delivery").** Additive: asset delivery is on by default for trusted sessions (paired headsets or the `auth.token`) on the LAN, with files the plugin builds from the server PC's own Minecraft install (config.yml `assets.auto`, `assets.minecraft-dir`); the `assets` offer gains optional `state` and `note`. Fixture `assets_building.json` (Java `GameAssetsTest`, Python `test_assets_offer_state_and_note`, C# `SetupTests`).
 
 ## 4.13–4.16 Runtime region control (v1, additive)
 
@@ -1249,9 +1250,10 @@ Fixtures `hello_sound.json`, `welcome_sound.json`, `sound_groups.json`, `actions
 
 ## Asset delivery (v0.6.0; cap `assets_v1`)
 
-Optional and off by default: a server operator who wants to skip `adb` can let their own server hand their own headsets the files the app reads from its files folder: `pack.zip`, `entity_models.json`, `sounds.zip`. **The project ships no Mojang assets**: these are the operator's own copies, made from their own Minecraft install (QUEST_SETUP.md Part E), and only for their own devices.
+A server hands its operator's own headsets the files the app reads from its files folder: `pack.zip`, `entity_models.json`, `sounds.zip`, so nothing has to be pushed with `adb`. **The project ships no Mojang assets**: these are the operator's own copies, made from their own Minecraft install, and only for their own devices. Next version (1.1.0): on by default, with the files built by the plugin itself from the server PC's Minecraft install (config.yml `assets.auto`, "Where the files come from" below), for paired headsets ("Pairing").
 
-- **Granted** (`assets_v1` in `welcome.caps`) when config.yml `assets.serve` is true, `assets.dir` is a folder, `auth.token` is set (so the session presented it), the client asked for `assets_v1` and its address is private (10/8, 172.16/12, 192.168/16, fc00::/7), link-local or loopback. Only the three names above are ever read from `assets.dir`.
+- **Granted** (`assets_v1` in `welcome.caps`) when the server has files to serve (config.yml `assets.auto`, or `assets.serve` with a folder `assets.dir`), the session is **trusted** (it presented `auth.token`, or the device token of a paired headset, "Pairing"), the client asked for `assets_v1` and its address is private (10/8, 172.16/12, 192.168/16, fc00::/7), link-local or loopback. Only the three names above are ever read. (Up to 1.0.x: only `assets.serve` with `auth.token` set.)
+- **Where the files come from** (next version, 1.1.0): for each name, `assets.dir` first (with `assets.serve`), then the files the plugin builds into `plugins/TabletopCraftAR/assets/` from the server PC's own launcher folder (`versions/<mc>/<mc>.jar` and `.json` of the server's game version, in the usual places or `assets.minecraft-dir`): `pack.zip` is the client jar's `assets/` entries; `entity_models.json` and `sounds.zip` come from `tools/entity_models/DumpEntityModels.java` and `tools/sounds/PackSounds.java`, run in a separate JVM. They are rebuilt when the jar, its JSON or the plugin version change. Nothing is downloaded from anywhere.
 - **Offer (S→C)**, after `welcome` and the registries, once the server has hashed the files (at start and `/tabletop reload`; again when a file changes while being served):
 
 ```json
@@ -1260,6 +1262,11 @@ Optional and off by default: a server operator who wants to skip `adb` can let t
 ```
 
   `chunk`: the length an `asset_get` should ask for (at most 1 MiB). Files not in the folder are left out; an empty list means nothing is offered.
+  Next version (1.1.0), optional: `state` says what the automatic files are doing (`building`, `ready`, `missing`: no Minecraft of the server's version on its PC, `failed`), and `note` (not when `ready`) says it in one line for the headset ("No Minecraft 26.3 on the server's PC: start Minecraft: Java Edition 26.3 once in the launcher there, then /tabletop assets rebuild"). A new offer follows when they change. Without `state` (a 1.0.x plugin, or `assets.auto` off) the client just takes the files. Fixture `assets_building.json`:
+
+```json
+{"v":1,"type":"assets","seq":4,"t":1760370000016,"chunk":262144,"files":[],"state":"building","note":"building pack.zip, entity_models.json, sounds.zip from the server PC's Minecraft 26.3"}
+```
 - **`asset_get` (C→S)**: `{"type":"asset_get","name":"sounds.zip","offset":262144,"length":262144}`. `offset` 0..size−1, `length` 1..1 MiB (the last chunk is shorter). At most 8 in flight per session (more get `rate_limited`). Errors carry `op: "asset_get"` and `name`: `asset_denied` (no grant), `not_found` (not offered, or changed on the server: a new offer follows), `bad_message` (offset or length out of range).
 - **The answer is one binary frame** (the only binary frame in the protocol):
 

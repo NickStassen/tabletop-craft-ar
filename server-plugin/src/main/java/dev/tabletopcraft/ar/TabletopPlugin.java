@@ -17,6 +17,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitTask;
 
+import java.nio.file.Path;
 import java.util.*;
 import java.util.Map;
 import java.util.HashMap;
@@ -97,11 +98,13 @@ public final class TabletopPlugin extends JavaPlugin {
     private volatile SoundGroups soundGroups = SoundGroups.empty();
     private volatile boolean soundEnabled = true;
     AssetService assets;   // onEnable (needs the logger)
+    GameAssets gameAssets;   // [setup] zero-config game files from this PC's Minecraft install (config assets.auto)
 
     @Override public void onEnable() {
         saveDefaultConfig();
         editWorld = new EditWorld(getLogger(), avatar::entities);
         assets = new AssetService(getLogger(), this::send, this::allSessions);   // [sound]
+        gameAssets = new GameAssets(getLogger(), () -> assets.rescan());       // [setup]
         getServer().getPluginManager().registerEvents(new BlockListener(this), this);
         getServer().getPluginManager().registerEvents(actions, this);
         getServer().getPluginManager().registerEvents(blockEntities, this);   // [blocks] sign edits, interactions
@@ -171,8 +174,10 @@ public final class TabletopPlugin extends JavaPlugin {
         interact.buildItemRegistry(iw != null ? iw : Bukkit.getWorlds().isEmpty() ? null : Bukkit.getWorlds().get(0));
         soundEnabled = c.getBoolean("sound.enabled", true);   // [sound]
         buildSoundGroups();
-        assets.configure(c.getBoolean("assets.serve", false), c.getString("assets.dir", ""), !c.getString("auth.token", "").isEmpty(),
-            c.getDouble("assets.max-mb-per-second", 8));
+        String mcDir = c.getString("assets.minecraft-dir", "");   // [setup] the PC's own game files, built on a worker
+        gameAssets.configure(c.getBoolean("assets.auto", true), getDataFolder().toPath().resolve("assets"), Bukkit.getMinecraftVersion(),
+            mcDir == null || mcDir.isBlank() ? null : Path.of(mcDir.trim()), getPluginMeta().getVersion(), getFile().getAbsolutePath(), GameAssets.javaCommand());
+        assets.configure(c.getBoolean("assets.serve", false), c.getString("assets.dir", ""), gameAssets, c.getDouble("assets.max-mb-per-second", 8));
         outbound = Executors.newSingleThreadExecutor(r -> { Thread t = new Thread(r, "tabletop-outbound"); t.setDaemon(true); return t; });
         link = new LinkServer(this, c.getString("bind.host", "0.0.0.0"), c.getInt("bind.port", 8765), c.getString("bind.path", "/tabletop"), c.getString("auth.token", ""));
         link.start();
@@ -203,6 +208,7 @@ public final class TabletopPlugin extends JavaPlugin {
     private void stop() {
         if (tickTask != null) tickTask.cancel();
         assets.stop();   // [sound]
+        gameAssets.stop();   // [setup] a running build (child JVM) ends
         interact.shutdown();   // [hands] held mobs get their gravity and AI back
         power.shutdown();      // [power] running box edits stop (their sessions close)
         operator.shutdown();   // [operator] container lids close
@@ -1265,9 +1271,35 @@ public final class TabletopPlugin extends JavaPlugin {
             }
             case "entities" -> sender.sendMessage("[tabletop] " + entities.lastStats + "; actions messages=" + actions.sent + " bytes=" + actions.bytes.get() + " dropped=" + actions.dropped);
             case "reload" -> { reloadConfig(); stop(); start(); sender.sendMessage("[tabletop] reloaded"); }
+            case "assets" -> assetsCommand(sender, args);   // [setup]
             default -> { return false; }
         }
         return true;
+    }
+
+    /** [setup] /tabletop assets [rebuild | dir &lt;launcher folder&gt;]: the automatic game files (GameAssets). */
+    private void assetsCommand(CommandSender sender, String[] args) {
+        String sub = args.length > 1 ? args[1].toLowerCase(Locale.ROOT) : "";
+        if (sub.equals("rebuild")) {
+            sender.sendMessage(gameAssets.rebuild() ? "[tabletop] rebuilding pack.zip, entity_models.json and sounds.zip (see the log)"
+                : "[tabletop] automatic game files are off (assets.auto)");
+            return;
+        }
+        if (sub.equals("dir")) {
+            if (args.length < 3) { sender.sendMessage("[tabletop] usage: /tabletop assets dir <the launcher folder, with versions/ in it>"); return; }
+            String d = String.join(" ", Arrays.copyOfRange(args, 2, args.length)).trim();
+            getConfig().set("assets.minecraft-dir", d);
+            saveConfig();
+            stop(); start();
+            sender.sendMessage("[tabletop] assets.minecraft-dir = " + d + "; looking there now (see the log)");
+            return;
+        }
+        var src = gameAssets.source();
+        sender.sendMessage("[tabletop] automatic game files: " + gameAssets.state().name().toLowerCase(Locale.ROOT)
+            + (gameAssets.note().isEmpty() ? "" : " (" + gameAssets.note() + ")") + (src != null ? "; from " + src.jar() : ""));
+        String aw = assets.why();
+        sender.sendMessage("[tabletop] serving: " + (aw != null ? "off (" + aw + ")" : assets.ready() ? assets.files().keySet() + " to paired headsets on the LAN" : "hashing..."));
+        sender.sendMessage("[tabletop] /tabletop assets rebuild | /tabletop assets dir <launcher folder>");
     }
 
     private void resubscribeAll() {
@@ -1279,8 +1311,9 @@ public final class TabletopPlugin extends JavaPlugin {
 
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
-        if (args.length == 1) return sender.hasPermission("tabletop.admin") ? List.of("status", "setorigin", "setsize", "avatar", "entities", "reload", "tell", "unfreeze-all") : List.of("tell");
+        if (args.length == 1) return sender.hasPermission("tabletop.admin") ? List.of("status", "setorigin", "setsize", "avatar", "entities", "reload", "tell", "unfreeze-all", "assets") : List.of("tell");
         if (args.length == 2 && args[0].equalsIgnoreCase("avatar")) return List.of("status", "spawn", "remove", "blocksize", "placement", "skin");
+        if (args.length == 2 && args[0].equalsIgnoreCase("assets")) return List.of("rebuild", "dir");   // [setup]
         if (args.length == 3 && args[0].equalsIgnoreCase("avatar") && args[1].equalsIgnoreCase("placement")) return List.of("floating", "ground", "exact");
         return List.of();
     }

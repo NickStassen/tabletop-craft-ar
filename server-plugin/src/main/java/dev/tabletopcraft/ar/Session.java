@@ -23,6 +23,9 @@ public final class Session {
     public volatile State state = State.AWAIT_HELLO;
     public volatile long lastInboundMs = openedMs;
     public volatile String client = "?";
+    /** [setup] Presented auth.token, or a paired headset's device token (PairingService): may have the features the
+     *  require-token switches keep for trusted headsets, and the game files (AssetService). Written once before READY. */
+    public volatile boolean trusted;
     private final AtomicInteger seq = new AtomicInteger();
 
     // Main-thread-only fields below.

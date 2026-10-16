@@ -139,6 +139,7 @@ BELL_DIRS = ("north", "south", "east", "west")
 ERROR_CODES |= {"asset_denied"}
 ASSET_NAMES = ("entity_models.json", "sounds.zip", "pack.zip")
 ASSET_MAX_CHUNK = 1 << 20
+ASSET_STATES = ("building", "ready", "missing", "failed")   # [setup] assets.state (next version, 1.1.0)
 SOUND_GROUP_KEYS = ("break", "step", "place", "hit", "fall")
 _SOUND_ID = re.compile(r"^([a-z0-9_.\-]+:)?[a-z0-9_./\-]+$")
 
@@ -1123,6 +1124,11 @@ def validate_sound(msg: dict) -> None:
                 raise ValueError(f"assets file must be one of {ASSET_NAMES} with a size: {f}")
             if not (isinstance(f.get("sha256"), str) and re.fullmatch(r"[0-9a-f]{64}", f["sha256"])):
                 raise ValueError("assets sha256 must be 64 lower-case hex digits")
+        # [setup] next version (1.1.0): what the plugin's automatic game files are doing, and a line for the headset
+        if "state" in msg and msg["state"] not in ASSET_STATES:
+            raise ValueError(f"assets state must be one of {ASSET_STATES}")
+        if "note" in msg and not isinstance(msg["note"], str):
+            raise ValueError("assets note must be a string")
     elif t == "asset_get":
         if msg["name"] not in ASSET_NAMES or not isinstance(msg["offset"], int) or msg["offset"] < 0:
             raise ValueError("asset_get needs a known name and an offset >= 0")

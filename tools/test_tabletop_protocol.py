@@ -824,6 +824,16 @@ def test_asset_messages_and_frame():
         parse_asset_frame(b"XXXX" + raw[4:])
 
 
+def test_assets_offer_state_and_note():
+    """[setup] next version: the offer says what the automatic game files are doing (PROTOCOL.md "Asset delivery")."""
+    offer = json.loads((FIX / "assets_building.json").read_text())
+    validate(offer)
+    assert offer["files"] == [] and offer["state"] == "building" and "26.3" in offer["note"]
+    for patch in ({"state": "cooking"}, {"note": 3}):
+        with pytest.raises(ValueError):
+            validate(dict(offer, **patch))
+
+
 def test_motion_messages():
     """[motion] lid, bell and explode actions; fuse, swell and the dying/sitting/sleeping poses (PROTOCOL.md "Block animations")."""
     a = json.loads((FIX / "actions_motion.json").read_text())

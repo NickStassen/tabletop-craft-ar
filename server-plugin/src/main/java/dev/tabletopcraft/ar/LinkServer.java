@@ -234,6 +234,7 @@ public final class LinkServer extends WebSocketServer {
         if (!speaks) { fatal(s, "version_mismatch", "server speaks protocols [" + Protocol.VERSION + "]", refSeq, Protocol.CLOSE_VERSION); return; }
         String t = m.has("token") && !m.get("token").isJsonNull() ? m.get("token").getAsString() : "";
         if (!token.isEmpty() && !tokenMatches(token, t)) { fatal(s, "auth_failed", "bad or missing token", refSeq, Protocol.CLOSE_AUTH); return; }
+        s.trusted = !token.isEmpty();   // [setup] it matched
         s.client = m.has("client") ? m.get("client").getAsString() : "unknown";
         if (m.has("caps") && m.get("caps").isJsonArray()) {
             java.util.Set<String> caps = new java.util.HashSet<>();

@@ -1,0 +1,10 @@
+{
+ "v": 1,
+ "type": "assets",
+ "seq": 4,
+ "t": 1760370000016,
+ "chunk": 262144,
+ "files": [],
+ "state": "building",
+ "note": "building pack.zip, entity_models.json, sounds.zip from the server PC's Minecraft 26.3"
+}
