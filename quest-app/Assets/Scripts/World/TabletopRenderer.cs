@@ -348,8 +348,11 @@ namespace TabletopCraft.World
             if (_retiring != null) _retiring.localPosition = Vector3.zero;
         }
 
-        void FinishStaging()
+        void FinishStaging(bool complete, int urgent)
         {
+            // [jump] How long the new region stayed hidden behind the old one; a timeout means something it waited for never came.
+            UnityEngine.Debug.Log($"[Tabletop] STAGED {(complete ? "complete" : "timed out")} after {(Time.unscaledTime - _stagingSince) * 1000:F0} ms: batches={_batches.Count} " +
+                                  $"dirty_batches={_dirty.Count} assembling={_assembling} dirty_in_scope={urgent} in_flight={_inFlight}");
             _staging = false;
             DropRetired();
             foreach (var b in _batches.Values) b.Go.SetActive(b.Verts > 0);
@@ -429,7 +432,11 @@ namespace TabletopCraft.World
             int urgent = DirtyIn(Scope);   // [nav] dirty sections near the window; the rest of the margin waits
             FlushTrail(urgent == 0 && _inFlight == 0 && Motion.sqrMagnitude < 0.01f);   // [mesh] idle and not gliding
             UpdateBatches();   // [area]
-            if (_staging && ((urgent == 0 && _inFlight == 0 && _dirty.Count == 0 && _assembling == 0) || Time.unscaledTime - _stagingSince > StagingTimeout)) FinishStaging();
+            if (_staging)
+            {
+                bool complete = urgent == 0 && _inFlight == 0 && _dirty.Count == 0 && _assembling == 0;
+                if (complete || Time.unscaledTime - _stagingSince > StagingTimeout) FinishStaging(complete, urgent);
+            }
             Dispatch(urgent);
             _saturated = _jobs >= MaxJobsInFlight;
             long h0 = FrameHitch.Begin();
@@ -595,16 +602,10 @@ namespace TabletopCraft.World
             }
         }
 
-        bool SectionsPending(Vector3Int key)
-        {
-            // [nav] Dirty sections outside Scope wait for the window: a batch doesn't wait for them.
-            // [mesh] Except for a batch entirely off screen: it waits (at most BatchMaxWait) for its dirty sections in
-            // KeepScope too, so a batch ahead of a glide is uploaded once with both its columns instead of once per column.
-            bool offScreen = BatchRules.OffScreen(_layout, key, VisibleScope);
-            foreach (var s in _layout.SectionsOf(key))
-                if (_busy.Contains(s) || (Model.DirtySections.Contains(s) && (Scope.Contains(s) || (offScreen && KeepScope.Contains(s))))) return true;
-            return false;
-        }
+        // [nav] Dirty sections outside Scope wait for the window; [mesh] a batch off screen waits (at most BatchMaxWait) for
+        // its KeepScope ones too, but never while staging (BatchRules.SectionsPending: that wait had no end there).
+        bool SectionsPending(Vector3Int key) =>
+            BatchRules.SectionsPending(_layout, key, _busy, Model.DirtySections, Scope, KeepScope, VisibleScope, _staging);
 
         Batch NewBatch(Vector3Int key)
         {

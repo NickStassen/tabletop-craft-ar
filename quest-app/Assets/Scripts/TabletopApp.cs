@@ -70,6 +70,7 @@ namespace TabletopCraft
         string _lastAreaStatus = "", _lastEditResult = "";
         string _session;
         float _avatarConfigAt = -1;   // send avatar_config once scaling settles, not every frame
+        string _avatarLogged;         // the last avatar_state logged
         // [comfort] session and comfort state (World/AppPrefs.cs, World/SessionState.cs)
         Dictionary<string, object> _config;              // tabletop.json as read
         AppPrefs _prefs = new AppPrefs();
@@ -934,6 +935,7 @@ namespace TabletopCraft
                 case "welcome":
                     Debug.Log($"[Tabletop] welcome from {m.S("server")} {m.S("server_version")} mc {m.S("mc_version")}");
                     _session = m.S("session");
+                    _avatarLogged = null;   // a new session logs its first avatar_state
                     _edit.Editor.ServerAllows = m.A("caps")?.Contains(Protocol.CapEdit) == true;   // block editing granted
                     _area.State.Limits = RegionLimits.From(m.O("limits"), RegionLimits.Default);
                     _nav.OnWelcome(m);   // [nav] server caps, limits, build height
@@ -1036,8 +1038,12 @@ namespace TabletopCraft
                     }
                     break;
                 case "avatar_state":
-                    Debug.Log($"[Tabletop] avatar enabled={m.B("enabled")} scale={m.D("scale")} note={m.S("note")}");
+                {
+                    // The server's debug.avatar-state streams this every 10 ticks (the giant isn't resent): log changes only.
+                    string av = $"enabled={m.B("enabled")} scale={m.D("scale")} note={m.S("note")}";
+                    if (av != _avatarLogged) { _avatarLogged = av; Debug.Log($"[Tabletop] avatar {av}"); }
                     break;
+                }
                 case "chat": case "command_result": case "command_output": case "command_suggestions":   // [talk] PROTOCOL.md 4.26-4.28
                 case "server_status": case "world_info": case "players_info":
                 case "bookmarks": case "container":   // [operator] PROTOCOL.md "Marks...", "Containers"

@@ -431,6 +431,24 @@ namespace TabletopCraft.World
         }
 
         /// <summary>
+        /// Does dirty batch `key` still wait for some of its sections (the sectionsPending of Ready)? A section being meshed
+        /// (busy) or dirty in scope (it is meshed soon). [nav] Dirty sections outside scope wait for the window, so a batch
+        /// doesn't wait for them. [mesh] Except for a batch entirely off screen: it waits (at most maxWait, Ready) for its
+        /// dirty sections in keep too, so a batch ahead of a glide is uploaded once with both its columns instead of once
+        /// per column. Never while staging: Ready has no time limit then, and nothing meshes those sections until the window
+        /// comes close, so a batch half in the lead waited forever and the new region stayed hidden until StagingTimeout
+        /// (a jump to a Mark showed no terrain for 20 s; Tests~ MeshTests "jump").
+        /// </summary>
+        public static bool SectionsPending(BatchLayout layout, Vector3Int key, HashSet<Vector3Int> busy, HashSet<Vector3Int> dirty,
+                                           SectionBox scope, SectionBox keep, SectionBox visible, bool staging)
+        {
+            bool offScreen = !staging && OffScreen(layout, key, visible);
+            foreach (var s in layout.SectionsOf(key))
+                if (busy.Contains(s) || (dirty.Contains(s) && (scope.Contains(s) || (offScreen && keep.Contains(s))))) return true;
+            return false;
+        }
+
+        /// <summary>
         /// After a re-keyed snapshot (a shift or resize by whole sections): batches that lost sections (dropped by the
         /// new region) must be rebuilt; batches that no longer cover any section of the region go away. Batches that
         /// only gain sections get dirty when those are meshed. `held` = old section keys that had a mesh.
