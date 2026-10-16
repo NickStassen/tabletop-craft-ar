@@ -41,7 +41,7 @@ Recordings are real headset and desktop captures; player names and the room may 
 
 1. On your PC, start **Minecraft: Java Edition 26.3** once in the launcher. The headset uses its textures, models and sounds; nothing from the game ships with this project.
 2. Download `tabletop-server-starter-<version>.zip` from the [latest release](https://github.com/NickStassen/tabletop-craft-ar/releases/latest), unpack it and run `start.bat` (Windows) or `bash start.sh` (Linux, macOS). Accept the Minecraft EULA when asked: it fetches Paper and the plugin and starts the server.
-3. Install the release's APK on a Meta Quest 3 in developer mode (`adb install`). A store invite link that needs no developer mode is on the way.
+3. Get the app on your Meta Quest 3: open the **[beta invite link](https://www.meta.com/s/7Hd4RBdRk)** on your phone or PC, accept it, then install **Tabletop Craft AR** from the headset's Library (no developer mode; the private beta is 18+). Or sideload the release's APK with `adb install`.
 4. Start the app at a table. It finds your server on the same Wi-Fi and shows a 6-digit code: type `tabletop pair <code>` in the server window.
 5. Wait for the one-time download (about 75 MB), set up the play area on the table, and have friends join with Java Edition at your PC's address.
 

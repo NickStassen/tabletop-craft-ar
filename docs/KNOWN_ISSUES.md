@@ -27,6 +27,6 @@ Things that don't work yet, or work differently from the game, in tabletop-craft
 - **Setup (v1.1.0):**
   - The Windows starter (`start.bat`/`start.ps1`) hasn't been run on Windows yet.
   - Only the official launcher's folder is found automatically. For Prism, MultiMC or CurseForge, point the plugin at the folder with `/tabletop assets dir <folder>`.
-  - The store invite link isn't published yet, so the app is sideloaded (Developer Mode).
+  - The store version is a private beta (invite link, 18+); a public store listing comes later.
 - **One region per server.** It's shared by all headsets, and the last change wins. There's one giant, owned by the last headset to connect.
 - **Realms and singleplayer Bedrock worlds** can't be used. Convert them to Java with Chunker and run them on Paper.

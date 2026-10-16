@@ -2,7 +2,7 @@
 
 There are two ways to set it up:
 
-- **Store install (recommended):** install the app from the Meta Horizon Store (an invite link while it's in a release channel; until that link is published here, install the release APK instead, step 3), run the server starter on your PC, and pair the headset with a 6-digit code. Nothing to type into config files, no Developer Mode, no cable: the headset gets the game's textures, models and sounds from your own PC.
+- **Store install (recommended):** install the app from the Meta Horizon Store through the [beta invite link](https://www.meta.com/s/7Hd4RBdRk), run the server starter on your PC, and pair the headset with a 6-digit code. Nothing to type into config files, no Developer Mode, no cable: the headset gets the game's textures, models and sounds from your own PC.
 - **Developer sideload** (the appendix at the end, Parts A to E): build the plugin and the APK yourself, install with `adb`, push files by hand. For development and testing.
 
 Parts F to Q (playing: the play area, moving around, building, the menu, chat and the console, Bedrock players) apply to both.
@@ -15,7 +15,7 @@ NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR 
 
 1. **On your PC, start Minecraft: Java Edition 26.3 once in the launcher.** That puts the game files the headset uses (textures, models, sounds) on your PC. The server reads them from there and sends them only to your own paired headsets.
 2. **Download the server starter and run it.** Get `tabletop-server-starter-<version>.zip` from the [releases page](https://github.com/NickStassen/tabletop-craft-ar/releases) and unpack it. Windows: double-click `start.bat`. Linux and macOS: `bash start.sh`. Accept the Minecraft EULA when it asks: it fetches Paper and the plugin, finds your game files and starts the server.
-3. **Install the app.** Once the store invite link is published here: open it on your phone or in a browser, accept it, then install **Tabletop Craft AR** from the Library in the headset. Until then, install `tabletop-craft-ar-<version>.apk` from the [latest release](https://github.com/NickStassen/tabletop-craft-ar/releases/latest) on a headset in Developer Mode: `adb install -r tabletop-craft-ar-<version>.apk` (appendix Part C step 1 has the Developer Mode setup). Everything after this step is the same.
+3. **Install the app.** Open the [beta invite link](https://www.meta.com/s/7Hd4RBdRk) on your phone or in a browser (signed in with the headset's Meta account), accept it, then install **Tabletop Craft AR** from the Library in the headset. The beta is a private release channel: invitees must be 18 or older. If the install waits as "queued", restart the headset. Alternatively, sideload `tabletop-craft-ar-<version>.apk` from the [latest release](https://github.com/NickStassen/tabletop-craft-ar/releases/latest) on a headset in Developer Mode: `adb install -r tabletop-craft-ar-<version>.apk` (appendix Part C step 1). The release APK and the store build are signed with the same key, so one can replace the other without uninstalling.
 4. **Start the app at a table and pair it.** The app finds your server on the same Wi-Fi by itself. It shows a 6-digit code: type `tabletop pair <code>` in the server window (or `/tabletop pair <code>` in game as an operator).
 5. **Wait for the one-time download** (about 75 MB over Wi-Fi; a toast shows the progress, then the table reloads with textures). Mark out the play area on the table (Part G). Friends join with Java Edition at your PC's address.
 
