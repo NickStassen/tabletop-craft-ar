@@ -1,6 +1,6 @@
 # CLAUDE.md: agent briefing for tabletop-craft-ar
 
-Read this, then `README.md`, `docs/PROTOCOL.md` (normative), `docs/ARCHITECTURE.md`, `docs/TESTING.md` and `docs/QUEST_SETUP.md`. `docs/PLAN.md` has the phases and `docs/RESEARCH.md` the sources.
+Read this, then `README.md` (short, visual), `docs/OVERVIEW.md` (features, status, versions), `docs/KNOWN_ISSUES.md`, `docs/PROTOCOL.md` (normative), `docs/ARCHITECTURE.md`, `docs/TESTING.md` and `docs/QUEST_SETUP.md`. `docs/PLAN.md` has the phases and `docs/RESEARCH.md` the sources.
 
 ## What this is
 A Paper plugin streams a box of blocks, player positions and block changes over a JSON WebSocket to a Quest 3 Unity passthrough app, which renders it as a table-top miniature. The Quest sends head and hand poses back at about 30 Hz, and the plugin drives a giant avatar (Mannequin with the SCALE attribute + two ItemDisplay hands) that Java players see. The Quest has no game account and never speaks the game protocol.
@@ -42,7 +42,7 @@ A Paper plugin streams a box of blocks, player positions and block changes over 
 
 ## First hardware session checklist
 Prereqs (human): Unity 6000.0.84f1 with Android module, Quest in Developer Mode connected over USB with debugging allowed, and the vanilla game installed for that version on this PC.
-Work through these in order and record what you verify in `README.md` Status and `docs/TESTING.md`:
+Work through these in order and record what you verify in `docs/OVERVIEW.md` Status and `docs/TESTING.md`:
 0. Push textures: find the client jar (Windows: `%APPDATA%\.minecraft\versions\26.3\26.3.jar`, Linux: `~/.minecraft/versions/26.3/26.3.jar`; if missing, ask the human to launch 26.3 once in the launcher). Copy it to a temp `pack.zip`, then `adb shell mkdir -p /sdcard/Android/data/com.tabletopcraft.ar/files/` and `adb push pack.zip` there (re-push after a fresh install if the folder was wiped). Also generate and push `entity_models.json` the same way (QUEST_SETUP.md Part E step 3) so entities show as models instead of boxes. Never commit the jar, pack.zip or entity_models.json.
 1. Open `quest-app/`, resolve Meta XR/MRUK 85.0.0 packages, fix compile errors with minimal changes (no version bumps). Run **TabletopCraft > Create Scene**, then build the APK. (Done on Linux 2026-10-13, headless: see TESTING.md section 5.)
 2. Start the plugin on Paper 26.3 / Java 25 on the PC. A new 26.x server has `white-list=true`: set it to false or `whitelist add` the Java players. Confirm the Quest can reach port 8765 over Wi-Fi (LAN IP, firewall rule).
@@ -81,4 +81,4 @@ Work through these in order and record what you verify in `README.md` Status and
 - Default branch **master**. Small conventional commits (`feat(plugin):`, `fix(quest):`, `docs:`). Never force-push or rewrite history.
 - Never commit `eula.txt`, server jars, worlds, resource packs, client jars, APKs or Unity's generated folders (`Library/`, `Temp/`, `Builds/`, `UserSettings/`).
 - Cross-link with real links: [ironman-quest3-hud](https://github.com/NickStassen/ironman-quest3-hud) (Unity/Meta XR setup, Quest networking notes) and the idea file [VR-7](https://github.com/NickStassen/ideas/blob/master/vr/07-minecraft-ar-tabletop.md).
-- When something is verified on a headset, update the Status table in `README.md`.
+- When something is verified on a headset, update the Status table in `docs/OVERVIEW.md` (and the README gallery or bullets if a headline feature changes). Keep the README short: big features, GIFs, links; details go in OVERVIEW.md, gaps in KNOWN_ISSUES.md.
