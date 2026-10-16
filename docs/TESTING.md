@@ -119,7 +119,7 @@ Quest 3 on Android 14-based Horizon OS, USB for install and logcat, Wi-Fi for th
   - VrApi `FPS=72/72` with ~2.4-2.6 ms app GPU time. Passthrough rendered at 72 fps.
   - A Java player shown on the table as a marker.
   - The giant followed the headset in a Java client, wearing the user's skin once the server was in online mode (`skin_player` set in tabletop.json; exact placement).
-  - The first demo media in `docs/media/` came from this session's headset recording; the Nether, End, lightning, power-tools, snow and crossplay GIFs come from the 2026-10-15 recordings. All of it is cropped or blurred so no screens or usernames show.
+  - The first demo media in `docs/media/` came from this session's headset recording; the Nether, End, lightning, power-tools, snow and crossplay GIFs come from the 2026-10-15 recordings. Player names and the room may be visible in them.
 - **Bugs found on the headset and fixed the same day**:
   - **Meshing race:** a few sections failed with NullReferenceException in the first meshing batch, so terrain was missing. Fixed by making the shape and face caches concurrent; Tests~ has a regression check.
   - **avatar_config spam:** the app sent `avatar_config` every frame while scaling, and the server respawned the giant each time (1,193 respawns in a few minutes). The app now debounces it, and the server rescales in place.

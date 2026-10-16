@@ -35,7 +35,7 @@
 | ![Building on the miniature from the headset: a stone hut on the water, with the selected stone block floating above the controller](docs/media/tabletop-building.gif) | ![The headset user as a giant head floating in the sky and peering in through a window, seen from the Java client](docs/media/tabletop-giant-java.gif) |
 | **Building.** Aim with the controller; the triggers place and break blocks. | **The view from Java.** Java players see you as a giant head peering in through their window. |
 
-Recorded on a Quest 3. Screens and player names in the recordings are blurred. More clips and stills: [docs/OVERVIEW.md](docs/OVERVIEW.md#more-recordings).
+Recordings are real headset and desktop captures; player names and the room may be visible. More clips and stills: [docs/OVERVIEW.md](docs/OVERVIEW.md#more-recordings).
 
 ## Get started
 

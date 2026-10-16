@@ -104,7 +104,7 @@ Yes, for the players: add [GeyserMC](https://geysermc.org) and Floodgate to the 
 
 ## More recordings
 
-Recorded on the headset. The player name labels and screens in these recordings are blurred.
+Recordings are real headset and desktop captures; player names and the room may be visible.
 
 Building from the headset: aim with the right controller, and the triggers place and break blocks. The selected block (stone) floats above the controller, and a laser shows where it will go.
 
