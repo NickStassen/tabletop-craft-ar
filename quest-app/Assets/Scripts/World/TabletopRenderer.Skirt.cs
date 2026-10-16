@@ -59,7 +59,9 @@ namespace TabletopCraft.World
         /// <summary>Once per frame after the batches: plans, builds, uploads and drops skirt tiles.</summary>
         void UpdateSkirt()
         {
-            while (_skirtDone.TryDequeue(out var r)) ApplySkirtTile(r.corner, r.minTop, r.maxTop, r.data);
+            // [smooth] Within the frame's upload budget like the batches (at least one tile per frame).
+            for (bool one = true; (one || _sw.Elapsed.TotalMilliseconds < UploadBudgetMs) && _skirtDone.TryDequeue(out var r); one = false)
+                ApplySkirtTile(r.corner, r.minTop, r.maxTop, r.data);
             bool on = SurfaceSkirt.Enabled && !_staging && Model != null && Model.Loaded && !Scope.Equals(SectionBox.All);
             if (!on) { if (_skirt.Tiles.Count > 0) { _skirt.Clear(); FreeDropped(); } return; }
             // Only while the view moves or tiles are up: at rest the window fills in from meshing within frames.

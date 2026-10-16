@@ -11,7 +11,8 @@
 // [mesh] optional: "surface_skirt": true (a low-detail surface where the window isn't meshed yet), "skirt_speed": 2 (with
 //   the skirt, glide up to this much faster than meshing keeps up; 1 = only as fast as detail arrives)
 // [smooth] optional: "hitch_ms": 30 (log a HITCH line for frames longer than this; 0 = off), "upload_budget_ms": 3
-//   (main-thread time per frame for mesh uploads), "reuse_snapshot_buffers": true (glide shifts reuse old grid arrays)
+//   (main-thread time per frame for mesh uploads), "reuse_snapshot_buffers": true (glide shifts reuse old grid arrays),
+//   "mesh_data_on_workers": true (batch geometry written into mesh data on the assembling worker)
 // [talk] optional: "operator_name": "Nick" (the name in chat, else skin_player), "quick_commands": ["time set day"]
 // [power] B held = undo; the block menu's Tools tab: box wand, clone, brushes, undo/redo (World/PowerTools.cs)
 // [hands] optional: "left_trigger": "use" (default: vanilla right-click order, left grip + trigger places) or "place"
@@ -471,6 +472,7 @@ namespace TabletopCraft
                 FrameHitch.ThresholdMs = Mathf.Max(0f, (float)c.D("hitch_ms", FrameHitch.ThresholdMs));                       // [smooth] HITCH log (0 = off)
                 TabletopRenderer.UploadBudgetMs = Mathf.Clamp((float)c.D("upload_budget_ms", TabletopRenderer.UploadBudgetMs), 0.5f, 12f);   // [smooth]
                 SnapshotBuffers.Enabled = c.B("reuse_snapshot_buffers", SnapshotBuffers.Enabled);                             // [smooth] A/B switch
+                TabletopRenderer.WriteOnWorkers = c.B("mesh_data_on_workers", TabletopRenderer.WriteOnWorkers);               // [smooth] A/B switch
                 SolidLayers.Enabled = c.B("solid_pass", SolidLayers.Enabled);                 // [gpu] opaque faces without alpha test
                 BatchRules.PackedVertices = c.B("packed_vertices", BatchRules.PackedVertices);   // [gpu] 20-byte batch vertices
                 BlockKeywords.UseClipPlanes = c.B("clip_planes", BlockKeywords.UseClipPlanes);   // [gpu] hardware clip planes for the window

@@ -19,6 +19,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
+using Unity.Collections;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -148,7 +149,15 @@ namespace TabletopCraft.World
         readonly Dictionary<Vector3Int, SectionMesh> _secs = new Dictionary<Vector3Int, SectionMesh>();   // [area] CPU mesh per section
         readonly Dictionary<Vector3Int, Batch> _batches = new Dictionary<Vector3Int, Batch>();
         readonly Dictionary<Vector3Int, float> _dirty = new Dictionary<Vector3Int, float>();             // batch key -> dirty since
-        readonly ConcurrentQueue<(Batch batch, BatchData data)> _assembled = new ConcurrentQueue<(Batch, BatchData)>();
+        readonly ConcurrentQueue<Assembled> _assembled = new ConcurrentQueue<Assembled>();
+
+        /// <summary>[smooth] A batch assembled on a worker, its geometry already written into writable mesh data (the
+        /// main thread only applies it); Written false: the worker couldn't, Data still holds the arrays (Fill).</summary>
+        sealed class Assembled
+        {
+            public Batch Batch; public BatchData Data; public Mesh.MeshDataArray Mesh; public bool HasMesh, Written; public Bounds Bounds;
+            public bool Packed; public long Bytes;
+        }
         readonly List<(SectionMesh, Vector3)> _parts = new List<(SectionMesh, Vector3)>();
         readonly List<Vector3Int> _order = new List<Vector3Int>();
         BatchLayout _layout;
@@ -529,15 +538,17 @@ namespace TabletopCraft.World
         /// <summary>Uploads assembled batches within the frame budget (at least one per frame), then starts new assemblies.</summary>
         void UpdateBatches()
         {
-            bool first = true;
+            // At least one upload per frame keeps things moving, unless a snapshot apply already took the frame's budget.
+            bool first = FrameHitch.Ms(FrameHitch.Part.Apply) < UploadBudgetMs;
             while ((first || _sw.Elapsed.TotalMilliseconds < UploadBudgetMs) && _assembled.TryDequeue(out var r))
             {
                 first = false;
                 _assembling--;
-                r.batch.Assembling = false;
-                if (!r.batch.Dead) UploadBatch(r.batch, r.data);
-                r.data.Release();
-                Uploaded(r.batch.Fresh); r.batch.Fresh = null;   // [mesh]
+                r.Batch.Assembling = false;
+                if (!r.Batch.Dead) UploadBatch(r.Batch, r);
+                else if (r.HasMesh) r.Mesh.Dispose();
+                r.Data.Release();
+                Uploaded(r.Batch.Fresh); r.Batch.Fresh = null;   // [mesh]
             }
             if (_dirty.Count == 0 || _assembling >= MaxAssembliesInFlight) return;
             // Nearest to the view first.
@@ -563,12 +574,21 @@ namespace TabletopCraft.World
                 System.Array.Sort(parts, (p, q) => q.Item2.y != p.Item2.y ? q.Item2.y.CompareTo(p.Item2.y) : 0);
                 b.Assembling = true; _assembling++;
                 b.Fresh = FreshOf(key);   // [mesh]
+                // [smooth] The worker writes the geometry straight into writable mesh data, so the main thread no longer
+                // copies megabytes per batch (SetVertexBufferData); it only applies the finished data.
+                bool write = WriteOnWorkers;
+                var r = new Assembled { Batch = b, HasMesh = write, Mesh = write ? UnityEngine.Mesh.AllocateWritableMeshData(1) : default };
                 Task.Run(() =>
                 {
-                    BatchData d;
-                    try { d = BatchData.Assemble(parts, BatchRules.PackedVertices); }
-                    catch (System.Exception e) { d = new BatchData(); UnityEngine.Debug.LogWarning($"[Tabletop] batch {b.Key}: {e.Message}"); }
-                    _assembled.Enqueue((b, d));
+                    try { r.Data = BatchData.Assemble(parts, BatchRules.PackedVertices); }
+                    catch (System.Exception e) { r.Data = new BatchData(); UnityEngine.Debug.LogWarning($"[Tabletop] batch {b.Key}: {e.Message}"); }
+                    r.Packed = r.Data.Packed != null; r.Bytes = r.Data.Bytes;
+                    if (write)
+                    {
+                        try { r.Bounds = Write(r.Mesh[0], r.Data); r.Written = true; r.Data.Release(); }
+                        catch (System.Exception e) { r.Written = false; UnityEngine.Debug.LogWarning($"[Tabletop] batch {b.Key} mesh data: {e.Message}"); }
+                    }
+                    _assembled.Enqueue(r);
                 });
             }
         }
@@ -652,14 +672,60 @@ namespace TabletopCraft.World
             m.bounds = bounds;
         }
 
-        void UploadBatch(Batch b, BatchData d)
+        /// <summary>[smooth] Batches write their mesh data on the worker that assembles them (false: Fill on the main thread,
+        /// the 0.8.1 path; tabletop.json "mesh_data_on_workers").</summary>
+        public static bool WriteOnWorkers = true;
+
+        /// <summary>[smooth] Fill's work for writable mesh data (any thread): vertex and index buffers, four submeshes.
+        /// Returns the bounds the main thread sets after applying it.</summary>
+        public static Bounds Write(Mesh.MeshData m, BatchData d)
         {
+            const MeshUpdateFlags F = MeshUpdateFlags.DontValidateIndices | MeshUpdateFlags.DontRecalculateBounds | MeshUpdateFlags.DontResetBoneBounds;
+            if (d.VertCount == 0)
+            {
+                m.SetVertexBufferParams(0, VertexLayout); m.SetIndexBufferParams(0, IndexFormat.UInt32); m.subMeshCount = 0;
+                return default;
+            }
+            if (d.Packed != null)
+            {
+                m.SetVertexBufferParams(d.VertCount, PackedLayout);
+                NativeArray<PackedVertex>.Copy(d.Packed, m.GetVertexData<PackedVertex>(), d.VertCount);
+            }
+            else
+            {
+                m.SetVertexBufferParams(d.VertCount, VertexLayout);
+                NativeArray<BatchVertex>.Copy(d.Verts, m.GetVertexData<BatchVertex>(), d.VertCount);
+            }
+            m.SetIndexBufferParams(d.IndexCount, IndexFormat.UInt32);
+            NativeArray<int>.Copy(d.Indices, m.GetIndexData<int>(), d.IndexCount);
+            var bounds = new Bounds((d.Min + d.Max) * 0.5f, d.Max - d.Min);
+            m.subMeshCount = 4;
+            m.SetSubMesh(0, new SubMeshDescriptor(0, d.Solid) { bounds = bounds, firstVertex = 0, vertexCount = d.VertCount }, F);
+            m.SetSubMesh(1, new SubMeshDescriptor(d.Solid, d.Opaque - d.Solid) { bounds = bounds, firstVertex = 0, vertexCount = d.VertCount }, F);
+            m.SetSubMesh(2, new SubMeshDescriptor(d.Opaque, d.Transparent) { bounds = bounds, firstVertex = 0, vertexCount = d.VertCount }, F);
+            m.SetSubMesh(3, new SubMeshDescriptor(d.Opaque + d.Transparent, d.WaterBack) { bounds = bounds, firstVertex = 0, vertexCount = d.VertCount }, F);
+            return bounds;
+        }
+
+        void UploadBatch(Batch b, Assembled r)
+        {
+            var d = r.Data;
             long h0 = FrameHitch.Begin();   // [smooth] HITCH upload_ms
-            Fill(b.Mesh, d);
-            FrameHitch.End(FrameHitch.Part.Upload, h0); FrameHitch.Uploaded(d.Bytes);
+            if (r.Written)
+            {
+                const MeshUpdateFlags F = MeshUpdateFlags.DontValidateIndices | MeshUpdateFlags.DontRecalculateBounds | MeshUpdateFlags.DontResetBoneBounds;
+                UnityEngine.Mesh.ApplyAndDisposeWritableMeshData(r.Mesh, b.Mesh, F);
+                b.Mesh.bounds = r.Bounds;
+            }
+            else
+            {
+                if (r.HasMesh) r.Mesh.Dispose();
+                Fill(b.Mesh, d);
+            }
+            FrameHitch.End(FrameHitch.Part.Upload, h0); FrameHitch.Uploaded(r.Bytes);
             b.Verts = d.VertCount; b.Indices = d.IndexCount; b.Opaque = d.Opaque; b.Solid = d.Solid; b.Transparent = d.Transparent; b.WaterBack = d.WaterBack;
-            b.Sections = d.Sections; b.Bytes = d.Bytes;
-            bool packed = d.Packed != null;
+            b.Sections = d.Sections; b.Bytes = r.Bytes;
+            bool packed = r.Packed;
             if (packed != b.Packed) { b.Packed = packed; b.Renderer.sharedMaterials = Materials(packed); }   // [gpu]
             b.Go.SetActive(d.VertCount > 0 && !_staging);
         }
