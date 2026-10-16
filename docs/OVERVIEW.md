@@ -41,7 +41,9 @@ Java players (LAN) ──game protocol──▶ Paper 26.3 + tabletop plugin ◀
 
 **The giant.** Java players see the headset user as a floating player head and two hands that follow the headset and controllers (or as a Mannequin), wearing the skin you choose. Bedrock players see a large Mannequin. See [Does it work with Bedrock?](#does-it-work-with-bedrock).
 
-**Files from your own install.** `pack.zip` (your client jar), `entity_models.json` and `sounds.zip` go on the headset by adb, or the plugin can hand your own copies to your own headset on the LAN. Setup: [Part E](QUEST_SETUP.md#part-e-textures-resource-pack), [Part P](QUEST_SETUP.md#part-p-sound-and-getting-your-files-from-your-server).
+**Files from your own install.** Since 1.1.0 the plugin builds `pack.zip`, `entity_models.json` and `sounds.zip` from the server PC's own Minecraft install (start Minecraft: Java Edition once there) and sends them to your paired headsets on the LAN, once (about 75 MB). They can still go on the headset by adb. Setup: [Store install](QUEST_SETUP.md#the-game-files), [Part E](QUEST_SETUP.md#part-e-textures-resource-pack).
+
+**Easy setup (1.1.0).** The server starter (`start.bat`, `start.sh`) downloads Paper, the plugin and optionally Geyser, asks you to accept the EULA and starts the server; the app finds it on the Wi-Fi and pairs with a 6-digit code (`tabletop pair <code>`, `tabletop devices`, `tabletop unpair`). Setup: [QUEST_SETUP Store install](QUEST_SETUP.md#store-install-recommended).
 
 ## Status
 
@@ -60,6 +62,7 @@ What has been tested and verified, and where. Each entry is backed by the sessio
 | 0.4.0: fast gliding, chat and commands, block entities | Verified on a Quest 3 (2026-10-15); fixes from that session in 0.8.1 (about 60 fps at 256 wide, 72 at 128) |
 | 0.5.0 / 0.5.1: hands, living world, operator and power tools, faster meshing | Verified on a Quest 3 (2026-10-15): items, mobs, night and weather, horse gear and leads, Marks, follow, chest and sign editing, wand fill and undo. Brushes and clone not tried yet |
 | 0.6.0 / 0.7.0: sound, motion | Verified on a Quest 3 (2026-10-15): sound, opt-in asset delivery (41.5 MB pack.zip in 6 s, 67 MB sounds.zip in 8 s, scene reload clean), flowing fluids, particles, lids, bells, explosions |
+| 1.1.0: server starter, pairing, automatic game files | Tested on a test server: `tools/pair_check.py` (with and without required pairing), and the app's own code paired, then downloaded and checked all three files from a server made by `start.sh`. Not yet checked on a headset; `start.ps1` not yet run on Windows |
 | Bedrock players (Geyser + Floodgate) | Verified with Minecraft on a phone (2026-10-15): joins through Geyser, appears on the table with its skin, chats both ways with the headset, and sees the giant as a large Mannequin wearing the headset user's skin (Bedrock cannot show the floating head and hands) |
 
 ## Versions
@@ -67,6 +70,8 @@ What has been tested and verified, and where. Each entry is backed by the sessio
 The repo's `VERSION` file versions the plugin, the Quest app and the protocol together. From 1.0.0 versions are semantic: a plugin and an app with the same major version work together, new optional fields and messages come in minor versions, and a breaking change needs a new major version. Before 1.0 the project used 0.X versions with no backwards compatibility (plugin, app and tools of the same 0.X went together). What each version added is in the [PROTOCOL.md changelog](PROTOCOL.md) and on the [releases page](https://github.com/NickStassen/tabletop-craft-ar/releases); the Status table above lists what each feature set was verified on.
 
 ## Quick start (server)
+
+The easy way is the server starter from the [latest release](https://github.com/NickStassen/tabletop-craft-ar/releases/latest) (`tabletop-server-starter-<version>.zip`, 1.1.0 and later): [QUEST_SETUP Store install](QUEST_SETUP.md#the-server-starter). By hand:
 
 Requires JDK 25 (Paper 26.x needs Java 25; the Gradle 9.8.0 wrapper runs on it).
 
