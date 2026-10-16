@@ -1,134 +1,72 @@
 # tabletop-craft-ar
 
+**A live Minecraft: Java Edition server as a miniature on your real table, in Meta Quest 3 passthrough AR.** Build, travel and play god over a world that Java and Bedrock players are walking around in, while they see you as a giant.
+
 [![Support on Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20this%20project-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/nickstassen)
 
-A live block world from a **Minecraft: Java Edition** server, shown as a miniature on a real table in **Meta Quest 3** passthrough AR. Java players walk around inside it in real time, and they see the headset user as a giant whose head and hands follow the headset and controllers.
-
-> Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft. This project ships no Mojang assets: textures come from a resource pack you supply.
+> **NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.**
+> The project ships no Mojang assets: textures and sounds come from your own copy of the game.
 
 ![Turning and scaling the miniature in a real room: it shrinks to a block on the floor, tumbles as it is turned, then grows until the viewer is standing in the terrain](docs/media/tabletop-scale-move.gif)
 
-*Grabbing, turning and scaling the miniature from the headset (Quest 3 passthrough). The world shrinks to a block on the floor, is turned, then scaled back up until you are standing in the terrain. A short pause in the middle is cut. Below: building from the block menu, and a Java player seen from the headset, plus the other direction.*
+## What it does
 
-Related: the idea write-up [VR-7 in NickStassen/ideas](https://github.com/NickStassen/ideas/blob/master/vr/07-minecraft-ar-tabletop.md) and the sister project [ironman-quest3-hud](https://github.com/NickStassen/ironman-quest3-hud), which has the Unity 6000.0.84f1 + Meta XR setup this project reuses.
+- **A live world on your table.** Any area of a Paper server streams in as a textured, lit miniature you can grab, turn and scale, from a block on the desk to standing in the terrain.
+- **Build like a creative player.** Break, place and pick blocks from a block menu and hotbar, and changes from Java players show up live.
+- **Use items and mobs.** Open doors, flip levers, pour buckets, use bone meal and spawn eggs, and carry, name or freeze mobs.
+- **God powers.** Strike lightning, mark a box and fill it or build walls, sculpt with sphere brushes, and undo any edit.
+- **Run the server from the headset.** Chat with players, run console commands and manage players and the world from the operator panel.
+- **Travel.** Glide across the world, jump to saved Marks in the Overworld, the Nether and the End, or follow a player.
+- **A living world.** Day and night, rain and snow, flowing water and lava, particles, moving mobs and the game's sounds, all on the table.
+- **Bedrock friends welcome.** Players on phones, consoles and Windows join through Geyser and show up on the table with their skins.
+- **Java players see you as a giant.** Your head and hands float over their world and follow the headset and controllers.
+- **Free and open source** under the MIT license.
 
-## How it works
+## See it in action
 
-```
-Java players (LAN) ──game protocol──▶ Paper 26.3 + tabletop plugin ◀──JSON over WebSocket (ws://host:8765/tabletop)─────▶ Quest 3 app
-                                        │ chunk_snapshot / block_update / player_positions ──────────────────────▶ │ greedy-meshed miniature on the table
-                                        │ ◀────────────────────────────────────────── pose (head + hands, 30 Hz)    │
-                                        └ giant avatar: floating player-head + 2 hand ItemDisplays (or a Mannequin)
-```
-
-- **server-plugin/**: Paper plugin (Java 25, Gradle Kotlin DSL, Java-WebSocket 1.6.0 shaded). Streams a configurable box (default 32x64x32) and drives the giant.
-- **quest-app/**: Unity 6000.0.84f1 project skeleton + C# scripts (link client, protocol, greedy mesher, resource-pack atlas, MRUK table placement, pose sender, player markers). Runs on a Quest 3 (first session 2026-10-13) and builds headless on Linux. See [docs/QUEST_SETUP.md](docs/QUEST_SETUP.md).
-- **tools/**: Python fake-Quest client, protocol fixtures, the mineflayer second-player bot, and `e2e.sh`, which runs the whole server-side stack headless.
-- **docs/**: [ARCHITECTURE](docs/ARCHITECTURE.md), [PROTOCOL](docs/PROTOCOL.md) (normative wire format, v1), [PLAN](docs/PLAN.md), [RESEARCH](docs/RESEARCH.md), [TESTING](docs/TESTING.md), [QUEST_SETUP](docs/QUEST_SETUP.md).
-
-## Status
-
-| Part | State |
+| | |
 |---|---|
-| Plugin: snapshot, block updates, players, subscribe, errors, timeouts | Tested end to end on a headless Paper 26.3 server (and earlier on 1.21.11); see [TESTING](docs/TESTING.md) |
-| Giant avatar following poses | Floating head + hands (default): positions and head rotation match the poses exactly on a 26.3 test server, and a mineflayer player receives the three displays (TESTING section 7); not yet seen by eye. Mannequin modes: on the first headset session a Java client on an online-mode server saw the giant follow the headset wearing the user's skin (exact placement); ground placement was tried and replaced as the default |
-| Java players on the table (skinned, animated figures) | Working on a Quest 3 headset: a Java player's figure shows up on the miniature (see the "Both sides of the same world" clip below). Geometry, UVs, animation and skin rules are unit-tested, and skin download was checked in the Unity Editor |
-| Quest C# protocol/mesher code | Compiled and unit-tested with .NET 8 outside Unity, plus a live session against the plugin |
-| Block editing from the headset (break, place, pick) | Verified on a Quest 3 (the screenshots below), and tested live against Paper 26.3 (unit tests, `Tests~ --live-edit`, `tools/edit_check.py`). See [TESTING](docs/TESTING.md) "Block editing" and [QUEST_SETUP](docs/QUEST_SETUP.md) Part I |
-| Quest app in Unity | Compiles and builds an APK on Linux, headless (Unity 6000.0.84f1, Meta XR 85.0.0); see [TESTING](docs/TESTING.md) section 5 |
-| Quest app on a headset | First session on a Quest 3: passthrough, Wi-Fi link to Paper 26.3 (RTT 13-42 ms), a 64x96x64 area textured from the 26.3 client jar at a steady 72 FPS (~2.5 ms app GPU), the Java player on the table, and the giant (with the user's skin) seen from a Java client. MRUK table detection works (the desk marked as a Table in Space Setup). Area setup (Y) could not open on the headset before 0.3.1 (a button-mapping bug); see [TESTING](docs/TESTING.md) "First headset session" |
-| 0.2.0-0.3.1: block menu, width presets, fixes and polish | The block menu and hotbar, width presets up to 256, vanilla placement rules, two-block items, placement preview, grass/tint/mipmap fixes, remembered settings, headset-off pause, offline badge, LAN discovery. Verified on a Quest 3 (2026-10-14) |
-| 0.4.0: fast gliding, chat and commands, block entities | Verified on a Quest 3 (2026-10-15); fixes from that session in 0.8.1 (about 60 fps at 256 wide, 72 at 128) |
-| 0.5.0 / 0.5.1: hands, living world, operator and power tools, faster meshing | Verified on a Quest 3 (2026-10-15): items, mobs, night and weather, horse gear and leads, Marks, follow, chest and sign editing, wand fill and undo. Brushes and clone not tried yet |
-| 0.6.0 / 0.7.0: sound, motion | Verified on a Quest 3 (2026-10-15): sound, opt-in asset delivery (41.5 MB pack.zip in 6 s, 67 MB sounds.zip in 8 s, scene reload clean), flowing fluids, particles, lids, bells, explosions |
-| Bedrock players (Geyser + Floodgate) | Verified with Minecraft on a phone (2026-10-15): joins through Geyser, appears on the table with its skin, chats both ways with the headset, and sees the giant as a large Mannequin wearing the headset user's skin (Bedrock cannot show the floating head and hands) |
+| ![A Nether area as a block-shaped miniature on a desk, lava inside and crimson forest on top](docs/media/tabletop-nether.gif) | ![The End's main island with its obsidian pillars as a miniature on a desk](docs/media/tabletop-end.gif) |
+| **The Nether on your desk.** Jump to a saved Mark in another dimension and it streams in live. | **The End, pillars and all.** The main island on the table, ready to explore. |
+| ![Lightning bolts striking a night-time forest miniature where the controller points](docs/media/tabletop-lightning.gif) | ![A cyan wand box on the miniature with stone walls built inside it](docs/media/tabletop-power-tools.gif) |
+| **Lightning from your hand.** Point the wand and strike: it's real lightning on the server. | **Power tools.** Mark a box with the wand, fill it or build walls, paint with brushes, undo. |
+| ![Snow falling over snowy peaks on the table, with the Java client on the monitor behind showing the giant head in the snow](docs/media/tabletop-snow.gif) | ![A Bedrock player's phone in hand next to the miniature, where the Java and Bedrock players stand among the trees](docs/media/tabletop-crossplay.gif) |
+| **Rain and snow.** The server's weather falls on the miniature. | **Bedrock + Java + AR.** A phone player and a Java player in the same live world as the headset. |
+| ![Building on the miniature from the headset: a stone hut on the water, with the selected stone block floating above the controller](docs/media/tabletop-building.gif) | ![The headset user as a giant head floating in the sky and peering in through a window, seen from the Java client](docs/media/tabletop-giant-java.gif) |
+| **Building.** Aim with the controller; the triggers place and break blocks. | **The view from Java.** Java players see you as a giant head peering in through their window. |
 
-## Known issues
+Recorded on a Quest 3. Screens and player names in the recordings are blurred. More clips and stills: [docs/OVERVIEW.md](docs/OVERVIEW.md#more-recordings).
 
-- **Bedrock players see the giant as a whole player.** Bedrock clients can't show the item displays the floating head and hands are made of, so Bedrock players see a large Mannequin wearing the headset user's skin, turning with the headset, with no moving hands. Java players see the floating head and hands.
-- **Pistons jump instead of sliding.** Pushed blocks appear in their new spot after the 2-tick move.
-- **Not drawn yet:**
-  - map art in item frames
-  - the item in suspicious sand and gravel
-  - banners don't sway
-  - the enchanting-table book stays closed
-  - sign text shows without styles or per-line colours
-- **Sounds:**
-  - Mob sound variants (moody cows, big pigs, wolf moods) use the base mob's sounds.
-  - Sounds played by other server plugins aren't heard.
-  - There's no music and no biome or underwater ambience.
-- **Chat:** `/msg` and `/tellraw` don't reach the headset's chat. Bukkit fires no event for them.
-- **The surface skirt is off by default.** It's the low-detail ground shown ahead of the detail while you glide fast (`"surface_skirt": true` in tabletop.json); it's still being checked on the headset.
-- **Very wide areas are heavy.** 256 wide runs at about 60 fps standing still and about 45-50 fps while gliding; 128 wide and below hold 72 fps (Quest 3). Growing the area's margin on the first glide can cause one long frame.
-- **One region per server.** It's shared by all headsets, and the last change wins. There's one giant, owned by the last headset to connect.
-- **Realms and singleplayer Bedrock worlds** can't be used. Convert them to Java with Chunker and run them on Paper.
+## Get started
 
-## Screenshots
+1. Run a [Paper](https://papermc.io) 26.3 server (Java 25) and drop the plugin jar from the [latest release](https://github.com/NickStassen/tabletop-craft-ar/releases/latest) into its `plugins/` folder.
+2. Install the release's APK on a Meta Quest 3 in developer mode (`adb install`).
+3. Copy your own Minecraft client jar to the headset as `pack.zip`, for the textures.
+4. Start the app at your table and pick the server under block menu > Info > Server > Find servers (or put its address in `tabletop.json`).
 
-Recorded on the headset. Building from the headset: aim with the right controller, and the triggers place and break blocks. The selected block (stone) floats above the controller, and a laser shows where it will go.
-
-![Building on the miniature from the headset: a stone hut on the water, with the selected stone block floating above the controller](docs/media/tabletop-building.gif)
-
-Gliding into the terrain: a lush cave with glow berries and a lava fall. It's lit with Minecraft-style smooth lighting and biome colours, and the textures come from the user's own client jar.
-
-![Inside the miniature: a lush cave with glow berries, moss and a lava fall](docs/media/tabletop-cave.gif)
-
-| | | |
-|---|---|---|
-| ![A stone hut built on the water from the headset](docs/media/tabletop-building.jpg) | ![A lush cave and lava fall inside the miniature](docs/media/tabletop-cave.jpg) | ![The forest world floating in a room, seen through the Quest 3](docs/media/tabletop-forest-floating.jpg) |
-| ![A Java player's avatar standing in a hut on the miniature, seen from the headset](docs/media/tabletop-avatar-in-house.jpg) | ![The headset user as a giant head in the sky, seen from the Java client](docs/media/tabletop-giant-java.jpg) | |
-
-### Both sides of the same world
-
-Picking a block from the block menu on the headset (the menu floats by the left hand, and the ray selects the block), then a Java player placing doors in the hut, with the changes showing up live on the miniature:
-
-![Opening the block menu and picking an oak door on the headset, then a Java player placing doors in a hut that updates live on the miniature](docs/media/tabletop-build-select.gif)
-
-A Java player on the miniature, seen from the headset: the player's figure stands on the mountain next to a real terrarium, and a cat has come to look at the world.
-
-![The miniature in a room with a cat sitting on a terrarium next to it, and the Java player's figure on the mountain](docs/media/tabletop-cat-terrarium.gif)
-
-The other direction: the headset user appears to Java players as a giant head that follows the headset, here floating outside and looking in through a window of the hut.
-
-![The headset user as a giant head floating in the sky and peering in through a window, seen from the Java client](docs/media/tabletop-giant-java.gif)
-
-The player name labels in these recordings are blurred.
-
-## Quick start (server)
-
-Requires JDK 25 (Paper 26.x needs Java 25; the Gradle 9.8.0 wrapper runs on it).
-
-```bash
-cd server-plugin && ./gradlew build          # -> build/libs/tabletop-craft-ar-plugin-<VERSION>.jar
-```
-
-Copy the jar into a Paper **26.3** server's `plugins/`, start the server once, then edit `plugins/TabletopCraftAR/config.yml` (region origin and size, port, optional token). A new 26.x server has `white-list=true` in `server.properties`, so Java players are rejected until you `whitelist add <name>` or set `white-list=false`. The log lists the addresses the headset can use (`Headset URL: ws://<lan-ip>:8765/tabletop`), and the headset can also find the server by itself (block menu > Info > Server > Find servers; UDP 8765). In game or in the console:
-
-```
-/tabletop status
-/tabletop setorigin [x y z]        # region min corner (your position if omitted)
-/tabletop setsize <dx> <dy> <dz>   # within config.yml max_region (default 352 x 384 x 352)
-/tabletop avatar status|spawn|remove|blocksize <m>
-/tabletop avatar placement floating|ground|exact   # head + hands at the headset/controllers (default), or a Mannequin
-/tabletop avatar skin <java name>         # giant's skin (also tabletop.json skin_player / config avatar.skin-player)
-/tabletop tell <message>          # any player: whisper to the headset (chat panel)
-/tabletop unfreeze-all            # wake every mob the headset froze
-/tabletop reload
-```
-
-Fake headset: `pip install -r tools/requirements.txt && python tools/fake_quest.py --url ws://SERVER:8765/tabletop --avatar -v`.
+The full guide is [docs/QUEST_SETUP.md](docs/QUEST_SETUP.md); server commands and options are in [docs/OVERVIEW.md](docs/OVERVIEW.md#quick-start-server).
 
 ## Does it work with Bedrock?
 
-Yes, for the players: add [GeyserMC](https://geysermc.org) and Floodgate to the Paper server, and Bedrock players on phones, consoles or Windows join it alongside Java players. They show up on the table, their chat reaches the headset, and they see the giant. Geyser can't show the floating head and hands, so for Bedrock players the plugin shows a giant Mannequin with its eyes where the head is. The server is still a Java server (Java game rules). To play a Bedrock world, convert it with [Chunker](https://chunker.app). The headset still loads its textures from the Java game files, which come with Minecraft for Windows (it has included both editions since 2022). A Bedrock Dedicated Server can't host the table. Setup: [QUEST_SETUP Part Q](docs/QUEST_SETUP.md#part-q-bedrock-players-geyser-and-floodgate).
+Yes, for the players: add [GeyserMC](https://geysermc.org) and Floodgate to the Paper server, and Bedrock players on phones, consoles or Windows join alongside Java players, appear on the table and chat with the headset. The world itself runs on a Java (Paper) server; a Bedrock world can be converted with [Chunker](https://chunker.app). Setup: [QUEST_SETUP Part Q](docs/QUEST_SETUP.md#part-q-bedrock-players-geyser-and-floodgate).
 
-## Legal
+## Learn more
 
-Follow the [Minecraft EULA](https://www.minecraft.net/eula) and [usage guidelines](https://www.minecraft.net/usage-guidelines). Running a server means accepting the EULA yourself (`eula.txt`); this repo never commits `eula.txt`, the server jar, or game assets. The Quest app loads textures only from a resource pack or client jar the user already owns.
+- [Overview](docs/OVERVIEW.md): every feature in detail, what has been verified on a headset, versions, and the server quick start
+- [Known issues](docs/KNOWN_ISSUES.md)
+- [Headset and server setup](docs/QUEST_SETUP.md)
+- [Architecture](docs/ARCHITECTURE.md) · [Protocol](docs/PROTOCOL.md) · [Testing](docs/TESTING.md) · [Plan and roadmap](docs/PLAN.md) · [Research](docs/RESEARCH.md)
+- Related: the idea write-up [VR-7](https://github.com/NickStassen/ideas/blob/master/vr/07-minecraft-ar-tabletop.md) and the sister project [ironman-quest3-hud](https://github.com/NickStassen/ironman-quest3-hud) (Unity and Meta XR setup)
 
 ## Support
 
 tabletop-craft-ar is free and open source, built in my spare time. If you enjoy it, you can [buy me a coffee on Ko-fi](https://ko-fi.com/nickstassen). It's totally optional, but it really helps keep the project going.
+
+## Legal
+
+**NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.**
+
+Follow the [Minecraft EULA](https://www.minecraft.net/eula) and [usage guidelines](https://www.minecraft.net/usage-guidelines). Running a server means accepting the EULA yourself; this repo never commits `eula.txt`, the server jar or game assets, and the headset loads textures and sounds only from files you already own.
 
 ## License
 
