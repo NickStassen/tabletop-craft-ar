@@ -53,7 +53,7 @@ Phases 0-3 were built and checked on Paper 1.21.11 / Java 21. The server pin has
   - Entities (vehicles, mobs, dropped items, held items) and player actions (arm swing, digging cracks, break particles, hurt flash), seen on a Quest 3.
 - **Built, waiting for headset measurements (2026-10-14):** area width presets 64–256 without reconnecting (resize deltas, re-keyed meshes, footprint kept) and mesh batching (roadmap item 7).
 - **Verified on a Quest 3 (2026-10-14):** releases 0.2.0 to 0.3.1 (block menu, width presets, fixes and polish).
-- **Verified on a Quest 3 (2026-10-15):** releases 0.4.0 to 0.8.1 (fixes from that session are 0.8.1); Bedrock only with a scripted client so far. Earlier list: 0.4.0 to 0.7.0 (fast gliding, chat and commands, block entities, using blocks/items/mobs, the living world, operator and power tools, faster meshing, sound, motion). Each part's headset checklist is in TESTING.md.
+- **Verified on a Quest 3 (2026-10-15):** releases 0.4.0 to 0.8.1 (fixes from that session are 0.8.1); Bedrock verified with a phone client too. Earlier list: 0.4.0 to 0.7.0 (fast gliding, chat and commands, block entities, using blocks/items/mobs, the living world, operator and power tools, faster meshing, sound, motion). Each part's headset checklist is in TESTING.md.
 
 ## Roadmap: "playing Minecraft as a god"
 Ordered by how much each adds to the feeling of a living world on the table that you can act on.
