@@ -7,9 +7,9 @@ store build on a Meta Horizon release channel. `CLAUDE.md` "Releases" has the sh
 
 - The repo's `VERSION` file is the only source. Gradle reads it for the plugin (`tabletop-craft-ar-plugin-<version>.jar`),
   and `TabletopBatch` sets the app's `bundleVersion` from it.
-- Semantic versioning from 1.0.0: a plugin and an app with the same major version work together, features come in
+- Semantic versioning from v1.0.0: a plugin and an app with the same major version work together, features come in
   minor versions (behind capabilities, PROTOCOL.md), fixes in patch versions.
-- **Android versionCode** = `M*1000000 + m*10000 + p*100 + TABLETOP_BUILD` (1.1.0 is 1010000). `TABLETOP_BUILD`
+- **Android versionCode** = `M*1000000 + m*10000 + p*100 + TABLETOP_BUILD` (v1.1.0 is 1010000). `TABLETOP_BUILD`
   (environment, 0-99, default 0) is for uploading the same version to a store channel again: the store only takes a
   versionCode higher than the last one it has.
 

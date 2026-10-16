@@ -309,7 +309,7 @@ debug:
 # Server caps for region_request / subscribe / setsize (PROTOCOL.md 4.13).
 # Sized for a 256-block visible box plus the headset's view margin, which grows with the width so gliding has runway
 # (48 blocks per side at 256: 352; docs/TESTING.md "Faster gliding"). A one-section glide shift reads only the new
-# sections (about 50 ms at 352x160x352) and sends a 0.2-0.9 MB delta. Servers set up with the 0.3.0 defaults
+# sections (about 50 ms at 352x160x352) and sends a 0.2-0.9 MB delta. Servers set up with the v0.3.0 defaults
 # (288 / 16777216) are raised to these on start.
 max_region:
   x: 352

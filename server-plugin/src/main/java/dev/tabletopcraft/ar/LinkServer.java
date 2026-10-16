@@ -263,7 +263,7 @@ public final class LinkServer extends WebSocketServer {
         boolean closed = !token.isEmpty() || pairing.required();
         if (closed && !s.trusted) {
             if (s.pairCap) { s.hello = m; s.state = Session.State.PAIRING; sendCode(s, true, refSeq); return; }
-            fatal(s, "auth_failed", token.isEmpty() ? "this server pairs its headsets: update the app to 1.1 or newer" : "bad or missing token", refSeq, Protocol.CLOSE_AUTH);
+            fatal(s, "auth_failed", token.isEmpty() ? "this server pairs its headsets: update the app to v1.1.0 or newer" : "bad or missing token", refSeq, Protocol.CLOSE_AUTH);
             return;
         }
         finishHello(s, m);

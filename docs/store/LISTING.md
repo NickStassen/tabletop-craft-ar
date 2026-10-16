@@ -71,9 +71,9 @@ Rules this text follows (Minecraft Usage Guidelines, Meta app policies):
 a trailer of 30 s to 2 min. All original art: no Minecraft logo, font, textures or screenshots of vanilla textures.
 The invite page needs the name, the short description and the header image (hero) only.
 
-## User reporting, blocking and the content rating (1.2.0)
+## User reporting, blocking and the content rating (v1.2.0)
 
-What the public listing needs, and what to set in the Developer Dashboard once 1.2.0 is uploaded. The invite-only beta
+What the public listing needs, and what to set in the Developer Dashboard once v1.2.0 is uploaded. The invite-only beta
 doesn't need it.
 
 **Meta's requirement.** [VRC.Content.3](https://developers.meta.com/horizon/resources/vrc-content-3/): apps with
@@ -106,7 +106,7 @@ answers them and points to the server's owner.
    with the release-channel build (VRC.Content.3 test steps: start the app, connect to a server, press the Meta
    button, Report, submit, see the success dialog).
 
-**IARC questionnaire: answers to change (1.2.0).**
+**IARC questionnaire: answers to change (v1.2.0).**
 
 | Question | Was | Now |
 |---|---|---|

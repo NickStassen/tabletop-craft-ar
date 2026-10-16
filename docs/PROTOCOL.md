@@ -1,6 +1,6 @@
 # PROTOCOL.md — Tabletop link protocol, v1.2.0
 
-The project version (repo `VERSION` file) versions the plugin, the Quest app and this protocol together. From 1.0.0 the version follows semantic versioning: a plugin and an app with the same major version work together, new optional fields and messages come in minor versions, and a breaking change needs a new major version. (Before 1.0 there was no backwards compatibility: plugin, app and tools of the same 0.X version went together.) The wire field `v` stays `1`.
+The project version (repo `VERSION` file) versions the plugin, the Quest app and this protocol together. From v1.0.0 the version follows semantic versioning: a plugin and an app with the same major version work together, new optional fields and messages come in minor versions, and a breaking change needs a new major version. (Before v1.0.0 there was no backwards compatibility: plugin, app and tools of the same v0.x.y version went together.) The wire field `v` stays `1`.
 
 Status: **v1, normative.** The server plugin (`server-plugin/`), the Quest app (`quest-app/`) and the fake client (`tools/`) must all implement exactly this. Any breaking change bumps `PROTOCOL_VERSION` and is recorded in the changelog at the bottom.
 
@@ -85,8 +85,8 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 | `sign_edit` | C→S | one side of a sign: four lines, dye colour, glowing ink ("Signs", needs `interact_v1`) |
 | `sound_groups` | S→C | every block's break, step, place, hit and fall sounds, once after the registries ("Sound", needs `sound_v1`) |
 | `assets` / `asset_get` | S→C / C→S | the operator's own pack.zip, entity_models.json and sounds.zip on offer; a chunk of one, answered by a binary frame ("Asset delivery", needs `assets_v1`) |
-| `pair_request` / `pair_code` / `paired` | C→S / S→C / S→C | ask for a pairing code; the code to show; the device token once an operator typed the code ("Pairing", needs `pair_v1`; 1.1.0) |
-| `report` / `report_ack` | C→S / S→C | report a player to the server's operators; the report's id once it is saved ("Chat safety: mute, block, report", needs `report_v1`; 1.2.0) |
+| `pair_request` / `pair_code` / `paired` | C→S / S→C / S→C | ask for a pairing code; the code to show; the device token once an operator typed the code ("Pairing", needs `pair_v1`; v1.1.0) |
+| `report` / `report_ack` | C→S / S→C | report a player to the server's operators; the report's id once it is saved ("Chat safety: mute, block, report", needs `report_v1`; v1.2.0) |
 
 ### 4.1 `hello` (C→S)
 
@@ -101,9 +101,9 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 - `client`: free string, e.g. `quest-app` or `fake-quest`.
 - `protocols`: protocol versions the client speaks. The server picks the highest one it also supports.
 - `token`: shared secret from the plugin `config.yml` (`auth.token`). If it's empty in config, auth is disabled (LAN dev only). A wrong token gets `error` `auth_failed` and then close code 4003.
-- `caps`: capability strings. v1 defines `rle_palette_v1` (required) and `avatar` (client will send poses). Optional extras: `light_v1` and `biomes_v1` (§4.5.1), `edit_v1` (§4.20), `entities_v1` (§4.21), `actions_v1` (§4.22), `chat_v1`, `command_v1` and `status_v1` (§4.26–4.28), `block_entities_v1` (§4.29), `interact_v1` ("Using blocks and items"), `world_v1` ("World state: time and weather"), `marks_v1` ("Marks: bookmarks, spawn and worlds"), `power_v1` ("Undo, box edits and brushes"), `report_v1` ("Chat safety: mute, block, report"; 1.2.0); unknown caps are ignored.
+- `caps`: capability strings. v1 defines `rle_palette_v1` (required) and `avatar` (client will send poses). Optional extras: `light_v1` and `biomes_v1` (§4.5.1), `edit_v1` (§4.20), `entities_v1` (§4.21), `actions_v1` (§4.22), `chat_v1`, `command_v1` and `status_v1` (§4.26–4.28), `block_entities_v1` (§4.29), `interact_v1` ("Using blocks and items"), `world_v1` ("World state: time and weather"), `marks_v1` ("Marks: bookmarks, spawn and worlds"), `power_v1` ("Undo, box edits and brushes"), `report_v1` ("Chat safety: mute, block, report"; v1.2.0); unknown caps are ignored.
 - `operator_name` (optional string): the name the headset wants in game chat (§4.26). The server keeps `[A-Za-z0-9_]`, at most 16 characters.
-- Since 1.1.0, with the cap `pair_v1`: `device_token` (optional string), the token this server gave the headset when it was paired, and `device_name` (optional string, e.g. "Quest 3"). A valid `device_token` counts like the shared `token`; on a server that needs a credential, a `pair_v1` client without one is shown a code instead of being refused ("Pairing").
+- Since v1.1.0, with the cap `pair_v1`: `device_token` (optional string), the token this server gave the headset when it was paired, and `device_name` (optional string, e.g. "Quest 3"). A valid `device_token` counts like the shared `token`; on a server that needs a credential, a `pair_v1` client without one is shown a code instead of being refused ("Pairing").
 - The client MUST NOT send anything else before it gets `welcome`. The server closes with 4002 if `hello` doesn't arrive within 5 s.
 
 ### 4.2 `welcome` (S→C)
@@ -123,7 +123,7 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 - `caps` (optional): the optional features granted to this session (§4.5.1). Missing or empty means none (e.g. an older server).
 - `region`: the default region from config. The server immediately follows `welcome` with a `chunk_snapshot` for it unless the client sends `subscribe` first. (Send order: `welcome`, then a snapshot, which the server builds async, so a `subscribe` arriving in the meantime replaces it.)
 - `limits.max_dims`: the largest `dims` the server accepts in `subscribe`.
-- Since 1.1.0: `server_id` (string, 16 hex digits), a random id the server keeps; and for `pair_v1` sessions `pairing` (`paired`, `device`, `name`, `required`, `token_rejected`; "Pairing").
+- Since v1.1.0: `server_id` (string, 16 hex digits), a random id the server keeps; and for `pair_v1` sessions `pairing` (`paired`, `device`, `name`, `required`, `token_rejected`; "Pairing").
 
 ### 4.3 `subscribe` (C→S)
 
@@ -338,8 +338,8 @@ Codes (strings, closed set in v1):
 | `not_found` | no | an `entity_op` whose entity is gone (died, despawned, unloaded) ("Acting on mobs") |
 | `mark_denied` | no | a `bookmark` without `marks_v1`, on a read-only server (`marks.edit`), over `marks.max`, or removing a name that doesn't exist ("Marks: bookmarks, spawn and worlds") |
 | `asset_denied` | no | an `asset_get` without `assets_v1` (nothing to serve, an untrusted session, not from the LAN, or not asked for) ("Asset delivery"); `not_found` also answers an `asset_get` for a name that isn't offered |
-| `pair_denied` | no (yes while waiting for pairing) | a `pair_request` refused: pairing off, already paired, too many requests from this address or too many headsets waiting ("Pairing"; 1.1.0) |
-| `report_denied` | no | a `report` without `report_v1`: the client didn't ask for it, or `reports.enabled` is off ("Chat safety: mute, block, report"; 1.2.0) |
+| `pair_denied` | no (yes while waiting for pairing) | a `pair_request` refused: pairing off, already paired, too many requests from this address or too many headsets waiting ("Pairing"; v1.1.0) |
+| `report_denied` | no | a `report` without `report_v1`: the client didn't ask for it, or `reports.enabled` is off ("Chat safety: mute, block, report"; v1.2.0) |
 
 `ref_seq` is the `seq` of the offending message, if any. When `fatal` is true, the sender closes the socket right after.
 
@@ -362,7 +362,7 @@ Then it closes with code 1000. When the Quest client disconnects (with or withou
 | 4004 | idle timeout |
 | 4005 | server shutting down / plugin disabled |
 
-A client SHOULD NOT reconnect by itself after 4001 or 4003: nothing changes until the app, the plugin, the token or the address does. The Quest app stops retrying and shows its setup card (QUEST_SETUP.md Part D); it reconnects with backoff after every other close. Since 1.1.0: after a 4003 to a `hello` that carried a `device_token` (the headset was unpaired), the client drops that token and reconnects without it, which shows a new code ("Pairing").
+A client SHOULD NOT reconnect by itself after 4001 or 4003: nothing changes until the app, the plugin, the token or the address does. The Quest app stops retrying and shows its setup card (QUEST_SETUP.md Part D); it reconnects with backoff after every other close. Since v1.1.0: after a 4003 to a `hello` that carried a `device_token` (the headset was unpaired), the client drops that token and reconnects without it, which shows a new code ("Pairing").
 
 ## 6. Implementation notes (non-normative)
 
@@ -385,7 +385,7 @@ So the headset can find a server without typing its address (QUEST_SETUP.md Part
 - The plugin answers only probes with `v` 1 from private (10/8, 172.16/12, 192.168/16), link-local or loopback addresses, at most 20 replies a second, and ignores everything else. `discovery.enabled: false` turns it off.
 - Why a probe and not a periodic beacon: an Android app receives broadcast or multicast only while it holds a `WifiManager.MulticastLock` (with the `CHANGE_WIFI_MULTICAST_STATE` permission), while sending a broadcast and receiving a unicast reply need neither. The Quest app's manifest is unchanged.
 - **Fallback (client only).** If nothing answers (a firewall that lets only TCP 8765 through), the Quest app connects to TCP 8765 on every host of its /24 (400 ms each, 48 at a time) and lists the hosts that accept as "port open". It never sends `hello` to them; connecting is the user's choice.
-- Since 1.1.0: the reply also carries `id` (the server's `server_id`, so a headset recognises a paired server whose address changed) and `pair` (true when it pairs headsets: no token to type even if `token` is true). Fixture `discovery_reply_pair.json`.
+- Since v1.1.0: the reply also carries `id` (the server's `server_id`, so a headset recognises a paired server whose address changed) and `pair` (true when it pairs headsets: no token to type even if `token` is true). Fixture `discovery_reply_pair.json`.
 - Fixtures: `tools/fixtures/discovery_probe.json`, `discovery_reply.json` (Java `LanBeaconTest`, Python `test_discovery_*`, C# `Tests~/ComfortTests.cs`).
 
 ## Changelog
@@ -398,7 +398,7 @@ So the headset can find a server without typing its address (QUEST_SETUP.md Part
 - **v0.3.1: sessions and discovery.** `region_changed` carries `limits` like `region_info` (with the new world's `build_height`, §4.13); LAN discovery over UDP (§7); `player_positions` filters on Y and leaves out spectators, invisible and vanished players (§4.6); clients drop a link after 6 s of silence (§4.10) and don't retry after 4001/4003 (§5). Fixtures `region_changed.json` (now with `limits`), `discovery_probe.json`, `discovery_reply.json`.
 - **v0.3.1: building like vanilla (§4.20).** No new fields. `block_edit` `pos` may be the clicked block itself when it is replaceable; the server places doors, beds and tall plants with both halves (and removes both on a break), checks vanilla replaceability and survival, refuses blocks with a collision box in a player or mob and edits outside the world border, makes placed leaves persistent, sets `waterlogged` from the cell, computes connection properties from the neighbours, and names blocks readably in refusals ("stone is in the way"; fixture `error_edit_denied.json`).
 - **v0.3.1: armour stands (§4.21).** `entities` entries carry `arms`, `base_plate` and `stand_pose` for armour stands; fixture `entities_armor_stand.json` (Java `EntityDeltaTest`, Python, C# `EntityTests`).
-- **v0.4.0: faster gliding (§4.17, §4.25), no field changes.** A glide `region_request` may move the origin by several whole sections at once; the default `max_region` is 352×384×352 and 25,165,824 blocks (a config still holding the 0.3.0 defaults is raised on start); a server reads only the sections of a moved or resized region that weren't in the old one (the delta lists exactly those). Fixture `region_changed.json` carries the new default limits.
+- **v0.4.0: faster gliding (§4.17, §4.25), no field changes.** A glide `region_request` may move the origin by several whole sections at once; the default `max_region` is 352×384×352 and 25,165,824 blocks (a config still holding the v0.3.0 defaults is raised on start); a server reads only the sections of a moved or resized region that weren't in the old one (the delta lists exactly those). Fixture `region_changed.json` carries the new default limits.
 - **v0.4.0: chat, commands and server status (§4.26–4.28).** New caps `chat_v1`, `command_v1` (needs `auth.token` by default) and `status_v1`; messages `chat`, `chat_send`, `command`, `command_result`, `command_output`, `command_complete`, `command_suggestions`, `server_status`, `world_query`, `world_info`, `players_query`, `players_info`; `hello.operator_name`; `welcome.chat` and `welcome.commands`; errors `chat_denied`, `command_denied`. Fixtures `hello_control.json`, `welcome_control.json`, `chat*.json`, `command*.json`, `error_command_denied.json`, `server_status.json`, `world_query.json`, `world_info.json`, `players_query.json`, `players_info.json`.
 - **v0.4.0: block entities (§4.29).** New cap `block_entities_v1` and message `block_entities`: sign text, banner patterns, player head profiles, pot sherds, spawner mobs, beacon tiers, campfire, shelf and vault items and active conduits, as per-chunk deltas with `removed`, and `reset` on a session's first region and after a world change; config.yml `block-entities`. Fixtures `block_entities.json`, `block_entities_reset.json`.
 - **v0.5.0: operator tools ("Operator tools": "Worlds and spawn", "Following a player", "Marks: bookmarks, spawn and worlds", "Containers", "Signs").** `welcome.worlds` and `region_info.worlds`/`spawn`; new cap `marks_v1` (config.yml `marks`) with `bookmark` and `bookmarks` (after `welcome` and on each change) and `welcome.marks`; error `mark_denied`; with `interact_v1`: `container_query`, `container`, `container_edit`, `container_close`, `sign_edit`, and `welcome.interact.containers`/`signs` (config.yml `interact.containers`, `interact.signs`, `interact.sign-event`). An `interact` on a container or sign is still refused (`interact_denied`). `subscribe.follow` is answered `unsupported`: headsets follow players themselves. Fixtures listed under "Operator tools: Fixtures and tests".
@@ -412,7 +412,7 @@ So the headset can find a server without typing its address (QUEST_SETUP.md Part
 - **v0.8.1: no message changes.** When one headset has several `region_request`s in flight, the server applies only the newest one's read (an older one finishing later is dropped and logged `REGION_SUPERSEDED`), so a slow link can't flip the area back to an older size or place.
 - **v1.0.0: first stable release, no message changes since v0.8.1.** From here the version is semantic: plugins and apps with the same major version work together, additions come in minor versions, breaking changes need 2.0.0.
 - **v1.1.0: pairing ("Pairing").** Additive: cap `pair_v1`; `hello.device_token` and `device_name`; `welcome.server_id` (every client) and `welcome.pairing`; messages `pair_request`, `pair_code`, `paired`; error `pair_denied`; a session state "waiting for pairing" on servers that need a credential (`pair_v1` clients only; others still get 4003); the discovery reply's `id` and `pair`; the require-token switches mean "trusted session" (shared token or paired headset); a 4003 to a hello with a `device_token` makes the client drop the token and reconnect. Fixtures `hello_pair.json`, `welcome_pair.json`, `pair_request.json`, `pair_code.json`, `paired.json`, `error_pair_denied.json`, `discovery_reply_pair.json`.
-- **v1.2.0: chat safety ("Chat safety: mute, block, report").** Additive: cap `report_v1` (config.yml `reports`); messages `report` (C→S) and `report_ack` (S→C); error `report_denied`; errors about a report carry `op: "report"`. Mute and block are client-side (no messages). Old peers: a 1.1.x plugin doesn't grant `report_v1` (the app greys Report, mute and block still work); a 1.1.x app never asks for it. Fixtures `hello_report.json`, `welcome_report.json`, `report.json`, `report_ack.json`, `error_report_denied.json`.
+- **v1.2.0: chat safety ("Chat safety: mute, block, report").** Additive: cap `report_v1` (config.yml `reports`); messages `report` (C→S) and `report_ack` (S→C); error `report_denied`; errors about a report carry `op: "report"`. Mute and block are client-side (no messages). Old peers: a v1.1.x plugin doesn't grant `report_v1` (the app greys Report, mute and block still work); a v1.1.x app never asks for it. Fixtures `hello_report.json`, `welcome_report.json`, `report.json`, `report_ack.json`, `error_report_denied.json`.
 - **v1.1.0: automatic game files ("Asset delivery").** Additive: asset delivery is on by default for trusted sessions (paired headsets or the `auth.token`) on the LAN, with files the plugin builds from the server PC's own Minecraft install (config.yml `assets.auto`, `assets.minecraft-dir`); the `assets` offer gains optional `state` and `note`. Fixture `assets_building.json` (Java `GameAssetsTest`, Python `test_assets_offer_state_and_note`, C# `SetupTests`).
 
 ## 4.13–4.16 Runtime region control (v1, additive)
@@ -423,7 +423,7 @@ So the headset can find a server without typing its address (QUEST_SETUP.md Part
 - `welcome.limits` gains `max_dims`, `max_blocks`, `max_bytes`. `chunk_snapshot` may carry `server_timing{read_ms,remap_ms,encode_ms}`, which clients ignore if they don't recognise it.
 - Growth triggers a full re-snapshot for `rle_palette_v1` clients. For `sections_v1` clients a resize whose origin moves by whole sections is a delta with only the new sections (§4.25); `limits` also carry `max_view_width` (§4.25).
 - Fixtures: `tools/fixtures/region_request.json`, `region_query.json`, `region_changed.json`, `region_info.json`, `error_region_too_large.json` (also parsed by the C# tests).
-- Changelog: added on 2026-10-13, before the 0.x versions (the "v1.1" step of the early protocol, not release 1.1.0). Additive: v1 clients are unaffected.
+- Changelog: added on 2026-10-13, before v0.1.0. Additive: v1 clients are unaffected.
 - Changelog (additive, no version bump): adds `player_positions[].skin_model` (§4.6) and documents the giant's placement and skin lookup (§4.8, §4.9). Fixture: `tools/fixtures/player_positions.json`.
 
 ## 4.17–4.19 Moving around: view margin, sectioned and delta snapshots (v1, additive)
@@ -468,7 +468,7 @@ A client that puts `"sections_v1"` in `hello.caps` MAY receive `chunk_snapshot` 
 
 - `tools/fixtures/chunk_snapshot_sections.json` (full, snapshot 8), `chunk_snapshot_delta.json` (snapshot 9 as a delta against 8, one section), `region_request_nav.json` (origin form with `view_margin`) and `chunk_snapshot_sections_light.json` (per-section light, biomes on part 0). Java `SectionCodecTest`, Python `test_tabletop_protocol.py` and C# `Tests~/NavTests.cs` decode them and rebuild snapshot 9 from 8.
 - `tools/nav_e2e.py` runs a `sections_v1` headset across the world on a live server and checks each delta-assembled region block by block against a v1 client's full snapshot of the same region.
-- Changelog: added on 2026-10-13, before the 0.x versions (the "v1.2" step of the early protocol, not release 1.2.0): `view_margin`, the server features in `welcome.caps`, `limits.build_height`, `pose.snapshot_id`, the `sections_v1` encoding (with per-section light), and the full resend after `bad_snapshot`. v1 and v1.1 clients are unaffected.
+- Changelog: added on 2026-10-13, before v0.1.0: `view_margin`, the server features in `welcome.caps`, `limits.build_height`, `pose.snapshot_id`, the `sections_v1` encoding (with per-section light), and the full resend after `bad_snapshot`. earlier v1 clients are unaffected.
 - Changelog (no field changes): the default giant is now `floating` (a head and two hands at the exact poses); `avatar_state.scale` and `world_height_blocks` describe the head in that mode (§4.9).
 
 ## 4.20 Block editing from the headset (`block_edit`, `edit_v1`; additive)
@@ -1259,10 +1259,10 @@ Fixtures `hello_sound.json`, `welcome_sound.json`, `sound_groups.json`, `actions
 
 ## Asset delivery (v0.6.0; cap `assets_v1`)
 
-A server hands its operator's own headsets the files the app reads from its files folder: `pack.zip`, `entity_models.json`, `sounds.zip`, so nothing has to be pushed with `adb`. **The project ships no Mojang assets**: these are the operator's own copies, made from their own Minecraft install, and only for their own devices. Since 1.1.0: on by default, with the files built by the plugin itself from the server PC's Minecraft install (config.yml `assets.auto`, "Where the files come from" below), for paired headsets ("Pairing").
+A server hands its operator's own headsets the files the app reads from its files folder: `pack.zip`, `entity_models.json`, `sounds.zip`, so nothing has to be pushed with `adb`. **The project ships no Mojang assets**: these are the operator's own copies, made from their own Minecraft install, and only for their own devices. Since v1.1.0: on by default, with the files built by the plugin itself from the server PC's Minecraft install (config.yml `assets.auto`, "Where the files come from" below), for paired headsets ("Pairing").
 
-- **Granted** (`assets_v1` in `welcome.caps`) when the server has files to serve (config.yml `assets.auto`, or `assets.serve` with a folder `assets.dir`), the session is **trusted** (it presented `auth.token`, or the device token of a paired headset, "Pairing"), the client asked for `assets_v1` and its address is private (10/8, 172.16/12, 192.168/16, fc00::/7), link-local or loopback. Only the three names above are ever read. (Up to 1.0.x: only `assets.serve` with `auth.token` set.)
-- **Where the files come from** (1.1.0): for each name, `assets.dir` first (with `assets.serve`), then the files the plugin builds into `plugins/TabletopCraftAR/assets/` from the server PC's own launcher folder (`versions/<mc>/<mc>.jar` and `.json` of the server's game version, in the usual places or `assets.minecraft-dir`): `pack.zip` is the client jar's `assets/` entries; `entity_models.json` and `sounds.zip` come from `tools/entity_models/DumpEntityModels.java` and `tools/sounds/PackSounds.java`, run in a separate JVM. They are rebuilt when the jar, its JSON or the plugin version change. Nothing is downloaded from anywhere.
+- **Granted** (`assets_v1` in `welcome.caps`) when the server has files to serve (config.yml `assets.auto`, or `assets.serve` with a folder `assets.dir`), the session is **trusted** (it presented `auth.token`, or the device token of a paired headset, "Pairing"), the client asked for `assets_v1` and its address is private (10/8, 172.16/12, 192.168/16, fc00::/7), link-local or loopback. Only the three names above are ever read. (Up to v1.0.x: only `assets.serve` with `auth.token` set.)
+- **Where the files come from** (v1.1.0): for each name, `assets.dir` first (with `assets.serve`), then the files the plugin builds into `plugins/TabletopCraftAR/assets/` from the server PC's own launcher folder (`versions/<mc>/<mc>.jar` and `.json` of the server's game version, in the usual places or `assets.minecraft-dir`): `pack.zip` is the client jar's `assets/` entries; `entity_models.json` and `sounds.zip` come from `tools/entity_models/DumpEntityModels.java` and `tools/sounds/PackSounds.java`, run in a separate JVM. They are rebuilt when the jar, its JSON or the plugin version change. Nothing is downloaded from anywhere.
 - **Offer (S→C)**, after `welcome` and the registries, once the server has hashed the files (at start and `/tabletop reload`; again when a file changes while being served):
 
 ```json
@@ -1271,7 +1271,7 @@ A server hands its operator's own headsets the files the app reads from its file
 ```
 
   `chunk`: the length an `asset_get` should ask for (at most 1 MiB). Files not in the folder are left out; an empty list means nothing is offered.
-  Since 1.1.0, optional: `state` says what the automatic files are doing (`building`, `ready`, `missing`: no Minecraft of the server's version on its PC, `failed`), and `note` (not when `ready`) says it in one line for the headset ("No Minecraft 26.3 on the server's PC: start Minecraft: Java Edition 26.3 once in the launcher there, then /tabletop assets rebuild"). A new offer follows when they change. Without `state` (a 1.0.x plugin, or `assets.auto` off) the client just takes the files. Fixture `assets_building.json`:
+  Since v1.1.0, optional: `state` says what the automatic files are doing (`building`, `ready`, `missing`: no Minecraft of the server's version on its PC, `failed`), and `note` (not when `ready`) says it in one line for the headset ("No Minecraft 26.3 on the server's PC: start Minecraft: Java Edition 26.3 once in the launcher there, then /tabletop assets rebuild"). A new offer follows when they change. Without `state` (a v1.0.x plugin, or `assets.auto` off) the client just takes the files. Fixture `assets_building.json`:
 
 ```json
 {"v":1,"type":"assets","seq":4,"t":1760370000016,"chunk":262144,"files":[],"state":"building","note":"building pack.zip, entity_models.json, sounds.zip from the server PC's Minecraft 26.3"}
@@ -1293,7 +1293,7 @@ A server hands its operator's own headsets the files the app reads from its file
 
 Fixtures `assets.json`, `asset_get.json`, `error_asset_denied.json`, `asset_chunk.bin` (one frame). Java `SoundTest` (frame byte for byte, LAN check), Python `test_asset_messages_and_frame`, C# `Tests~/SoundTests.cs` (offer, frame, a download against an in-memory server with resume and a checksum mismatch). Live: `tools/sound_check.py --assets-dir DIR`, `Tests~ --live-assets URL TOKEN` (the app's own classes; dummy files).
 
-## Pairing (1.1.0; cap `pair_v1`)
+## Pairing (v1.1.0; cap `pair_v1`)
 
 So a headset needs nothing typed or pushed: instead of a shared token in tabletop.json, an operator who can see the headset approves it once with a 6-digit code, and the server gives that headset its own device token. QUEST_SETUP.md "Store install" shows the steps; the plugin side is `PairingService.java`, the app side `Net/Pairing.cs`.
 
@@ -1325,15 +1325,15 @@ So a headset needs nothing typed or pushed: instead of a shared token in tableto
 "pairing":{"paired":true,"device":"a1b2c3d4","name":"Quest 3","required":false}
 ```
 
-- **Trusted sessions** may have what the config.yml switches `edit.require-token`, `edit.power-require-token`, `interact.require-token`, `marks.require-token` and `commands.require-token` keep for them (each "requires a token" means "requires a trusted session": the shared token or a paired headset), and the game files ("Asset delivery"). Up to 1.0.x those switches meant "the server has an `auth.token`"; on a server with a token every session is trusted, so that case is unchanged.
+- **Trusted sessions** may have what the config.yml switches `edit.require-token`, `edit.power-require-token`, `interact.require-token`, `marks.require-token` and `commands.require-token` keep for them (each "requires a token" means "requires a trusted session": the shared token or a paired headset), and the game files ("Asset delivery"). Up to v1.0.x those switches meant "the server has an `auth.token`"; on a server with a token every session is trusted, so that case is unchanged.
 - **Revoking.** `/tabletop devices` lists paired headsets (id, name, player, when paired, last seen) and the ones waiting with a code (never the code). `/tabletop unpair <id|name|all>` removes them; a connected one gets `error` `auth_failed` "this headset was unpaired on the server" and close 4003. A client that presented a `device_token` and gets 4003 forgets that token and connects again without it (so it shows a new code) instead of stopping (§5).
 - **Security.** The link is plain `ws://`: device tokens travel in clear like the shared token, so this suits a trusted LAN (ARCHITECTURE.md 6). The code itself never leaves the headset and the operator's keyboard; a code is only useful to the headset that asked for it.
 
-**Older peers.** A 1.0.x plugin ignores `pair_v1`, `device_token` and `device_name`: the client sees no `welcome.pairing` and keeps working without pairing (the Quest app says once that a plugin update to 1.1.0 adds pairing and automatic game files, with the releases link). A 1.0.x app never asks for `pair_v1`: on an open server it works as before; on a server with `auth.require-pairing` it gets 4003.
+**Older peers.** A v1.0.x plugin ignores `pair_v1`, `device_token` and `device_name`: the client sees no `welcome.pairing` and keeps working without pairing (the Quest app says once that a plugin update to v1.1.0 adds pairing and automatic game files, with the releases link). A v1.0.x app never asks for `pair_v1`: on an open server it works as before; on a server with `auth.require-pairing` it gets 4003.
 
 Fixtures `hello_pair.json`, `welcome_pair.json`, `pair_request.json`, `pair_code.json`, `paired.json`, `error_pair_denied.json`, `discovery_reply_pair.json`. Java `PairingTest` (codes, tokens, devices.yml, revoking, limits, the messages against the fixtures), Python `test_pairing_fixtures`, `test_pairing_rejects_bad_fields`, C# `Tests~/SetupTests.cs` (the token store, codes, welcome, old plugins, and LinkClient against a fake server: pings while waiting, an unpaired token). Live: `tools/pair_check.py` (pairs through the server console, then checks the game-file offer and an unpair).
 
-## Chat safety: mute, block, report (1.2.0; cap `report_v1`)
+## Chat safety: mute, block, report (v1.2.0; cap `report_v1`)
 
 The headset user can stop seeing a player's chat, and tell the server's operators about a player. The people who can act on a report are the server's operators (kick, ban, whitelist), so reports go to them, not to the app's developer. Docs: QUEST_SETUP.md Part L ("Mute, block and report").
 
@@ -1350,7 +1350,7 @@ The headset user can stop seeing a player's chat, and tell the server's operator
 ```
 
 - `player.uuid` (required): a UUID, as in `chat.from.uuid` or `players_info`. `player.name` (optional): the name the headset saw, for the log when the server doesn't know the player.
-- `reason` (required): one of `harassment`, `hate`, `sexual`, `threat`, `spam`, `cheating`, `other`. A server takes any other lower-case word (`[a-z_]{1,24}`) as given, so a newer app's reason reaches an older 1.x plugin.
+- `reason` (required): one of `harassment`, `hate`, `sexual`, `threat`, `spam`, `cheating`, `other`. A server takes any other lower-case word (`[a-z_]{1,24}`) as given, so a newer app's reason reaches an older v1.x.y plugin.
 - `details` (optional): the headset user's note, at most 200 characters; the server removes control characters and `§` and collapses whitespace.
 - `blocked` (optional, default false): the headset also blocked the player (the Quest app always does).
 - Refused with `error` and `op: "report"`: `report_denied` without `report_v1`; `bad_message` for a missing or malformed field; `rate_limited` beyond `reports.max-per-minute` (3) per session; `internal` when the server couldn't save it.
@@ -1365,7 +1365,7 @@ The headset user can stop seeing a player's chat, and tell the server's operator
 
 `id`: the report's id in reports.log. `operators`: how many online players with `tabletop.reports` were shown it (0: it waits in the log).
 
-**Older peers.** A 1.1.x plugin never grants `report_v1` and answers a `report` with `unknown_type`; the Quest app then greys Report and says the server's plugin is older than 1.2.0 (mute and block still work, they need nothing from the server). A 1.1.x app never asks for the cap.
+**Older peers.** A v1.1.x plugin never grants `report_v1` and answers a `report` with `unknown_type`; the Quest app then greys Report and says the server's plugin is older than v1.2.0 (mute and block still work, they need nothing from the server). A v1.1.x app never asks for the cap.
 
 **The platform's own reporting.** On the Meta Horizon Store, the Quest button's universal menu also has "Report Abuse" (Meta's User Reporting Service, set up in the Developer Dashboard; it sends the report to the app's developer, not to the server). That is outside this protocol; QUEST_SETUP.md Part L and `docs/store/LISTING.md` describe both routes.
 
