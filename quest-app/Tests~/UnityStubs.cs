@@ -28,7 +28,7 @@ namespace UnityEngine
         public static Vector3 Lerp(Vector3 a, Vector3 b, float t) => a + (b - a) * Mathf.Clamp01(t);
         public static float Distance(Vector3 a, Vector3 b) => (a - b).magnitude;
     }
-    public struct Vector3Int
+    public struct Vector3Int : System.IEquatable<Vector3Int>   // like Unity's: HashSet/Contains without boxing
     {
         public int x, y, z;
         public Vector3Int(int x, int y, int z) { this.x = x; this.y = y; this.z = z; }
@@ -43,17 +43,19 @@ namespace UnityEngine
         public static bool operator ==(Vector3Int a, Vector3Int b) => a.x == b.x && a.y == b.y && a.z == b.z;
         public static bool operator !=(Vector3Int a, Vector3Int b) => !(a == b);
         public override bool Equals(object o) => o is Vector3Int v && v == this;
+        public bool Equals(Vector3Int v) => v == this;
         public override int GetHashCode() => x * 73856093 ^ y * 19349663 ^ z * 83492791;
         public override string ToString() => $"({x}, {y}, {z})";
     }
     // [mesh] SurfaceSkirt tile keys
-    public struct Vector2Int
+    public struct Vector2Int : System.IEquatable<Vector2Int>
     {
         public int x, y;
         public Vector2Int(int x, int y) { this.x = x; this.y = y; }
         public static bool operator ==(Vector2Int a, Vector2Int b) => a.x == b.x && a.y == b.y;
         public static bool operator !=(Vector2Int a, Vector2Int b) => !(a == b);
         public override bool Equals(object o) => o is Vector2Int v && v == this;
+        public bool Equals(Vector2Int v) => v == this;
         public override int GetHashCode() => x * 73856093 ^ y * 19349663;
         public override string ToString() => $"({x}, {y})";
     }

@@ -24,6 +24,7 @@ namespace TabletopCraft.World
             public int Parts = 1, Listed = -1;  // Listed: sections sent (sectioned snapshots)
             public HashSet<Vector3Int> ListedKeys;   // [edit] a delta's sent section keys (pending block edits elsewhere carry over)
             public double Ms;                   // worker time
+            public long DecodeBytes = -1, PlanBytes = -1;   // [smooth] garbage of the decode and the plan (MeasureAlloc)
         }
 
         readonly List<Dictionary<string, object>> _parts = new List<Dictionary<string, object>>();
@@ -69,6 +70,9 @@ namespace TabletopCraft.World
             return new Vector3Int(Math.Max(0, v[0]), Math.Max(0, v[1]), Math.Max(0, v[2]));
         }
 
+        /// <summary>[smooth] Tools: measure what the decode and the plan allocate (Tests~ glide harness).</summary>
+        public static bool MeasureAlloc;
+
         static Result Run(int id, Vector3Int margin, WorldModel current, HashSet<Vector3Int> stale,
                           Func<List<Vector3Int>, (ChunkSnapshot, bool)> decode, int parts)
         {
@@ -77,11 +81,14 @@ namespace TabletopCraft.World
             try
             {
                 var listed = new List<Vector3Int>();
+                long a0 = MeasureAlloc ? GC.GetAllocatedBytesForCurrentThread() : 0;
                 var (s, delta) = decode(listed);
+                long a1 = MeasureAlloc ? GC.GetAllocatedBytesForCurrentThread() : 0;
                 r.Snapshot = s; r.Delta = delta;
                 r.Listed = parts > 1 || delta || listed.Count > 0 ? listed.Count : -1;
-                if (delta) r.ListedKeys = new HashSet<Vector3Int>(listed);   // [edit]
-                r.Plan = SectionPlan.Compute(current, s, stale, delta ? listed : null);
+                if (delta) r.ListedKeys = new HashSet<Vector3Int>(listed);   // [edit] [smooth] also the plan's lookup (a list was O(n) per section)
+                r.Plan = SectionPlan.Compute(current, s, stale, delta ? r.ListedKeys : null);
+                if (MeasureAlloc) { r.DecodeBytes = a1 - a0; r.PlanBytes = GC.GetAllocatedBytesForCurrentThread() - a1; }
             }
             catch (Exception e) { r.Error = e.Message; r.Snapshot = null; }
             r.Ms = sw.Elapsed.TotalMilliseconds;
