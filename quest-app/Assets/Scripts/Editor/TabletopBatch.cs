@@ -1,6 +1,7 @@
 // Headless versions of the Editor setup steps, for Linux (no Link / Play mode) and scripted builds. Close the Editor first.
 //   Unity -batchmode -nographics -projectPath quest-app -buildTarget Android -executeMethod TabletopCraft.EditorTools.TabletopBatch.Setup -logFile setup.log
 //   Unity -batchmode -nographics -quit -projectPath quest-app -buildTarget Android -executeMethod TabletopCraft.EditorTools.TabletopBatch.BuildApk -logFile build.log
+//   (BuildReleaseApk: the same, but refuses to build without the release key; docs/RELEASING.md)
 // Run Setup WITHOUT -quit: Meta's Project Setup Tool fixes run on editor updates, and Setup exits once they're done.
 // Same approach as ironman-quest3-hud's IronManHudBatch.
 #if UNITY_EDITOR
@@ -42,14 +43,24 @@ namespace TabletopCraft.EditorTools
         }
 
         /// <summary>
-        /// Builds the APK. A build that failed only because a build tool crashed with a segmentation fault is run again,
-        /// up to <see cref="MaxBuildAttempts"/> builds in all: on Linux, il2cpp's bundled .NET runtime now and then
-        /// crashes in <c>il2cpp --convert-to-cpp</c> and passes when run again (QUEST_SETUP.md Troubleshooting,
-        /// TESTING.md section 5). Any other failure ends the build at once. Bee is incremental, so a retry only redoes
-        /// the failed step and what follows it.
+        /// Builds the APK, release-signed when the TABLETOP_KEYSTORE variables are set (<see cref="ReleaseKey"/>), else
+        /// with Unity's debug key (fine for sideloading, never for a store upload). A build that failed only because a
+        /// build tool crashed with a segmentation fault is run again, up to <see cref="MaxBuildAttempts"/> builds in all:
+        /// on Linux, il2cpp's bundled .NET runtime now and then crashes in <c>il2cpp --convert-to-cpp</c> and passes when
+        /// run again (QUEST_SETUP.md Troubleshooting, TESTING.md section 5). Any other failure ends the build at once. Bee
+        /// is incremental, so a retry only redoes the failed step and what follows it.
         /// </summary>
-        public static void BuildApk()
+        public static void BuildApk() => Build(requireRelease: false);
+
+        /// <summary>BuildApk for a store upload: fails unless all four TABLETOP_KEYSTORE variables are set.</summary>
+        public static void BuildReleaseApk() => Build(requireRelease: true);
+
+        static void Build(bool requireRelease)
         {
+            var key = ReleaseKey.FromEnvironment(out string problem);
+            if (problem == null && key == null && requireRelease)
+                problem = "BuildReleaseApk needs the release key: set " + string.Join(", ", ReleaseKey.Variables) + " (docs/RELEASING.md)";
+            if (problem != null) { Debug.LogError("[Tabletop] " + problem); EditorApplication.Exit(1); return; }
             ApplyVersion();
             var options = new BuildPlayerOptions
             {
@@ -57,21 +68,66 @@ namespace TabletopCraft.EditorTools
                 locationPathName = ApkPath,
                 target = BuildTarget.Android,
                 targetGroup = BuildTargetGroup.Android,
-                options = BuildOptions.None,
+                options = BuildOptions.None,   // never Development: a store build must not be debuggable
             };
             BuildReport report = null;
-            for (int attempt = 1; attempt <= MaxBuildAttempts; attempt++)
+            try
             {
-                report = BuildPipeline.BuildPlayer(options);
-                Debug.Log($"[Tabletop] Build {report.summary.result}: {Path.GetFullPath(ApkPath)}, " +
-                    $"{report.summary.totalSize / (1024 * 1024)} MB, {report.summary.totalErrors} errors, {report.summary.totalTime}" +
-                    (attempt > 1 ? $" (attempt {attempt} of {MaxBuildAttempts})" : ""));
-                if (report.summary.result == BuildResult.Succeeded || !OnlyToolCrashes(report)) break;
-                if (attempt < MaxBuildAttempts)
-                    Debug.LogWarning("[Tabletop] A build tool crashed (Segmentation fault; on Linux usually il2cpp's own .NET runtime, " +
-                        $"not our code). Building again, attempt {attempt + 1} of {MaxBuildAttempts}. See QUEST_SETUP.md Troubleshooting.");
+                UseKey(key);
+                for (int attempt = 1; attempt <= MaxBuildAttempts; attempt++)
+                {
+                    report = BuildPipeline.BuildPlayer(options);
+                    Debug.Log($"[Tabletop] Build {report.summary.result}: {Path.GetFullPath(ApkPath)}, " +
+                        $"{report.summary.totalSize / (1024 * 1024)} MB, {report.summary.totalErrors} errors, {report.summary.totalTime}, " +
+                        (key != null ? "release-signed" : "debug-signed") + (attempt > 1 ? $" (attempt {attempt} of {MaxBuildAttempts})" : ""));
+                    if (report.summary.result == BuildResult.Succeeded || !OnlyToolCrashes(report)) break;
+                    if (attempt < MaxBuildAttempts)
+                        Debug.LogWarning("[Tabletop] A build tool crashed (Segmentation fault; on Linux usually il2cpp's own .NET runtime, " +
+                            $"not our code). Building again, attempt {attempt + 1} of {MaxBuildAttempts}. See QUEST_SETUP.md Troubleshooting.");
+                }
             }
-            if (report.summary.result != BuildResult.Succeeded) EditorApplication.Exit(1);
+            finally { UseKey(null); }   // ProjectSettings.asset never records the keystore path or alias
+            if (report == null || report.summary.result != BuildResult.Succeeded) EditorApplication.Exit(1);
+        }
+
+        /// <summary>
+        /// The release key from the environment (docs/RELEASING.md): TABLETOP_KEYSTORE (path to the .jks, outside the
+        /// repo), TABLETOP_KEYSTORE_PASS, TABLETOP_KEY_ALIAS, TABLETOP_KEY_PASS. None set: null (debug key). Some set, or
+        /// a keystore that isn't a file: a problem, so a typo never turns into a debug-signed store build. The values are
+        /// never logged or written to a file.
+        /// </summary>
+        sealed class ReleaseKey
+        {
+            public static readonly string[] Variables = { "TABLETOP_KEYSTORE", "TABLETOP_KEYSTORE_PASS", "TABLETOP_KEY_ALIAS", "TABLETOP_KEY_PASS" };
+            public string Keystore, KeystorePass, Alias, KeyPass;
+
+            public static ReleaseKey FromEnvironment(out string problem)
+            {
+                problem = null;
+                var v = Variables.Select(n => System.Environment.GetEnvironmentVariable(n) ?? "").ToArray();
+                var missing = Variables.Where((n, i) => v[i].Length == 0).ToArray();
+                if (missing.Length == Variables.Length)
+                {
+                    Debug.Log("[Tabletop] TABLETOP_KEYSTORE is not set: debug signing (fine for sideloading; a store upload needs " +
+                        "BuildReleaseApk with the release key, docs/RELEASING.md)");
+                    return null;
+                }
+                if (missing.Length > 0) { problem = "release signing: " + string.Join(", ", missing) + " not set (set all four or none; docs/RELEASING.md)"; return null; }
+                string path = Path.GetFullPath(v[0].StartsWith("~/") ? Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile), v[0].Substring(2)) : v[0]);
+                if (!File.Exists(path)) { problem = "release signing: TABLETOP_KEYSTORE is not a file"; return null; }
+                return new ReleaseKey { Keystore = path, KeystorePass = v[1], Alias = v[2], KeyPass = v[3] };
+            }
+        }
+
+        /// <summary>Sets Unity's Android signing to the key (null = the debug key and every field cleared).</summary>
+        static void UseKey(ReleaseKey key)
+        {
+            PlayerSettings.Android.useCustomKeystore = key != null;
+            PlayerSettings.Android.keystoreName = key?.Keystore ?? "";
+            PlayerSettings.Android.keystorePass = key?.KeystorePass ?? "";
+            PlayerSettings.Android.keyaliasName = key?.Alias ?? "";
+            PlayerSettings.Android.keyaliasPass = key?.KeyPass ?? "";
+            if (key != null) Debug.Log($"[Tabletop] release signing with {Path.GetFileName(key.Keystore)}, alias {key.Alias}");
         }
 
         const int MaxBuildAttempts = 3;
@@ -88,19 +144,25 @@ namespace TabletopCraft.EditorTools
             return errors.All(e => e != null && (e.Contains("Segmentation fault") || e.Contains("core dumped")));
         }
 
-        /// <summary>Same as ticking OpenXR in Project Settings > XR Plug-in Management for the given platform.</summary>
-        /// <summary>App version from the repo's VERSION file (shared with the plugin): bundleVersion "0.X.Y" and a
-        /// monotonically increasing versionCode X*10000 + Y*100 for Android.</summary>
+        /// <summary>
+        /// App version from the repo's VERSION file (shared with the plugin): bundleVersion "M.m.p" and the Android
+        /// versionCode M*1000000 + m*10000 + p*100 + TABLETOP_BUILD (0-99, default 0: a re-upload of the same version to
+        /// a store channel needs a higher code; docs/RELEASING.md).
+        /// </summary>
         static void ApplyVersion()
         {
             string v = File.ReadAllText(Path.Combine("..", "VERSION")).Trim();
             var parts = v.Split('.').Select(int.Parse).ToArray();
+            string b = System.Environment.GetEnvironmentVariable("TABLETOP_BUILD");
+            int build = int.TryParse(b, out int n) && n >= 0 && n <= 99 ? n : 0;
+            if (!string.IsNullOrEmpty(b) && build.ToString() != b.Trim()) Debug.LogWarning("[Tabletop] TABLETOP_BUILD must be 0..99, ignored: " + b);
             PlayerSettings.bundleVersion = v;
-            PlayerSettings.Android.bundleVersionCode = parts[0] * 1000000 + parts[1] * 10000 + (parts.Length > 2 ? parts[2] : 0) * 100;
+            PlayerSettings.Android.bundleVersionCode = parts[0] * 1000000 + parts[1] * 10000 + (parts.Length > 2 ? parts[2] : 0) * 100 + build;
             AssetDatabase.SaveAssets();
             Debug.Log($"[Tabletop] version {v} (code {PlayerSettings.Android.bundleVersionCode})");
         }
 
+        /// <summary>Same as ticking OpenXR in Project Settings > XR Plug-in Management for the given platform.</summary>
         static void EnableOpenXrLoader(BuildTargetGroup group)
         {
             if (!EditorBuildSettings.TryGetConfigObject(XRGeneralSettings.k_SettingsKey, out XRGeneralSettingsPerBuildTarget perTarget) || perTarget == null)

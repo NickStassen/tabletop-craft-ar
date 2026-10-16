@@ -19,3 +19,7 @@ __pycache__/
 entity_models.json
 # Claude Code agent worktrees
 .claude/worktrees/
+# Release signing material: never in the repo (docs/RELEASING.md)
+*.jks
+*.keystore
+upload.env
