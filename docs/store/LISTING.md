@@ -60,9 +60,9 @@ Rules this text follows (Minecraft Usage Guidelines, Meta app policies):
 | Comfort | Comfortable: the world never moves you; you move the table |
 | Internet | Local network (Wi-Fi) required; internet only for player skins |
 | Website | https://github.com/NickStassen/tabletop-craft-ar |
-| Privacy policy URL | where you publish `docs/privacy.html` (for example GitHub Pages) |
-| Support / contact email | [CONTACT EMAIL] (a project address, not a personal one) |
-| Publisher name | [PUBLISHER NAME] |
+| Privacy policy URL | https://nickstassen.github.io/tabletop-craft-ar/privacy.html (GitHub Pages from `docs/`) |
+| Support / contact email | nicholas@stassen.com (public: privacy page and store) |
+| Publisher name | Nick Stassen (developer shown as "Nick Stassen Hobbies") |
 | Data Use Checkup | not needed: the app uses no Platform SDK features |
 
 **Store media checklist** (Meta's asset guidelines): icon 512x512 (opaque, square corners), hero 3000x900, landscape
