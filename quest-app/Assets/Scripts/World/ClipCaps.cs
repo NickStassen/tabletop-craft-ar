@@ -29,7 +29,7 @@ namespace TabletopCraft.World
         readonly List<Vector3> _tmp = new List<Vector3>();
         readonly List<int> _tri = new List<int>();
         FaceKey[] _keys = new FaceKey[0]; bool[] _capsTable = new bool[0];
-        int _keysVersion, _keysSnapshot = -1, _keysCount;
+        int _keysVersion, _keysEpoch = -1, _keysCount;
         bool _visible;
 
         // [water] Water cuts seen from inside are a third submesh (MeshData.WaterBack), drawn only while the eye is under
@@ -76,7 +76,9 @@ namespace TabletopCraft.World
                 return;
             }
             _visible = true;
+            long k0 = FrameHitch.Begin();   // [smooth]
             RefreshKeys();
+            FrameHitch.End(FrameHitch.Part.Caps, k0);
             var d = Model.Dims;
             for (int f = 0; f < 6; f++)
             {
@@ -93,7 +95,10 @@ namespace TabletopCraft.World
                     if (!c.Job.IsFaulted)
                     {
                         var r = c.Job.Result;
-                        Upload(c, r.data); c.Slice = r.slice; c.Version = r.version; c.BuiltOrigin = r.origin; c.KeysVersion = r.keys;
+                        long h0 = FrameHitch.Begin();   // [smooth]
+                        Upload(c, r.data);
+                        FrameHitch.End(FrameHitch.Part.Caps, h0);
+                        c.Slice = r.slice; c.Version = r.version; c.BuiltOrigin = r.origin; c.KeysVersion = r.keys;
                     }
                     c.Job = null;
                 }
@@ -122,12 +127,17 @@ namespace TabletopCraft.World
         /// <summary>palette index * 6 + face -> FaceKey, built on the main thread (the atlas loads textures here).</summary>
         void RefreshKeys()
         {
-            if (_keysSnapshot == Model.SnapshotId && _keysCount == Model.Palette.Count) return;
+            // [smooth] A glide shift's delta only appends to the palette (PaletteEpoch): compute the new entries, not all of
+            // them again (the full pass cost milliseconds per shift on the headset once the palette had grown).
             int n = Model.Palette.Count;
+            if (_keysEpoch == Model.PaletteEpoch && _keysCount == n) return;
+            int from = _keysEpoch == Model.PaletteEpoch && _keysCount <= n ? _keysCount : 0;
             var keys = new FaceKey[n * 6]; var table = new bool[n];
-            for (int i = 0; i < n; i++)
+            if (from > 0) { System.Array.Copy(_keys, keys, from * 6); System.Array.Copy(_capsTable, table, from); }
+            for (int i = from; i < n; i++)
             {
                 string st = Model.Palette[i];
+                Faces?.Face(st, 0);   // resolves the state first (a pack model can change its shape: BlockModels.Prepare)
                 var shape = BlockRules.Shape(st);
                 // [water] waterlogged models, kelp and seagrass are cut as water (CapMesher.CapState)
                 string cut = CapMesher.CapState(st, shape);
@@ -151,7 +161,7 @@ namespace TabletopCraft.World
                     TransparentMaterial.SetTexture("_Blocks", atlas.Array); TransparentMaterial.SetFloat("_HasTex", 1);
                 }
             }
-            _keys = keys; _capsTable = table; _keysSnapshot = Model.SnapshotId; _keysCount = n; _keysVersion++;
+            _keys = keys; _capsTable = table; _keysEpoch = Model.PaletteEpoch; _keysCount = n; _keysVersion++;
         }
 
         void Upload(Cap c, MeshData data)

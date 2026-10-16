@@ -19,6 +19,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
+using Unity.Collections;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -33,7 +34,9 @@ namespace TabletopCraft.World
         /// <summary>[nav] Fewest sections one job meshes in a row (tabletop.json "mesh_sections_per_job"). [mesh] A job takes
         /// more when sections are cheap (MeshScope.SectionsPerJob): enough to keep its worker busy until the next frame.</summary>
         public static int SectionsPerJob = 4;
-        public float UploadBudgetMs = 3f;        // main-thread mesh upload budget per frame
+        /// <summary>Main-thread time per frame for applying meshed sections and uploading batches and skirt tiles
+        /// (tabletop.json "upload_budget_ms").</summary>
+        public static float UploadBudgetMs = 3f;
         public Material OpaqueMaterial, TransparentMaterial;
         public WorldModel Model;
         public ResourcePackAtlas Atlas;
@@ -146,7 +149,15 @@ namespace TabletopCraft.World
         readonly Dictionary<Vector3Int, SectionMesh> _secs = new Dictionary<Vector3Int, SectionMesh>();   // [area] CPU mesh per section
         readonly Dictionary<Vector3Int, Batch> _batches = new Dictionary<Vector3Int, Batch>();
         readonly Dictionary<Vector3Int, float> _dirty = new Dictionary<Vector3Int, float>();             // batch key -> dirty since
-        readonly ConcurrentQueue<(Batch batch, BatchData data)> _assembled = new ConcurrentQueue<(Batch, BatchData)>();
+        readonly ConcurrentQueue<Assembled> _assembled = new ConcurrentQueue<Assembled>();
+
+        /// <summary>[smooth] A batch assembled on a worker, its geometry already written into writable mesh data (the
+        /// main thread only applies it); Written false: the worker couldn't, Data still holds the arrays (Fill).</summary>
+        sealed class Assembled
+        {
+            public Batch Batch; public BatchData Data; public Mesh.MeshDataArray Mesh; public bool HasMesh, Written; public Bounds Bounds;
+            public bool Packed; public long Bytes;
+        }
         readonly List<(SectionMesh, Vector3)> _parts = new List<(SectionMesh, Vector3)>();
         readonly List<Vector3Int> _order = new List<Vector3Int>();
         BatchLayout _layout;
@@ -156,7 +167,7 @@ namespace TabletopCraft.World
         readonly HashSet<Vector3Int> _busy = new HashSet<Vector3Int>();
         readonly List<Vector3Int> _pick = new List<Vector3Int>();
         readonly Stopwatch _sw = new Stopwatch();
-        int _inFlight, _jobs, _prewarmedSnapshot = -1, _prewarmedCount;   // _inFlight: sections being meshed; _jobs: worker jobs
+        int _inFlight, _jobs, _prewarmedEpoch = -1, _prewarmedCount;   // _inFlight: sections being meshed; _jobs: worker jobs
         // [nav] snapshot transitions
         readonly HashSet<Vector3Int> _lazy = new HashSet<Vector3Int>();   // kept sections to refresh when idle
         readonly List<Batch> _retired = new List<Batch>();
@@ -252,6 +263,16 @@ namespace TabletopCraft.World
         /// </summary>
         public void OnSnapshot(SectionPlan plan, Vector3Int oldOrigin, Vector3Int newOrigin)
         {
+            long h0 = FrameHitch.Begin();   // [smooth] HITCH rekey_ms
+            try { Rekey(plan, oldOrigin, newOrigin); }
+            finally { FrameHitch.End(FrameHitch.Part.Rekey, h0); }
+        }
+
+        readonly Dictionary<Vector3Int, SectionMesh> _moved = new Dictionary<Vector3Int, SectionMesh>();
+        readonly List<Vector3Int> _lazyTmp = new List<Vector3Int>();
+
+        void Rekey(SectionPlan plan, Vector3Int oldOrigin, Vector3Int newOrigin)
+        {
             _keepChecked = false;   // [nav] section keys changed: check the kept meshes against the next KeepScope
             var n = Model.SectionCount;
             var layout = new BatchLayout(Model.Origin, Model.Dims, BatchRules.Columns);
@@ -261,7 +282,7 @@ namespace TabletopCraft.World
                 // [area] Batches are keyed in world sections: they keep their meshes and only move. The ones that lost
                 // sections are rebuilt; the ones that gain sections are rebuilt when those are meshed.
                 var (dirtyBatches, gone) = BatchRules.AfterRekey(_layout, layout, sh, _secs.Keys, _batches.Keys);
-                var moved = new Dictionary<Vector3Int, SectionMesh>();
+                var moved = _moved; moved.Clear();   // [smooth] reused (no garbage per shift)
                 int quads = 0;
                 foreach (var kv in _secs)
                 {
@@ -271,12 +292,13 @@ namespace TabletopCraft.World
                 }
                 _secs.Clear();
                 foreach (var kv in moved) _secs[kv.Key] = kv.Value;
+                moved.Clear();
                 Quads = quads;
                 foreach (var g in gone) { if (_batches.TryGetValue(g, out var b)) Kill(b); _batches.Remove(g); _dirty.Remove(g); _trail.Remove(g); }
                 _layout = layout;
                 foreach (var b in _batches.Values) b.Go.transform.localPosition = _layout.Position(b.Key, b.Y0);
                 foreach (var k in dirtyBatches) MarkBatch(k);
-                var lazy = new List<Vector3Int>(_lazy);
+                var lazy = _lazyTmp; lazy.Clear(); lazy.AddRange(_lazy);
                 _lazy.Clear();
                 foreach (var k in lazy)
                 {
@@ -352,7 +374,8 @@ namespace TabletopCraft.World
 
         void Prewarm()
         {
-            if (_prewarmedSnapshot != Model.SnapshotId) { _prewarmedSnapshot = Model.SnapshotId; _prewarmedCount = 0; }
+            // [smooth] Only the palette entries a delta appended (PaletteEpoch); every shift used to resolve the whole palette again.
+            if (_prewarmedEpoch != Model.PaletteEpoch || _prewarmedCount > Model.Palette.Count) { _prewarmedEpoch = Model.PaletteEpoch; _prewarmedCount = 0; }
             if (Atlas == null) { _prewarmedCount = Model.Palette.Count; return; }
             // FluidMesher meshes water/lava (incl. waterlogged blocks, kelp, seagrass) with these two states' faces. Always
             // ready, so a worker never resolves them, even for a block_update that lands mid-mesh (cached after the first call).
@@ -364,8 +387,9 @@ namespace TabletopCraft.World
             // [piston] what moving_piston cells draw instead (PistonGhosts): piston heads may not be in the palette.
             if (!Model.MovingShown.IsEmpty) foreach (var s in Model.MovingShown.Values) Atlas.Face(s, 0);
             Atlas.Commit();
-            if (Atlas.Array != null)
+            if (Atlas.Array != null && !ReferenceEquals(Atlas.Array, _boundArray))   // [smooth] only when the array was (re)created
             {
+                _boundArray = Atlas.Array;
                 OpaqueMaterial.SetTexture("_Blocks", Atlas.Array); OpaqueMaterial.SetFloat("_HasTex", 1);
                 SolidMaterial.SetTexture("_Blocks", Atlas.Array); SolidMaterial.SetFloat("_HasTex", 1);   // [gpu]
                 PackedMaterials();
@@ -374,6 +398,7 @@ namespace TabletopCraft.World
             }
             if (_randomVersion != RandomUv.Version) UploadRandomTables();
         }
+        Texture _boundArray;
 
         // [random] Per-block texture rotation of greedy cubes (RandomUv, Shaders/TabletopRandom.cginc): the tables are a
         // global array (fixed size: Unity can't grow a shader array after its first upload), and every batch carries the
@@ -407,7 +432,9 @@ namespace TabletopCraft.World
             if (_staging && ((urgent == 0 && _inFlight == 0 && _dirty.Count == 0 && _assembling == 0) || Time.unscaledTime - _stagingSince > StagingTimeout)) FinishStaging();
             Dispatch(urgent);
             _saturated = _jobs >= MaxJobsInFlight;
+            long h0 = FrameHitch.Begin();
             UpdateSkirt();   // [mesh] low-detail surface where the window isn't meshed yet
+            FrameHitch.End(FrameHitch.Part.Skirt, h0);   // [smooth]
         }
 
         /// <summary>Hands dirty sections in Scope to the worker jobs (urgent first; kept ones refreshed when idle).</summary>
@@ -418,7 +445,9 @@ namespace TabletopCraft.World
             // Urgent sections first (new terrain, nearest the view); kept ones are only refreshed when idle.
             bool lazy = urgent == 0;
             if (lazy && (_lazy.Count == 0 || _staging)) return;
+            long h0 = FrameHitch.Begin();   // [smooth] HITCH prewarm_ms
             Prewarm();
+            FrameHitch.End(FrameHitch.Part.Prewarm, h0);
             // [nav] Each job meshes several sections in a row: with one section per job a worker sat idle until the next
             // frame handed it another, which capped meshing at 3 sections per frame (216/s at 72 Hz), too few for a
             // 256-wide window entering at glide speed. Dealt round-robin so every job starts with an urgent one.
@@ -478,6 +507,7 @@ namespace TabletopCraft.World
             {
                 Interlocked.Decrement(ref _inFlight);
                 _meshedNow++;
+                FrameHitch.MeshDone();   // [smooth]
                 _busy.Remove(j.Section);
                 // Stale (a new snapshot arrived while meshing): its sections are already queued again.
                 if (j.SnapshotId != Model.SnapshotId) continue;
@@ -494,7 +524,9 @@ namespace TabletopCraft.World
             Quads += (mesh?.Quads ?? 0) - (old?.Quads ?? 0);
             if (mesh == null) _secs.Remove(s); else _secs[s] = mesh;
             MarkBatch(_layout.KeyOf(s));
-            MarkFresh(s);   // [mesh] not on screen until its batch is uploaded (the skirt covers it meanwhile)
+            // [mesh] Not on screen until its batch is uploaded (the skirt covers it meanwhile). [smooth] Only a section that had
+            // no mesh: one being redone keeps its old mesh on screen, so its column needs no skirt.
+            if (old == null) MarkFresh(s);
         }
 
         void MarkBatch(Vector3Int key)
@@ -508,15 +540,17 @@ namespace TabletopCraft.World
         /// <summary>Uploads assembled batches within the frame budget (at least one per frame), then starts new assemblies.</summary>
         void UpdateBatches()
         {
-            bool first = true;
+            // At least one upload per frame keeps things moving, unless a snapshot apply already took the frame's budget.
+            bool first = FrameHitch.Ms(FrameHitch.Part.Apply) < UploadBudgetMs;
             while ((first || _sw.Elapsed.TotalMilliseconds < UploadBudgetMs) && _assembled.TryDequeue(out var r))
             {
                 first = false;
                 _assembling--;
-                r.batch.Assembling = false;
-                if (!r.batch.Dead) UploadBatch(r.batch, r.data);
-                r.data.Release();
-                Uploaded(r.batch.Fresh); r.batch.Fresh = null;   // [mesh]
+                r.Batch.Assembling = false;
+                if (!r.Batch.Dead) UploadBatch(r.Batch, r);
+                else if (r.HasMesh) r.Mesh.Dispose();
+                r.Data.Release();
+                Uploaded(r.Batch.Fresh); r.Batch.Fresh = null;   // [mesh]
             }
             if (_dirty.Count == 0 || _assembling >= MaxAssembliesInFlight) return;
             // Nearest to the view first.
@@ -542,12 +576,21 @@ namespace TabletopCraft.World
                 System.Array.Sort(parts, (p, q) => q.Item2.y != p.Item2.y ? q.Item2.y.CompareTo(p.Item2.y) : 0);
                 b.Assembling = true; _assembling++;
                 b.Fresh = FreshOf(key);   // [mesh]
+                // [smooth] The worker writes the geometry straight into writable mesh data, so the main thread no longer
+                // copies megabytes per batch (SetVertexBufferData); it only applies the finished data.
+                bool write = WriteOnWorkers;
+                var r = new Assembled { Batch = b, HasMesh = write, Mesh = write ? UnityEngine.Mesh.AllocateWritableMeshData(1) : default };
                 Task.Run(() =>
                 {
-                    BatchData d;
-                    try { d = BatchData.Assemble(parts, BatchRules.PackedVertices); }
-                    catch (System.Exception e) { d = new BatchData(); UnityEngine.Debug.LogWarning($"[Tabletop] batch {b.Key}: {e.Message}"); }
-                    _assembled.Enqueue((b, d));
+                    try { r.Data = BatchData.Assemble(parts, BatchRules.PackedVertices); }
+                    catch (System.Exception e) { r.Data = new BatchData(); UnityEngine.Debug.LogWarning($"[Tabletop] batch {b.Key}: {e.Message}"); }
+                    r.Packed = r.Data.Packed != null; r.Bytes = r.Data.Bytes;
+                    if (write)
+                    {
+                        try { r.Bounds = Write(r.Mesh[0], r.Data); r.Written = true; r.Data.Release(); }
+                        catch (System.Exception e) { r.Written = false; UnityEngine.Debug.LogWarning($"[Tabletop] batch {b.Key} mesh data: {e.Message}"); }
+                    }
+                    _assembled.Enqueue(r);
                 });
             }
         }
@@ -631,12 +674,60 @@ namespace TabletopCraft.World
             m.bounds = bounds;
         }
 
-        void UploadBatch(Batch b, BatchData d)
+        /// <summary>[smooth] Batches write their mesh data on the worker that assembles them (false: Fill on the main thread,
+        /// the 0.8.1 path; tabletop.json "mesh_data_on_workers").</summary>
+        public static bool WriteOnWorkers = true;
+
+        /// <summary>[smooth] Fill's work for writable mesh data (any thread): vertex and index buffers, four submeshes.
+        /// Returns the bounds the main thread sets after applying it.</summary>
+        public static Bounds Write(Mesh.MeshData m, BatchData d)
         {
-            Fill(b.Mesh, d);
+            const MeshUpdateFlags F = MeshUpdateFlags.DontValidateIndices | MeshUpdateFlags.DontRecalculateBounds | MeshUpdateFlags.DontResetBoneBounds;
+            if (d.VertCount == 0)
+            {
+                m.SetVertexBufferParams(0, VertexLayout); m.SetIndexBufferParams(0, IndexFormat.UInt32); m.subMeshCount = 0;
+                return default;
+            }
+            if (d.Packed != null)
+            {
+                m.SetVertexBufferParams(d.VertCount, PackedLayout);
+                NativeArray<PackedVertex>.Copy(d.Packed, m.GetVertexData<PackedVertex>(), d.VertCount);
+            }
+            else
+            {
+                m.SetVertexBufferParams(d.VertCount, VertexLayout);
+                NativeArray<BatchVertex>.Copy(d.Verts, m.GetVertexData<BatchVertex>(), d.VertCount);
+            }
+            m.SetIndexBufferParams(d.IndexCount, IndexFormat.UInt32);
+            NativeArray<int>.Copy(d.Indices, m.GetIndexData<int>(), d.IndexCount);
+            var bounds = new Bounds((d.Min + d.Max) * 0.5f, d.Max - d.Min);
+            m.subMeshCount = 4;
+            m.SetSubMesh(0, new SubMeshDescriptor(0, d.Solid) { bounds = bounds, firstVertex = 0, vertexCount = d.VertCount }, F);
+            m.SetSubMesh(1, new SubMeshDescriptor(d.Solid, d.Opaque - d.Solid) { bounds = bounds, firstVertex = 0, vertexCount = d.VertCount }, F);
+            m.SetSubMesh(2, new SubMeshDescriptor(d.Opaque, d.Transparent) { bounds = bounds, firstVertex = 0, vertexCount = d.VertCount }, F);
+            m.SetSubMesh(3, new SubMeshDescriptor(d.Opaque + d.Transparent, d.WaterBack) { bounds = bounds, firstVertex = 0, vertexCount = d.VertCount }, F);
+            return bounds;
+        }
+
+        void UploadBatch(Batch b, Assembled r)
+        {
+            var d = r.Data;
+            long h0 = FrameHitch.Begin();   // [smooth] HITCH upload_ms
+            if (r.Written)
+            {
+                const MeshUpdateFlags F = MeshUpdateFlags.DontValidateIndices | MeshUpdateFlags.DontRecalculateBounds | MeshUpdateFlags.DontResetBoneBounds;
+                UnityEngine.Mesh.ApplyAndDisposeWritableMeshData(r.Mesh, b.Mesh, F);
+                b.Mesh.bounds = r.Bounds;
+            }
+            else
+            {
+                if (r.HasMesh) r.Mesh.Dispose();
+                Fill(b.Mesh, d);
+            }
+            FrameHitch.End(FrameHitch.Part.Upload, h0); FrameHitch.Uploaded(r.Bytes);
             b.Verts = d.VertCount; b.Indices = d.IndexCount; b.Opaque = d.Opaque; b.Solid = d.Solid; b.Transparent = d.Transparent; b.WaterBack = d.WaterBack;
-            b.Sections = d.Sections; b.Bytes = d.Bytes;
-            bool packed = d.Packed != null;
+            b.Sections = d.Sections; b.Bytes = r.Bytes;
+            bool packed = r.Packed;
             if (packed != b.Packed) { b.Packed = packed; b.Renderer.sharedMaterials = Materials(packed); }   // [gpu]
             b.Go.SetActive(d.VertCount > 0 && !_staging);
         }

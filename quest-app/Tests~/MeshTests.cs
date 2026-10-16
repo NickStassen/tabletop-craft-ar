@@ -81,6 +81,7 @@ static class MeshTests
             for (int x = 0; x < n.x; x++) for (int y = 0; y < n.y; y++) for (int z = 0; z < n.z; z++)
             { var k = new Vector3Int(x, y, z); GreedyMesher.Build(w, k, faces, md); GreedyMesher.BuildSpecials(w, k, faces, md); SectionMesh.From(md, k); }
             double tBuild = 0, tSpecial = 0, tFrom = 0, worst = 0;
+            long aBuild = 0, aSpecial = 0, aFrom = 0;
             long quads = 0, verts = 0; int empty = 0, emptyMs = 0;
             var kinds = new Dictionary<string, (int n, double ms)>();
             var sw = new Stopwatch();
@@ -88,13 +89,18 @@ static class MeshTests
                 for (int x = 0; x < n.x; x++) for (int y = 0; y < n.y; y++) for (int z = 0; z < n.z; z++)
                 {
                     var k = new Vector3Int(x, y, z);
+                    long a0 = GC.GetAllocatedBytesForCurrentThread();   // [smooth] garbage per stage (the headset's GC pauses)
                     long t0 = Stopwatch.GetTimestamp();
                     GreedyMesher.Build(w, k, faces, md);
                     long t1 = Stopwatch.GetTimestamp();
+                    long a1 = GC.GetAllocatedBytesForCurrentThread();
                     GreedyMesher.BuildSpecials(w, k, faces, md);
                     long t2 = Stopwatch.GetTimestamp();
+                    long a2 = GC.GetAllocatedBytesForCurrentThread();
                     var sm = SectionMesh.From(md, k);
                     long t3 = Stopwatch.GetTimestamp();
+                    long a3 = GC.GetAllocatedBytesForCurrentThread();
+                    aBuild += a1 - a0; aSpecial += a2 - a1; aFrom += a3 - a2;
                     double b = Ms(t1 - t0), s = Ms(t2 - t1), fr = Ms(t3 - t2);
                     tBuild += b; tSpecial += s; tFrom += fr; worst = Math.Max(worst, b + s + fr);
                     if (r == 0)
@@ -120,6 +126,7 @@ static class MeshTests
                               $"sections={secs} empty_out={empty} quads={quads} verts={verts} palette={w.Palette.Count}");
             Console.WriteLine($"  per section (mean of {reps}x{secs}): total={total / reps / secs:F3} ms  build={tBuild / reps / secs:F3}  specials+fluid={tSpecial / reps / secs:F3} " +
                               $"(fluid alone {tFluid / secs:F3})  from={tFrom / reps / secs:F3}  worst={worst:F2} ms");
+            Console.WriteLine($"  allocated per section: build={aBuild / reps / secs / 1024.0:F1} KB  specials+fluid={aSpecial / reps / secs / 1024.0:F1} KB  from={aFrom / reps / secs / 1024.0:F1} KB");
             foreach (var kv in kinds.OrderByDescending(k => k.Value.ms))
                 Console.WriteLine($"  kind {kv.Key,-12} n={kv.Value.n,5}  ms/section={kv.Value.ms / kv.Value.n:F3}  share={kv.Value.ms / (total / reps) * 100:F0}%");
         }
@@ -290,11 +297,13 @@ static class MeshTests
         var want = BlockShading.Flat(grass, faces.Face("minecraft:grass_block[snowy=false]", 3), new Vector3Int(0, 3, 0), out byte code);
         check(md.Colors.Count == 4 && E(md.Colors[0], want) && md.Light[0] == code && md.Uvs[0].z == 3, "skirt: top colour = tint x light of the cell above, with its light code");
 
-        // Planner: tiles for pending columns, dropped when their surface sections are on screen or the column leaves.
+        // Planner: a tile per box column with a pending section and nothing of it in the window on screen; [smooth] dropped
+        // as soon as any of its window sections is on screen, and not planned again while that holds (no toggling).
         var p = new SkirtPlanner(); var pend = new SkirtPlanner.Pending(); var build = new List<Vector2Int>();
         var box = new SectionBox { Min = new Vector3Int(0, 0, 0), Max = new Vector3Int(4, 4, 4) };
         var pending = new HashSet<Vector3Int> { new Vector3Int(1, 2, 1), new Vector3Int(3, 0, 2), new Vector3Int(9, 1, 1) };
-        void Frame(int max) { pend.Reset(box, new Vector3Int(10, 6, 10)); foreach (var s in pending) pend.Mark(s); p.Frame(pend, max, build); }
+        var shown = new HashSet<Vector3Int>();
+        void Frame(int max) { pend.Reset(box, new Vector3Int(10, 6, 10), 1, 3); foreach (var s in pending) pend.Mark(s); foreach (var s in shown) pend.MarkShown(s); p.Frame(pend, max, build); }
         Frame(8);
         check(build.Count == 2 && build.Contains(new Vector2Int(1, 1)) && build.Contains(new Vector2Int(3, 2)), $"skirt plan: a tile per box column with a pending section ({build.Count})");
         Frame(8);
@@ -302,12 +311,21 @@ static class MeshTests
         p.Built(new Vector2Int(1, 1), 30, 33);   // surface in section 1, things standing on it in section 2
         p.Built(new Vector2Int(3, 2), -1, -1);   // no surface below the window top
         Frame(8);
-        check(p.Tiles.Count == 2 && p.Dropped.Count == 0, "skirt plan: built tiles stay while their surface (or, without one, their column) is pending");
-        pending.Remove(new Vector3Int(1, 2, 1)); pending.Add(new Vector3Int(1, 0, 1));
+        check(p.Tiles.Count == 2 && p.Dropped.Count == 0, "skirt plan: built tiles stay while their column is pending and nothing of it is on screen");
+        shown.Add(new Vector3Int(1, 0, 1));   // below the window's rows (1..2)
         Frame(8);
-        check(!p.Tiles.ContainsKey(new Vector2Int(1, 1)) && p.Dropped.Count == 1 && build.Count == 0, "skirt plan: a tile goes when its surface sections are on screen (a pending section deep below doesn't keep it)");
+        check(p.Tiles.ContainsKey(new Vector2Int(1, 1)) && p.Dropped.Count == 0, "skirt plan: a section on screen below the window doesn't drop the tile");
+        shown.Add(new Vector3Int(1, 1, 1));
         Frame(8);
-        check(build.Count == 1 && build[0] == new Vector2Int(1, 1), "skirt plan: ...and comes back if that column is still pending and has no tile");
+        check(!p.Tiles.ContainsKey(new Vector2Int(1, 1)) && p.Dropped.Count == 1 && build.Count == 0, "skirt plan: a tile goes as soon as any section of its column in the window is on screen");
+        Frame(8);
+        check(build.Count == 0 && !p.Tiles.ContainsKey(new Vector2Int(1, 1)), "skirt plan: ...and doesn't come back while its column is still pending (no flicker)");
+        pending.Remove(new Vector3Int(3, 0, 2));
+        Frame(8);
+        check(!p.Tiles.ContainsKey(new Vector2Int(3, 2)) && p.Dropped.Count == 1, "skirt plan: a tile goes when nothing of its column is pending");
+        shown.Clear(); pending.Add(new Vector3Int(3, 0, 2));
+        Frame(8);
+        check(build.Count == 2 && p.Tiles.Count == 2, "skirt plan: columns that are wholly pending again get tiles again");
         p.Shift(new Vector3Int(1, 0, 0), new Vector3Int(10, 6, 10));
         check(p.Tiles.ContainsKey(new Vector2Int(2, 2)) && p.Tiles.ContainsKey(new Vector2Int(0, 1)) && p.Dropped.Count == 0, "skirt plan: a shift re-keys tiles (new key = old - shift)");
         p.Shift(new Vector3Int(1, 0, 0), new Vector3Int(10, 6, 10));

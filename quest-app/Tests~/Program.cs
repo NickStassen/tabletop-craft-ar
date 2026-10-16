@@ -139,6 +139,7 @@ static class Program
         fails += NavTests.Run(Fixture);   // navigation, streaming, clip caps (Tests~/NavTests.cs)
         AreaTests.Run(Check, Fixture);    // [area] width presets, resize re-keying, mesh batching (Tests~/AreaTests.cs)
         MeshTests.Run(Check);              // [mesh] mesher fast paths, job size, surface skirt (Tests~/MeshTests.cs)
+        SmoothTests.Run(Check);            // [smooth] hitch log, palette tables, snapshot buffers, shifts, skirt (Tests~/SmoothTests.cs)
         if (args.Contains("--be-probe")) { BlockEntityTests.PrintProbes(); return 0; }   // [blocks] the transforms, to compare with the client's own
         int beSceneIdx = Array.IndexOf(args, "--be-scene");
         if (beSceneIdx >= 0 && JarPath(args) != null)
@@ -175,6 +176,10 @@ static class Program
             if (ui >= 0) MeshScope.Utilisation = float.Parse(args[ui + 1], inv);
             int pj = Array.IndexOf(args, "--per-job-max");   // [mesh] 4 = the fixed jobs of 0.4.0
             if (pj >= 0) MeshScope.MaxSectionsPerJob = int.Parse(args[pj + 1]);
+            GlideTests.OldApply = args.Contains("--old-apply");   // [smooth] compare with the 0.8.1 apply
+            if (args.Contains("--old-shifts")) { AreaSizing.MarginByWidth = new[] { (0, 16), (128, 32), (256, 48) }; GlideTests.OldShifts = true; }   // [smooth] 0.8.1 margins, one-section lookahead
+            int spIdx = Array.IndexOf(args, "--speed"); if (spIdx >= 0) GlideTests.MaxSpeed = float.Parse(args[spIdx + 1], inv);
+            int hiIdx = Array.IndexOf(args, "--height"); if (hiIdx >= 0) GlideTests.Height = int.Parse(args[hiIdx + 1]);
             GlideTests.LiveGlide(args[glideIdx + 1], widths, si >= 0 ? float.Parse(args[si + 1], inv) : 8f,
                                  !args.Contains("--no-mesh"), sl >= 0 ? float.Parse(args[sl + 1], inv) : 1f, Check, JarPath(args), args.Contains("--skirt"), args.Contains("--old-batch-rules"));
             Console.WriteLine(fails == 0 ? "ALL PASS" : $"{fails} FAILED");

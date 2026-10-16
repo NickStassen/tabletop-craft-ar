@@ -277,21 +277,53 @@ namespace TabletopCraft.World
         public void Commit()
         {
             if (!_arrayDirty || _pixels.Count == 0) return;
+            if (_canCopy < 0) _canCopy = (SystemInfo.copyTextureSupport & UnityEngine.Rendering.CopyTextureSupport.Basic) != 0 ? 1 : 0;
+            // [smooth] New textures while gliding into new terrain: the array has spare layers, so only the new ones are
+            // copied in (a staging texture and GPU copies). Re-creating the whole array (every layer and mip set again and
+            // uploaded) cost the main thread milliseconds whenever a shift brought a block with a texture not seen yet.
+            if (Array != null && _canCopy == 1 && _committed > 0 && _pixels.Count <= Array.depth)
+            {
+                for (int i = _committed; i < _pixels.Count; i++) CopyLayer(i);
+                _committed = _pixels.Count;
+                _arrayDirty = false;
+                CommitAnimations();
+                return;
+            }
             if (Array != null) UnityEngine.Object.Destroy(Array);
-            Array = new Texture2DArray(TileSize, TileSize, _pixels.Count, TextureFormat.RGBA32, Mipmaps)
+            int cap = Mathf.Max(_pixels.Count, Mathf.Min(SystemInfo.maxTextureArraySlices, _pixels.Count + Mathf.Max(32, _pixels.Count / 4)));   // spare layers
+            Array = new Texture2DArray(TileSize, TileSize, cap, TextureFormat.RGBA32, Mipmaps)
             { filterMode = Mipmaps ? FilterMode.Trilinear : FilterMode.Point, wrapMode = TextureWrapMode.Repeat, anisoLevel = 0 };
             for (int i = 0; i < _pixels.Count; i++)
             {
                 if (!Mipmaps) { Array.SetPixels32(_pixels[i], i); continue; }
-                while (_mips.Count <= i) _mips.Add(null);
-                if (_mips[i] == null) _mips[i] = TextureMips.Chain(_pixels[i], TileSize);
-                for (int k = 0; k < _mips[i].Length && k < Array.mipmapCount; k++) Array.SetPixels32(_mips[i][k], i, k);
+                for (int k = 0; k < MipsOf(i).Length && k < Array.mipmapCount; k++) Array.SetPixels32(_mips[i][k], i, k);
             }
             Array.Apply(false, true);
+            _committed = _pixels.Count;
             Shader.SetGlobalFloat(BlocksSizeId, TileSize);   // texels per block: the shaders keep them crisp when magnified
             _arrayDirty = false;
             Debug.Log($"[Tabletop] ATLAS {_pixels.Count} layers {TileSize}px mips={Array.mipmapCount} {ArrayBytes / 1024} KB");
             CommitAnimations();   // frame store + current frames into the new array
+        }
+
+        int _committed;      // [smooth] layers already in Array
+        Texture2D _stage;    // one layer, uploaded and GPU-copied into the array (the copies run in order on the render thread)
+
+        Color32[][] MipsOf(int i)
+        {
+            while (_mips.Count <= i) _mips.Add(null);
+            return _mips[i] ?? (_mips[i] = TextureMips.Chain(_pixels[i], TileSize));
+        }
+
+        void CopyLayer(int i)
+        {
+            if (_stage == null) _stage = new Texture2D(TileSize, TileSize, TextureFormat.RGBA32, Mipmaps) { filterMode = FilterMode.Point };
+            if (!Mipmaps) { _stage.SetPixels32(_pixels[i]); _stage.Apply(false, false); Graphics.CopyTexture(_stage, 0, 0, Array, i, 0); return; }
+            var mips = MipsOf(i);
+            int n = Mathf.Min(mips.Length, Mathf.Min(Array.mipmapCount, _stage.mipmapCount));
+            for (int k = 0; k < n; k++) _stage.SetPixels32(mips[k], k);
+            _stage.Apply(false, false);
+            for (int k = 0; k < n; k++) Graphics.CopyTexture(_stage, 0, k, Array, i, k);
         }
 
         Dictionary<string, object> ReadJson(string path)
@@ -301,6 +333,6 @@ namespace TabletopCraft.World
             using (var r = new StreamReader(e.Open())) return Json.Parse(r.ReadToEnd()) as Dictionary<string, object>;
         }
 
-        public void Dispose() { DisposeAnimations(); _zip?.Dispose(); if (Array != null) UnityEngine.Object.Destroy(Array); }
+        public void Dispose() { DisposeAnimations(); _zip?.Dispose(); if (Array != null) UnityEngine.Object.Destroy(Array); if (_stage != null) UnityEngine.Object.Destroy(_stage); }
     }
 }

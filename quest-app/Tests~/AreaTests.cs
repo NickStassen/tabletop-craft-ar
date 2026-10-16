@@ -169,7 +169,10 @@ static class AreaTests
             }
         Check(true, "plan: any view -> section-aligned origin, window centred to within 8 blocks");
         n.View = n.RegionCentre;
-        Check(AreaSizing.Plan(n, 64, Server) == null, "plan: same width -> nothing to send");
+        var same = AreaSizing.Plan(n, 64, Server);   // [smooth] same width: only the margin grows to MarginFor(64) = 32
+        Check(same.HasValue && same.Value.Dims == new Vector3Int(128, 128, 128) && same.Value.Margin == new Vector3Int(32, 16, 32), "plan: same width -> only the margin grows");
+        var n32 = Nav(new Vector3Int(-16, 16, -16), new Vector3Int(128, 128, 128), new Vector3Int(32, 16, 32));
+        Check(AreaSizing.Plan(n32, 64, Server) == null, "plan: same width and margin -> nothing to send");
         var capped = Server; capped.MaxViewWidth = 192;
         Check(AreaSizing.Plan(n, 256, capped).Value.Dims.x == 192 + 2 * 32, "plan: the server's max caps the width (192 + its 32-block glide margins)");
         var fewBlocks = Server; fewBlocks.MaxBlocks = 288L * 288 * 128 - 1;
@@ -180,7 +183,7 @@ static class AreaTests
         // An old region without a margin gets one (the glide needs it).
         var bare = Nav(new Vector3Int(0, 60, 0), new Vector3Int(32, 64, 32), new Vector3Int(0, 0, 0));
         var pad = AreaSizing.Plan(bare, 64, Server).Value;
-        Check(pad.Dims == new Vector3Int(96, 64, 96) && pad.Margin == new Vector3Int(16, 0, 16) && pad.Origin == new Vector3Int(-32, 60, -32), $"plan: a region without margin gets a 16-block margin ({pad.Origin} {pad.Dims} {pad.Margin})");
+        Check(pad.Dims == new Vector3Int(128, 64, 128) && pad.Margin == new Vector3Int(32, 0, 32) && pad.Origin == new Vector3Int(-48, 60, -48), $"plan: a region without margin gets a 32-block margin ({pad.Origin} {pad.Dims} {pad.Margin})");
 
         // NavState: one request in flight; the answer keeps the view where it is in the world.
         n.View = new Vector3(53, n.View.y, 41);

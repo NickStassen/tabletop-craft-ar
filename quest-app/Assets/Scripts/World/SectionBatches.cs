@@ -162,7 +162,9 @@ namespace TabletopCraft.World
             int S = WorldModel.Section;
             float bx = section.x * S, by = section.y * S, bz = section.z * S;
             var v = new BatchVertex[n];
-            var acc = new float[n * 3];
+            // [smooth] Per-thread scratch for the normal sums (it was 12 bytes of garbage per vertex, a quarter of a mesh).
+            var acc = _acc != null && _acc.Length >= n * 3 ? _acc : (_acc = new float[System.Math.Max(n * 3, 3 * 4096)]);
+            System.Array.Clear(acc, 0, n * 3);
             bool lit = d.Light.Count == n;   // [living] every emitter filled the light codes (else: open sky)
             for (int i = 0; i < n; i++)
             {
@@ -194,17 +196,20 @@ namespace TabletopCraft.World
         static int SplitSolid(int[] idx, int n, BatchVertex[] v)
         {
             if (!SolidLayers.Enabled || n == 0) return 0;
-            int[] cut = null; int nCut = 0, nSolid = 0;
+            int[] cut = null; int nCut = 0, nSolid = 0;   // [smooth] cut: per-thread scratch (_cut)
             for (int i = 0; i + 2 < n; i += 3)
             {
                 int a = idx[i], b = idx[i + 1], c = idx[i + 2];
                 bool solid = v[a].Color.a == 255 && v[b].Color.a == 255 && v[c].Color.a == 255 && SolidLayers.Face(v[a].Uv.z);
                 if (solid) { idx[nSolid++] = a; idx[nSolid++] = b; idx[nSolid++] = c; }
-                else { if (cut == null) cut = new int[n]; cut[nCut++] = a; cut[nCut++] = b; cut[nCut++] = c; }
+                else { if (cut == null) cut = _cut != null && _cut.Length >= n ? _cut : (_cut = new int[System.Math.Max(n, 6 * 1024)]); cut[nCut++] = a; cut[nCut++] = b; cut[nCut++] = c; }
             }
             if (nCut > 0) Array.Copy(cut, 0, idx, nSolid, nCut);
             return nSolid;
         }
+
+        [System.ThreadStatic] static float[] _acc;
+        [System.ThreadStatic] static int[] _cut;
 
         static sbyte Snorm(float f) => (sbyte)Math.Round(Math.Max(-1f, Math.Min(1f, f)) * 127f);
 

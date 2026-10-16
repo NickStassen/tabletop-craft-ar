@@ -1362,3 +1362,43 @@ Everything on the GPU: these are offline counts. Whether Unity's Vulkan device e
 
 Hardware clip planes cost far more than the fragment discard they replace on this GPU, so `clip_planes` is off by default. The weather fix removed the periodic hitch. Width 128 runs a steady 72 fps.
 
+## Smooth gliding (smooth; 2026-10-15)
+
+### On the headset before (Quest 3, 0.8.1, width 96, region 128x186x128, margin 16, gliding or following a walking player)
+- A region shift every 0.5-1 s, each a `sections_v1` delta of 96 sections (`re-keyed by (16, 0, 0): 96-180 to mesh, ~670 kept decode+plan 7-24 ms`; the decode and plan already ran on a worker, so that is worker time).
+- PERF while moving: p99 37-42 ms, max 60-71 ms; standing still a steady 72 fps, p99 15-17 ms. With `surface_skirt` on: blocks that aren't there under leaves and stone overhangs, and surfaces blinking while moving; both gone with it off.
+
+### What changed (one commit per step)
+1. `HITCH` log line for every frame over `hitch_ms` (default 30): the frame's apply, re-key, upload, prewarm, skirt and caps time, uploads and KB, sections meshed, GCs, heap, and `script_ms` (first Update to `onBeforeRender`). Log lines carry no stack trace.
+2. Cheaper snapshot apply: palette-derived tables extend instead of being rebuilt per snapshot (block-entity mask with culture-aware `EndsWith`, clip-cap face keys, sound ambience, atlas prewarm, shapes), the atlas grows in place (spare layers, GPU copies) instead of being re-created for a new texture, glide shifts reuse retired grid and light arrays, JSON integers don't allocate, `SectionMesh.From` uses per-thread scratch, re-key reuses its collections; the delta plan looks the sent sections up in a set (separate commit).
+3. Batch geometry is written into writable mesh data by the worker that assembles it; the main thread only applies it within `upload_budget_ms` (skirt tiles too).
+4. Margin 32 from the smallest width; steady lookahead moves two sections at a time (three at a 48 margin) with 20 blocks of runway left; following a player gets lookahead from the player's velocity and no longer pauses while a shift is in flight.
+5. Surface skirt: full blocks and fluids only (leaves, glass, plants, slabs, models are see-through for it), sides only over the column's own solid run, fluid tops at the fluid's height; one keep/drop rule (a tile while its column is pending and none of its window sections is on screen); `surface_skirt` off by default.
+
+### Offline numbers (PC, `Tests~ -c Release --live-glide ws://127.0.0.1:8828/tabletop --height 186 --mesh-slowdown 4 --jar <client jar>`, Paper 26.3 test server)
+- New `SMOOTH` line per width and direction: shifts and shifts/s, blocks per shift, main-thread frame time, apply time, decode worker time, garbage per shift (all threads), GC counts, buffers reused; `--old-apply` runs the 0.8.1 apply, `--old-shifts` the 0.8.1 margins and one-section lookahead, `--speed B` caps the glide at B blocks/s.
+- Garbage per shift at 96 wide (128x186x128), 8 s glides: 23.7 / 22.7 MB (0.8.1 apply) -> 15.5 / 14.3 MB; the decode alone (`--no-mesh`) 12.6 -> 4.8 MB. GCs in 8 s (gen 0/1/2): 10/10/8 -> 7/7/5. Main-thread apply p50 0.71 -> 0.49 ms and 0.36 -> 0.19 ms on a PC with a palette of about 250 states (the passes that are gone grew with the session palette and ran string tests that are much slower under IL2CPP).
+- The delta plan at 256 wide (352x186x352): 28 ms of decode worker time per shift -> 12 ms (and 115-122 MB of garbage per shift in the harness, boxing in the old stubs -> 0.1 MB).
+- `--profile-mesh` now prints garbage per stage: `SectionMesh.From` 52.6 KB per section before the scratch buffers (build and specials allocate nothing).
+- Shifts, engine-free (`SmoothTests`, 72 Hz, 0.4 s answers): 96 wide at 20 blocks/s, 10 shifts at margin 16 -> 6 at margin 32 with pairs (one section at a time at margin 32: 11), no stall, at least 19.8 blocks of runway when a shift goes out. 256 wide at 40 blocks/s: 46 blocks per shift, no stall. A walking player (4.3 blocks/s) followed for 20 s: 3 shifts over 84 blocks, no stall.
+- Shifts, live: 96 wide, 128x186 area, glide capped at 24 blocks/s (`--speed 24`): 0.80 shifts/s, 30 blocks per shift, no stall, 0-1 frames with holes of 760 (0.8.1 on the headset: 16-block shifts, 1.5/s at that speed). At full harness speed (55 blocks/s at 96, 110-118 at 256): 1.75 and 2.25-2.5 shifts/s, 31 and 46-49 blocks per shift, no stall.
+- Skirt, live with `--skirt --skirt-factor 2`: 96 wide no surface holes; 256 wide 178-220 frames of 600 with missing surface detail, 1-11 of them not covered by a tile; 0.13-0.18 ms per tile.
+
+### Tests
+- `Tests~` (with `--jar` and `--entity-models`): ALL PASS (1,506). New in `SmoothTests.cs`: the HITCH line (threshold, counters per frame, 4 lines a second, off), palette tables (a delta computes only new entries, another palette rebuilds), snapshot buffers (reuse rules, Keep), JSON numbers (integers, negatives, -0, fractions, exponents, long numbers, shared boxes), shift sims (pairs and threes, runway, no stall), follow lead and velocity, the follow not pausing during a shift, skirt overhang, canopy, pond and default off. `MeshTests` skirt planner rewritten for the new rule; `NavTests`/`AreaTests` margins updated (the lazy-margin scope test keeps one-section shifts).
+- Unity: compile clean; `BatchMeshCheck.Run` 0 errors; `BatchMeshCheck.RunRenderer` 0 errors (load, shift, edit, grow, shrink, vertical shift, staged jump, lazy margin, skirt while gliding) with the batch mesh data written on workers; `TabletopBatch.BuildApk` built (not installed). No shader changes.
+
+### To measure on the headset
+1. `adb logcat -s Unity | grep -E "HITCH|PERF|GLIDE|snapshot"` while gliding at 96 wide for 30 s (stick held one way, then back), then at 256 wide, then following a walking player at 96. For each HITCH line: which part dominates (`apply_ms`, `upload_ms`, `prewarm_ms`, `skirt_ms`, `caps_ms`) or none of them (`ms` far above `script_ms`: render thread, GPU or GC; `gc=1`: a collection in that frame).
+2. PERF p99 and max while moving, against 37-42 / 60-71 ms before; the snapshot lines' `re-keyed by (32, 0, 0)` (pairs) and their rate (about half of before at the same speed).
+3. A/B (one at a time, same glide): `"mesh_data_on_workers": false`, `"reuse_snapshot_buffers": false`, `"upload_budget_ms": 2` and `4`.
+4. `"surface_skirt": true`: glide at 256 wide over forest, cliffs and water: no blocks that aren't there, no blinking, no z-fighting at the hand-off.
+
+### Not verified (needs the headset)
+Everything on the Quest: these are PC numbers. `Mesh.MeshData` written from a `Task.Run` thread passed in the editor (`RunRenderer`); on the player a failure falls back to the main-thread copy with a `batch ... mesh data:` warning in logcat. The atlas's in-place growth needs `CopyTextureSupport.Basic` (else it re-creates the array as before).
+
+### Known gaps
+- A meshed section still allocates its `SectionMesh` arrays (about 50 KB each); they become garbage when the section is replaced or dropped. Pooling them needs lifetimes across batch assemblies: the next step if HITCH lines show `gc=1`.
+- The JSON message text and its lists are still garbage per delta (about 5 MB per shift at 96 wide, 22-27 MB at 256).
+- A margin of 32 at 96 wide makes the region 160x186x160 (4.8M blocks instead of 3M): more server reads and a bigger first glide load; meshing is lazy, so frame time doesn't grow.
+

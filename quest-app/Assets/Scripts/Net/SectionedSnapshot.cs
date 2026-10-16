@@ -33,7 +33,7 @@ namespace TabletopCraft.Net
             };
             long volume = (long)d[0] * d[1] * d[2];
             if (d[0] < 1 || d[1] < 1 || d[2] < 1 || volume > int.MaxValue) throw new FormatException("bad dims");
-            var grid = new ushort[volume];
+            var grid = SnapshotBuffers.Grid(volume);   // [smooth] every cell is written below (full coverage is checked)
             var n = SectionPlan.Sections(s.Dims);
             var covered = new bool[n.x * n.y * n.z];
             int total = m0.I("parts", 1);
@@ -42,7 +42,7 @@ namespace TabletopCraft.Net
             // light_v1 (PROTOCOL.md 4.5.1): the top-level "light" says light travels inside the sections.
             var lightObj = m0.O("light");
             if (lightObj != null && lightObj.S("encoding") != "rle_v1") throw new FormatException("unsupported light encoding " + lightObj.S("encoding"));
-            var light = lightObj != null ? new byte[volume] : null;
+            var light = lightObj != null ? SnapshotBuffers.Light(volume) : null;
 
             var bas = m0.O("base");
             Vector3Int shift = default;
@@ -173,5 +173,74 @@ namespace TabletopCraft.Net
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// [smooth] Grid and light arrays of snapshots the app has moved past, reused by the next sectioned snapshot of the
+    /// same size: at 128x186x128 every glide shift allocated 9 MB (a new grid and light copy), a large part of the garbage
+    /// that made the headset's GC pause. TabletopApp retires the old arrays after applying a snapshot; an array is handed
+    /// out again only after another snapshot has been applied since and MinAgeSeconds have passed, so a worker still
+    /// reading a stale snapshot (a mesh job takes at most about 0.1 s on the headset, skirt and caps jobs milliseconds) is done. Off unless Enabled (tests and
+    /// tools allocate as before). Thread-safe (the decode runs on a worker).
+    /// </summary>
+    public static class SnapshotBuffers
+    {
+        public static bool Enabled;
+        public static double MinAgeSeconds = 0.3;
+        /// <summary>Arrays kept per kind (older ones are left to the GC).</summary>
+        public static int Keep = 2;
+        public static System.Func<double> Clock = () => System.Diagnostics.Stopwatch.GetTimestamp() / (double)System.Diagnostics.Stopwatch.Frequency;
+        /// <summary>Arrays handed out again (tests, logs).</summary>
+        public static int Reused { get; private set; }
+
+        sealed class Entry { public Array A; public int Gen; public double At; }
+        static readonly object Lock = new object();
+        static readonly List<Entry> Pool = new List<Entry>();
+        static int _gen;
+
+        /// <summary>Main thread, right after a snapshot replaced these arrays in the model.</summary>
+        public static void Retire(ushort[] grid, byte[] light)
+        {
+            if (!Enabled) return;
+            lock (Lock)
+            {
+                _gen++;
+                double now = Clock();
+                if (grid != null && grid.Length > 0) Add(grid, now);
+                if (light != null && light.Length > 0) Add(light, now);
+            }
+        }
+
+        static void Add(Array a, double now)
+        {
+            foreach (var e in Pool) if (ReferenceEquals(e.A, a)) return;
+            Pool.Add(new Entry { A = a, Gen = _gen, At = now });
+            int same = 0;
+            for (int i = Pool.Count - 1; i >= 0; i--)
+                if (Pool[i].A.GetType() == a.GetType() && ++same > Keep) Pool.RemoveAt(i);
+        }
+
+        public static ushort[] Grid(long n) => Take(typeof(ushort[]), n) as ushort[] ?? new ushort[n];
+        public static byte[] Light(long n) => Take(typeof(byte[]), n) as byte[] ?? new byte[n];
+
+        static Array Take(Type t, long n)
+        {
+            if (!Enabled) return null;
+            lock (Lock)
+            {
+                double now = Clock();
+                for (int i = 0; i < Pool.Count; i++)
+                {
+                    var e = Pool[i];
+                    if (e.A.GetType() != t || e.A.LongLength != n || e.Gen >= _gen || now - e.At < MinAgeSeconds) continue;
+                    Pool.RemoveAt(i);
+                    Reused++;
+                    return e.A;
+                }
+            }
+            return null;
+        }
+
+        public static void Clear() { lock (Lock) { Pool.Clear(); Reused = 0; } }
     }
 }

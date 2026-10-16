@@ -59,7 +59,16 @@ namespace TabletopCraft.World
         double _lastTick = -1;
         // per palette index: 0 nothing, 1 flowing water, 2 lava, 3 fire (rebuilt when the palette changes)
         byte[] _ambient = new byte[0];
-        int _ambientFor = -1, _ambientSnapshot = -1;
+        readonly PaletteTable<byte> _ambientTable = new PaletteTable<byte>();
+        static readonly Func<string, byte> AmbientFn = AmbientKind;
+
+        /// <summary>1: flowing water, 2: lava, 3: fire, 0: nothing (Ambience).</summary>
+        static byte AmbientKind(string s)
+        {
+            string p = BlockRules.Path(s);
+            string lv = p == "water" ? BlockEditRules.Prop(s, "level") : null;
+            return (byte)(p == "water" && lv != null && lv != "0" && int.TryParse(lv, out var n) && n < 8 ? 1 : p == "lava" ? 2 : p == "fire" || p == "soul_fire" ? 3 : 0);
+        }
 
         public bool Ready => Defs != null && Defs.Count > 0;
         public int Mobs => _mobs.Count;
@@ -391,17 +400,7 @@ namespace TabletopCraft.World
         /// pops and roars where it's open above, fire crackles.</summary>
         void Ambience(WorldModel w, Vector3Int lo, Vector3Int hi, double now)
         {
-            if (_ambientFor != w.Palette.Count || _ambientSnapshot != w.SnapshotId)
-            {
-                _ambientFor = w.Palette.Count; _ambientSnapshot = w.SnapshotId;
-                _ambient = new byte[w.Palette.Count];
-                for (int i = 0; i < _ambient.Length; i++)
-                {
-                    string s = w.Palette[i], p = BlockRules.Path(s);
-                    string lv = p == "water" ? BlockEditRules.Prop(s, "level") : null;
-                    _ambient[i] = (byte)(p == "water" && lv != null && lv != "0" && int.TryParse(lv, out var n) && n < 8 ? 1 : p == "lava" ? 2 : p == "fire" || p == "soul_fire" ? 3 : 0);
-                }
-            }
+            if (_ambientTable.Update(w, AmbientFn)) _ambient = _ambientTable.Items;   // [smooth] new palette entries only
             int sx = hi.x - lo.x, sy = hi.y - lo.y, sz = hi.z - lo.z;
             if (sx <= 0 || sy <= 0 || sz <= 0) return;
             long volume = (long)sx * sy * sz;

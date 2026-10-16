@@ -25,10 +25,27 @@ namespace TabletopCraft.Net
             if (s.Length - i >= 5 && string.CompareOrdinal(s, i, "false", 0, 5) == 0) { i += 5; return false; }
             if (s.Length - i >= 4 && string.CompareOrdinal(s, i, "null", 0, 4) == 0) { i += 4; return null; }
             int st = i;
+            // [smooth] Plain integers (nearly every number: RLE runs, palette indices, light) without a substring, and the
+            // small ones as shared boxes: a glide delta has hundreds of thousands of them, and their garbage drove the
+            // headset's GC.
+            bool neg = c == '-';
+            int j = neg ? i + 1 : i, digits = 0;
+            long v = 0;
+            while (j < s.Length && s[j] >= '0' && s[j] <= '9' && digits < 16) { v = v * 10 + (s[j] - '0'); j++; digits++; }
+            if (digits > 0 && digits < 16 && (j == s.Length || "+-.eE0123456789".IndexOf(s[j]) < 0) && !(neg && v == 0))
+            {
+                i = j;
+                if (neg) v = -v;
+                return v >= 0 && v < SmallInts.Length ? SmallInts[v] : (object)(double)v;
+            }
             while (i < s.Length && "+-0123456789.eE".IndexOf(s[i]) >= 0) i++;
             if (st == i) throw new FormatException("bad token at " + i);
             return double.Parse(s.Substring(st, i - st), NumberStyles.Float, CultureInfo.InvariantCulture);
         }
+
+        /// <summary>Boxed 0..4096 (shared: a boxed double is immutable).</summary>
+        static readonly object[] SmallInts = MakeSmallInts(4097);
+        static object[] MakeSmallInts(int n) { var a = new object[n]; for (int k = 0; k < n; k++) a[k] = (double)k; return a; }
 
         static Dictionary<string, object> Obj(string s, ref int i)
         {

@@ -106,15 +106,15 @@ namespace TabletopCraft.World
                 case "campfire": case "soul_campfire": return BlockEntityKind.Campfire;
                 case "vault": return BlockEntityKind.Vault;
             }
-            if (path.EndsWith("copper_chest")) return BlockEntityKind.Chest;
-            if (path.EndsWith("shulker_box")) return BlockEntityKind.ShulkerBox;
-            if (path.EndsWith("copper_golem_statue")) return BlockEntityKind.CopperGolemStatue;
-            if (path.EndsWith("_banner")) return BlockEntityKind.Banner;
-            if (path.EndsWith("_hanging_sign")) return BlockEntityKind.HangingSign;
-            if (path.EndsWith("_sign")) return BlockEntityKind.Sign;
-            if (path.EndsWith("_shelf")) return BlockEntityKind.Shelf;
-            if (path.EndsWith("_skull")) return BlockEntityKind.Skull;
-            if (path.EndsWith("_head"))
+            if (path.EndsWith("copper_chest", System.StringComparison.Ordinal)) return BlockEntityKind.Chest;
+            if (path.EndsWith("shulker_box", System.StringComparison.Ordinal)) return BlockEntityKind.ShulkerBox;
+            if (path.EndsWith("copper_golem_statue", System.StringComparison.Ordinal)) return BlockEntityKind.CopperGolemStatue;
+            if (path.EndsWith("_banner", System.StringComparison.Ordinal)) return BlockEntityKind.Banner;
+            if (path.EndsWith("_hanging_sign", System.StringComparison.Ordinal)) return BlockEntityKind.HangingSign;
+            if (path.EndsWith("_sign", System.StringComparison.Ordinal)) return BlockEntityKind.Sign;
+            if (path.EndsWith("_shelf", System.StringComparison.Ordinal)) return BlockEntityKind.Shelf;
+            if (path.EndsWith("_skull", System.StringComparison.Ordinal)) return BlockEntityKind.Skull;
+            if (path.EndsWith("_head", System.StringComparison.Ordinal))
                 foreach (var t in HeadTypes) if (path == t + "_head" || path == t + "_wall_head") return BlockEntityKind.Skull;
             return BlockEntityKind.None;
         }
@@ -313,7 +313,7 @@ namespace TabletopCraft.World
             string m;
             if (path == "trapped_chest") m = "trapped";
             else if (path == "ender_chest") return "entity/chest/ender";
-            else if (path.EndsWith("copper_chest"))
+            else if (path.EndsWith("copper_chest", System.StringComparison.Ordinal))
             {
                 string p = path.StartsWith("waxed_") ? path.Substring(6) : path;
                 m = p.StartsWith("exposed_") ? "copper_exposed" : p.StartsWith("weathered_") ? "copper_weathered" : p.StartsWith("oxidized_") ? "copper_oxidized" : "copper";
@@ -426,7 +426,7 @@ namespace TabletopCraft.World
                 }
                 case BlockEntityKind.Banner:
                 {
-                    bool wall = path.EndsWith("_wall_banner");
+                    bool wall = path.EndsWith("_wall_banner", System.StringComparison.Ordinal);
                     var m = BannerTransform(wall, facing, PropInt(p, "rotation"));
                     string layer = wall ? "wall_banner" : "standing_banner";
                     into.Add(new BEPart { Model = layer, Texture = "entity/banner/banner_base", M = m });
@@ -475,8 +475,8 @@ namespace TabletopCraft.World
         {
             string path = BlockRules.Path(state);
             var p = BlockModelBaker.Props(state);
-            bool hanging = path.EndsWith("_hanging_sign");
-            bool wall = path.EndsWith("_wall_sign") || path.EndsWith("_wall_hanging_sign");
+            bool hanging = path.EndsWith("_hanging_sign", System.StringComparison.Ordinal);
+            bool wall = path.EndsWith("_wall_sign", System.StringComparison.Ordinal) || path.EndsWith("_wall_hanging_sign", System.StringComparison.Ordinal);
             float angle = wall ? YRot(Prop(p, "facing", "north")) : PropInt(p, "rotation") * 22.5f;
             M4 m;
             if (hanging)

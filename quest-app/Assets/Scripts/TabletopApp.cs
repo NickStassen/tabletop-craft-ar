@@ -10,6 +10,9 @@
 //   cheap), "mesh_workers": 3 (meshing threads; the Quest 3 gives an app about three cores)
 // [mesh] optional: "surface_skirt": true (a low-detail surface where the window isn't meshed yet), "skirt_speed": 2 (with
 //   the skirt, glide up to this much faster than meshing keeps up; 1 = only as fast as detail arrives)
+// [smooth] optional: "hitch_ms": 30 (log a HITCH line for frames longer than this; 0 = off), "upload_budget_ms": 3
+//   (main-thread time per frame for mesh uploads), "reuse_snapshot_buffers": true (glide shifts reuse old grid arrays),
+//   "mesh_data_on_workers": true (batch geometry written into mesh data on the assembling worker)
 // [talk] optional: "operator_name": "Nick" (the name in chat, else skin_player), "quick_commands": ["time set day"]
 // [power] B held = undo; the block menu's Tools tab: box wand, clone, brushes, undo/redo (World/PowerTools.cs)
 // [hands] optional: "left_trigger": "use" (default: vanilla right-click order, left grip + trigger places) or "place"
@@ -207,7 +210,12 @@ namespace TabletopCraft
 
         void Start()
         {
+            SnapshotBuffers.Enabled = true;   // [smooth] glide shifts reuse retired grid/light arrays (tabletop.json can turn it off)
             LoadConfig();
+            // [smooth] Log lines without a stack trace: collecting one costs about a millisecond under IL2CPP, and the app
+            // logs on every glide shift. Warnings and errors keep theirs.
+            Application.SetStackTraceLogType(LogType.Log, StackTraceLogType.None);
+            gameObject.AddComponent<HitchProbe>();   // [smooth] HITCH lines for frames over hitch_ms
             MeshScope.SkirtFactor = SurfaceSkirt.Enabled ? SurfaceSkirt.SpeedFactor : 1f;   // [mesh] the skirt covers what meshing lags behind
             LoadPrefs();   // [comfort] prefs.json, and which of tabletop.json's shared keys win
             var rig = FindFirstObjectByType<OVRCameraRig>();
@@ -461,6 +469,10 @@ namespace TabletopCraft
                 TabletopRenderer.Workers = Mathf.Clamp(c.I("mesh_workers", TabletopRenderer.Workers), 1, 8);                    // [mesh] meshing threads
                 SurfaceSkirt.Enabled = c.B("surface_skirt", SurfaceSkirt.Enabled);                                            // [mesh] low-detail surface ahead
                 SurfaceSkirt.SpeedFactor = Mathf.Clamp((float)c.D("skirt_speed", SurfaceSkirt.SpeedFactor), 1f, 4f);          // [mesh] glide past meshing
+                FrameHitch.ThresholdMs = Mathf.Max(0f, (float)c.D("hitch_ms", FrameHitch.ThresholdMs));                       // [smooth] HITCH log (0 = off)
+                TabletopRenderer.UploadBudgetMs = Mathf.Clamp((float)c.D("upload_budget_ms", TabletopRenderer.UploadBudgetMs), 0.5f, 12f);   // [smooth]
+                SnapshotBuffers.Enabled = c.B("reuse_snapshot_buffers", SnapshotBuffers.Enabled);                             // [smooth] A/B switch
+                TabletopRenderer.WriteOnWorkers = c.B("mesh_data_on_workers", TabletopRenderer.WriteOnWorkers);               // [smooth] A/B switch
                 SolidLayers.Enabled = c.B("solid_pass", SolidLayers.Enabled);                 // [gpu] opaque faces without alpha test
                 BatchRules.PackedVertices = c.B("packed_vertices", BatchRules.PackedVertices);   // [gpu] 20-byte batch vertices
                 BlockKeywords.UseClipPlanes = c.B("clip_planes", BlockKeywords.UseClipPlanes);   // [gpu] hardware clip planes for the window
@@ -948,10 +960,19 @@ namespace TabletopCraft
         // where it is in the world. (Player figures keep world positions and follow Model.Origin by themselves.)
         void ApplySnapshot(SnapshotAssembler.Result r)
         {
+            long h0 = FrameHitch.Begin();   // [smooth] HITCH apply_ms (includes rekey_ms)
+            FrameHitch.Snapshot();
+            try { Apply(r); }
+            finally { FrameHitch.End(FrameHitch.Part.Apply, h0); }
+        }
+
+        void Apply(SnapshotAssembler.Result r)
+        {
             if (r.Snapshot == null) { BadSnapshot(r.SnapshotId, r.Error); return; }
             var s = r.Snapshot;
             bool had = _world.Loaded;
             var oldOrigin = had ? _world.Origin : s.Origin;
+            var oldGrid = _world.Grid; var oldLight = _world.Light;   // [smooth] reused by a later snapshot (SnapshotBuffers)
             _world.ApplySnapshot(s);
             _edit.Editor.OnSnapshot(_world, r.Delta ? r.ListedKeys : null);   // block-edit guesses: dropped, or moved along by a delta
             _renderer.OnSnapshot(r.Plan, oldOrigin, s.Origin);
@@ -966,6 +987,7 @@ namespace TabletopCraft
             bool big = !had || r.Plan == null || !r.Plan.Rekey || oldWidth != AreaSizing.Current(_nav.State) || oldWorld != s.World;
             if (big) { _loading.Begin(_renderer.Pending); _loadingAt = 0; }
             if (!_assetsChecked) { _assetsChecked = true; AssetToasts(); }
+            if (!ReferenceEquals(oldGrid, _world.Grid)) SnapshotBuffers.Retire(oldGrid, ReferenceEquals(oldLight, _world.Light) ? null : oldLight);
             Debug.Log($"[Tabletop] snapshot {s.SnapshotId}: {s.Dims} palette {s.Palette.Length} parts {r.Parts}" +
                       (r.Delta ? $" delta ({r.Listed} sections sent)" : "") +
                       (r.Plan.Rekey ? $" re-keyed by {r.Plan.ShiftBlocks}: {r.Plan.Mesh.Count} to mesh, {r.Plan.Kept} kept" : " full re-mesh") +
