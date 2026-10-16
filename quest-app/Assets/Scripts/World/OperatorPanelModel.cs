@@ -16,6 +16,12 @@
 //            the container view (World/ContainerModel.cs) and the sign editor (World/SignEditorModel.cs), opened by the
 //            left trigger on a container or a sign (BlockEditMode's hooks).
 //
+// [safety] Mute, block and report (World/ChatSafety.cs; work without command_v1): clicking a player's line in Chat shows
+//            Mute / Block / Report / Close for them under the log; Players has the same row for the selected player and
+//            "Mute list (n)", which turns the player rows into this server's muted and blocked players (Unmute, Unblock;
+//            Online goes back). Report opens a third mode, the report picker: seven reasons, an optional note on the
+//            keyboard, Send report (report in the Outbox; the player is blocked here too) or Cancel.
+//
 // Every button that runs a command is a template on top of the console path (World/OperatorCommands below); without
 // command_v1 they are greyed and say "needs auth.token". The focused field (chat line, command line or kick reason)
 // is typed on the shared on-panel keyboard (World/KeyboardModel.cs: shift, ?123, delete, clear, enter); Enter sends.
@@ -32,10 +38,11 @@ namespace TabletopCraft.World
     public enum OpTab { Chat, Console, Players, World, Server, Marks }
 
     public enum PanelPart { None, Panel, Tab, ScrollUp, ScrollDown, Send, Chip, Quick, HistoryUp, HistoryDown, AtToggle, Complete, PlayerRow, Button, Rule, Key, Cancel,
-                            Field, MarkRow, Slot, Swatch, SignLine }   // [operator]
+                            Field, MarkRow, Slot, Swatch, SignLine,   // [operator]
+                            ChatLine, SafetyRow }                     // [safety] a chat line (picks its player), a muted/blocked player
 
-    /// <summary>[operator] What the panel shows under the tabs: a tab, or the container view / sign editor.</summary>
-    public enum PanelMode { Tabs, Container, Sign }
+    /// <summary>[operator] What the panel shows under the tabs: a tab, or the container view / sign editor; [safety] or the report picker.</summary>
+    public enum PanelMode { Tabs, Container, Sign, Report }
 
     public struct PanelItem
     {
@@ -144,6 +151,16 @@ namespace TabletopCraft.World
         public int Version { get; private set; }
 
         public readonly ChatLog Log = new ChatLog();
+        // [safety] mute, block and report (World/ChatSafety.cs): the lists of the server in use, the report being written,
+        // the player picked from a chat line (Chat tab), the Players tab's list view and its selection
+        public readonly ChatSafety Safety = new ChatSafety();
+        public readonly ReportDraft Report = new ReportDraft();
+        public string ChatPickUuid { get; private set; }
+        public string ChatPickName { get; private set; }
+        public bool SafetyList { get; private set; }
+        public string SafetySelected { get; private set; }
+        string _reportPending;
+        readonly List<WristLine> _chatPage = new List<WristLine>();
         public readonly ConsoleModel Console = new ConsoleModel();
         public ControlWelcome Welcome = new ControlWelcome();
         public ServerStatus Status;
@@ -158,7 +175,7 @@ namespace TabletopCraft.World
         public readonly KeyboardModel KickKeys = new KeyboardModel { MaxLength = 100, EnterLabel = "kick" };
         /// <summary>The keyboard of the focused field, or null (no field on this tab).</summary>
         public KeyboardModel ActiveKeys => Focus == Field.Chat ? ChatKeys : Focus == Field.Console ? ConsoleKeys : Focus == Field.Kick ? KickKeys
-                                         : Focus == Field.Marks ? Marks.ActiveKeys : Focus == Field.Sign ? Sign.Keys : null;
+                                         : Focus == Field.Marks ? Marks.ActiveKeys : Focus == Field.Sign ? Sign.Keys : Focus == Field.Report ? Report.Keys : null;
 
         public string ChatInput { get; private set; } = "";
         public string KickReason { get; private set; } = "";
@@ -179,14 +196,16 @@ namespace TabletopCraft.World
         public int Scroll => _scroll.TryGetValue(Tab, out var v) ? v : 0;
 
         /// <summary>Which text field the keyboard types into.</summary>
-        public enum Field { None, Chat, Console, Kick, Marks, Sign }
-        public Field Focus => Mode == PanelMode.Sign ? Field.Sign : Mode == PanelMode.Container ? Field.None
+        public enum Field { None, Chat, Console, Kick, Marks, Sign, Report }
+        public Field Focus => Mode == PanelMode.Sign ? Field.Sign : Mode == PanelMode.Container ? Field.None : Mode == PanelMode.Report ? Field.Report
                             : Tab == OpTab.Chat ? Field.Chat : Tab == OpTab.Console ? Field.Console : Tab == OpTab.Players && KickTarget != null ? Field.Kick
                             : Tab == OpTab.Marks && Marks.Typing ? Field.Marks : Field.None;
         public string FocusText => Focus == Field.Chat ? ChatInput : Focus == Field.Console ? Console.Input : Focus == Field.Kick ? KickReason
-                                 : Focus == Field.Marks ? Marks.FieldText : Focus == Field.Sign ? Sign.Current.Lines[Sign.Line] : "";
+                                 : Focus == Field.Marks ? Marks.FieldText : Focus == Field.Sign ? Sign.Current.Lines[Sign.Line] : Focus == Field.Report ? Report.Note : "";
         public int FocusMaxLen => Focus == Field.Chat ? Welcome.ChatMaxLen : Focus == Field.Console ? Welcome.CommandMaxLen : Focus == Field.Sign ? SignEditorModel.MaxLine
-                                : Focus == Field.Marks ? (Marks.Mode == MarksModel.FieldMode.Name ? 32 : 40) : 200;
+                                : Focus == Field.Marks ? (Marks.Mode == MarksModel.FieldMode.Name ? 32 : 40) : Focus == Field.Report ? ReportDraft.MaxNote : 200;
+        /// <summary>[safety] Reports can be sent: the server granted report_v1 and the link is up.</summary>
+        public bool ReportsOn => Welcome.Reports && Connected;
 
         public void SetOpen(bool open)
         {
@@ -202,6 +221,7 @@ namespace TabletopCraft.World
             bool left = LeaveMode();
             if (t == Tab && !left) return false;
             Tab = t; KickTarget = null; _nextQuery = 0; Note = "";
+            ChatPickUuid = ChatPickName = null; SafetyList = false; SafetySelected = null;   // [safety]
             ActiveKeys?.ResetMode();
             Version++;
             return true;
@@ -249,6 +269,7 @@ namespace TabletopCraft.World
             if (Mode == PanelMode.Tabs) return false;
             if (Mode == PanelMode.Container) { var m = Container.Close(); if (m != null) Outbox.Add(m); }
             if (Mode == PanelMode.Sign) Sign.Close();
+            if (Mode == PanelMode.Report) Report.Close();   // [safety]
             Mode = PanelMode.Tabs;
             Version++;
             return true;
@@ -333,6 +354,7 @@ namespace TabletopCraft.World
                 case Field.Console: Console.SetInput(text, now); break;
                 case Field.Kick: KickReason = text; break;
                 case Field.Marks: Marks.ActiveKeys?.SetText(text); break;   // [operator]
+                case Field.Report: Report.Keys.SetText(text); break;        // [safety]
                 default: return;
             }
             Version++;
@@ -369,8 +391,156 @@ namespace TabletopCraft.World
                     return new PanelAction { Kind = PanelActionKind.Command, Line = line };
                 }
                 case Field.Marks: return MarksEnter();   // [operator]
+                case Field.Report: return SendReport();  // [safety]
             }
             return default;
+        }
+
+        // ---------- [safety] mute, block, report ----------
+
+        /// <summary>The player the Mute / Block / Report buttons act on: the picked chat line's (Chat tab), the selected row
+        /// of the muted/blocked list, or the selected online player.</summary>
+        public (string uuid, string name) SafetyTarget()
+        {
+            if (Tab == OpTab.Chat) return (ChatPickUuid, ChatPickName);
+            if (Tab != OpTab.Players) return (null, null);
+            if (SafetyList) { var e = Safety.Find(SafetySelected); return e != null ? (e.Uuid, e.Name) : (null, null); }
+            return SelectedPlayer != null && SelectedName() != null ? (SelectedPlayer, SelectedName()) : (null, null);
+        }
+
+        public static bool IsSafetyButton(int id) => id >= BtnMute && id <= BtnPickClose;
+
+        public string MuteLabel(string uuid) => Safety.LevelOf(uuid) == SafetyLevel.Muted ? "Unmute" : "Mute";
+        public string BlockLabel(string uuid) => Safety.IsBlocked(uuid) ? "Unblock" : "Block";
+
+        /// <summary>Mutes, blocks, clears: hides what they said from the log and drops their bubbles (the XR panel does,
+        /// on Safety.Version) at once.</summary>
+        void SetLevel(string uuid, string name, SafetyLevel level)
+        {
+            Safety.Set(uuid, name, level);
+            if (level != SafetyLevel.None) Log.RemoveFrom(uuid, level == SafetyLevel.Blocked);
+            if (SafetyList && level == SafetyLevel.None && SafetySelected == uuid) SafetySelected = null;
+            Version++;
+        }
+
+        PanelAction SafetyButton(int id)
+        {
+            if (id == BtnSafetyList)
+            {
+                SafetyList = !SafetyList; SafetySelected = null; KickTarget = null; _scroll[OpTab.Players] = 0;
+                Note = SafetyList ? (Safety.Count == 0 ? "nobody is muted or blocked on this server" : "select a player, then Unmute or Unblock") : "";
+                Version++;
+                return new PanelAction { Kind = PanelActionKind.Toggled };
+            }
+            if (id == BtnPickClose) { ChatPickUuid = ChatPickName = null; Note = ""; Version++; return new PanelAction { Kind = PanelActionKind.Toggled }; }
+            var (uuid, name) = SafetyTarget();
+            if (uuid == null) return Refuse(Tab == OpTab.Chat ? "click a player's chat line first" : "select a player first");
+            var lv = Safety.LevelOf(uuid);
+            switch (id)
+            {
+                case BtnMute:
+                    if (lv == SafetyLevel.Blocked) return Refuse(name + " is blocked, which mutes them too: Unblock first");
+                    SetLevel(uuid, name, lv == SafetyLevel.Muted ? SafetyLevel.None : SafetyLevel.Muted);
+                    Note = lv == SafetyLevel.Muted ? "unmuted " + name : "muted " + name + ": their chat and bubbles are hidden on this headset (Players > Mute list to undo)";
+                    return new PanelAction { Kind = PanelActionKind.Toggled };
+                case BtnBlock:
+                    SetLevel(uuid, name, lv == SafetyLevel.Blocked ? SafetyLevel.None : SafetyLevel.Blocked);
+                    Note = lv == SafetyLevel.Blocked ? "unblocked " + name : "blocked " + name + ": their chat, bubbles and whispers are hidden on this headset";
+                    return new PanelAction { Kind = PanelActionKind.Toggled };
+                case BtnReport: return OpenReport(uuid, name);
+            }
+            return default;
+        }
+
+        /// <summary>Report: the panel shows the reason picker for this player.</summary>
+        public PanelAction OpenReport(string uuid, string name)
+        {
+            if (string.IsNullOrEmpty(uuid)) return Refuse("select a player first");
+            if (!Connected) return Refuse("not connected");
+            if (!Welcome.Reports) return Refuse(ReportsOffWhy);
+            LeaveMode();
+            _modeFromWorld = false;
+            Mode = PanelMode.Report; Note = "";
+            Report.Begin(uuid, name);
+            Version++;
+            return new PanelAction { Kind = PanelActionKind.Toggled };
+        }
+
+        public const string ReportsOffWhy = "this server takes no reports (its plugin is older than 1.2.0): Block hides them here";
+
+        /// <summary>Send report: the report goes out (Outbox), the player is blocked on this headset, the panel goes back.</summary>
+        PanelAction SendReport()
+        {
+            if (!Report.Open) return default;
+            if (Report.Reason == null) return Refuse("pick a reason first");
+            if (!Connected) return Refuse("not connected");
+            if (!Welcome.Reports) return Refuse(ReportsOffWhy);
+            string uuid = Report.Uuid, name = Report.Name, reason = Report.Reason;
+            Outbox.Add(Report.Message());
+            Safety.Reported(uuid, name, reason, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            SetLevel(uuid, name, SafetyLevel.Blocked);
+            _reportPending = name;
+            LeaveMode();
+            if (ChatPickUuid == uuid) ChatPickUuid = ChatPickName = null;
+            Note = "reporting " + name + " to the server's operators... (blocked on this headset)";
+            Version++;
+            return new PanelAction { Kind = PanelActionKind.Sent };
+        }
+
+        PanelAction ReportButton(int id)
+        {
+            if (id >= BtnReason && id < BtnReason + ReportReasons.Codes.Length)
+            {
+                Report.Reason = ReportReasons.Codes[id - BtnReason]; Version++;
+                return new PanelAction { Kind = PanelActionKind.Toggled };
+            }
+            if (id == BtnReportSend) return SendReport();
+            if (id == BtnClose) return CloseMode();
+            return default;
+        }
+
+        /// <summary>report_ack: what the note line (and a toast) says.</summary>
+        public string OnReportAck(ReportAck a)
+        {
+            string who = _reportPending ?? "the player";
+            _reportPending = null;
+            Note = a.Operators > 0 ? $"reported {who} (report {a.Id}): {a.Operators} operator{(a.Operators == 1 ? "" : "s")} online saw it"
+                                   : $"reported {who} (report {a.Id}): saved for the server's operators (none online now)";
+            Version++;
+            return Note;
+        }
+
+        /// <summary>An error about a report: the note line says it (the player stays blocked here).</summary>
+        public string OnReportError(string message)
+        {
+            _reportPending = null;
+            Note = "report not sent: " + message;
+            Version++;
+            return Note;
+        }
+
+        /// <summary>The chat rows on screen (Layout fills it), to know whose line a click picked.</summary>
+        PanelAction PickChatLine(int row)
+        {
+            if (row < 0 || row >= _chatPage.Count) return default;
+            var e = _chatPage[row].Entry;
+            if (e == null || string.IsNullOrEmpty(e.Uuid)) return default;
+            if (ChatPickUuid == e.Uuid) { ChatPickUuid = ChatPickName = null; Note = ""; }
+            else
+            {
+                ChatPickUuid = e.Uuid; ChatPickName = string.IsNullOrEmpty(e.Name) ? "?" : e.Name;
+                Note = ChatPickName + ": Mute hides their chat here, Block also their whispers, Report tells the server's operators";
+            }
+            Version++;
+            return new PanelAction { Kind = PanelActionKind.Selected };
+        }
+
+        public List<SafetyEntry> VisibleSafety()
+        {
+            var all = Safety.List();
+            var l = new List<SafetyEntry>();
+            for (int i = Scroll; i < all.Count && l.Count < PlayerRows; i++) l.Add(all[i]);
+            return l;
         }
 
         // ---------- [operator] Marks tab ----------
@@ -605,9 +775,21 @@ namespace TabletopCraft.World
                 case PanelPart.Slot: Container.Select(item.Index); Note = ""; Version++; return new PanelAction { Kind = PanelActionKind.Selected };
                 case PanelPart.Swatch: Sign.SetColor(OperatorProtocol.Dyes[item.Index]); Version++; return new PanelAction { Kind = PanelActionKind.Toggled };
                 case PanelPart.SignLine: Sign.SelectLine(item.Index); Version++; return new PanelAction { Kind = PanelActionKind.Selected };
+                // [safety] a chat line picks its player; a row of the muted/blocked list selects it
+                case PanelPart.ChatLine: return PickChatLine(item.Index);
+                case PanelPart.SafetyRow:
+                {
+                    var rows = VisibleSafety();
+                    if (item.Index >= rows.Count) return none;
+                    SafetySelected = rows[item.Index].Uuid == SafetySelected ? null : rows[item.Index].Uuid;
+                    Version++;
+                    return new PanelAction { Kind = PanelActionKind.Selected };
+                }
                 case PanelPart.Button:
+                    if (Mode == PanelMode.Report) return ReportButton(item.Index);   // [safety]
                     if (Mode == PanelMode.Container) return ContainerButton(item.Index);
                     if (Mode == PanelMode.Sign) return SignButton(item.Index);
+                    if (IsSafetyButton(item.Index)) return SafetyButton(item.Index);   // [safety]
                     if (Tab == OpTab.Marks) return MarksButton(item.Index);
                     return Button(item.Index);
                 case PanelPart.Rule:
@@ -625,6 +807,16 @@ namespace TabletopCraft.World
         /// <summary>Why a greyed item does nothing (the note line says it when it's clicked).</summary>
         public string DisabledWhy(PanelItem item)
         {
+            // [safety] the report picker, Mute / Block / Report
+            if (item.Part == PanelPart.Button && Mode == PanelMode.Report)
+                return !Connected ? "not connected" : !Welcome.Reports ? ReportsOffWhy : item.Index == BtnReportSend ? "pick a reason first" : "not available";
+            if (item.Part == PanelPart.Button && Mode == PanelMode.Tabs && IsSafetyButton(item.Index))
+            {
+                if (SafetyTarget().uuid == null) return Tab == OpTab.Chat ? "click a player's chat line first" : "select a player first";
+                if (item.Index == BtnReport) return !Connected ? "not connected" : ReportsOffWhy;
+                if (item.Index == BtnMute && Safety.IsBlocked(SafetyTarget().uuid)) return "blocked, which mutes them too: Unblock first";
+                return "not available";
+            }
             // [operator] the Marks tab, follow buttons, the container view and the sign editor say their own reasons
             if (item.Part == PanelPart.Button && (Mode != PanelMode.Tabs || Tab == OpTab.Marks || item.Index == BtnFollow || item.Index == BtnGoTo))
                 return !Connected ? "not connected" : Mode == PanelMode.Container ? (Container.View == null ? "waiting for the server..." : !Container.CanEdit ? "containers are view-only on this server (interact.containers)" : "select a slot first")
@@ -666,6 +858,9 @@ namespace TabletopCraft.World
         // 92 back, 93 glow, 94 save; 90 close (container and sign).
         public const int BtnFollow = 48, BtnGoTo = 49, BtnWorld = 60, BtnSpawn = 70, BtnAddMark = 71, BtnStopFollow = 72, BtnGoMark = 73, BtnDeleteMark = 74,
                          BtnTake = 80, BtnPut = 81, BtnClear = 82, BtnSort = 83, BtnCount = 84, BtnClose = 90, BtnFront = 91, BtnBack = 92, BtnGlow = 93, BtnSave = 94;
+        // [safety] Chat tab (picked line) and Players: 100 mute, 101 block, 102 report, 103 the muted/blocked list (Players),
+        // 104 close the picked line (Chat); the report picker: 110-116 reasons, 120 send (90 cancels).
+        public const int BtnMute = 100, BtnBlock = 101, BtnReport = 102, BtnSafetyList = 103, BtnPickClose = 104, BtnReason = 110, BtnReportSend = 120;
 
         PanelAction Button(int id)
         {
@@ -731,7 +926,7 @@ namespace TabletopCraft.World
             switch (Tab)
             {
                 case OpTab.Marks: return Math.Max(0, Marks.Bookmarks.Marks.Count - MarkRowCount);   // [operator]
-                case OpTab.Players: return Math.Max(0, (Players?.Players.Count ?? 0) - PlayerRows);
+                case OpTab.Players: return Math.Max(0, (SafetyList ? Safety.Count : Players?.Players.Count ?? 0) - PlayerRows);   // [safety] or the list
                 case OpTab.World: return Math.Max(0, (BoolRules().Count + 1) / 2 - RuleRows);
                 case OpTab.Chat: return Math.Max(0, Log.Page(L.TextRows, L.TextChars, 0, _tmpChat) - L.TextRows);
                 case OpTab.Console: return Math.Max(0, Console.Page(L.TextRows, L.TextChars, 0, _tmpConsole) - L.TextRows);
@@ -783,11 +978,21 @@ namespace TabletopCraft.World
             // [operator] the container view or the sign editor in place of the tab's content
             if (Mode == PanelMode.Container) y = ContainerLayout(L, y, inner);
             else if (Mode == PanelMode.Sign) y = SignLayout(L, y, inner);
+            else if (Mode == PanelMode.Report) y = ReportLayout(L, y, inner);   // [safety]
             else switch (Tab)
             {
                 case OpTab.Marks: y = MarksLayout(L, y, inner); break;   // [operator]
                 case OpTab.Chat:
-                    y = TextArea(L, y, inner, ChatRows);
+                {
+                    // [safety] a player's line can be clicked: Mute / Block / Report for them in a row under the log
+                    string u = ChatPickUuid;
+                    y = TextArea(L, y, inner, u != null ? ChatRows - 2 : ChatRows);
+                    ChatLineItems(L);
+                    if (u != null)
+                        y = Row(L, y, inner, ChatPickName.Length > 12 ? ChatPickName.Substring(0, 11) + "…" : ChatPickName,
+                                new[] { (MuteLabel(u), BtnMute, !Safety.IsBlocked(u), Safety.LevelOf(u) == SafetyLevel.Muted), (BlockLabel(u), BtnBlock, true, Safety.IsBlocked(u)),
+                                        ("Report", BtnReport, ReportsOn, false), ("Close", BtnPickClose, true, false) });
+                }
                     L.Field = new MenuRect(Margin, y, inner - 0.05f - Gap, FieldH);
                     Add(L, PanelPart.Send, 0, new MenuRect(Margin + inner - 0.05f, y, 0.05f, FieldH), "Send", ChatOn);
                     y += FieldH + Gap;
@@ -818,6 +1023,22 @@ namespace TabletopCraft.World
                     }
                     y = KeyboardBlock(L, y, inner);
                     break;
+                case OpTab.Players when SafetyList:   // [safety] the muted and blocked players of this server
+                {
+                    var rows = VisibleSafety();
+                    float lw = inner - ScrollW - Gap;
+                    for (int i = 0; i < PlayerRows; i++)
+                    {
+                        string label = i < rows.Count ? ChatSafety.Describe(rows[i]) : "";
+                        var it = Add(L, PanelPart.SafetyRow, i, new MenuRect(Margin, y + i * RowH, lw, RowH), label, i < rows.Count);
+                        it.Active = i < rows.Count && rows[i].Uuid == SafetySelected; L.Items[L.Items.Count - 1] = it;
+                    }
+                    Scrollers(L, y, PlayerRows * RowH);
+                    L.Text = new MenuRect(Margin, y, lw, PlayerRows * RowH);
+                    y += PlayerRows * RowH + Gap;
+                    y = SafetyRowButtons(L, y, inner, "List");
+                    break;
+                }
                 case OpTab.Players:
                 {
                     var rows = VisiblePlayers();
@@ -840,6 +1061,7 @@ namespace TabletopCraft.World
                         bool view = sel && Connected;
                         bool following = sel && Marks.FollowName == SelectedName();
                         y = ButtonRow(L, y, inner, "View", new[] { (following ? "Stop" : "Follow", BtnFollow, view), ("Go to", BtnGoTo, view) });
+                        y = SafetyRowButtons(L, y, inner, "Chat");   // [safety] mute, block, report, the list
                     }
                     if (KickTarget != null)
                     {
@@ -944,6 +1166,47 @@ namespace TabletopCraft.World
                 L.Items.Add(new PanelItem { Part = PanelPart.Button, Index = buttons[i].id, R = new MenuRect(Margin + LabelW + i * bw, y, bw, ButtonH), Label = buttons[i].text,
                                             Enabled = buttons[i].on, Active = buttons[i].active });
             return y + ButtonH + Gap;
+        }
+
+        /// <summary>[safety] Mute / Block / Report for the selected player and the list switch (Players tab; also in the list view).</summary>
+        float SafetyRowButtons(PanelLayout L, float y, float inner, string label)
+        {
+            string u = SafetyTarget().uuid;
+            bool sel = u != null;
+            return Row(L, y, inner, label, new[] { (MuteLabel(u), BtnMute, sel && !Safety.IsBlocked(u), sel && Safety.LevelOf(u) == SafetyLevel.Muted),
+                                                    (BlockLabel(u), BtnBlock, sel, sel && Safety.IsBlocked(u)), ("Report", BtnReport, sel && ReportsOn, false),
+                                                    (SafetyList ? "Online" : $"Mute list ({Safety.Count})", BtnSafetyList, true, false) });
+        }
+
+        /// <summary>[safety] The Chat tab's rows as clickable items where the line has a player (fills _chatPage).</summary>
+        void ChatLineItems(PanelLayout L)
+        {
+            Log.Page(L.TextRows, L.TextChars, Scroll, _chatPage);
+            for (int i = 0; i < _chatPage.Count; i++)
+            {
+                var e = _chatPage[i].Entry;
+                if (e == null || string.IsNullOrEmpty(e.Uuid)) continue;
+                L.Items.Add(new PanelItem { Part = PanelPart.ChatLine, Index = i, R = new MenuRect(L.Text.X, L.Text.Y + i * LineH, L.Text.W, LineH), Label = "",
+                                            Enabled = true, Active = e.Uuid == ChatPickUuid });
+            }
+        }
+
+        /// <summary>[safety] The report picker: who (header), seven reasons, an optional note, Send report / Cancel, the keyboard.</summary>
+        float ReportLayout(PanelLayout L, float y, float inner)
+        {
+            L.Header = new MenuRect(Margin, y, inner, LineH);
+            y += LineH + Gap;
+            var c = ReportReasons.Codes;
+            var first = new (string, int, bool, bool)[4];
+            for (int i = 0; i < 4; i++) first[i] = (ReportReasons.Labels[i], BtnReason + i, true, Report.Reason == c[i]);
+            y = Row(L, y, inner, "Reason", first);
+            var rest = new (string, int, bool, bool)[c.Length - 4];
+            for (int i = 4; i < c.Length; i++) rest[i - 4] = (ReportReasons.Labels[i], BtnReason + i, true, Report.Reason == c[i]);
+            y = Row(L, y, inner, "", rest);
+            L.Field = new MenuRect(Margin, y, inner, FieldH);
+            y += FieldH + Gap;
+            y = Row(L, y, inner, "", new[] { ("Send report", BtnReportSend, ReportsOn && Report.Reason != null, false), ("Cancel", BtnClose, true, false) });
+            return KeyboardBlock(L, y, inner);
         }
 
         public const int BtnGoCoords = 75;
@@ -1059,6 +1322,7 @@ namespace TabletopCraft.World
         /// <summary>[operator] The header line of the container view / sign editor / Marks tab.</summary>
         public string ModeHeader()
         {
+            if (Mode == PanelMode.Report) return "Report " + Report.Name + " to this server's operators (they get the reason, your note and their recent chat)";   // [safety]
             if (Mode == PanelMode.Container)
                 return (Container.Title.Length > 0 ? Container.Title : "Container") + $"  {Container.Pos.x} {Container.Pos.y} {Container.Pos.z}   " + Container.SlotLine();
             if (Mode == PanelMode.Sign)

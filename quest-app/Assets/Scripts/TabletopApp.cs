@@ -358,6 +358,7 @@ namespace TabletopCraft
             _ops.WorldName = () => _world.World;
             _ops.AimedBlock = () => _edit.Target.Hit && _world.Loaded ? _world.Origin + _edit.Target.Block : (Vector3Int?)null;
             _ops.Toast = (t, k) => _hud.Toast(t, k);
+            _ops.Model.Safety.Load(_prefs.ChatSafety);   // [safety] who this headset mutes and blocks, per server (prefs.json)
             // [hands] The left trigger's right-click order, mobs and players on the ray, the right grip's carry, B on a mob
             // (XR/BlockEditMode.cs, World/UseRules.cs), and the mob info card above the mob (XR/EntityCard.cs).
             _edit.Interact = () => _interact;
@@ -556,6 +557,7 @@ namespace TabletopCraft
                 BlockSizeM = BlockSizeM, AreaWidth = AreaSizing.Current(_nav.State), ShowHud = _showHud, MenuTab = m.TabId(m.Tab),
                 Hotbar = m.Hotbar.Slots(), HotbarSelected = m.Hotbar.Selected, Selected = m.Selected,
                 Volume = _volume, Sound = _soundOn,   // [sound]
+                ChatSafety = _ops.Model.Safety.ToJson(),   // [safety]
             };
             if (_placement.TryRelative(out var id, out var rel)) { p.TableAnchor = id; p.Table = rel; }
             else { p.TableAnchor = _prefs.TableAnchor; p.Table = _prefs.Table; }   // no table this session: keep the old one
@@ -937,6 +939,7 @@ namespace TabletopCraft
                     _nav.OnWelcome(m);   // [nav] server caps, limits, build height
                     AreaSize.OnLimits(m.O("limits"));   // [area] max_view_width
                     _ops.OnWelcome(m, _quickCommands);   // [talk] chat, commands, status granted
+                    _ops.Model.Safety.UseServer(m.S("server_id"), _link.Url);   // [safety] this server's muted and blocked players
                     _interact = InteractWelcome.From(m);   // [hands] item_registry follows for interact_v1 sessions
                     _tools.OnWelcome(m); _menu.Model.SetTools(_tools);   // [power] power_v1 and its limits: the Tools tab
                     if (!_interact.Allowed && _items != null) { _items = null; _menu.SetItems(null); }
@@ -1038,8 +1041,10 @@ namespace TabletopCraft
                 case "chat": case "command_result": case "command_output": case "command_suggestions":   // [talk] PROTOCOL.md 4.26-4.28
                 case "server_status": case "world_info": case "players_info":
                 case "bookmarks": case "container":   // [operator] PROTOCOL.md "Marks...", "Containers"
+                case "report_ack":                    // [safety] PROTOCOL.md "Chat safety"
                     _ops.OnMessage(m);
-                    if (m.S("type") == "chat") _sound.Director.OnChat(m, Time.unscaledTimeAsDouble);   // [sound] a soft ping for what others say
+                    // [sound] a soft ping for what others say ([safety] not for muted or blocked players)
+                    if (m.S("type") == "chat" && !_ops.Model.Safety.Hides(ChatMessage.From(m))) _sound.Director.OnChat(m, Time.unscaledTimeAsDouble);
                     break;
                 case ItemRegistry.Type:   // [hands] usable items and spawn eggs (PROTOCOL.md "Using blocks and items")
                     try

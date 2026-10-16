@@ -22,7 +22,8 @@ namespace TabletopCraft.World
         public bool Mine;
     }
 
-    public struct WristLine { public string Text; public ChatTone Tone; public float Alpha; }
+    /// <summary>A line to draw; [safety] Entry: the chat line it comes from (Page fills it, so a row can be picked).</summary>
+    public struct WristLine { public string Text; public ChatTone Tone; public float Alpha; public ChatEntry Entry; }
 
     public sealed class ChatLog
     {
@@ -50,6 +51,15 @@ namespace TabletopCraft.World
         }
 
         public void Clear() { _entries.Clear(); Version++; }
+
+        /// <summary>[safety] Takes a muted player's chat, say and me lines out (and whispers when blocked); how many went.</summary>
+        public int RemoveFrom(string uuid, bool whispers)
+        {
+            if (string.IsNullOrEmpty(uuid)) return 0;
+            int n = _entries.RemoveAll(e => e.Uuid == uuid && (e.Kind == "chat" || e.Kind == "say" || e.Kind == "me" || (whispers && e.Kind == "whisper")));
+            if (n > 0) Version++;
+            return n;
+        }
 
         /// <summary>One line as the game shows it: "&lt;Alex&gt; hi", "[Alex] hi" (say), "* Alex waves" (me), the full line otherwise.</summary>
         public static string Format(ChatMessage m)
@@ -121,7 +131,7 @@ namespace TabletopCraft.World
         {
             into.Clear();
             var all = new List<WristLine>();
-            foreach (var e in _entries) foreach (var w in Wrap(e.Display, width)) all.Add(new WristLine { Text = w, Tone = e.Tone, Alpha = 1 });
+            foreach (var e in _entries) foreach (var w in Wrap(e.Display, width)) all.Add(new WristLine { Text = w, Tone = e.Tone, Alpha = 1, Entry = e });
             int end = Math.Max(0, all.Count - Math.Max(0, scroll)), start = Math.Max(0, end - rows);
             for (int i = start; i < end; i++) into.Add(all[i]);
             return all.Count;
@@ -174,6 +184,16 @@ namespace TabletopCraft.World
             l.Add(new Bubble { Text = text, Until = now + Life(text) });
             if (l.Count > MaxPerPlayer) l.RemoveRange(0, l.Count - MaxPerPlayer);
             Version++;
+        }
+
+        /// <summary>[safety] Drops the bubbles of the players matching (muted on this headset); true when some went away.</summary>
+        public bool RemoveWhere(Func<string, bool> gone)
+        {
+            var drop = new List<string>();
+            foreach (var k in _by.Keys) if (gone(k)) drop.Add(k);
+            foreach (var k in drop) _by.Remove(k);
+            if (drop.Count > 0) Version++;
+            return drop.Count > 0;
         }
 
         /// <summary>Drops expired bubbles; true when something went away.</summary>
