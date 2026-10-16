@@ -52,13 +52,13 @@ Work through these in order and record what you verify in `README.md` Status and
 7. Place and break blocks from a Java client and confirm live diffs on the table.
 8. Check the giant avatar (Mannequin + hands) tracks head and hand poses.
 9. Profile with OVR Metrics. Tune the 250k-face soft cap if needed.
-10. Enable CI: `gh auth refresh -s workflow`, then `git mv ci/github-actions-ci.yml .github/workflows/ci.yml`.
+10. CI runs on GitHub Actions (`.github/workflows/ci.yml`: Gradle tests, ruff + pytest, the engine-free C# tests without the client jar).
 
 ## Protocol rules
-- **Versioning (pre-1.0):**
-  - The project is versioned 0.X: plugin `version` in build.gradle.kts, the app's `bundleVersion`, and the version line in PROTOCOL.md, all kept equal.
-  - Bump the minor version for each new feature set and add a changelog entry.
-  - Backwards compatibility is NOT required before 1.0: old capability flags and compatibility paths may be removed or replaced freely; plugin, app and tools just have to match.
+- **Versioning (from 1.0.0, semantic):**
+  - One version for plugin `version` (build.gradle.kts), the app's `bundleVersion` and the PROTOCOL.md version line, all from `VERSION`.
+  - Patch (1.0.x) for fixes, minor (1.x.0) for new features that old plugins/apps can ignore (new optional fields, new messages behind caps), major (2.0.0) for anything that breaks a plugin/app of the same major version. Every protocol change gets a changelog entry.
+  - Before 1.0 there was no backwards compatibility (0.X versions just had to match).
 - **Releases:** one `VERSION` file at the repo root is the single source: Gradle reads it for the plugin, and `TabletopBatch.BuildApk` sets the app's `bundleVersion` and versionCode from it. To release a feature set:
   1. bump `VERSION` (0.X.0; patch for fixes);
   2. update the PROTOCOL.md header and its changelog;

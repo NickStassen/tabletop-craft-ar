@@ -43,6 +43,26 @@ Java players (LAN) ──game protocol──▶ Paper 26.3 + tabletop plugin ◀
 | 0.6.0 / 0.7.0: sound, motion | Verified on a Quest 3 (2026-10-15): sound, opt-in asset delivery (41.5 MB pack.zip in 6 s, 67 MB sounds.zip in 8 s, scene reload clean), flowing fluids, particles, lids, bells, explosions |
 | Bedrock players (Geyser + Floodgate) | Verified with Minecraft on a phone (2026-10-15): joins through Geyser, appears on the table with its skin, chats both ways with the headset, and sees the giant as a large Mannequin wearing the headset user's skin (Bedrock cannot show the floating head and hands) |
 
+## Known issues
+
+- **Bedrock players see the giant as a whole player.** Bedrock clients can't show the item displays the floating head and hands are made of, so Bedrock players see a large Mannequin wearing the headset user's skin, turning with the headset, with no moving hands. Java players see the floating head and hands.
+- **Pistons jump instead of sliding.** Pushed blocks appear in their new spot after the 2-tick move.
+- **Not drawn yet:**
+  - map art in item frames
+  - the item in suspicious sand and gravel
+  - banners don't sway
+  - the enchanting-table book stays closed
+  - sign text shows without styles or per-line colours
+- **Sounds:**
+  - Mob sound variants (moody cows, big pigs, wolf moods) use the base mob's sounds.
+  - Sounds played by other server plugins aren't heard.
+  - There's no music and no biome or underwater ambience.
+- **Chat:** `/msg` and `/tellraw` don't reach the headset's chat. Bukkit fires no event for them.
+- **The surface skirt is off by default.** It's the low-detail ground shown ahead of the detail while you glide fast (`"surface_skirt": true` in tabletop.json); it's still being checked on the headset.
+- **Very wide areas are heavy.** 256 wide runs at about 60 fps rather than 72, depending on the terrain and where you look. 128 wide holds 72 fps.
+- **One region per server.** It's shared by all headsets, and the last change wins. There's one giant, owned by the last headset to connect.
+- **Realms and singleplayer Bedrock worlds** can't be used. Convert them to Java with Chunker and run them on Paper.
+
 ## Screenshots
 
 Recorded on the headset. Building from the headset: aim with the right controller, and the triggers place and break blocks. The selected block (stone) floats above the controller, and a laser shows where it will go.
