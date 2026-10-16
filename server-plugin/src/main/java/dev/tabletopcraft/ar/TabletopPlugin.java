@@ -91,6 +91,8 @@ public final class TabletopPlugin extends JavaPlugin {
     final PowerService power = new PowerService(this);
     // [operator] worlds and spawn, shared bookmarks, container view and editing, sign editing
     final OperatorService operator = new OperatorService(this);
+    // [safety] reports about players to this server's operators (report_v1, config section reports)
+    final ReportService reports = new ReportService(this);
     // [comfort] LAN discovery (PROTOCOL.md 7, config.yml discovery): answers the headset's UDP probe on its own thread.
     private LanBeacon beacon;
     private volatile int onlinePlayers;
@@ -173,6 +175,7 @@ public final class TabletopPlugin extends JavaPlugin {
         interact.configure(c);  // [hands]
         power.configure(c);     // [power]
         operator.configure(c);  // [operator]
+        reports.configure(c);   // [safety]
         World iw = Bukkit.getWorld(defaultRegion().world());
         interact.buildItemRegistry(iw != null ? iw : Bukkit.getWorlds().isEmpty() ? null : Bukkit.getWorlds().get(0));
         soundEnabled = c.getBoolean("sound.enabled", true);   // [sound]
@@ -369,6 +372,7 @@ public final class TabletopPlugin extends JavaPlugin {
         if (s.pairCap) sc.add(PairingService.CAP);   // [setup]
         if (power.granted(s)) sc.add(PowerMessages.CAP);   // [power]
         if (s.wantsMarks) sc.add(OperatorMessages.CAP_MARKS);   // [operator]
+        if (s.canReport) sc.add(ReportService.CAP);   // [safety] reports to this server's operators
         w.add("caps", sc);
         control.welcome(s, w);
         interact.welcome(s, w);   // [hands] welcome.interact: the switches

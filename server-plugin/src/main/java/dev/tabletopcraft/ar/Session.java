@@ -109,6 +109,10 @@ public final class Session {
     final Map<String, Long> assetsStartNs = new java.util.concurrent.ConcurrentHashMap<>();
     // [operator] Shared bookmarks (marks_v1, OperatorService), granted at hello.
     public volatile boolean wantsMarks;
+    // [safety] Reports to this server's operators (report_v1, ReportService), granted at hello; the times of the last
+    // minute's reports (sliding window, synchronized on itself).
+    public volatile boolean canReport;
+    final java.util.ArrayDeque<Long> reportTimes = new java.util.ArrayDeque<>();
 
     /** RegionReader extras this session needs in its snapshots and diffs. */
     public int readExtras() { return (wantsLight ? RegionReader.LIGHT : 0) | (wantsBiomes ? RegionReader.BIOMES : 0); }

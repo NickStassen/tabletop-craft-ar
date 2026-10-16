@@ -211,6 +211,17 @@ public final class LinkServer extends WebSocketServer {
                     if (!limited(s, s.canInteract ? s.interactLimiter : null, "sign edits", refSeq))
                         plugin.enqueue(() -> plugin.power.journalledTiles(s, group, "sign", e.pos(), () -> plugin.operator.onSignEdit(s, e, refSeq)));
                 }
+                // [safety] a report about a player to this server's operators (PROTOCOL.md "Chat safety"): checked and
+                // rate-limited here, logged and announced on the main thread, written to reports.log off it
+                case "report" -> {
+                    ReportService rs = plugin.reports;
+                    if (!s.canReport) { s.send(ReportService.error("report_denied", rs.enabled() ? "ask for report_v1 in hello.caps" : "reports are off on this server (reports.enabled)", refSeq)); return; }
+                    ReportService.Report r;
+                    try { r = ReportService.parse(m); }
+                    catch (IllegalArgumentException e) { s.send(ReportService.error("bad_message", e.getMessage(), refSeq)); return; }
+                    if (!rs.admit(s, System.currentTimeMillis())) { s.send(ReportService.error("rate_limited", "more than " + rs.perMinute + " reports a minute (reports.max-per-minute)", refSeq)); return; }
+                    plugin.enqueue(() -> rs.onReport(s, r, refSeq));
+                }
                 case "ping" -> {
                     JsonObject p = Protocol.body("pong");
                     if (m.has("id")) p.add("id", m.get("id"));
@@ -288,6 +299,7 @@ public final class LinkServer extends WebSocketServer {
                 else if (c.equals(Protocol.CAP_SOUND)) s.wantsSound = plugin.soundEnabled();        // [sound]
                 else if (c.equals(AssetService.CAP)) plugin.assets.grant(s);   // [sound] only with auth.token set, from the LAN
                 else if (c.equals(OperatorMessages.CAP_MARKS) && plugin.operator.marksAllowed(s)) s.wantsMarks = true;   // [operator]
+                else if (c.equals(ReportService.CAP) && plugin.reports.enabled()) s.canReport = true;   // [safety]
             }
         if (wantsPower && s.canEdit && plugin.power.allowed(s)) plugin.power.grant(s);   // [power]
         ControlService cs = plugin.control;   // [talk] rate limits (token buckets) and the chat name

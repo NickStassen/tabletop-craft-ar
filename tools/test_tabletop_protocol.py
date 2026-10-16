@@ -888,3 +888,35 @@ def test_motion_messages():
         b["entities"][0].update(patch)
         with pytest.raises(ValueError):
             validate(b)
+
+
+REPORT_FIXTURES = ("hello_report", "welcome_report", "report", "report_ack", "error_report_denied")
+
+
+def test_report_fixtures():
+    """[safety] 1.2.0: a report about a player to the server's operators (PROTOCOL.md "Chat safety")."""
+    from tabletop_protocol import CAP_REPORT, REPORT_REASONS
+    for name in REPORT_FIXTURES:
+        validate(json.loads((FIX / f"{name}.json").read_text()))
+    assert CAP_REPORT in json.loads((FIX / "hello_report.json").read_text())["caps"]
+    assert CAP_REPORT in json.loads((FIX / "welcome_report.json").read_text())["caps"]
+    report = json.loads((FIX / "report.json").read_text())
+    ack = json.loads((FIX / "report_ack.json").read_text())
+    chat = json.loads((FIX / "chat.json").read_text())
+    assert report["reason"] in REPORT_REASONS and report["blocked"] is True
+    assert report["player"]["uuid"] == chat["from"]["uuid"], "a player is reported by the uuid their chat came with"
+    assert ack["ref_seq"] == report["seq"]
+    err = json.loads((FIX / "error_report_denied.json").read_text())
+    assert err["op"] == "report" and err["fatal"] is False
+
+
+@pytest.mark.parametrize("name,patch", [
+    ("report", {"player": {"name": "Alex"}}), ("report", {"player": {"uuid": "not-a-uuid"}}), ("report", {"reason": "Spam!"}),
+    ("report", {"reason": 3}), ("report", {"details": "x" * 201}), ("report", {"blocked": "yes"}),
+    ("report_ack", {"id": "ABC"}), ("report_ack", {"operators": -1}), ("error_report_denied", {"code": "edit_denied"}),
+])
+def test_report_rejects_bad_fields(name, patch):
+    msg = json.loads((FIX / f"{name}.json").read_text())
+    msg.update(patch)
+    with pytest.raises(ValueError):
+        validate(msg)

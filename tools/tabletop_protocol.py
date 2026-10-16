@@ -265,6 +265,8 @@ def validate(msg: dict) -> None:
         validate_power(msg)   # [power]
     if t in PAIR_REQUIRED or t in ("hello", "welcome"):
         validate_pairing(msg)   # [setup]
+    if t in REPORT_REQUIRED or (t == "error" and msg.get("op") == "report"):
+        validate_report(msg)   # [safety]
 
 
 # [setup] Pairing (PROTOCOL.md "Pairing", 1.1.0): cap pair_v1; hello.device_token / device_name; welcome.server_id
@@ -310,6 +312,43 @@ def validate_pairing(msg: dict) -> None:
             raise ValueError("paired token must be 32-128 base64url characters")
         if not (isinstance(msg["device"], str) and _HEXID.match(msg["device"])) or not _HEXID.match(str(msg["server_id"])):
             raise ValueError("paired device and server_id must be lower-case hex ids")
+
+
+# [safety] Chat safety (PROTOCOL.md "Chat safety: mute, block, report", 1.2.0): mute and block are the headset's own;
+# cap report_v1: report (C->S) about a player to the server's operators, report_ack (S->C); error report_denied.
+CAP_REPORT = "report_v1"
+REPORT_REASONS = ("harassment", "hate", "sexual", "threat", "spam", "cheating", "other")
+REPORT_REQUIRED = {
+    "report": ["player", "reason"],
+    "report_ack": ["ref_seq", "id", "operators"],
+}
+REQUIRED.update(REPORT_REQUIRED)
+ERROR_CODES |= {"report_denied"}
+_UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+_REASON = re.compile(r"^[a-z_]{1,24}$")
+
+
+def validate_report(msg: dict) -> None:
+    t = msg["type"]
+    if t == "report":
+        p = msg["player"]
+        if not (isinstance(p, dict) and isinstance(p.get("uuid"), str) and _UUID.match(p["uuid"])):
+            raise ValueError("report player needs a uuid")
+        if "name" in p and not isinstance(p["name"], str):
+            raise ValueError("report player name must be a string")
+        if not (isinstance(msg["reason"], str) and _REASON.match(msg["reason"])):
+            raise ValueError("report reason must be a lower-case word")
+        if "details" in msg and not (isinstance(msg["details"], str) and len(msg["details"]) <= 200):
+            raise ValueError("report details must be a string of at most 200 characters")
+        if "blocked" in msg and not isinstance(msg["blocked"], bool):
+            raise ValueError("report blocked must be true or false")
+    elif t == "report_ack":
+        if not (isinstance(msg["id"], str) and _HEXID.match(msg["id"])):
+            raise ValueError("report_ack id must be lower-case hex")
+        if not (isinstance(msg["operators"], int) and msg["operators"] >= 0) or not isinstance(msg["ref_seq"], int):
+            raise ValueError("report_ack needs ref_seq and operators >= 0 (integers)")
+    elif t == "error" and msg["code"] not in ("report_denied", "bad_message", "rate_limited", "internal"):
+        raise ValueError(f"an error about a report can't be {msg['code']}")
 
 
 def _group_ok(v) -> bool:

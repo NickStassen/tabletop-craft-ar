@@ -1,0 +1,9 @@
+{
+ "v": 1,
+ "type": "report_ack",
+ "seq": 120,
+ "t": 1760370009040,
+ "ref_seq": 70,
+ "id": "5e1a9c03",
+ "operators": 1
+}
