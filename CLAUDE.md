@@ -59,7 +59,7 @@ Steps 0-10 were all done in the 2026-10-13 to 2026-10-15 sessions; they stay her
 - **Versioning (from v1.0.0, semantic):**
   - Write project versions as `vX.Y.Z` in docs and messages (v1.1.0, not 1.1 or v1.1); `v1.0.x` / `v1.x.y` for a range. The wire field `v` (protocol v1) is separate.
   - One version for plugin `version` (build.gradle.kts), the app's `bundleVersion` and the PROTOCOL.md version line, all from `VERSION`.
-  - Patch (v1.0.x) for fixes, minor (v1.x.0) for new features that old plugins/apps can ignore (new optional fields, new messages behind caps), major (2.0.0) for anything that breaks a plugin/app of the same major version. Every protocol change gets a changelog entry.
+  - Patch (v1.0.x) for fixes, minor (v1.x.0) for new features that old plugins/apps can ignore (new optional fields, new messages behind caps), major (v2.0.0) for anything that breaks a plugin/app of the same major version. Every protocol change gets a changelog entry.
   - Before v1.0.0 there was no backwards compatibility (v0.x.y versions just had to match).
 - **Releases:** one `VERSION` file at the repo root is the single source: Gradle reads it for the plugin, and `TabletopBatch.BuildApk` sets the app's `bundleVersion` and versionCode from it. To release a feature set:
   1. bump `VERSION` (0.X.0; patch for fixes);
