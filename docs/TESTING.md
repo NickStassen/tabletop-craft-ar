@@ -1402,3 +1402,15 @@ Everything on the Quest: these are PC numbers. `Mesh.MeshData` written from a `T
 - The JSON message text and its lists are still garbage per delta (about 5 MB per shift at 96 wide, 22-27 MB at 256).
 - A margin of 32 at 96 wide makes the region 160x186x160 (4.8M blocks instead of 3M): more server reads and a bigger first glide load; meshing is lazy, so frame time doesn't grow.
 
+### Headset check of smooth gliding (Quest 3, 2026-10-16, v1.0.0 candidate)
+
+Gliding back and forth (and following a walking player) with the HITCH log on, skirt off:
+
+| Width | PERF fps (avg) | p99 frame (median of 5 s windows) | worst frame |
+|---|---|---|---|
+| 64 | 70 | 25 ms | 68 ms |
+| 96 | 71.5 | 14.6 ms (was 37-42 ms in 0.8.1) | one 976 ms frame when the margin grew to 32 on the first push |
+| 256 | 47 | 52 ms | 148 ms |
+
+The user's verdict: "Looks great". 256 wide while gliding remains GPU-heavy (known issue).
+

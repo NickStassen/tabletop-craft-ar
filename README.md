@@ -59,7 +59,7 @@ Java players (LAN) ──game protocol──▶ Paper 26.3 + tabletop plugin ◀
   - There's no music and no biome or underwater ambience.
 - **Chat:** `/msg` and `/tellraw` don't reach the headset's chat. Bukkit fires no event for them.
 - **The surface skirt is off by default.** It's the low-detail ground shown ahead of the detail while you glide fast (`"surface_skirt": true` in tabletop.json); it's still being checked on the headset.
-- **Very wide areas are heavy.** 256 wide runs at about 60 fps rather than 72, depending on the terrain and where you look. 128 wide holds 72 fps.
+- **Very wide areas are heavy.** 256 wide runs at about 60 fps standing still and about 45-50 fps while gliding; 128 wide and below hold 72 fps (Quest 3). Growing the area's margin on the first glide can cause one long frame.
 - **One region per server.** It's shared by all headsets, and the last change wins. There's one giant, owned by the last headset to connect.
 - **Realms and singleplayer Bedrock worlds** can't be used. Convert them to Java with Chunker and run them on Paper.
 

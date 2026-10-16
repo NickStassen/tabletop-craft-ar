@@ -1,4 +1,4 @@
-# PROTOCOL.md — Tabletop link protocol, v0.8.1
+# PROTOCOL.md — Tabletop link protocol, v1.0.0
 
 The project version (repo `VERSION` file) versions the plugin, the Quest app and this protocol together. From 1.0.0 the version follows semantic versioning: a plugin and an app with the same major version work together, new optional fields and messages come in minor versions, and a breaking change needs a new major version. (Before 1.0 there was no backwards compatibility: plugin, app and tools of the same 0.X version went together.) The wire field `v` stays `1`.
 
@@ -403,6 +403,7 @@ So the headset can find a server without typing its address (QUEST_SETUP.md Part
 - **v0.7.0: block animations ("Block animations").** The `actions` kinds `lid` (a container lid opens or closes), `bell` (a bell rung, with the side) and `explode` (an explosion's point and power) for `actions_v1` sessions; `entities` entries gain `fuse` (primed TNT, ticks left) and `swell` (a creeper, 0..1), and the poses `dying`, `sitting` and `sleeping` are now drawn. No new cap. Fixtures `actions_motion.json`, `entities_motion.json` (Java `MotionTest`, Python `test_motion_messages`, C# `MotionTests`). Client-only: flowing fluids and ambient particles (QUEST_SETUP.md Part E, tabletop.json `particles`).
 - **v0.8.0: no message changes.** Bedrock players joining through Geyser/Floodgate are ordinary players here (names may start with `.`); the plugin now re-sends a player's `skin` when it changes, as §4.6 always said (Floodgate applies Bedrock skins after the join).
 - **v0.8.1: no message changes.** When one headset has several `region_request`s in flight, the server applies only the newest one's read (an older one finishing later is dropped and logged `REGION_SUPERSEDED`), so a slow link can't flip the area back to an older size or place.
+- **v1.0.0: first stable release, no message changes since v0.8.1.** From here the version is semantic: plugins and apps with the same major version work together, additions come in minor versions, breaking changes need 2.0.0.
 
 ## 4.13–4.16 Runtime region control (v1, additive)
 
