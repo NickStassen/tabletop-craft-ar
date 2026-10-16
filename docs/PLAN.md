@@ -53,7 +53,7 @@ Phases 0-3 were built and checked on Paper 1.21.11 / Java 21. The server pin has
   - Entities (vehicles, mobs, dropped items, held items) and player actions (arm swing, digging cracks, break particles, hurt flash), seen on a Quest 3.
 - **Built, waiting for headset measurements (2026-10-14):** area width presets 64–256 without reconnecting (resize deltas, re-keyed meshes, footprint kept) and mesh batching (roadmap item 7).
 - **Verified on a Quest 3 (2026-10-14):** releases 0.2.0 to 0.3.1 (block menu, width presets, fixes and polish).
-- **Verified on a Quest 3 (2026-10-15):** releases 0.4.0 to 0.8.1 (fixes from that session are 0.8.1); Bedrock only with a scripted client, opt-in asset delivery, brushes and clone not yet tried. Earlier list: 0.4.0 to 0.7.0 (fast gliding, chat and commands, block entities, using blocks/items/mobs, the living world, operator and power tools, faster meshing, sound, motion). Each part's headset checklist is in TESTING.md.
+- **Verified on a Quest 3 (2026-10-15):** releases 0.4.0 to 0.8.1 (fixes from that session are 0.8.1); Bedrock only with a scripted client so far. Earlier list: 0.4.0 to 0.7.0 (fast gliding, chat and commands, block entities, using blocks/items/mobs, the living world, operator and power tools, faster meshing, sound, motion). Each part's headset checklist is in TESTING.md.
 
 ## Roadmap: "playing Minecraft as a god"
 Ordered by how much each adds to the feeling of a living world on the table that you can act on.
@@ -79,7 +79,7 @@ Ordered by how much each adds to the feeling of a living world on the table that
 
 **4. Sound.**
 - (Done, verified on a Quest 3) Spatial sound from the miniature (0.6; QUEST_SETUP.md Part E step 4 and Part P, PROTOCOL.md "Sound"): the user's own sounds packaged by `tools/sounds/PackSounds.java` into `sounds.zip`; blocks breaking, placed and dug, footsteps, mobs (ambient, hurt, death), doors and redstone parts, tools, pickups, thunder, rain, water, lava and fire, note blocks, bells, containers, jukeboxes and explosions (the server's `sound` actions), a chat ping; fall-off scaled with the block size, 24 voices with priorities, volume on the Info tab.
-- (Done, not yet tried on the headset) Getting the user's own `pack.zip`, `entity_models.json` and `sounds.zip` from their own server instead of adb (opt-in `assets.serve`, token and LAN only; PROTOCOL.md "Asset delivery").
+- (Done, verified on a Quest 3) Getting the user's own `pack.zip`, `entity_models.json` and `sounds.zip` from their own server instead of adb (opt-in `assets.serve`, token and LAN only; PROTOCOL.md "Asset delivery").
 - Open: mob sound variants (26.x moody cows, big pigs, angry/cute wolves: the server doesn't say which), the underwater and biome ambience loops, music, sounds other plugins play (`World#playSound` has no event), HRTF spatialisation (Unity's panning only; the Meta XR Audio SDK would be a new package).
 
 **5. God powers.**

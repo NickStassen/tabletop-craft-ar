@@ -40,7 +40,7 @@ Java players (LAN) ──game protocol──▶ Paper 26.3 + tabletop plugin ◀
 | 0.2.0-0.3.1: block menu, width presets, fixes and polish | The block menu and hotbar, width presets up to 256, vanilla placement rules, two-block items, placement preview, grass/tint/mipmap fixes, remembered settings, headset-off pause, offline badge, LAN discovery. Verified on a Quest 3 (2026-10-14) |
 | 0.4.0: fast gliding, chat and commands, block entities | Verified on a Quest 3 (2026-10-15); fixes from that session in 0.8.1 (about 60 fps at 256 wide, 72 at 128) |
 | 0.5.0 / 0.5.1: hands, living world, operator and power tools, faster meshing | Verified on a Quest 3 (2026-10-15): items, mobs, night and weather, horse gear and leads, Marks, follow, chest and sign editing, wand fill and undo. Brushes and clone not tried yet |
-| 0.6.0 / 0.7.0: sound, motion | Verified on a Quest 3 (2026-10-15): sound, flowing fluids, particles, lids, bells, explosions. Opt-in asset delivery not tried yet |
+| 0.6.0 / 0.7.0: sound, motion | Verified on a Quest 3 (2026-10-15): sound, opt-in asset delivery (41.5 MB pack.zip in 6 s, 67 MB sounds.zip in 8 s, scene reload clean), flowing fluids, particles, lids, bells, explosions |
 | Bedrock players (Geyser + Floodgate) | Tested with a Bedrock bot on the 26.3 test server: joins, appears on the table, chats both ways, sees the giant (a Mannequin shown only to Bedrock players) and its speech bubble. Not yet tried with a real Bedrock device; see [TESTING](docs/TESTING.md) "Bedrock players" |
 
 ## Screenshots
