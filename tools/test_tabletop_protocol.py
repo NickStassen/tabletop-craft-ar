@@ -507,7 +507,7 @@ def test_discovery_reply_rejects_bad_fields(patch):
 
 
 def test_region_changed_carries_the_new_worlds_build_height():
-    """next version: region_changed has limits (build_height of the region's world) for gliding after a world change."""
+    """since v0.3.1: region_changed has limits (build_height of the region's world) for gliding after a world change."""
     msg = json.loads((FIX / "region_changed.json").read_text())
     validate(msg)
     assert msg["limits"]["build_height"] == [0, 256] and msg["world"] == "world_nether"
@@ -828,7 +828,7 @@ PAIR_FIXTURES = ("hello_pair", "welcome_pair", "pair_request", "pair_code", "pai
 
 
 def test_pairing_fixtures():
-    """[setup] next version: pairing with a 6-digit code (PROTOCOL.md "Pairing")."""
+    """[setup] 1.1.0: pairing with a 6-digit code (PROTOCOL.md "Pairing")."""
     for name in PAIR_FIXTURES:
         validate(json.loads((FIX / f"{name}.json").read_text()))
     hello = json.loads((FIX / "hello_pair.json").read_text())
@@ -857,7 +857,7 @@ def test_pairing_rejects_bad_fields(name, patch):
 
 
 def test_assets_offer_state_and_note():
-    """[setup] next version: the offer says what the automatic game files are doing (PROTOCOL.md "Asset delivery")."""
+    """[setup] 1.1.0: the offer says what the automatic game files are doing (PROTOCOL.md "Asset delivery")."""
     offer = json.loads((FIX / "assets_building.json").read_text())
     validate(offer)
     assert offer["files"] == [] and offer["state"] == "building" and "26.3" in offer["note"]

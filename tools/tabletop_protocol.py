@@ -139,7 +139,7 @@ BELL_DIRS = ("north", "south", "east", "west")
 ERROR_CODES |= {"asset_denied"}
 ASSET_NAMES = ("entity_models.json", "sounds.zip", "pack.zip")
 ASSET_MAX_CHUNK = 1 << 20
-ASSET_STATES = ("building", "ready", "missing", "failed")   # [setup] assets.state (next version, 1.1.0)
+ASSET_STATES = ("building", "ready", "missing", "failed")   # [setup] assets.state (1.1.0)
 SOUND_GROUP_KEYS = ("break", "step", "place", "hit", "fall")
 _SOUND_ID = re.compile(r"^([a-z0-9_.\-]+:)?[a-z0-9_./\-]+$")
 
@@ -189,7 +189,7 @@ def validate(msg: dict) -> None:
     if t in ("welcome", "region_info") and not isinstance(msg["limits"].get("max_view_width"), int):
         raise ValueError(f"{t} limits need max_view_width (PROTOCOL.md 4.25)")
     if t == "region_changed" and "limits" in msg:
-        # next version: region_changed carries the new world's limits, build_height included (PROTOCOL.md 4.13)
+        # since v0.3.1: region_changed carries the new world's limits, build_height included (PROTOCOL.md 4.13)
         bh = msg["limits"].get("build_height")
         if bh is not None and not (isinstance(bh, list) and len(bh) == 2 and all(isinstance(v, int) for v in bh) and bh[0] < bh[1]):
             raise ValueError(f"region_changed limits.build_height must be [minY, maxY), got {bh}")
@@ -267,7 +267,7 @@ def validate(msg: dict) -> None:
         validate_pairing(msg)   # [setup]
 
 
-# [setup] Pairing (PROTOCOL.md "Pairing", next version 1.1.0): cap pair_v1; hello.device_token / device_name; welcome.server_id
+# [setup] Pairing (PROTOCOL.md "Pairing", 1.1.0): cap pair_v1; hello.device_token / device_name; welcome.server_id
 # and welcome.pairing; pair_request (C->S), pair_code and paired (S->C); error pair_denied.
 CAP_PAIR = "pair_v1"
 PAIR_REQUIRED = {
@@ -692,7 +692,7 @@ def validate_discovery(msg: dict) -> None:
             raise ValueError(f"tabletop_server path must start with /, got {msg['path']}")
         if not isinstance(msg["token"], bool):
             raise ValueError("tabletop_server token must be true or false")
-        # [setup] next version (1.1.0): the server's id (welcome.server_id) and whether it pairs headsets
+        # [setup] 1.1.0: the server's id (welcome.server_id) and whether it pairs headsets
         if "id" in msg and not (isinstance(msg["id"], str) and re.match(r"^[0-9a-f]{8,32}$", msg["id"])):
             raise ValueError("tabletop_server id must be 8-32 lower-case hex digits")
         if "pair" in msg and not isinstance(msg["pair"], bool):
@@ -1176,7 +1176,7 @@ def validate_sound(msg: dict) -> None:
                 raise ValueError(f"assets file must be one of {ASSET_NAMES} with a size: {f}")
             if not (isinstance(f.get("sha256"), str) and re.fullmatch(r"[0-9a-f]{64}", f["sha256"])):
                 raise ValueError("assets sha256 must be 64 lower-case hex digits")
-        # [setup] next version (1.1.0): what the plugin's automatic game files are doing, and a line for the headset
+        # [setup] 1.1.0: what the plugin's automatic game files are doing, and a line for the headset
         if "state" in msg and msg["state"] not in ASSET_STATES:
             raise ValueError(f"assets state must be one of {ASSET_STATES}")
         if "note" in msg and not isinstance(msg["note"], str):

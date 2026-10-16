@@ -166,7 +166,7 @@ class FixtureTest {
         assertEquals("wide", c.model());
     }
 
-    /** Next version (PROTOCOL.md 4.13): region_changed carries the region's limits as region_info does, build_height included. */
+    /** Since v0.3.1 (PROTOCOL.md 4.13): region_changed carries the region's limits as region_info does, build_height included. */
     @Test void regionChangedFixtureCarriesLimits() throws Exception {
         JsonObject lim = fixture("region_changed").getAsJsonObject("limits");
         JsonObject caps = new JsonObject();
