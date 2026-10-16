@@ -39,10 +39,11 @@ Recordings are real headset and desktop captures; player names and the room may 
 
 ## Get started
 
-1. Run a [Paper](https://papermc.io) 26.3 server (Java 25) and drop the plugin jar from the [latest release](https://github.com/NickStassen/tabletop-craft-ar/releases/latest) into its `plugins/` folder.
-2. Install the release's APK on a Meta Quest 3 in developer mode (`adb install`).
-3. Copy your own Minecraft client jar to the headset as `pack.zip`, for the textures.
-4. Start the app at your table and pick the server under block menu > Info > Server > Find servers (or put its address in `tabletop.json`).
+1. On your PC, start **Minecraft: Java Edition 26.3** once in the launcher. The headset uses its textures, models and sounds; nothing from the game ships with this project.
+2. Download `tabletop-server-starter-<version>.zip` from the [latest release](https://github.com/NickStassen/tabletop-craft-ar/releases/latest), unpack it and run `start.bat` (Windows) or `bash start.sh` (Linux, macOS). Accept the Minecraft EULA when asked: it fetches Paper and the plugin and starts the server.
+3. Install the release's APK on a Meta Quest 3 in developer mode (`adb install`). A store invite link that needs no developer mode is on the way.
+4. Start the app at a table. It finds your server on the same Wi-Fi and shows a 6-digit code: type `tabletop pair <code>` in the server window.
+5. Wait for the one-time download (about 75 MB), set up the play area on the table, and have friends join with Java Edition at your PC's address.
 
 The full guide is [docs/QUEST_SETUP.md](docs/QUEST_SETUP.md); server commands and options are in [docs/OVERVIEW.md](docs/OVERVIEW.md#quick-start-server).
 
