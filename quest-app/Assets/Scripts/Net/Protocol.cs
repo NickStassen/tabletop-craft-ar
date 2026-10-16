@@ -32,6 +32,7 @@ namespace TabletopCraft.Net
             if (WantSound) caps.Add(CapSound);                 // [sound] sound_groups and sound actions
             if (WantAssets) caps.Add(AssetProtocol.Cap);       // [sound] the operator's own files, if the server offers them
             caps.Add(PairingProtocol.Cap);                     // [setup] pairing with a 6-digit code
+            caps.Add(ControlProtocol.CapReport);               // [safety] reports to the server's operators
             if (!string.IsNullOrEmpty(deviceToken)) d["device_token"] = deviceToken;
             if (!string.IsNullOrEmpty(deviceName)) d["device_name"] = deviceName;
             return d;

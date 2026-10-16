@@ -149,8 +149,10 @@ final class ControlService implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onChat(AsyncChatEvent e) {
-        if (!chatEnabled || !anyChat()) return;
-        toChatSessions(ControlMessages.chat("chat", from(e.getPlayer()), ChatText.plain(e.message()), null));
+        if (!chatEnabled) return;
+        String text = ChatText.plain(e.message());
+        plugin.reports.heard(e.getPlayer(), "chat", text);   // [safety] a report's context
+        if (anyChat()) toChatSessions(ControlMessages.chat("chat", from(e.getPlayer()), text, null));
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
@@ -182,12 +184,14 @@ final class ControlService implements Listener {
     public void onServerCommand(ServerCommandEvent e) { mirrorSayMe(e.getSender(), e.getCommand()); }
 
     private void mirrorSayMe(CommandSender sender, String line) {
-        if (!chatEnabled || !anyChat()) return;
+        if (!chatEnabled) return;
         String root = CommandPolicy.rootLabel(line);
         if (!root.equals("say") && !root.equals("me")) return;
         if (sender instanceof Player p && !p.hasPermission("minecraft.command." + root)) return;
         String rest = rest(line);
-        if (!rest.isBlank()) toChatSessions(ControlMessages.chat(root, from(sender), rest, null));
+        if (rest.isBlank()) return;
+        if (sender instanceof Player p) plugin.reports.heard(p, root, rest);   // [safety]
+        if (anyChat()) toChatSessions(ControlMessages.chat(root, from(sender), rest, null));
     }
 
     private static String rest(String line) {
@@ -208,6 +212,7 @@ final class ControlService implements Listener {
         if (t == null) return -1;
         int n = 0;
         JsonObject msg = ControlMessages.chat("whisper", from(sender), t, null);
+        if (sender instanceof Player p) plugin.reports.heard(p, "whisper", t);   // [safety]
         for (Session s : plugin.allSessions()) if (s.state == Session.State.READY && s.wantsChat) { plugin.send(s, msg.deepCopy()); n++; }
         plugin.getLogger().info(String.format("TELL %s -> %d headsets: %s", sender.getName(), n, t));
         return n;

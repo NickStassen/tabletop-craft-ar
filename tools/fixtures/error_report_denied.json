@@ -1,0 +1,11 @@
+{
+ "v": 1,
+ "type": "error",
+ "seq": 121,
+ "t": 1760370009050,
+ "code": "report_denied",
+ "message": "reports are off on this server (reports.enabled)",
+ "ref_seq": 71,
+ "fatal": false,
+ "op": "report"
+}

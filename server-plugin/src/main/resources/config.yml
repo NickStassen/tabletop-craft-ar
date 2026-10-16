@@ -283,6 +283,20 @@ commands:
   notify-ops: true
   # Quick buttons in the headset's Console tab (tabletop.json "quick_commands" adds its own).
   quick: ["time set day", "weather clear", "tick freeze", "tick unfreeze"]
+# [safety] Reports from headsets (report_v1, PROTOCOL.md "Chat safety: mute, block, report"). A headset user can mute
+# or block a player on their headset, and report one to you: the report (the headset, the reason, its note and the
+# player's recent chat) goes into plugins/TabletopCraftAR/reports.log, the console, and to online players with the
+# permission tabletop.reports (default: ops). The reported player isn't told. Act on it with your usual tools (kick,
+# ban, whitelist remove).
+reports:
+  enabled: true
+  # Reports per minute per headset; more get error rate_limited.
+  max-per-minute: 3
+  # Recent chat kept per player for a report's context (memory only; written to reports.log only with a report).
+  context-lines: 20
+  context-minutes: 30
+  # reports.log is moved to reports.log.1 (replacing an older one) when it would grow past this many kilobytes.
+  max-log-kb: 1024
 # [talk] Server status for headsets (status_v1, PROTOCOL.md 4.28): server_status (TPS, MSPT, memory, players, worlds)
 # every every-ticks ticks, world_info (time, weather, difficulty, gamerules) and players_info on request.
 status:

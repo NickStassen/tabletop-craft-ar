@@ -55,7 +55,8 @@ namespace TabletopCraft.XR
         static readonly Color32 PanelBg = new Color32(16, 18, 22, 225), Slot = new Color32(44, 47, 56, 235), Hover = new Color32(86, 96, 112, 245),
             Active = new Color32(46, 112, 150, 250), Disabled = new Color32(34, 36, 42, 200), Field = new Color32(28, 30, 36, 240),
             Arrow = new Color32(200, 205, 215, 255), Dim = new Color32(70, 74, 84, 220), Cursor = new Color32(255, 255, 255, 230),
-            Selected = new Color32(40, 104, 140, 245);
+            Selected = new Color32(40, 104, 140, 245),
+            ChatHover = new Color32(86, 96, 112, 140), ChatPicked = new Color32(40, 104, 140, 170);   // [safety] chat lines under the ray / picked
         static readonly Color TextMain = new Color(0.92f, 0.95f, 1f), TextDim = new Color(0.55f, 0.6f, 0.68f), TextErr = new Color(1f, 0.5f, 0.42f),
             TextOk = new Color(0.75f, 1f, 0.8f), TextCmd = new Color(0.65f, 0.85f, 1f), TextNote = new Color(1f, 0.85f, 0.5f);
 
@@ -75,6 +76,7 @@ namespace TabletopCraft.XR
         float _hapticOff = -1;
         Vector3Int? _pointer; string _pointerWorld; float _pointerAt = -999;
         string _historyPath; int _historySaved;
+        int _safetyVersion = -1;   // [safety] muting drops the player's bubbles
         readonly Dictionary<long, string> _queries = new Dictionary<long, string>();
 
         void Start()
@@ -125,6 +127,7 @@ namespace TabletopCraft.XR
                 case "chat":
                 {
                     var c = ChatMessage.From(m);
+                    if (Model.Safety.Hides(c)) return true;   // [safety] muted or blocked on this headset: no line, bubble or toast
                     var e = Model.Log.Add(c, now, Session);
                     Bubbles.Add(c, now);
                     if (ChatLog.Toast(c.Kind) && !Model.Open) Toast?.Invoke(e.Display, c.Kind == "death" ? ToastKind.Warn : ToastKind.Info);
@@ -142,6 +145,13 @@ namespace TabletopCraft.XR
                 case "server_status": Model.OnStatus(ServerStatus.From(m)); return true;
                 case "world_info": Model.OnWorld(WorldInfo.From(m)); return true;
                 case "players_info": Model.OnPlayers(PlayersInfo.From(m)); return true;
+                case "report_ack":   // [safety] the server saved the report
+                {
+                    string t = Model.OnReportAck(ReportAck.From(m));
+                    Toast?.Invoke(char.ToUpperInvariant(t[0]) + t.Substring(1), ToastKind.Info);
+                    Debug.Log("[Tabletop] REPORT " + t);
+                    return true;
+                }
                 // [operator] the shared bookmarks; a container view's contents (or its end)
                 case "bookmarks": Model.Marks.OnBookmarks(BookmarkList.From(m)); return true;
                 case "container":
@@ -178,6 +188,13 @@ namespace TabletopCraft.XR
             long refSeq = (long)m.D("ref_seq", -1);
             // [operator] bookmark, container and sign refusals carry their op (and pos): the note line says them
             string op = m.S("op");
+            if (op == "report")   // [safety] the player stays blocked here; the note line and a toast say why it wasn't sent
+            {
+                string t = Model.OnReportError(m.S("message") ?? m.S("code") ?? "?");
+                Toast?.Invoke(char.ToUpperInvariant(t[0]) + t.Substring(1), ToastKind.Warn);
+                Debug.LogWarning("[Tabletop] REPORT " + t);
+                return true;
+            }
             if (op == "bookmark" || op == "container_query" || op == "container_edit" || op == "sign_edit")
             {
                 var p = m.A("pos");
@@ -218,6 +235,7 @@ namespace TabletopCraft.XR
                 if (Model.Open && OVRInput.GetDown(OVRInput.Button.Start, OVRInput.Controller.LTouch)) Model.SetOpen(false);
             }
             Bubbles.Prune(dnow);
+            if (_safetyVersion != Model.Safety.Version) { _safetyVersion = Model.Safety.Version; Bubbles.RemoveWhere(Model.Safety.IsMuted); }   // [safety]
 
             if (Model.Open)
             {
@@ -410,7 +428,11 @@ namespace TabletopCraft.XR
                         Box(_b, it.R, it.Active ? Cursor : hover ? Hover : Slot, 0, 0.0004f);
                         Box(_b, it.R, EntityCatalog.DyeColor(it.Label, BlockRules.FlatColor("minecraft:" + it.Label + "_wool")), -0.0002f, it.Active ? 0.0026f : 0.0016f);
                         break;
+                    case PanelPart.ChatLine:   // [safety] a player's chat line: lit under the ray, and while it is the picked player's
+                        if (it.Active || hover) Box(_b, it.R, it.Active ? ChatPicked : ChatHover, 0.0001f);
+                        break;
                     case PanelPart.PlayerRow:
+                    case PanelPart.SafetyRow:  // [safety]
                     case PanelPart.Rule:
                     case PanelPart.MarkRow:    // [operator]
                     case PanelPart.SignLine:   // [operator]
@@ -437,12 +459,12 @@ namespace TabletopCraft.XR
             if (Lo.Field.W > 0)
             {
                 Box(_b, Lo.Field, Field, 0, 0.0006f);
-                string prefix = Model.Focus == OperatorPanelModel.Field.Kick ? "kick " + Model.KickTarget + ": " : Model.Focus == OperatorPanelModel.Field.Console ? "/" : "";
+                string prefix = Model.Focus == OperatorPanelModel.Field.Kick ? "kick " + Model.KickTarget + ": " : Model.Focus == OperatorPanelModel.Field.Console ? "/" : Model.Focus == OperatorPanelModel.Field.Report ? "note: " : "";
                 string text = Model.FocusText;
                 int chars = OperatorPanelModel.CharsFor(Lo.Field.W - 0.006f) - prefix.Length - 1;
                 string shown = text.Length > chars ? "…" + text.Substring(text.Length - chars + 1) : text;
                 string ph = Model.Focus == OperatorPanelModel.Field.Chat ? (Model.ChatOn ? "say something..." : "chat is read-only") :
-                            Model.Focus == OperatorPanelModel.Field.Console ? (Model.CommandsOn ? "type a command..." : "commands need pairing") : "reason (optional)";
+                            Model.Focus == OperatorPanelModel.Field.Console ? (Model.CommandsOn ? "type a command..." : "commands need pairing") : Model.Focus == OperatorPanelModel.Field.Report ? "what happened (optional, for the operators)" : "reason (optional)";
                 bool empty = text.Length == 0;
                 Label("field", empty ? prefix + ph : prefix + shown + "_", Lo.Field.X + 0.003f, Lo.Field.CY, 0.0015f, TextAnchor.MiddleLeft, empty ? TextDim : TextMain);
             }
@@ -465,12 +487,15 @@ namespace TabletopCraft.XR
                 return !Model.Container.CanEdit ? (Model.Container.View == null ? "waiting for the server..." : "view only (interact.containers: view)")
                      : "select a slot; Put adds " + Model.Container.Count + " " + ContainerModel.Label(ContainerModel.ItemOf(Model.HotbarSelection, Model.Registry)) + " (hotbar)";
             if (Model.Mode == PanelMode.Sign) return "pick a line and type (enter = next line), then Save; Front / Back switch sides";
+            if (Model.Mode == PanelMode.Report) return Model.Report.Reason == null ? "pick a reason; a note is optional. " + Model.Report.Name + " is also blocked on this headset"   // [safety]
+                                                                                   : "Send report (or enter) sends it; Cancel goes back without reporting";
             switch (Model.Tab)
             {
                 case OpTab.Marks: return !Model.Marks.Welcome.Marks ? "jumps work; bookmarks need marks_v1 on the server" : "a world, Spawn, a bookmark or typed x z: the view jumps there (same width)";
-                case OpTab.Chat: return Model.ChatOn ? $"as {Model.Welcome.ChatName} (Java players see [Giant] {Model.Welcome.ChatName})" : "chat: " + (Model.Connected ? "read-only" : "not connected");
+                case OpTab.Chat: return Model.ChatOn ? $"as {Model.Welcome.ChatName}; click a player's line to mute, block or report them" : "chat: " + (Model.Connected ? "read-only" : "not connected") + "; click a player's line to mute, block or report them";
                 case OpTab.Console: return Model.CommandsOn ? $"stick click = tab   pointer {ptr}" : "commands " + Model.CommandsOffWhy;
-                case OpTab.Players: return Model.CommandsOn ? $"pointer {ptr}" : "buttons need a paired headset";
+                case OpTab.Players when Model.SafetyList: return "muted and blocked on this server (only on this headset): select one, then Unmute or Unblock";   // [safety]
+                case OpTab.Players: return Model.CommandsOn ? $"pointer {ptr}; Mute, Block and Report work on any server" : "Mute, Block and Report work here; the other buttons need a paired headset";
                 case OpTab.World: return Model.CommandsOn ? $"pointer {ptr}" : "buttons need a paired headset";
                 default: return Model.Welcome.Status ? "updates every 2 s" : "the server sends no status (status_v1)";
             }
@@ -535,6 +560,9 @@ namespace TabletopCraft.XR
                     if (Model.Console.Entries.Count == 0) Label("empty", Model.CommandsOn ? "run a command: type it, or a quick button" : "commands need a paired headset (or the server's token)", Lo.Text.CX, Lo.Text.CY, 0.0014f, TextAnchor.MiddleCenter, TextDim);
                     break;
                 }
+                case OpTab.Players when Model.SafetyList:   // [safety]
+                    if (Model.Safety.Count == 0) Label("empty", "nobody muted or blocked on this server", Lo.Text.CX, Lo.Text.CY, 0.0015f, TextAnchor.MiddleCenter, TextDim);
+                    break;
                 case OpTab.Players:
                     if (Model.Players == null || Model.Players.Players.Count == 0)
                         Label("empty", Model.Players == null ? "waiting for players_info..." : "nobody online", Lo.Text.CX, Lo.Text.CY, 0.0015f, TextAnchor.MiddleCenter, TextDim);

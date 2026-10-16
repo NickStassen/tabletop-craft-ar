@@ -2,7 +2,8 @@
 //
 // prefs.json lives next to tabletop.json (persistentDataPath) and is written by the app, debounced: the block size and
 // the visible width it was chosen for, the table's position and turn relative to the MRUK TABLE anchor, the hotbar, the
-// selected block, the menu tab and Show HUD. tabletop.json stays the hand-edited setup file (server, token, skin,
+// selected block, the menu tab and Show HUD; [safety] the players muted or blocked on each server ("chat_safety",
+// World/ChatSafety.cs). tabletop.json stays the hand-edited setup file (server, token, skin,
 // lighting). Three keys can be in both (block_size_m, area_width, show_hud): a value in tabletop.json wins at the next
 // start only when it differs from the one seen there last time (you edited the file); otherwise the headset's own
 // choice from prefs.json stands. prefs.json records the tabletop.json values it saw under "tabletop_json".
@@ -67,6 +68,8 @@ namespace TabletopCraft.World
         public string Selected;
         public string TableAnchor;         // MRUK TABLE anchor UUID the pose is relative to
         public TablePose? Table;
+        /// <summary>[safety] Muted and blocked players per server ("chat_safety", World/ChatSafety.cs ToJson / Load), or null.</summary>
+        public Dictionary<string, object> ChatSafety;
         /// <summary>tabletop.json's values of SharedKeys when these prefs were written (double or bool).</summary>
         public readonly Dictionary<string, object> Seen = new Dictionary<string, object>();
 
@@ -93,6 +96,7 @@ namespace TabletopCraft.World
                 p.TableAnchor = anchor;
                 p.Table = new TablePose { X = (float)v[0], Y = (float)v[1], Z = (float)v[2], Yaw = (float)t.D("yaw") };
             }
+            p.ChatSafety = m.O("chat_safety");   // [safety]
             var seen = m.O("tabletop_json");
             if (seen != null) foreach (var k in SharedKeys) if (seen.TryGetValue(k, out var v) && (v is double || v is bool)) p.Seen[k] = v;
             return p;
@@ -120,6 +124,7 @@ namespace TabletopCraft.World
                     ["yaw"] = Math.Round(t.Yaw, 2),
                 };
             }
+            if (ChatSafety != null && ChatSafety.Count > 0) d["chat_safety"] = ChatSafety;   // [safety]
             if (Seen.Count > 0) d["tabletop_json"] = new Dictionary<string, object>(Seen);
             return ConfigFile.Pretty(d);
         }

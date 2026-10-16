@@ -1,0 +1,23 @@
+{
+ "v": 1,
+ "type": "hello",
+ "seq": 0,
+ "t": 1760370000000,
+ "client": "quest-app",
+ "client_version": "1.2.0",
+ "protocols": [
+  1
+ ],
+ "token": "",
+ "caps": [
+  "rle_palette_v1",
+  "avatar",
+  "chat_v1",
+  "command_v1",
+  "status_v1",
+  "pair_v1",
+  "report_v1"
+ ],
+ "operator_name": "Nick",
+ "device_name": "Quest 3"
+}

@@ -19,3 +19,6 @@ permissions:
   tabletop.notify:
     description: 'See "[Tabletop: /command]" when a headset runs a command'
     default: op
+  tabletop.reports:
+    description: See reports that headsets send about players (also in plugins/TabletopCraftAR/reports.log)
+    default: op

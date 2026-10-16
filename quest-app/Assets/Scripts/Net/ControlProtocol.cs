@@ -9,7 +9,23 @@ namespace TabletopCraft.Net
     public static class ControlProtocol
     {
         public const string CapChat = "chat_v1", CapCommand = "command_v1", CapStatus = "status_v1";
+        /// <summary>[safety] Reports about a player to the server's operators (PROTOCOL.md "Chat safety: mute, block, report").</summary>
+        public const string CapReport = "report_v1";
+        public const int MaxReportNote = 200;
         public const int MaxLen = 256;
+
+        /// <summary>[safety] report: a player (by uuid, with the name for the log), a reason code, an optional note, and
+        /// whether this headset also blocked them.</summary>
+        public static Dictionary<string, object> Report(string uuid, string name, string reason, string note, bool blocked)
+        {
+            var player = new Dictionary<string, object> { ["uuid"] = uuid };
+            if (!string.IsNullOrEmpty(name)) player["name"] = name;
+            var d = new Dictionary<string, object> { ["type"] = "report", ["player"] = player, ["reason"] = reason };
+            string n = (note ?? "").Trim();
+            if (n.Length > 0) d["details"] = n.Length > MaxReportNote ? n.Substring(0, MaxReportNote) : n;
+            d["blocked"] = blocked;
+            return d;
+        }
 
         public static Dictionary<string, object> ChatSend(string text) => new Dictionary<string, object> { ["type"] = "chat_send", ["text"] = text };
 
@@ -48,6 +64,8 @@ namespace TabletopCraft.Net
     public sealed class ControlWelcome
     {
         public bool Chat, ChatSend, Commands, Status;
+        /// <summary>[safety] report_v1: the server takes reports (a 1.2.0 plugin with reports.enabled).</summary>
+        public bool Reports;
         public string ChatName = "";
         public int ChatMaxLen = ControlProtocol.MaxLen, CommandMaxLen = ControlProtocol.MaxLen;
         public List<string> Quick = new List<string>();
@@ -59,6 +77,7 @@ namespace TabletopCraft.Net
             w.Chat = caps?.Contains(ControlProtocol.CapChat) == true;
             w.Commands = caps?.Contains(ControlProtocol.CapCommand) == true;
             w.Status = caps?.Contains(ControlProtocol.CapStatus) == true;
+            w.Reports = caps?.Contains(ControlProtocol.CapReport) == true;
             var c = welcome?.O("chat");
             if (c != null) { w.ChatSend = c.B("send"); w.ChatName = c.S("name") ?? ""; w.ChatMaxLen = c.I("max_len", ControlProtocol.MaxLen); }
             var k = welcome?.O("commands");
@@ -82,6 +101,13 @@ namespace TabletopCraft.Net
                 Name = f?.S("name"), Uuid = f?.S("uuid"), Session = f?.S("session"), Id = f?.I("id", -1) ?? -1,
             };
         }
+    }
+
+    /// <summary>[safety] report_ack: the server saved the report (its id) and showed it to this many online operators.</summary>
+    public sealed class ReportAck
+    {
+        public long RefSeq; public string Id = ""; public int Operators;
+        public static ReportAck From(Dictionary<string, object> m) => new ReportAck { RefSeq = (long)m.D("ref_seq", -1), Id = m.S("id") ?? "", Operators = m.I("operators") };
     }
 
     public sealed class CommandResult
