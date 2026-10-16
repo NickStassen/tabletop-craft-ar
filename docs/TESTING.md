@@ -1463,3 +1463,15 @@ For the store listing (VRC.Content.3 and the dashboard's "User Reporting"; `docs
 - Blocking hides chat, bubbles and whispers; the player's figure, name, builds and sign text stay on the table.
 - The chat context only has what the plugin heard while running (memory, `reports.context-minutes`); `/msg` and `/tellraw` aren't seen (no event).
 
+
+## Jump to a Mark: no terrain for 20 s (jump fix; 2026-10-16, v1.2.1 candidate)
+
+On the headset (v1.2.0, width 64, region 128x186x128): after a jump to a Mark in another place or world, "Loading area" climbed to ~98 % and the table showed no terrain for 20-45 s while the plugin had sent the whole snapshot in under 0.6 s and the headset decoded it in 24 ms (72 fps throughout). The PERF lines showed `pending=7 batches=9` from the jump until the 20 s `StagingTimeout`, then `batches=16`. Cause: a full snapshot replacing a region on screen is staged (the new batches stay hidden until nothing is pending), and while staging a dirty batch waits for its sections with no time limit. Batches entirely off screen also waited for their dirty sections in `KeepScope` (the glide upload saving), which are only meshed when the window comes close: with the view still, the 7 off-screen batches half in the lead ring never became ready. Fix: `BatchRules.SectionsPending` (shared by `TabletopRenderer`) skips that wait while staging. The renderer logs `STAGED complete|timed out after N ms` with what was still pending. The app now logs `avatar_state` only when it changes (with `debug.avatar-state` the server streams it every 10 ticks; nothing was resent).
+
+### Tests
+- Tests~ (`--jar`, `--entity-models`): ALL PASS, 1610 checks (new in `MeshTests.cs`, 5: both headset jumps simulated with the renderer's schedule and the view still: the old rule leaves exactly 7 batches pending after 20 s, the new one ends staging after 30 frames (360 sections near the window, 12 a frame); `SectionsPending`: the off-screen wait for keep-only sections stays outside staging, busy and in-scope sections always count, a batch on screen never waits for keep-only ones).
+- Unity 6000.0.84f1 compile: 0 errors. `BatchMeshCheck.RunRenderer`: 11/11 PASS (its staged jump logs `STAGED complete`). `BuildApk`: debug-signed APK, 0 errors (1 min 44 s).
+
+### To check on the headset
+- Jump to a Mark in another world and back (operator panel > Marks): terrain shows within about a second, `STAGED complete after N ms` (N well under 1000), never `timed out`; PERF `pending=0` right after; "Loading area" ends with "Area loaded".
+- `avatar enabled=... scale=...` appears once per change, not every 0.5 s.

@@ -251,8 +251,91 @@ static class MeshTests
               && BatchRules.OffScreen(lay, lay.KeyOf(new Vector3Int(8, 0, 4)), vis) && BatchRules.OffScreen(lay, lay.KeyOf(new Vector3Int(0, 0, 4)), vis)
               && !BatchRules.OffScreen(lay, lay.KeyOf(new Vector3Int(0, 0, 0)), SectionBox.All), "mesh: batch off screen (x/z outside the visible box; never with no box)");
 
+        JumpTests(check);
         SkirtTests(check);
         BlockRules.ResetShapes();
+    }
+
+    /// <summary>
+    /// [jump] A jump to a Mark in another place or world: the full snapshot replaces a region on screen, so the old batches
+    /// stay up (staging) until every dirty section near the window is meshed and every dirty batch rebuilt. Off-screen
+    /// batches used to wait for their sections in KeepScope during staging too: those are never meshed while the view
+    /// stands still, and Ready has no time limit while staging, so 7 batches stayed dirty and the new region showed only
+    /// after StagingTimeout (20 s; headset log 1.2.1: pending=7 from the jump to the timeout, both ways).
+    /// </summary>
+    static void JumpTests(Action<bool, string> check)
+    {
+        int cols = BatchRules.Columns; BatchRules.Columns = 2;
+        // The two jumps on the headset: 128x186x128 regions with a 64-wide window, the view where the jump landed.
+        var cases = new[]
+        {
+            ("world_nether", new Vector3Int(-64, 0, -60), new Vector3(0.5f, 77f, 4.5f)),
+            ("world", new Vector3Int(32, 52, -96), new Vector3(96.5f, 145f, -31.5f)),
+        };
+        foreach (var (world, origin, view) in cases)
+        {
+            var nav = new NavState();
+            nav.OnRegion(world, origin, new Vector3Int(128, 186, 128), new Vector3Int(32, 32, 32), 0);
+            nav.View = view;
+            var (oldFrames, oldPending) = StageAfterJump(nav, true, 72 * 20);
+            var (frames, pending) = StageAfterJump(nav, false, 72 * 20);
+            int scope = MeshScope.Active(nav, SectionPlan.Sections(nav.Dims)).Count;
+            check(oldFrames < 0 && oldPending == 7, $"jump {world}: the old off-screen wait while staging never ends (pending {oldPending} after 20 s, the headset's 7)");
+            check(frames >= 0 && frames <= scope / StageSectionsPerFrame + 3 && pending == 0,
+                  $"jump {world}: the new region shows as soon as the {scope} sections near the window are meshed ({frames} frames, view still)");
+        }
+        // The off-screen wait itself stays for glides (fewer uploads): a batch off screen waits for its sections in KeepScope.
+        var lay = new BatchLayout(new Vector3Int(0, 0, 0), new Vector3Int(128, 80, 128), 2);
+        var vis = new SectionBox { Min = new Vector3Int(2, 0, 2), Max = new Vector3Int(6, 4, 6) };
+        var scopeBox = new SectionBox { Min = new Vector3Int(1, 0, 1), Max = new Vector3Int(7, 4, 7) };
+        var keepBox = new SectionBox { Min = new Vector3Int(0, 0, 0), Max = new Vector3Int(8, 5, 8) };
+        var none = new HashSet<Vector3Int>(); var dirty = new HashSet<Vector3Int> { new Vector3Int(0, 1, 3) };   // keep only
+        var key = lay.KeyOf(new Vector3Int(0, 0, 3));
+        check(BatchRules.SectionsPending(lay, key, none, dirty, scopeBox, keepBox, vis, false) && !BatchRules.SectionsPending(lay, key, none, dirty, scopeBox, keepBox, vis, true)
+              && BatchRules.SectionsPending(lay, key, new HashSet<Vector3Int> { new Vector3Int(1, 2, 2) }, none, scopeBox, keepBox, vis, true)
+              && BatchRules.SectionsPending(lay, key, none, new HashSet<Vector3Int> { new Vector3Int(1, 2, 2) }, scopeBox, keepBox, vis, true)
+              && !BatchRules.SectionsPending(lay, lay.KeyOf(new Vector3Int(2, 0, 3)), none, new HashSet<Vector3Int> { new Vector3Int(2, 4, 3) }, scopeBox, keepBox, vis, false),
+              "jump: an off-screen batch waits for its keep-only sections when not staging, never while staging; busy and in-scope sections always count; a batch on screen never waits for keep-only ones");
+        BatchRules.Columns = cols;
+    }
+
+    const int StageSectionsPerFrame = 12;
+
+    /// <summary>
+    /// TabletopRenderer.Update after a full snapshot with old batches on screen, without Unity: finished sections mark their
+    /// batch dirty (Upload/Apply), dirty batches are rebuilt when Ready (UpdateBatches; assembly and upload take no time
+    /// here), staging ends when nothing is pending (as Update), then dirty sections in Scope go to the workers (Dispatch,
+    /// StageSectionsPerFrame a frame, done by the next frame). The view stands still. oldOffScreenWait: the 1.2.0 rule
+    /// (off-screen batches wait for KeepScope sections while staging too). Returns the frame staging ended (-1: not within
+    /// maxFrames) and the renderer's Pending then.
+    /// </summary>
+    static (int frames, int pending) StageAfterJump(NavState nav, bool oldOffScreenWait, int maxFrames)
+    {
+        var n = SectionPlan.Sections(nav.Dims);
+        var scope = MeshScope.Active(nav, n); var keep = MeshScope.Keep(nav, n); var vis = MeshScope.Visible(nav, n);
+        var layout = new BatchLayout(nav.Origin, nav.Dims, BatchRules.Columns);
+        var dirty = new HashSet<Vector3Int>(); var busy = new HashSet<Vector3Int>();
+        for (int x = 0; x < n.x; x++) for (int y = 0; y < n.y; y++) for (int z = 0; z < n.z; z++) dirty.Add(new Vector3Int(x, y, z));   // full re-mesh
+        var dirtyBatches = new Dictionary<Vector3Int, float>();
+        const float dt = 1f / 72f, maxWait = 0.4f;
+        const bool staging = true;   // until it ends (the loop returns then)
+        int pending = 0;
+        for (int f = 0; f < maxFrames; f++)
+        {
+            float now = f * dt;
+            foreach (var s in busy) { var k = layout.KeyOf(s); if (!dirtyBatches.ContainsKey(k)) dirtyBatches[k] = now; }
+            busy.Clear();
+            int urgent = dirty.Count(scope.Contains);
+            foreach (var key in dirtyBatches.Keys.ToList())
+            {
+                bool sp = BatchRules.SectionsPending(layout, key, busy, dirty, scope, keep, vis, staging && !oldOffScreenWait);
+                if (BatchRules.Ready(sp, dirtyBatches[key], now, maxWait, staging)) dirtyBatches.Remove(key);
+            }
+            pending = urgent + busy.Count + dirtyBatches.Count;
+            if (pending == 0) return (f, 0);
+            foreach (var s in dirty.Where(scope.Contains).Take(StageSectionsPerFrame).ToList()) { dirty.Remove(s); busy.Add(s); }
+        }
+        return (-1, pending);
     }
 
     static bool Eq(Quad4 a, Quad4 b) => E(a.C0, b.C0) && E(a.C1, b.C1) && E(a.C2, b.C2) && E(a.C3, b.C3) && a.L0 == b.L0 && a.L1 == b.L1 && a.L2 == b.L2 && a.L3 == b.L3;
