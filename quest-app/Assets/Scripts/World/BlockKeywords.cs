@@ -13,8 +13,9 @@ namespace TabletopCraft.World
     {
         public const string Fog = "TABLETOP_FOG", DayLight = "TABLETOP_DAYLIGHT", ClipPlanes = "TABLETOP_CLIP_PLANES";
 
-        /// <summary>tabletop.json "clip_planes" (default on). Off: the fragment discard of 0.8.0.</summary>
-        public static bool UseClipPlanes = true;
+        /// <summary>tabletop.json "clip_planes" (default off). Measured on a Quest 3 at 256 wide (2026-10-15): hardware clip planes
+        /// stalled vertex fetch ~72% and ran 14-27 fps; the fragment discard with the solid pass and packed vertices ran 55-61 fps.</summary>
+        public static bool UseClipPlanes = false;
 
         /// <summary>Sets a global keyword when it changes (Shader.EnableKeyword is cheap, but this runs every frame).</summary>
         public static void Set(string keyword, bool on)

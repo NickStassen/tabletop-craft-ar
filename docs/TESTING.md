@@ -1349,3 +1349,16 @@ Everything on the GPU: these are offline counts. Whether Unity's Vulkan device e
 - The first time night or rain starts, or the eye enters water, the block materials switch to a variant the GPU hasn't built yet: expect one short hitch then (not prewarmed).
 - Random texture rotation stays a per-face branch (coherent across a face); a variant would need another submesh and draw call per batch. The vertex colour is still converted from sRGB per vertex (3 vector multiply-adds).
 - If 72 fps isn't reached at 256 wide, the next step is a distance LOD: section columns far from the view centre meshed at 2x2x2 blocks (or the surface skirt's heightfield), full detail near it, with skirts on the seams.
+
+### Headset measurement (Quest 3, 2026-10-15, width 256, region 352x186x352, same view, ~20 s each)
+
+| Run | fps | VrApi app GPU | worst frame | GPU profiler |
+|---|---|---|---|---|
+| before the GPU work (0.8.0) | 26-31 | 26-35 ms | 145-160 ms (rain rebuild) | 405M vertices/s, 1.35G fragments/s, vertex fetch stall 39% |
+| GPU work, `clip_planes` on | 14-27 | 38-57 ms | 120 ms | 127M vertices/s, 0.68G fragments/s, vertex fetch stall 72% |
+| GPU work, `clip_planes` off | **55-61** | **13-17 ms** | **19-22 ms** | 331M vertices/s, 1.07G fragments/s, vertex fetch stall 22% |
+| `clip_planes` on + `solid_pass` off | 28 | 24-30 ms | 40 ms | stall 69% |
+| `clip_planes` on + `packed_vertices` off | 28-29 | 24-33 ms | 42 ms | stall 66% |
+
+Hardware clip planes cost far more than the fragment discard they replace on this GPU, so `clip_planes` is off by default. The weather fix removed the periodic hitch. Width 128 runs a steady 72 fps.
+
