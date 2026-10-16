@@ -44,7 +44,7 @@ Phases 0-3 were built and checked on Paper 1.21.11 / Java 21. The server pin has
 ## Status after the first headset sessions (2026-10-13)
 - **Done:**
   - Phases 0–4 run on a Quest 3 against Paper 26.3.
-  - From Phase 5: block models from the pack, biome colours, smooth lighting with AO, animated textures, waterlogging and fluids, gliding across the world with sectioned/delta streaming (v1.2), and areas up to 128×96×128 recommended.
+  - From Phase 5: block models from the pack, biome colours, smooth lighting with AO, animated textures, waterlogging and fluids, gliding across the world with sectioned/delta streaming, and areas up to 128×96×128 recommended.
   - Phase 6: `block_edit` from the headset (break, place, pick). It was done as an additive v1 message (`edit_v1`), not a v2 bump, and the plugin applies edits itself rather than as the avatar entity.
 - **Also done (not in the original phases):**
   - The floating giant: a head and hands at the exact headset poses.

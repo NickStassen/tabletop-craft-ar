@@ -574,7 +574,7 @@ Optional GPU keys (for comparing on the headset; TESTING.md "GPU at 256 wide"): 
 
 Without a pack the app uses flat colours. To use textures you already own:
 
-1. Copy your client jar, e.g. `%APPDATA%\.minecraft\versions\26.3\26.3.jar` (Linux: `~/.minecraft/versions/26.3/26.3.jar`), or any Java resource pack `.zip`, to a temp folder and rename it `pack.zip` (a jar is a zip). The atlas loader was checked offline against the 26.3 jar; on the headset it's still untested.
+1. Copy your client jar, e.g. `%APPDATA%\.minecraft\versions\26.3\26.3.jar` (Linux: `~/.minecraft/versions/26.3/26.3.jar`), or any Java resource pack `.zip`, to a temp folder and rename it `pack.zip` (a jar is a zip). The atlas loader was checked offline against the 26.3 jar and verified on the headset.
 2. `adb push pack.zip /sdcard/Android/data/com.tabletopcraft.ar/files/pack.zip`, then restart the app. The menu's Info tab (Part J) shows `PACK yes`.
 3. Entity models (boats, minecarts, mobs, armour, and the block entities: chests, shulker boxes, heads, banners, bells, decorated pots, conduits, copper golem statues, lectern and enchanting books). The app ships no model data; generate it from the same client jar with JDK 25 from the repo root, then push it next to `pack.zip`:
    ```

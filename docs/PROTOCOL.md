@@ -423,10 +423,10 @@ So the headset can find a server without typing its address (QUEST_SETUP.md Part
 - `welcome.limits` gains `max_dims`, `max_blocks`, `max_bytes`. `chunk_snapshot` may carry `server_timing{read_ms,remap_ms,encode_ms}`, which clients ignore if they don't recognise it.
 - Growth triggers a full re-snapshot for `rle_palette_v1` clients. For `sections_v1` clients a resize whose origin moves by whole sections is a delta with only the new sections (§4.25); `limits` also carry `max_view_width` (§4.25).
 - Fixtures: `tools/fixtures/region_request.json`, `region_query.json`, `region_changed.json`, `region_info.json`, `error_region_too_large.json` (also parsed by the C# tests).
-- Changelog: v1.1 adds the messages above. v1 clients are unaffected.
+- Changelog: added on 2026-10-13, before the 0.x versions (the "v1.1" step of the early protocol, not release 1.1.0). Additive: v1 clients are unaffected.
 - Changelog (additive, no version bump): adds `player_positions[].skin_model` (§4.6) and documents the giant's placement and skin lookup (§4.8, §4.9). Fixture: `tools/fixtures/player_positions.json`.
 
-## 4.17–4.19 Moving around: view margin, sectioned and delta snapshots (v1.2, additive)
+## 4.17–4.19 Moving around: view margin, sectioned and delta snapshots (v1, additive)
 
 These let a headset glide across the world while the miniature stays a box on the table. Everything here is optional: a peer that doesn't know a field ignores it, and the server only uses the new snapshot encoding with clients that ask for it. `v` stays 1.
 
@@ -468,7 +468,7 @@ A client that puts `"sections_v1"` in `hello.caps` MAY receive `chunk_snapshot` 
 
 - `tools/fixtures/chunk_snapshot_sections.json` (full, snapshot 8), `chunk_snapshot_delta.json` (snapshot 9 as a delta against 8, one section), `region_request_nav.json` (origin form with `view_margin`) and `chunk_snapshot_sections_light.json` (per-section light, biomes on part 0). Java `SectionCodecTest`, Python `test_tabletop_protocol.py` and C# `Tests~/NavTests.cs` decode them and rebuild snapshot 9 from 8.
 - `tools/nav_e2e.py` runs a `sections_v1` headset across the world on a live server and checks each delta-assembled region block by block against a v1 client's full snapshot of the same region.
-- Changelog: v1.2 (2026-10-13) adds `view_margin`, the server features in `welcome.caps`, `limits.build_height`, `pose.snapshot_id`, the `sections_v1` encoding (with per-section light), and the full resend after `bad_snapshot`. v1 and v1.1 clients are unaffected.
+- Changelog: added on 2026-10-13, before the 0.x versions (the "v1.2" step of the early protocol, not release 1.2.0): `view_margin`, the server features in `welcome.caps`, `limits.build_height`, `pose.snapshot_id`, the `sections_v1` encoding (with per-section light), and the full resend after `bad_snapshot`. v1 and v1.1 clients are unaffected.
 - Changelog (no field changes): the default giant is now `floating` (a head and two hands at the exact poses); `avatar_state.scale` and `world_height_blocks` describe the head in that mode (§4.9).
 
 ## 4.20 Block editing from the headset (`block_edit`, `edit_v1`; additive)
