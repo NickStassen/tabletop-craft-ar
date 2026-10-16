@@ -301,6 +301,25 @@ static class GlideTests
         public readonly MeshWorkMeter Work = new MeshWorkMeter();
     }
 
+    /// <summary>[smooth] The palette-derived tables the app rebuilds on the main thread when a snapshot is applied: the
+    /// block-entity mask (BlockEntityRenderer), the clip caps' face keys (ClipCaps.RefreshKeys), the sound ambience
+    /// table (SoundDirector) and the atlas prewarm (TabletopRenderer.Prewarm).</summary>
+    static void FullPalettePasses(WorldModel w, IFaceSource faces)
+    {
+        var p = w.Palette;
+        BlockEntityScan.Mask(p);
+        for (int i = 0; i < p.Count; i++)
+        {
+            string st = p[i];
+            var shape = BlockRules.Shape(st);
+            string cut = CapMesher.CapState(st, shape);
+            if (cut != null && faces != null) for (int f = 0; f < 6; f++) faces.Face(cut, f);
+            string path = BlockRules.Path(st);
+            if (path == "water") BlockEditRules.Prop(st, "level");
+            if (faces != null) for (int d = 0; d < 6; d++) faces.Face(st, d);
+        }
+    }
+
     public static void LiveGlide(string url, int[] widths, float seconds, bool mesh, float slowdown, Action<bool, string> check, string jar = null, bool skirt = false, bool oldBatches = false)
     {
         var link = new LinkClient(url, "");
@@ -325,6 +344,10 @@ static class GlideTests
         float Now() => (float)clock.Elapsed.TotalSeconds;
         float requestAt = -1; var latencies = new List<float>(); int listed = 0, requests = 0, parts0 = 0, holeFrames = 0, uncoveredFrames = 0, surfaceFrames = 0;
         bool gliding = false; float lastFrame = -1;
+        // [smooth] main-thread time per frame (inbound, apply, meshing schedule, nav; not the sleep), apply time per
+        // snapshot, the decode worker's time, and GC while gliding.
+        var mainMs = new List<float>(); var applyMs = new List<float>(); var decodeMs = new List<float>();
+        void PalettePasses() => FullPalettePasses(world, pack);
 
         // One frame of the headset: inbound messages, a finished decode, meshing, then the caller moves.
         void Frame()
@@ -334,9 +357,12 @@ static class GlideTests
                 if (r.Snapshot == null) Console.WriteLine("GLIDE snapshot error " + r.Error);
                 else
                 {
+                    long a0 = Stopwatch.GetTimestamp();
                     world.ApplySnapshot(r.Snapshot);
                     Prewarm();
                     sim.OnSnapshot(r.Plan);
+                    PalettePasses();   // [smooth] the app's palette-derived tables (block entities, caps, sound)
+                    if (gliding) { applyMs.Add((float)((Stopwatch.GetTimestamp() - a0) * 1000.0 / Stopwatch.Frequency)); decodeMs.Add((float)r.Ms); }
                     nav.OnRegion(world.World, world.Origin, world.Dims, r.ViewMargin, Now());
                     if (requestAt >= 0) { latencies.Add(Now() - requestAt); requestAt = -1; }
                     listed += Math.Max(0, r.Listed);
@@ -408,9 +434,13 @@ static class GlideTests
                 latencies.Clear(); listed = 0; requests = 0; sim.Meshed = 0; sim.Dropped = 0; sim.MeshTicks = 0; holeFrames = 0; uncoveredFrames = 0; surfaceFrames = 0; sim.TilesBuilt = 0; sim.SkirtTicks = 0; gliding = true;
                 sim.Rebuilds = 0; sim.RebuildBytes = 0; sim.EmptyRebuilds = 0;
                 float held0 = 0, t0 = Now(), last = t0, x0 = nav.View.x, stalled = 0, capSum = 0, meshCapSum = 0; int frames = 0;
+                mainMs.Clear(); applyMs.Clear(); decodeMs.Clear();
+                int gc0 = GC.CollectionCount(0), gc1 = GC.CollectionCount(1), gc2 = GC.CollectionCount(2);
+                long alloc0 = GC.GetTotalAllocatedBytes(false);
                 while (Now() - t0 < seconds)
                 {
                     float now = Now(), dt = Math.Min(0.1f, now - last); last = now;
+                    long f0 = Stopwatch.GetTimestamp();
                     Frame();
                     held0 += dt;
                     nav.MeshCap = MeshScope.MeshSpeedCap(sim.Meter.Rate, sim.Scope, new Vector3(dir, 0, 0));   // as NavController
@@ -422,10 +452,13 @@ static class GlideTests
                     var mv = nav.Move(new Vector3(dir * speed * dt, 0, 0), dt, now);
                     if (Math.Abs(nav.View.x - before) < 0.5f * speed * dt) stalled += dt;
                     if (mv.HasValue) Send(mv.Value);
+                    mainMs.Add((float)((Stopwatch.GetTimestamp() - f0) * 1000.0 / Stopwatch.Frequency));
                     int sleep = (int)((1f / 72f - (Now() - now)) * 1000);
                     if (sleep > 0) Thread.Sleep(sleep);
                 }
                 gliding = false;
+                double allocMb = (GC.GetTotalAllocatedBytes(false) - alloc0) / 1048576.0;
+                int gcs0 = GC.CollectionCount(0) - gc0, gcs1 = GC.CollectionCount(1) - gc1, gcs2 = GC.CollectionCount(2) - gc2;
                 float secs = Now() - t0, dist = (nav.View.x - x0) * dir;
                 var lat = latencies.OrderBy(x => x).ToList();
                 string P(float p) => lat.Count == 0 ? "-" : (lat[Math.Min(lat.Count - 1, (int)(p * lat.Count))] * 1000).ToString("F0");
@@ -437,6 +470,13 @@ static class GlideTests
                                   $"dropped={sim.Dropped} hole_frames={holeFrames}/{frames} surface_hole_frames={surfaceFrames} uncovered_frames={uncoveredFrames} faces={(pack != null ? "pack" : "flat")} slowdown={slowdown:F1} " +
                                   $"skirt={(skirt ? "on" : "off")} skirt_factor={MeshScope.SkirtFactor:F1} skirt_tiles_s={sim.TilesBuilt / secs:F0} skirt_ms_per_tile={(sim.TilesBuilt == 0 ? 0 : sim.SkirtTicks * 1000.0 / Stopwatch.Frequency / sim.TilesBuilt):F3} " +
                                   $"batch_rebuilds_s={sim.Rebuilds / secs:F1} (empty {sim.EmptyRebuilds / secs:F1}) batch_upload_mb_s={sim.RebuildBytes / secs / 1048576.0:F1}");
+                // [smooth] what the shifts cost the main thread and the GC (TESTING.md "Smooth gliding")
+                string Pc(List<float> l, float p) { if (l.Count == 0) return "-"; var o = l.OrderBy(x => x).ToList(); return o[Math.Min(o.Count - 1, (int)(p * o.Count))].ToString("F2"); }
+                Console.WriteLine($"SMOOTH width={w} dir={(dir > 0 ? "+x" : "-x")} region={nav.Dims.x}x{nav.Dims.y}x{nav.Dims.z} margin={nav.Margin.x} shifts={applyMs.Count} shifts_s={applyMs.Count / secs:F2} " +
+                                  $"blocks_per_shift={(applyMs.Count == 0 ? 0 : dist / applyMs.Count):F1} main_ms p50={Pc(mainMs, 0.5f)} p99={Pc(mainMs, 0.99f)} max={(mainMs.Count == 0 ? 0 : mainMs.Max()):F2} " +
+                                  $"over4ms={mainMs.Count(x => x > 4f)}/{mainMs.Count} apply_ms p50={Pc(applyMs, 0.5f)} max={(applyMs.Count == 0 ? 0 : applyMs.Max()):F2} " +
+                                  $"decode_worker_ms p50={Pc(decodeMs, 0.5f)} max={(decodeMs.Count == 0 ? 0 : decodeMs.Max()):F1} palette={world.Palette.Count} " +
+                                  $"alloc_mb={allocMb:F0} alloc_mb_per_shift={(applyMs.Count == 0 ? 0 : allocMb / applyMs.Count):F1} gc={gcs0}/{gcs1}/{gcs2}");
                 WaitIdle(30);
             }
         }

@@ -81,6 +81,7 @@ static class MeshTests
             for (int x = 0; x < n.x; x++) for (int y = 0; y < n.y; y++) for (int z = 0; z < n.z; z++)
             { var k = new Vector3Int(x, y, z); GreedyMesher.Build(w, k, faces, md); GreedyMesher.BuildSpecials(w, k, faces, md); SectionMesh.From(md, k); }
             double tBuild = 0, tSpecial = 0, tFrom = 0, worst = 0;
+            long aBuild = 0, aSpecial = 0, aFrom = 0;
             long quads = 0, verts = 0; int empty = 0, emptyMs = 0;
             var kinds = new Dictionary<string, (int n, double ms)>();
             var sw = new Stopwatch();
@@ -88,13 +89,18 @@ static class MeshTests
                 for (int x = 0; x < n.x; x++) for (int y = 0; y < n.y; y++) for (int z = 0; z < n.z; z++)
                 {
                     var k = new Vector3Int(x, y, z);
+                    long a0 = GC.GetAllocatedBytesForCurrentThread();   // [smooth] garbage per stage (the headset's GC pauses)
                     long t0 = Stopwatch.GetTimestamp();
                     GreedyMesher.Build(w, k, faces, md);
                     long t1 = Stopwatch.GetTimestamp();
+                    long a1 = GC.GetAllocatedBytesForCurrentThread();
                     GreedyMesher.BuildSpecials(w, k, faces, md);
                     long t2 = Stopwatch.GetTimestamp();
+                    long a2 = GC.GetAllocatedBytesForCurrentThread();
                     var sm = SectionMesh.From(md, k);
                     long t3 = Stopwatch.GetTimestamp();
+                    long a3 = GC.GetAllocatedBytesForCurrentThread();
+                    aBuild += a1 - a0; aSpecial += a2 - a1; aFrom += a3 - a2;
                     double b = Ms(t1 - t0), s = Ms(t2 - t1), fr = Ms(t3 - t2);
                     tBuild += b; tSpecial += s; tFrom += fr; worst = Math.Max(worst, b + s + fr);
                     if (r == 0)
@@ -120,6 +126,7 @@ static class MeshTests
                               $"sections={secs} empty_out={empty} quads={quads} verts={verts} palette={w.Palette.Count}");
             Console.WriteLine($"  per section (mean of {reps}x{secs}): total={total / reps / secs:F3} ms  build={tBuild / reps / secs:F3}  specials+fluid={tSpecial / reps / secs:F3} " +
                               $"(fluid alone {tFluid / secs:F3})  from={tFrom / reps / secs:F3}  worst={worst:F2} ms");
+            Console.WriteLine($"  allocated per section: build={aBuild / reps / secs / 1024.0:F1} KB  specials+fluid={aSpecial / reps / secs / 1024.0:F1} KB  from={aFrom / reps / secs / 1024.0:F1} KB");
             foreach (var kv in kinds.OrderByDescending(k => k.Value.ms))
                 Console.WriteLine($"  kind {kv.Key,-12} n={kv.Value.n,5}  ms/section={kv.Value.ms / kv.Value.n:F3}  share={kv.Value.ms / (total / reps) * 100:F0}%");
         }

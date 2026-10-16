@@ -139,6 +139,7 @@ static class Program
         fails += NavTests.Run(Fixture);   // navigation, streaming, clip caps (Tests~/NavTests.cs)
         AreaTests.Run(Check, Fixture);    // [area] width presets, resize re-keying, mesh batching (Tests~/AreaTests.cs)
         MeshTests.Run(Check);              // [mesh] mesher fast paths, job size, surface skirt (Tests~/MeshTests.cs)
+        SmoothTests.Run(Check);            // [smooth] hitch log, palette tables, snapshot buffers, shifts, skirt (Tests~/SmoothTests.cs)
         if (args.Contains("--be-probe")) { BlockEntityTests.PrintProbes(); return 0; }   // [blocks] the transforms, to compare with the client's own
         int beSceneIdx = Array.IndexOf(args, "--be-scene");
         if (beSceneIdx >= 0 && JarPath(args) != null)

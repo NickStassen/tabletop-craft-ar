@@ -76,7 +76,9 @@ namespace TabletopCraft.World
                 return;
             }
             _visible = true;
+            long k0 = FrameHitch.Begin();   // [smooth]
             RefreshKeys();
+            FrameHitch.End(FrameHitch.Part.Caps, k0);
             var d = Model.Dims;
             for (int f = 0; f < 6; f++)
             {
@@ -93,7 +95,10 @@ namespace TabletopCraft.World
                     if (!c.Job.IsFaulted)
                     {
                         var r = c.Job.Result;
-                        Upload(c, r.data); c.Slice = r.slice; c.Version = r.version; c.BuiltOrigin = r.origin; c.KeysVersion = r.keys;
+                        long h0 = FrameHitch.Begin();   // [smooth]
+                        Upload(c, r.data);
+                        FrameHitch.End(FrameHitch.Part.Caps, h0);
+                        c.Slice = r.slice; c.Version = r.version; c.BuiltOrigin = r.origin; c.KeysVersion = r.keys;
                     }
                     c.Job = null;
                 }

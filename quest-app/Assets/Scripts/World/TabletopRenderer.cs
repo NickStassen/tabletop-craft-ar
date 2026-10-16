@@ -33,7 +33,9 @@ namespace TabletopCraft.World
         /// <summary>[nav] Fewest sections one job meshes in a row (tabletop.json "mesh_sections_per_job"). [mesh] A job takes
         /// more when sections are cheap (MeshScope.SectionsPerJob): enough to keep its worker busy until the next frame.</summary>
         public static int SectionsPerJob = 4;
-        public float UploadBudgetMs = 3f;        // main-thread mesh upload budget per frame
+        /// <summary>Main-thread time per frame for applying meshed sections and uploading batches and skirt tiles
+        /// (tabletop.json "upload_budget_ms").</summary>
+        public static float UploadBudgetMs = 3f;
         public Material OpaqueMaterial, TransparentMaterial;
         public WorldModel Model;
         public ResourcePackAtlas Atlas;
@@ -252,6 +254,13 @@ namespace TabletopCraft.World
         /// </summary>
         public void OnSnapshot(SectionPlan plan, Vector3Int oldOrigin, Vector3Int newOrigin)
         {
+            long h0 = FrameHitch.Begin();   // [smooth] HITCH rekey_ms
+            try { Rekey(plan, oldOrigin, newOrigin); }
+            finally { FrameHitch.End(FrameHitch.Part.Rekey, h0); }
+        }
+
+        void Rekey(SectionPlan plan, Vector3Int oldOrigin, Vector3Int newOrigin)
+        {
             _keepChecked = false;   // [nav] section keys changed: check the kept meshes against the next KeepScope
             var n = Model.SectionCount;
             var layout = new BatchLayout(Model.Origin, Model.Dims, BatchRules.Columns);
@@ -407,7 +416,9 @@ namespace TabletopCraft.World
             if (_staging && ((urgent == 0 && _inFlight == 0 && _dirty.Count == 0 && _assembling == 0) || Time.unscaledTime - _stagingSince > StagingTimeout)) FinishStaging();
             Dispatch(urgent);
             _saturated = _jobs >= MaxJobsInFlight;
+            long h0 = FrameHitch.Begin();
             UpdateSkirt();   // [mesh] low-detail surface where the window isn't meshed yet
+            FrameHitch.End(FrameHitch.Part.Skirt, h0);   // [smooth]
         }
 
         /// <summary>Hands dirty sections in Scope to the worker jobs (urgent first; kept ones refreshed when idle).</summary>
@@ -418,7 +429,9 @@ namespace TabletopCraft.World
             // Urgent sections first (new terrain, nearest the view); kept ones are only refreshed when idle.
             bool lazy = urgent == 0;
             if (lazy && (_lazy.Count == 0 || _staging)) return;
+            long h0 = FrameHitch.Begin();   // [smooth] HITCH prewarm_ms
             Prewarm();
+            FrameHitch.End(FrameHitch.Part.Prewarm, h0);
             // [nav] Each job meshes several sections in a row: with one section per job a worker sat idle until the next
             // frame handed it another, which capped meshing at 3 sections per frame (216/s at 72 Hz), too few for a
             // 256-wide window entering at glide speed. Dealt round-robin so every job starts with an urgent one.
@@ -478,6 +491,7 @@ namespace TabletopCraft.World
             {
                 Interlocked.Decrement(ref _inFlight);
                 _meshedNow++;
+                FrameHitch.MeshDone();   // [smooth]
                 _busy.Remove(j.Section);
                 // Stale (a new snapshot arrived while meshing): its sections are already queued again.
                 if (j.SnapshotId != Model.SnapshotId) continue;
@@ -633,7 +647,9 @@ namespace TabletopCraft.World
 
         void UploadBatch(Batch b, BatchData d)
         {
+            long h0 = FrameHitch.Begin();   // [smooth] HITCH upload_ms
             Fill(b.Mesh, d);
+            FrameHitch.End(FrameHitch.Part.Upload, h0); FrameHitch.Uploaded(d.Bytes);
             b.Verts = d.VertCount; b.Indices = d.IndexCount; b.Opaque = d.Opaque; b.Solid = d.Solid; b.Transparent = d.Transparent; b.WaterBack = d.WaterBack;
             b.Sections = d.Sections; b.Bytes = d.Bytes;
             bool packed = d.Packed != null;
