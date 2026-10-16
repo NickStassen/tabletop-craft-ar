@@ -86,6 +86,7 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 | `sound_groups` | S→C | every block's break, step, place, hit and fall sounds, once after the registries ("Sound", needs `sound_v1`) |
 | `assets` / `asset_get` | S→C / C→S | the operator's own pack.zip, entity_models.json and sounds.zip on offer; a chunk of one, answered by a binary frame ("Asset delivery", needs `assets_v1`) |
 | `pair_request` / `pair_code` / `paired` | C→S / S→C / S→C | ask for a pairing code; the code to show; the device token once an operator typed the code ("Pairing", needs `pair_v1`; 1.1.0) |
+| `report` / `report_ack` | C→S / S→C | report a player to the server's operators; the report's id once it is saved ("Chat safety: mute, block, report", needs `report_v1`; next version, 1.2.0) |
 
 ### 4.1 `hello` (C→S)
 
@@ -100,7 +101,7 @@ Direction: **S→C** means server to Quest/client, **C→S** client to server.
 - `client`: free string, e.g. `quest-app` or `fake-quest`.
 - `protocols`: protocol versions the client speaks. The server picks the highest one it also supports.
 - `token`: shared secret from the plugin `config.yml` (`auth.token`). If it's empty in config, auth is disabled (LAN dev only). A wrong token gets `error` `auth_failed` and then close code 4003.
-- `caps`: capability strings. v1 defines `rle_palette_v1` (required) and `avatar` (client will send poses). Optional extras: `light_v1` and `biomes_v1` (§4.5.1), `edit_v1` (§4.20), `entities_v1` (§4.21), `actions_v1` (§4.22), `chat_v1`, `command_v1` and `status_v1` (§4.26–4.28), `block_entities_v1` (§4.29), `interact_v1` ("Using blocks and items"), `world_v1` ("World state: time and weather"), `marks_v1` ("Marks: bookmarks, spawn and worlds"), `power_v1` ("Undo, box edits and brushes"); unknown caps are ignored.
+- `caps`: capability strings. v1 defines `rle_palette_v1` (required) and `avatar` (client will send poses). Optional extras: `light_v1` and `biomes_v1` (§4.5.1), `edit_v1` (§4.20), `entities_v1` (§4.21), `actions_v1` (§4.22), `chat_v1`, `command_v1` and `status_v1` (§4.26–4.28), `block_entities_v1` (§4.29), `interact_v1` ("Using blocks and items"), `world_v1` ("World state: time and weather"), `marks_v1` ("Marks: bookmarks, spawn and worlds"), `power_v1` ("Undo, box edits and brushes"), `report_v1` ("Chat safety: mute, block, report"; 1.2.0); unknown caps are ignored.
 - `operator_name` (optional string): the name the headset wants in game chat (§4.26). The server keeps `[A-Za-z0-9_]`, at most 16 characters.
 - Since 1.1.0, with the cap `pair_v1`: `device_token` (optional string), the token this server gave the headset when it was paired, and `device_name` (optional string, e.g. "Quest 3"). A valid `device_token` counts like the shared `token`; on a server that needs a credential, a `pair_v1` client without one is shown a code instead of being refused ("Pairing").
 - The client MUST NOT send anything else before it gets `welcome`. The server closes with 4002 if `hello` doesn't arrive within 5 s.
@@ -338,6 +339,7 @@ Codes (strings, closed set in v1):
 | `mark_denied` | no | a `bookmark` without `marks_v1`, on a read-only server (`marks.edit`), over `marks.max`, or removing a name that doesn't exist ("Marks: bookmarks, spawn and worlds") |
 | `asset_denied` | no | an `asset_get` without `assets_v1` (nothing to serve, an untrusted session, not from the LAN, or not asked for) ("Asset delivery"); `not_found` also answers an `asset_get` for a name that isn't offered |
 | `pair_denied` | no (yes while waiting for pairing) | a `pair_request` refused: pairing off, already paired, too many requests from this address or too many headsets waiting ("Pairing"; 1.1.0) |
+| `report_denied` | no | a `report` without `report_v1`: the client didn't ask for it, or `reports.enabled` is off ("Chat safety: mute, block, report"; 1.2.0) |
 
 `ref_seq` is the `seq` of the offending message, if any. When `fatal` is true, the sender closes the socket right after.
 
@@ -410,6 +412,7 @@ So the headset can find a server without typing its address (QUEST_SETUP.md Part
 - **v0.8.1: no message changes.** When one headset has several `region_request`s in flight, the server applies only the newest one's read (an older one finishing later is dropped and logged `REGION_SUPERSEDED`), so a slow link can't flip the area back to an older size or place.
 - **v1.0.0: first stable release, no message changes since v0.8.1.** From here the version is semantic: plugins and apps with the same major version work together, additions come in minor versions, breaking changes need 2.0.0.
 - **v1.1.0: pairing ("Pairing").** Additive: cap `pair_v1`; `hello.device_token` and `device_name`; `welcome.server_id` (every client) and `welcome.pairing`; messages `pair_request`, `pair_code`, `paired`; error `pair_denied`; a session state "waiting for pairing" on servers that need a credential (`pair_v1` clients only; others still get 4003); the discovery reply's `id` and `pair`; the require-token switches mean "trusted session" (shared token or paired headset); a 4003 to a hello with a `device_token` makes the client drop the token and reconnect. Fixtures `hello_pair.json`, `welcome_pair.json`, `pair_request.json`, `pair_code.json`, `paired.json`, `error_pair_denied.json`, `discovery_reply_pair.json`.
+- **Next version (1.2.0): chat safety ("Chat safety: mute, block, report").** Additive: cap `report_v1` (config.yml `reports`); messages `report` (C→S) and `report_ack` (S→C); error `report_denied`; errors about a report carry `op: "report"`. Mute and block are client-side (no messages). Old peers: a 1.1.x plugin doesn't grant `report_v1` (the app greys Report, mute and block still work); a 1.1.x app never asks for it. Fixtures `hello_report.json`, `welcome_report.json`, `report.json`, `report_ack.json`, `error_report_denied.json`.
 - **v1.1.0: automatic game files ("Asset delivery").** Additive: asset delivery is on by default for trusted sessions (paired headsets or the `auth.token`) on the LAN, with files the plugin builds from the server PC's own Minecraft install (config.yml `assets.auto`, `assets.minecraft-dir`); the `assets` offer gains optional `state` and `note`. Fixture `assets_building.json` (Java `GameAssetsTest`, Python `test_assets_offer_state_and_note`, C# `SetupTests`).
 
 ## 4.13–4.16 Runtime region control (v1, additive)
@@ -1329,6 +1332,44 @@ So a headset needs nothing typed or pushed: instead of a shared token in tableto
 **Older peers.** A 1.0.x plugin ignores `pair_v1`, `device_token` and `device_name`: the client sees no `welcome.pairing` and keeps working without pairing (the Quest app says once that a plugin update to 1.1.0 adds pairing and automatic game files, with the releases link). A 1.0.x app never asks for `pair_v1`: on an open server it works as before; on a server with `auth.require-pairing` it gets 4003.
 
 Fixtures `hello_pair.json`, `welcome_pair.json`, `pair_request.json`, `pair_code.json`, `paired.json`, `error_pair_denied.json`, `discovery_reply_pair.json`. Java `PairingTest` (codes, tokens, devices.yml, revoking, limits, the messages against the fixtures), Python `test_pairing_fixtures`, `test_pairing_rejects_bad_fields`, C# `Tests~/SetupTests.cs` (the token store, codes, welcome, old plugins, and LinkClient against a fake server: pings while waiting, an unpaired token). Live: `tools/pair_check.py` (pairs through the server console, then checks the game-file offer and an unpair).
+
+## Chat safety: mute, block, report (next version, 1.2.0; cap `report_v1`)
+
+The headset user can stop seeing a player's chat, and tell the server's operators about a player. The people who can act on a report are the server's operators (kick, ban, whitelist), so reports go to them, not to the app's developer. Docs: QUEST_SETUP.md Part L ("Mute, block and report").
+
+**Mute and block (client-side, no messages).** The app keeps, per server (`welcome.server_id`, else the server's address), the players this headset mutes or blocks, by uuid (`chat.from.uuid`, §4.26). Neither the server nor the player is told. Client guidance (non-normative; what the Quest app does):
+- muted: the player's `chat`, `say` and `me` lines and their bubbles are not shown (and make no sound);
+- blocked: as muted, and their `whisper` lines (`/tabletop tell`) too;
+- `join`, `quit`, `death` and `advancement` lines stay (they say who is on the server), and so do lines without a uuid (the console, plugin broadcasts, other headsets' `operator` lines);
+- muting removes the player's earlier lines from the log at once; unmuting doesn't bring them back.
+
+**`report` (C→S)**, needs `report_v1` (granted when config.yml `reports.enabled`, default true; echoed in `welcome.caps`):
+
+```json
+{"v":1,"type":"report","seq":70,"t":1760370009000,"player":{"name":"Alex","uuid":"0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"},"reason":"harassment","details":"kept insulting me in chat","blocked":true}
+```
+
+- `player.uuid` (required): a UUID, as in `chat.from.uuid` or `players_info`. `player.name` (optional): the name the headset saw, for the log when the server doesn't know the player.
+- `reason` (required): one of `harassment`, `hate`, `sexual`, `threat`, `spam`, `cheating`, `other`. A server takes any other lower-case word (`[a-z_]{1,24}`) as given, so a newer app's reason reaches an older 1.x plugin.
+- `details` (optional): the headset user's note, at most 200 characters; the server removes control characters and `§` and collapses whitespace.
+- `blocked` (optional, default false): the headset also blocked the player (the Quest app always does).
+- Refused with `error` and `op: "report"`: `report_denied` without `report_v1`; `bad_message` for a missing or malformed field; `rate_limited` beyond `reports.max-per-minute` (3) per session; `internal` when the server couldn't save it.
+
+**What the server does.** It appends the report to `plugins/TabletopCraftAR/reports.log` (moved to `reports.log.1` past `reports.max-log-kb`, 1024): an id (8 hex digits), the time, the reporting headset (its device name, paired device id, session and chat name; never its address), the player's name and uuid and whether they are online, offline or unknown to the server, the reason, the note, whether the headset blocked them, and the player's recent chat: the newest `reports.context-lines` (20) lines of the last `reports.context-minutes` (30) they said (`chat`, `say`, `me`, whispers to the headsets), which the plugin keeps in memory per player while reports are on and writes nowhere else. It logs a `REPORT <id> ...` warning on the console and shows a line to every online player with the permission `tabletop.reports` (default: ops) except the reported player. The reported player is not told.
+
+**`report_ack` (S→C)**, once the report is saved:
+
+```json
+{"v":1,"type":"report_ack","seq":120,"t":1760370009040,"ref_seq":70,"id":"5e1a9c03","operators":1}
+```
+
+`id`: the report's id in reports.log. `operators`: how many online players with `tabletop.reports` were shown it (0: it waits in the log).
+
+**Older peers.** A 1.1.x plugin never grants `report_v1` and answers a `report` with `unknown_type`; the Quest app then greys Report and says the server's plugin is older than 1.2.0 (mute and block still work, they need nothing from the server). A 1.1.x app never asks for the cap.
+
+**The platform's own reporting.** On the Meta Horizon Store, the Quest button's universal menu also has "Report Abuse" (Meta's User Reporting Service, set up in the Developer Dashboard; it sends the report to the app's developer, not to the server). That is outside this protocol; QUEST_SETUP.md Part L and `docs/store/LISTING.md` describe both routes.
+
+Fixtures `hello_report.json`, `welcome_report.json`, `report.json`, `report_ack.json`, `error_report_denied.json`. Java `ReportTest` (parsing and its refusals, the ack and error against the fixtures, the chat context window, the log block, rotation, the rate limit), Python `test_report_fixtures`, `test_report_rejects_bad_fields`, C# `Tests~/SafetyTests.cs` (the fixtures, what mute and block hide, lists per server and in prefs.json, the panel's buttons, list and report picker).
 
 ## Block animations (v0.7.0; `actions_v1`, `entities_v1`)
 

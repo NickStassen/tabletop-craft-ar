@@ -31,7 +31,8 @@ table, together with a server plugin you run on your own PC. It is open source:
 
 <p class="note">In short: there is no account, no advertising and no analytics of our own. The app talks to the
 Minecraft server you choose on your local network, and fetches player skin images from Minecraft's skin server. We
-(the developers) receive no data from the app.</p>
+(the developers) receive no data from the app; only a report you choose to send through the Quest's "Report Abuse"
+menu reaches us.</p>
 
 <h2>What the app sends, and to whom</h2>
 <p>This is every network endpoint the app contacts.</p>
@@ -43,8 +44,9 @@ it only from private network addresses)</td>
 <td>The positions of your headset and controllers relative to the table, about 30 times a second (they move your
 "giant" in the game); the blocks you place or break, items you use, chat lines and server commands you send; the
 headset's name (for example "Quest 3") and the app version; after pairing, the device token that server gave this
-headset. From the server the app receives the world, player names and positions, chat, and the game's textures,
-models and sounds from the server owner's own Minecraft install.</td></tr>
+headset; and the reports you make about a player in the app (which player, a reason, your note, and that you
+blocked them), which go to that server's operators. From the server the app receives the world, player names and
+positions, chat, and the game's textures, models and sounds from the server owner's own Minecraft install.</td></tr>
 <tr><td>Your local network, UDP broadcast to port 8765</td>
 <td>A small "is there a Tabletop server here?" message when the app looks for servers. If none answers, the app tries
 to open a connection to port 8765 on the other addresses of your local network (it sends nothing to them) and lists
@@ -60,6 +62,11 @@ graphics chip) when the app starts, under Unity's own privacy policy.</td></tr>
 <td>The app uses Meta's passthrough and scene understanding to find your table. Your room's scene data is read on the
 headset and is not sent anywhere by the app. What the Quest system itself collects is covered by Meta's privacy
 policy.</td></tr>
+<tr><td>Meta's User Reporting Service, only if you use it</td>
+<td>The Quest button's menu has "Report Abuse". If you send a report there, Meta's form collects what you choose to
+enter (the reason, your description and, if the form asks, your email address) and delivers it to us by email or
+Meta's encrypted inbox. The app itself sends nothing to it. We use such a report only to look into it and answer
+you.</td></tr>
 </tbody>
 </table>
 
@@ -73,26 +80,35 @@ Wi-Fi responsive (low-latency mode) while you play.</li>
 <h2>What is stored, and where</h2>
 <ul>
 <li><b>On the headset</b>, in the app's own folder: the server address and your choices (table position, block size,
-hotbar, volume), the device tokens of the servers you paired with, and the game files your server sent. Uninstalling
-the app deletes all of it.</li>
+hotbar, volume), the players you muted or blocked on each server (their Minecraft name and player id), the device
+tokens of the servers you paired with, and the game files your server sent. Uninstalling the app deletes all of
+it.</li>
 <li><b>On the server owner's PC</b> (not ours): the plugin keeps a list of paired headsets (name, a hash of each
 token, when it was paired and last seen, and an optional Minecraft player name), and the server log records headset
-connections with their local IP addresses, and commands run from a headset.</li>
-<li><b>With us:</b> nothing. We run no server for this app and receive no data from it.</li>
+connections with their local IP addresses, and commands run from a headset. Reports made in the app are written to
+the plugin's <code>reports.log</code>: the reporting headset's name and pairing id and the name it chats under, the
+reported player, the reason, your note, and that player's recent chat lines (the plugin keeps the last few lines
+each player said in memory, for this purpose only, and writes them only into a report). The server's operators see
+these reports.</li>
+<li><b>With us:</b> only reports you send through the Quest's "Report Abuse" menu (above). We run no server for this
+app and receive no other data from it.</li>
 </ul>
 
 <h2>Your choices and deleting data</h2>
 <ul>
 <li>Uninstall the app to delete everything it stored on the headset.</li>
+<li>Unmute or unblock a player in the operator panel (Players, Mute list) to remove them from the headset's list.</li>
 <li>The server owner can remove a headset with <code>tabletop unpair</code>, and delete the plugin's
-<code>devices.yml</code> and the server logs.</li>
-<li>Questions or requests: <a href="mailto:nicholas@stassen.com">nicholas@stassen.com</a>. As we hold no data about you, there is nothing for us to delete, but we
-will help you with the steps above.</li>
+<code>devices.yml</code>, <code>reports.log</code> and the server logs.</li>
+<li>Questions or requests: <a href="mailto:nicholas@stassen.com">nicholas@stassen.com</a>. We hold no data about you
+apart from reports you sent through "Report Abuse"; we delete those on request, and help you with the steps
+above.</li>
 </ul>
 
 <h2>Children</h2>
 <p>The app is meant for teens and adults (13 and older). It has no chat with strangers of its own: chat only reaches
-the players on the server you connect to.</p>
+the players on the server you connect to. You can mute, block and report players from the app's operator panel;
+reports go to that server's operators.</p>
 
 <h2>Changes</h2>
 <p>If what the app sends changes, this page changes first, with a new date at the top.</p>

@@ -33,7 +33,7 @@ Rules this text follows (Minecraft Usage Guidelines, Meta app policies):
 >
 > - Glide over the world, zoom and turn the table, and pick how wide an area you see.
 > - Break, place and pick blocks; use doors, levers, buckets and tools; undo, fill boxes and paint with brushes.
-> - Chat with players and run server commands from a panel on your wrist.
+> - Chat with players and run server commands from a panel on your wrist; mute, block or report players.
 > - Your friends see you as a giant head and hands above their world, moving as you do.
 > - Spatial sound, day and night, weather, signs, banners and chests, all from the game files on your own PC.
 > - Bedrock players can join too (Geyser and Floodgate).
@@ -63,9 +63,58 @@ Rules this text follows (Minecraft Usage Guidelines, Meta app policies):
 | Privacy policy URL | https://nickstassen.github.io/tabletop-craft-ar/privacy.html (GitHub Pages from `docs/`) |
 | Support / contact email | nicholas@stassen.com (public: privacy page and store) |
 | Publisher name | Nick Stassen (developer shown as "Nick Stassen Hobbies") |
-| Data Use Checkup | not needed: the app uses no Platform SDK features |
+| Data Use Checkup | not needed: the app uses no Platform SDK features (Meta's User Reporting Service is set up in the dashboard, with no SDK in the app) |
+| Player modes | Multiplayer (online with invited players: the server's whitelist and pairing), once User Reporting is active (below) |
 
 **Store media checklist** (Meta's asset guidelines): icon 512x512 (opaque, square corners), hero 3000x900, landscape
 2560x1440, square 1440x1440, portrait 1008x1440, five screenshots at 2560x1440 from the real app with no text on them,
 a trailer of 30 s to 2 min. All original art: no Minecraft logo, font, textures or screenshots of vanilla textures.
 The invite page needs the name, the short description and the header image (hero) only.
+
+## User reporting, blocking and the content rating (1.2.0)
+
+What the public listing needs, and what to set in the Developer Dashboard once 1.2.0 is uploaded. The invite-only beta
+doesn't need it.
+
+**Meta's requirement.** [VRC.Content.3](https://developers.meta.com/horizon/resources/vrc-content-3/): apps with
+user interaction, including synchronous multiplayer with text chat, "must have a form for users to notify the
+developer" about conduct against the Code of Conduct for Virtual Experiences, and it "must always be accessible to the
+user from the" Meta Quest button; an in-app Report is allowed as long as the button route works too. Muting and
+blocking aren't required by a VRC (the dashboard's IARC questionnaire asks whether users can block and report). Meta
+offers two tools: the [User Reporting Service](https://developers.meta.com/horizon/resources/reporting-service/), a
+hosted form configured only in the dashboard that delivers reports by email or an encrypted inbox, and the
+[User Reporting Plugin](https://developers.meta.com/horizon/resources/reporting-plugin), which hands the Quest
+button's Report to an in-app flow and needs the Platform SDK (entitlement check, Data Use Checkup). See also
+[the 2023 announcement](https://developers.meta.com/horizon/blog/user-reporting-requirements-developer-tools-updates/).
+
+**Decision: the hosted User Reporting Service, no Platform SDK.** It satisfies VRC.Content.3 without any code, so the
+app keeps using no Platform SDK features. The in-app tools are for what the developer can't do: the people a headset
+user chats with are players on a private server, and only that server's operators can kick, ban or take them off the
+whitelist, so the in-app **Report** goes to them (`report_v1`, `reports.log`, PROTOCOL.md "Chat safety"), and
+**Mute** / **Block** hide a player's chat on the headset. Reports through the Quest button reach the developer, who
+answers them and points to the server's owner.
+
+**Developer Dashboard steps.**
+1. My Apps > Tabletop Craft AR > Platform Services > **User Reporting** > Add Service > Get Started.
+2. Primary reporting tool: **User Reporting Service** (not the plugin: that needs the Platform SDK).
+3. Delivery: **email** to the support address above (or the secure inbox: generate and keep the decryption key; a
+   lost key can't be recovered). Ask for the reporter's email: yes (to answer them).
+4. Reasons (5 to 7, short): Harassment or bullying; Hate speech; Sexual content; Threats or violence; Spam or scams;
+   Cheating or griefing; Something else. Optional: a 1440x2560 branding image (original art, no Minecraft assets).
+5. Activate. Then App Submissions > App Metadata > Specs: set the player mode to **Multiplayer**; the dashboard
+   should now accept it with User Reporting active. Check the Report Abuse form from the Quest button on a headset
+   with the release-channel build (VRC.Content.3 test steps: start the app, connect to a server, press the Meta
+   button, Report, submit, see the success dialog).
+
+**IARC questionnaire: answers to change (1.2.0).**
+
+| Question | Was | Now |
+|---|---|---|
+| Users can interact or exchange text (chat) | yes | yes (unchanged) |
+| Users can block other users | no | **yes**: Mute and Block in the operator panel, per server |
+| Users can report other users | no | **yes**: Report in the operator panel (to the server's operators) and the Quest button's Report Abuse (to the developer) |
+| Chat is moderated | no | no (no filtering; the server's operators get reports and can act, but there is no moderation service) |
+| Interaction limited to invited friends | yes | yes (unchanged: the server's whitelist and pairing) |
+
+The privacy policy (`docs/privacy.html`) already describes both report routes and what each stores; it says the Quest
+menu has Report Abuse, so activate the service before the public listing goes live.

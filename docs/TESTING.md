@@ -1441,3 +1441,25 @@ Paper 26.3 test server (offline mode, seed 12345, ports 25629 / 8829), the PC's 
 - The server's own PC needs the game; a server elsewhere needs a copy of the launcher folder (QUEST_SETUP.md "Store install").
 - `upload_quest.sh` doesn't read the last uploaded versionCode (the upload itself refuses a lower one).
 
+## Chat safety: mute, block, report (safety; 2026-10-16, no headset)
+
+For the store listing (VRC.Content.3 and the dashboard's "User Reporting"; `docs/store/LISTING.md`). Paper 26.3 test server (offline mode, seed 12345, ports 25631 / 8831).
+
+### Tests
+- Java: 230 tests, 0 failures (new `ReportTest` 7: the fixture parses, ack and error against the fixtures, malformed reports and their refusals, optional fields and cleaned notes, the per-player chat context (20 lines, the time window, 500 players), the reports.log block, rotation to `reports.log.1`, the sliding-window rate limit).
+- Python: 287 passed (new `test_report_fixtures`, `test_report_rejects_bad_fields` x9), ruff clean.
+- Tests~ (`--jar`, `--entity-models`): ALL PASS, 1605 checks (new `SafetyTests`, 64: hello asks for `report_v1`, welcome grants it, the report builder against `report.json`, what mute and block hide (chat/say/me; whispers only when blocked; joins, deaths and lines without a uuid stay), lists per server with the move from address to server id, the prefs.json round trip and bad saved entries, the log and bubbles a mute takes away; the panel: clickable chat lines, Mute / Block / Report / Close for the picked line, Mute greyed while blocked, the report picker (reason, note typed on the keyboard, enter sends, the player blocked and marked reported, Cancel reports nothing), ack and error notes, the Players tab's Chat row and Mute list with Unmute / Unblock, an older plugin greying Report, every view fitting beside the hand).
+- Unity 6000.0.84f1 compile: 0 errors. `BuildApk`: debug-signed APK, 0 errors (1 min 41 s).
+
+### Live (test server, a fake headset)
+- `report_v1` granted when asked; a report about a player the server never saw gets `report_ack` (8-hex id, `operators: 0`) and a block in `plugins/TabletopCraftAR/reports.log` with the reporter (device name, "not paired", session, chat name; no address), the player's name and uuid ("never seen on this server"), the reason, the note with its newline collapsed, "blocked on the headset: yes"; the console logs `REPORT <id> ...` as a warning. A bad uuid is `bad_message` with `op: "report"`; the fourth report in a minute is `rate_limited`; a session that didn't ask for the cap gets `report_denied`. (A scratch script, not kept in `tools/`.)
+
+### Not verified (needs the headset)
+- Pointing at chat lines (highlight, the picked line, the button row), the Players tab's Chat row and Mute list, the report picker and its keyboard, the toasts; mute and block hiding new lines, bubbles and whispers live; prefs.json keeping the lists across a restart.
+- A report with a real Java player: the chat context lines and the gold line to an online op (`tabletop.reports`).
+
+### Known gaps
+- Other headsets' lines (`[Giant] ...`, kind `operator`) have no player uuid: they can't be muted, blocked or reported.
+- Blocking hides chat, bubbles and whispers; the player's figure, name, builds and sign text stay on the table.
+- The chat context only has what the plugin heard while running (memory, `reports.context-minutes`); `/msg` and `/tellraw` aren't seen (no event).
+
