@@ -57,6 +57,9 @@ and the alias.
 - `TabletopBatch.BuildReleaseApk`: the same, but fails when the key isn't set. Use it for anything that goes to the
   store.
 - Both build without the Development flag (not debuggable) to `quest-app/Builds/TabletopCraftAR.apk`.
+- After a release build `ProjectSettings.asset` may show `AndroidKeystoreName: '{inproject}: '` (Unity's way of
+  writing "no keystore"; it holds no path). Revert it with `git checkout quest-app/ProjectSettings/ProjectSettings.asset`
+  rather than committing it.
 
 ```
 read -rs TABLETOP_KEYSTORE_PASS && export TABLETOP_KEYSTORE_PASS TABLETOP_KEY_PASS="$TABLETOP_KEYSTORE_PASS"
