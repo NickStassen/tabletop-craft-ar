@@ -123,7 +123,7 @@ namespace TabletopCraft.World
         readonly Queue<Vector3Int> _scan = new Queue<Vector3Int>();               // region-local sections still to scan
         readonly HashSet<Vector3Int> _scanSet = new HashSet<Vector3Int>();
         bool[] _mask = new bool[0];
-        int _maskCount = -1, _modelsGen = -1;
+        int _modelsGen = -1;
         bool _fullScan, _textDirty, _portalDirty;
         Matrix4x4 _lastL2W;
         readonly Stopwatch _sw = new Stopwatch();
@@ -232,8 +232,7 @@ namespace TabletopCraft.World
                     if (_scanSet.Contains(new Vector3Int(l.x / S, l.y / S, l.z / S))) i.Confirmed = false;
                 }
             }
-            _mask = BlockEntityScan.Mask(Model.Palette);
-            _maskCount = Model.Palette.Count;
+            UpdateMask();
         }
 
         void Queue(Vector3Int s) { if (_scanSet.Add(s)) _scan.Enqueue(s); }
@@ -242,12 +241,13 @@ namespace TabletopCraft.World
 
         // ---------- the scan ----------
 
+        /// <summary>[smooth] Extended for new palette entries only (a glide shift used to redo the whole palette).</summary>
         void UpdateMask()
         {
-            if (_maskCount == Model.Palette.Count) return;
-            _mask = BlockEntityScan.Mask(Model.Palette);
-            _maskCount = Model.Palette.Count;
+            if (_maskTable.Update(Model, WantedFn)) _mask = _maskTable.Items;
         }
+        readonly PaletteTable<bool> _maskTable = new PaletteTable<bool>();
+        static readonly System.Func<string, bool> WantedFn = BlockEntityScan.Wanted;
 
         void ScanStep()
         {

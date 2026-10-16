@@ -40,6 +40,7 @@ static class GlideTests
         public Vector3 Motion;
         int _inFlight;
         readonly HashSet<Vector3Int> _busy = new HashSet<Vector3Int>();
+        readonly ConcurrentBag<MeshData> _pool = new ConcurrentBag<MeshData>();
         readonly HashSet<Vector3Int> _meshes = new HashSet<Vector3Int>();
         readonly ConcurrentQueue<(Vector3Int s, int snap, SectionMesh mesh)> _done = new ConcurrentQueue<(Vector3Int, int, SectionMesh)>();
         public IFaceSource Faces = new MeshTests.CachedFlat();
@@ -266,7 +267,7 @@ static class GlideTests
                 var faces = Faces;
                 Task.Run(() =>
                 {
-                    var data = new MeshData();
+                    var data = _pool.TryTake(out var pooled) ? pooled : new MeshData();   // pooled like TabletopRenderer's
                     foreach (var s in list)
                     {
                         long t0 = Stopwatch.GetTimestamp();
@@ -292,6 +293,7 @@ static class GlideTests
                         }
                         _done.Enqueue((s, snap, mesh));
                     }
+                    _pool.Add(data);
                     Interlocked.Decrement(ref _jobs);
                 });
             }
@@ -308,17 +310,37 @@ static class GlideTests
     {
         var p = w.Palette;
         BlockEntityScan.Mask(p);
-        for (int i = 0; i < p.Count; i++)
+        for (int i = 0; i < p.Count; i++) PaletteEntry(p[i], faces);
+    }
+
+    static byte PaletteEntry(string st, IFaceSource faces)
+    {
+        var shape = BlockRules.Shape(st);
+        string cut = CapMesher.CapState(st, shape);
+        if (cut != null && faces != null) for (int f = 0; f < 6; f++) faces.Face(cut, f);
+        string path = BlockRules.Path(st);
+        if (path == "water") BlockEditRules.Prop(st, "level");
+        if (faces != null) for (int d = 0; d < 6; d++) faces.Face(st, d);
+        return 0;
+    }
+
+    /// <summary>[smooth] The same passes as the app does them now: only the entries a delta appended (PaletteTable).</summary>
+    sealed class AppPalettePasses
+    {
+        readonly PaletteTable<bool> _mask = new PaletteTable<bool>();
+        readonly PaletteTable<byte> _rest = new PaletteTable<byte>();
+        public int Computed => _rest.Computed;
+        public void Update(WorldModel w, IFaceSource faces)
         {
-            string st = p[i];
-            var shape = BlockRules.Shape(st);
-            string cut = CapMesher.CapState(st, shape);
-            if (cut != null && faces != null) for (int f = 0; f < 6; f++) faces.Face(cut, f);
-            string path = BlockRules.Path(st);
-            if (path == "water") BlockEditRules.Prop(st, "level");
-            if (faces != null) for (int d = 0; d < 6; d++) faces.Face(st, d);
+            _mask.Update(w, BlockEntityScan.Wanted);
+            _rest.Update(w, s => PaletteEntry(s, faces));
         }
     }
+
+    /// <summary>[smooth] --old-apply: the 0.8.1 snapshot apply (whole-palette passes every snapshot, no buffer reuse).</summary>
+    public static bool OldApply;
+    /// <summary>[smooth] --height H: the region height to glide with (0: the server's).</summary>
+    public static int Height;
 
     public static void LiveGlide(string url, int[] widths, float seconds, bool mesh, float slowdown, Action<bool, string> check, string jar = null, bool skirt = false, bool oldBatches = false)
     {
@@ -334,7 +356,8 @@ static class GlideTests
         void Prewarm()
         {
             if (pack == null) return;
-            if (prewarmSnap != world.SnapshotId) { prewarmSnap = world.SnapshotId; prewarmed = 0; }
+            int key = OldApply ? world.SnapshotId : world.PaletteEpoch;   // [smooth] the app now prewarms only appended entries
+            if (prewarmSnap != key) { prewarmSnap = key; prewarmed = 0; }
             for (int d = 0; d < 6; d++) { pack.Face(FluidRules.WaterState, d); pack.Face(FluidRules.LavaState, d); }
             for (; prewarmed < world.Palette.Count; prewarmed++) pack.Face(world.Palette[prewarmed], 0);
         }
@@ -347,7 +370,9 @@ static class GlideTests
         // [smooth] main-thread time per frame (inbound, apply, meshing schedule, nav; not the sleep), apply time per
         // snapshot, the decode worker's time, and GC while gliding.
         var mainMs = new List<float>(); var applyMs = new List<float>(); var decodeMs = new List<float>();
-        void PalettePasses() => FullPalettePasses(world, pack);
+        var passes = new AppPalettePasses();
+        void PalettePasses() { if (OldApply) FullPalettePasses(world, pack); else passes.Update(world, pack); }
+        SnapshotBuffers.Enabled = !OldApply; SnapshotBuffers.Clear();
 
         // One frame of the headset: inbound messages, a finished decode, meshing, then the caller moves.
         void Frame()
@@ -358,10 +383,12 @@ static class GlideTests
                 else
                 {
                     long a0 = Stopwatch.GetTimestamp();
+                    var oldGrid = world.Grid; var oldLight = world.Light;
                     world.ApplySnapshot(r.Snapshot);
                     Prewarm();
                     sim.OnSnapshot(r.Plan);
                     PalettePasses();   // [smooth] the app's palette-derived tables (block entities, caps, sound)
+                    if (!ReferenceEquals(oldGrid, world.Grid)) SnapshotBuffers.Retire(oldGrid, ReferenceEquals(oldLight, world.Light) ? null : oldLight);   // as TabletopApp
                     if (gliding) { applyMs.Add((float)((Stopwatch.GetTimestamp() - a0) * 1000.0 / Stopwatch.Frequency)); decodeMs.Add((float)r.Ms); }
                     nav.OnRegion(world.World, world.Origin, world.Dims, r.ViewMargin, Now());
                     if (requestAt >= 0) { latencies.Add(Now() - requestAt); requestAt = -1; }
@@ -420,6 +447,12 @@ static class GlideTests
         }
 
         if (!WaitIdle(120)) { check(false, "live-glide: no first snapshot"); link.Dispose(); return; }
+        if (Height > 0 && nav.Dims.y != Height)   // [smooth] --height: a taller area, like the headset's 186-block one
+        {
+            var mv = new RegionMove { Origin = new Vector3Int(nav.Origin.x, Math.Max(nav.MinY == int.MinValue ? -64 : nav.MinY, (int)nav.View.y - Height / 2) / 16 * 16, nav.Origin.z), Dims = new Vector3Int(nav.Dims.x, Height, nav.Dims.z), Margin = new Vector3Int(nav.Margin.x, 0, nav.Margin.z), Kind = "resize" };
+            if (nav.TryIssue(mv, Now())) Send(mv);
+            if (!WaitIdle(120)) { check(false, "live-glide: no taller area"); link.Dispose(); return; }
+        }
         foreach (int width in widths)
         {
             var plan = AreaSizing.Plan(nav, width, limits);
@@ -476,7 +509,7 @@ static class GlideTests
                                   $"blocks_per_shift={(applyMs.Count == 0 ? 0 : dist / applyMs.Count):F1} main_ms p50={Pc(mainMs, 0.5f)} p99={Pc(mainMs, 0.99f)} max={(mainMs.Count == 0 ? 0 : mainMs.Max()):F2} " +
                                   $"over4ms={mainMs.Count(x => x > 4f)}/{mainMs.Count} apply_ms p50={Pc(applyMs, 0.5f)} max={(applyMs.Count == 0 ? 0 : applyMs.Max()):F2} " +
                                   $"decode_worker_ms p50={Pc(decodeMs, 0.5f)} max={(decodeMs.Count == 0 ? 0 : decodeMs.Max()):F1} palette={world.Palette.Count} " +
-                                  $"alloc_mb={allocMb:F0} alloc_mb_per_shift={(applyMs.Count == 0 ? 0 : allocMb / applyMs.Count):F1} gc={gcs0}/{gcs1}/{gcs2}");
+                                  $"alloc_mb={allocMb:F0} alloc_mb_per_shift={(applyMs.Count == 0 ? 0 : allocMb / applyMs.Count):F1} gc={gcs0}/{gcs1}/{gcs2} buffers_reused={SnapshotBuffers.Reused} old_apply={OldApply}");
                 WaitIdle(30);
             }
         }

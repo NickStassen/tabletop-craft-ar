@@ -155,12 +155,15 @@ namespace TabletopCraft.World
         public static bool[] Mask(IList<string> palette)
         {
             var m = new bool[palette.Count];
-            for (int i = 0; i < m.Length; i++)
-            {
-                var k = BlockEntityCatalog.KindOfState(palette[i]);
-                m[i] = k != BlockEntityKind.None && (k != BlockEntityKind.Lectern || palette[i].Contains("has_book=true"));
-            }
+            for (int i = 0; i < m.Length; i++) m[i] = Wanted(palette[i]);
             return m;
+        }
+
+        /// <summary>A state this renderer draws (one entry of Mask).</summary>
+        public static bool Wanted(string state)
+        {
+            var k = BlockEntityCatalog.KindOfState(state);
+            return k != BlockEntityKind.None && (k != BlockEntityKind.Lectern || state.Contains("has_book=true"));
         }
 
         /// <summary>Region-local cells of the given 16^3 sections (all sections when null) whose palette index is in the mask.</summary>

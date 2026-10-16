@@ -158,7 +158,7 @@ namespace TabletopCraft.World
         readonly HashSet<Vector3Int> _busy = new HashSet<Vector3Int>();
         readonly List<Vector3Int> _pick = new List<Vector3Int>();
         readonly Stopwatch _sw = new Stopwatch();
-        int _inFlight, _jobs, _prewarmedSnapshot = -1, _prewarmedCount;   // _inFlight: sections being meshed; _jobs: worker jobs
+        int _inFlight, _jobs, _prewarmedEpoch = -1, _prewarmedCount;   // _inFlight: sections being meshed; _jobs: worker jobs
         // [nav] snapshot transitions
         readonly HashSet<Vector3Int> _lazy = new HashSet<Vector3Int>();   // kept sections to refresh when idle
         readonly List<Batch> _retired = new List<Batch>();
@@ -259,6 +259,9 @@ namespace TabletopCraft.World
             finally { FrameHitch.End(FrameHitch.Part.Rekey, h0); }
         }
 
+        readonly Dictionary<Vector3Int, SectionMesh> _moved = new Dictionary<Vector3Int, SectionMesh>();
+        readonly List<Vector3Int> _lazyTmp = new List<Vector3Int>();
+
         void Rekey(SectionPlan plan, Vector3Int oldOrigin, Vector3Int newOrigin)
         {
             _keepChecked = false;   // [nav] section keys changed: check the kept meshes against the next KeepScope
@@ -270,7 +273,7 @@ namespace TabletopCraft.World
                 // [area] Batches are keyed in world sections: they keep their meshes and only move. The ones that lost
                 // sections are rebuilt; the ones that gain sections are rebuilt when those are meshed.
                 var (dirtyBatches, gone) = BatchRules.AfterRekey(_layout, layout, sh, _secs.Keys, _batches.Keys);
-                var moved = new Dictionary<Vector3Int, SectionMesh>();
+                var moved = _moved; moved.Clear();   // [smooth] reused (no garbage per shift)
                 int quads = 0;
                 foreach (var kv in _secs)
                 {
@@ -280,12 +283,13 @@ namespace TabletopCraft.World
                 }
                 _secs.Clear();
                 foreach (var kv in moved) _secs[kv.Key] = kv.Value;
+                moved.Clear();
                 Quads = quads;
                 foreach (var g in gone) { if (_batches.TryGetValue(g, out var b)) Kill(b); _batches.Remove(g); _dirty.Remove(g); _trail.Remove(g); }
                 _layout = layout;
                 foreach (var b in _batches.Values) b.Go.transform.localPosition = _layout.Position(b.Key, b.Y0);
                 foreach (var k in dirtyBatches) MarkBatch(k);
-                var lazy = new List<Vector3Int>(_lazy);
+                var lazy = _lazyTmp; lazy.Clear(); lazy.AddRange(_lazy);
                 _lazy.Clear();
                 foreach (var k in lazy)
                 {
@@ -361,7 +365,8 @@ namespace TabletopCraft.World
 
         void Prewarm()
         {
-            if (_prewarmedSnapshot != Model.SnapshotId) { _prewarmedSnapshot = Model.SnapshotId; _prewarmedCount = 0; }
+            // [smooth] Only the palette entries a delta appended (PaletteEpoch); every shift used to resolve the whole palette again.
+            if (_prewarmedEpoch != Model.PaletteEpoch || _prewarmedCount > Model.Palette.Count) { _prewarmedEpoch = Model.PaletteEpoch; _prewarmedCount = 0; }
             if (Atlas == null) { _prewarmedCount = Model.Palette.Count; return; }
             // FluidMesher meshes water/lava (incl. waterlogged blocks, kelp, seagrass) with these two states' faces. Always
             // ready, so a worker never resolves them, even for a block_update that lands mid-mesh (cached after the first call).
@@ -373,8 +378,9 @@ namespace TabletopCraft.World
             // [piston] what moving_piston cells draw instead (PistonGhosts): piston heads may not be in the palette.
             if (!Model.MovingShown.IsEmpty) foreach (var s in Model.MovingShown.Values) Atlas.Face(s, 0);
             Atlas.Commit();
-            if (Atlas.Array != null)
+            if (Atlas.Array != null && !ReferenceEquals(Atlas.Array, _boundArray))   // [smooth] only when the array was (re)created
             {
+                _boundArray = Atlas.Array;
                 OpaqueMaterial.SetTexture("_Blocks", Atlas.Array); OpaqueMaterial.SetFloat("_HasTex", 1);
                 SolidMaterial.SetTexture("_Blocks", Atlas.Array); SolidMaterial.SetFloat("_HasTex", 1);   // [gpu]
                 PackedMaterials();
@@ -383,6 +389,7 @@ namespace TabletopCraft.World
             }
             if (_randomVersion != RandomUv.Version) UploadRandomTables();
         }
+        Texture _boundArray;
 
         // [random] Per-block texture rotation of greedy cubes (RandomUv, Shaders/TabletopRandom.cginc): the tables are a
         // global array (fixed size: Unity can't grow a shader array after its first upload), and every batch carries the

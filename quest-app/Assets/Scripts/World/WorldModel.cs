@@ -48,15 +48,27 @@ namespace TabletopCraft.World
         {
             int v = BlockRules.Version, n = Palette.Count;
             var s = new BlockShape[n];
-            for (int i = 0; i < n; i++) s[i] = BlockRules.Shape(Palette[i]);
+            // [smooth] Same shapes version and the palette only grew (a delta): keep the known part.
+            var old = _shapes; int from = 0;
+            if (_shapesVersion == v && _shapesEpoch == PaletteEpoch && old.Length <= n) { System.Array.Copy(old, s, old.Length); from = old.Length; }
+            for (int i = from; i < n; i++) s[i] = BlockRules.Shape(Palette[i]);
             _shapes = s;
-            _shapesVersion = v;
+            _shapesVersion = v; _shapesEpoch = PaletteEpoch;
         }
+        int _shapesEpoch = -1;
+
+        /// <summary>[smooth] Bumped when a snapshot replaces the palette with one that doesn't start with the old one. Deltas
+        /// and block_update's palette_add only append, so tables derived from the palette (PaletteTables) extend instead of
+        /// being rebuilt on every glide shift.</summary>
+        public int PaletteEpoch { get; private set; }
 
         public void ApplySnapshot(ChunkSnapshot s)
         {
             SnapshotId = s.SnapshotId; World = s.World; Origin = s.Origin; Dims = s.Dims;
-            Palette.Clear(); Palette.AddRange(s.Palette);
+            bool prefix = Palette.Count <= s.Palette.Length;
+            for (int i = 0; prefix && i < Palette.Count; i++) prefix = string.Equals(Palette[i], s.Palette[i]);
+            if (prefix) for (int i = Palette.Count; i < s.Palette.Length; i++) Palette.Add(s.Palette[i]);
+            else { PaletteEpoch++; Palette.Clear(); Palette.AddRange(s.Palette); }
             Grid = s.Grid;
             Light = s.Light;
             Biomes = s.Biomes;
@@ -126,5 +138,36 @@ namespace TabletopCraft.World
                 for (int sy = y0; sy <= y1; sy++)
                     for (int sz = z0; sz <= z1; sz++) DirtySections.Add(new Vector3Int(sx, sy, sz));
         }
+    }
+
+    /// <summary>
+    /// [smooth] One value per palette index, derived from the state strings (main thread). A glide shift's delta only
+    /// appends to the palette (WorldModel.PaletteEpoch), so Update computes the new entries instead of the whole palette:
+    /// string tests under IL2CPP made the full passes cost milliseconds on every shift once the session palette had a few
+    /// hundred states. Each change publishes a new array, so a worker holding the old one keeps a consistent table.
+    /// </summary>
+    public sealed class PaletteTable<T>
+    {
+        T[] _items = new T[0];
+        int _epoch = -1;
+        public T[] Items => _items;
+        /// <summary>Entries computed by the last Update calls (tests).</summary>
+        public int Computed { get; private set; }
+
+        /// <summary>Brings the table up to date; true when it changed.</summary>
+        public bool Update(WorldModel w, System.Func<string, T> make)
+        {
+            var p = w.Palette;
+            int n = p.Count, from = _epoch == w.PaletteEpoch && _items.Length <= n ? _items.Length : 0;
+            if (from == n && _epoch == w.PaletteEpoch) return false;
+            var a = new T[n];
+            if (from > 0) System.Array.Copy(_items, a, from);
+            for (int i = from; i < n; i++) a[i] = make(p[i]);
+            Computed += n - from;
+            _items = a; _epoch = w.PaletteEpoch;
+            return true;
+        }
+
+        public void Reset() { _items = new T[0]; _epoch = -1; }
     }
 }
