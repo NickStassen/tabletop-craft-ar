@@ -5,7 +5,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the design and [PROTOCOL.md](PROTOCOL
 Phases 0-3 were built and checked on Paper 1.21.11 / Java 21. The server pin has since moved to Paper 26.3 / Java 25 (ARCHITECTURE §2); the versions in those phases are kept as written.
 
 ## Phase 0 — Repo and scaffolding (box)
-- A private repo whose default branch is `master`, with `server-plugin/` (Gradle, Java 21, Paper 1.21.11 API, Shadow + relocation), `quest-app/` (scripts + setup doc), `tools/` (fake-quest client), `docs/`, and a CLAUDE.md that cross-links ironman-quest3-hud and VR-7.
+- A repo (now public) whose default branch is `master`, with `server-plugin/` (Gradle; then Java 21 and the Paper 1.21.11 API, now Java 25 and Paper 26.3; Shadow + relocation), `quest-app/` (scripts + setup doc), `tools/` (fake-quest client), `docs/`, and a CLAUDE.md that cross-links ironman-quest3-hud and VR-7.
 - **Exit:** `./gradlew build` produces a shaded jar whose Java-WebSocket classes live under the relocated package (`unzip -l` shows no `org/java_websocket/`). CI runs the build and the unit tests.
 
 ## Phase 1 — Server link + export (box, headless)

@@ -127,7 +127,7 @@ Quest 3 on Android 14-based Horizon OS, USB for install and logcat, Wi-Fi for th
 - **Setup notes**:
   - The USB debugging prompt didn't appear at first. A headset restart with the cable in, then "Always allow", fixed it.
   - Unity's batch builds kill the adb server, so expect to re-approve until "Always allow" sticks.
-- **Not yet checked on the headset**:
+- **Not yet checked on the headset** (at the time; all of these were verified in the 2026-10-14 and 2026-10-15 sessions, see the Status table in OVERVIEW.md):
   - MRUK table detection. The log has "MRUK Shared: Unable to bind OpenXR function" warnings, and the table was placed with A.
   - Area setup.
   - Live block edits.
