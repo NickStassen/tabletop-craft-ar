@@ -125,6 +125,8 @@ stops working 90 days after the channel's last upload**; invitees to a private c
 4. Commit `release: vX.Y.Z`, tag `vX.Y.Z`.
 5. `gh release create vX.Y.Z` with notes (what's new, what was verified on a headset, known gaps), attaching the plugin
    jar as `tabletop-craft-ar-plugin-X.Y.Z.jar` (the server starter downloads exactly this name from the latest
-   release; GitHub lists its SHA-256, which the starter checks) and the APK as `tabletop-craft-ar-X.Y.Z.apk`. **Never** attach a client jar, `pack.zip`, `entity_models.json`, `sounds.zip` or the keystore.
+   release; GitHub lists its SHA-256, which the starter checks), the APK as `tabletop-craft-ar-X.Y.Z.apk`, and the
+   three starter scripts (`server-starter/start.bat`, `start.ps1`, `start.sh`) as `tabletop-server-starter-X.Y.Z.zip`
+   (`cd server-starter && zip ../tabletop-server-starter-X.Y.Z.zip start.*`). **Never** attach a client jar, `pack.zip`, `entity_models.json`, `sounds.zip` or the keystore.
 6. `tools/release/upload_quest.sh --channel BETA` (at least every 90 days, so the invite link stays alive).
 7. Install from the store on a second, non-developer account and record the result in TESTING.md.
