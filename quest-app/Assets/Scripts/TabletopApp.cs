@@ -971,10 +971,12 @@ namespace TabletopCraft
                     SavePairings();
                     _serverIdHint = sid;
                     _link.DeviceToken = token;
+                    // A server that waited for the code goes on with welcome on this connection; an open one needs a new hello.
+                    bool sameConnection = _pairCode != null && _pairCode.Required;
                     _pairCode = null;
                     _hud.Toast("Paired with " + ServerAddress.HostOf(_link.Url) + " as " + (m.S("name") ?? DeviceName), ToastKind.Info, 5);
                     Debug.Log("[Tabletop] PAIR paired as " + m.S("device"));
-                    if (_link.Connected) _link.Reconnect();
+                    if (!sameConnection) _link.Reconnect();
                     break;
                 }
                 case "region_info":

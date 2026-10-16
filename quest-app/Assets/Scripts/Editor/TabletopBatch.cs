@@ -122,12 +122,23 @@ namespace TabletopCraft.EditorTools
         /// <summary>Sets Unity's Android signing to the key (null = the debug key and every field cleared).</summary>
         static void UseKey(ReleaseKey key)
         {
-            PlayerSettings.Android.useCustomKeystore = key != null;
-            PlayerSettings.Android.keystoreName = key?.Keystore ?? "";
-            PlayerSettings.Android.keystorePass = key?.KeystorePass ?? "";
-            PlayerSettings.Android.keyaliasName = key?.Alias ?? "";
+            // Only what changes is set: assigning an empty keystore name records "{inproject}: " in ProjectSettings.asset.
+            bool use = key != null;
+            string store = key?.Keystore ?? "", alias = key?.Alias ?? "";
+            if (PlayerSettings.Android.useCustomKeystore != use) PlayerSettings.Android.useCustomKeystore = use;
+            if (Blank(PlayerSettings.Android.keystoreName) != Blank(store) || (!Blank(store) && PlayerSettings.Android.keystoreName != store))
+                PlayerSettings.Android.keystoreName = store;
+            if ((PlayerSettings.Android.keyaliasName ?? "") != alias) PlayerSettings.Android.keyaliasName = alias;
+            PlayerSettings.Android.keystorePass = key?.KeystorePass ?? "";   // passwords are never written to ProjectSettings.asset
             PlayerSettings.Android.keyaliasPass = key?.KeyPass ?? "";
             if (key != null) Debug.Log($"[Tabletop] release signing with {Path.GetFileName(key.Keystore)}, alias {key.Alias}");
+        }
+
+        /// <summary>An unset keystore name: empty, or Unity's "{inproject}: " with nothing after it.</summary>
+        static bool Blank(string keystoreName)
+        {
+            string s = (keystoreName ?? "").Trim();
+            return s.Length == 0 || s == "{inproject}:";
         }
 
         const int MaxBuildAttempts = 3;
