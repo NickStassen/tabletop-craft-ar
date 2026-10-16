@@ -76,7 +76,9 @@ namespace TabletopCraft.World
                    "(in game, as an operator: /tabletop pair " + code.Code + ")\n\n" +
                    $"Server: {Short(host, 48)}   code valid {s / 60}:{s % 60:00}\n" +
                    (code.Required ? "The world loads once the server knows this headset."
-                                  : "The world works meanwhile; pairing adds the game's textures and sounds.");
+                                  : "The world works meanwhile; pairing adds the game's textures and sounds.") +
+                   // [v1.2.1] the first-run card is often gone within a frame (the server answers at once): every new user sees this one
+                   "\n\n<size=34>NOT AN OFFICIAL MINECRAFT PRODUCT.\nNOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.</size>";
         }
 
         /// <summary>[setup] First run (no server chosen yet): looking for servers on the LAN, or how to start one.</summary>

@@ -150,10 +150,13 @@ namespace TabletopCraft.Net
         public static string Note(PairingWelcome w, bool hasPack)
         {
             if (w.Supported) return null;
-            string v = string.IsNullOrEmpty(w.ServerVersion) ? "an older version" : w.ServerVersion;
+            string v = string.IsNullOrEmpty(w.ServerVersion) ? "an older version" : Named(w.ServerVersion);
             return $"Server plugin {v} can't pair headsets{(hasPack ? "" : " or send the game's textures")}: " +
-                   $"update it to {PairingSince} or newer ({Releases})";
+                   $"update it to {Named(PairingSince)} or newer ({Releases})";
         }
+
+        /// <summary>[v1.2.1] A version as the docs write it: "1.1.0" -> "v1.1.0".</summary>
+        public static string Named(string version) => string.IsNullOrEmpty(version) || version[0] == 'v' ? version : "v" + version;
 
         /// <summary>Compares "1.0.2" and "1.1.0" by number (missing parts are 0; anything after '-' is ignored).</summary>
         public static int Compare(string a, string b)

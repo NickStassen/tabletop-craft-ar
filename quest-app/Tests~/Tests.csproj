@@ -33,6 +33,7 @@
     <!-- [menu] block menu: registry, menu model, HUD toasts, icons (PROTOCOL.md 4.24) -->
     <Compile Include="../Assets/Scripts/Net/BlockRegistry.cs;../Assets/Scripts/World/BlockMenuModel.cs;../Assets/Scripts/World/HudState.cs;../Assets/Scripts/World/PngDecoder.cs;../Assets/Scripts/World/BlockIcons.cs" />
     <!-- [talk] chat, commands, server status, operator panel (PROTOCOL.md 4.26-4.28) -->
+    <Compile Include="../Assets/Scripts/World/TextFit.cs" />
     <Compile Include="../Assets/Scripts/Net/ControlProtocol.cs;../Assets/Scripts/World/ChatSafety.cs;../Assets/Scripts/World/ChatLog.cs;../Assets/Scripts/World/ConsoleModel.cs;../Assets/Scripts/World/OperatorPanelModel.cs" />
     <!-- [hands] using blocks, items and mobs (interact_v1) -->
     <Compile Include="../Assets/Scripts/Net/InteractProtocol.cs;../Assets/Scripts/World/UseRules.cs;../Assets/Scripts/World/EntityRaycast.cs;../Assets/Scripts/World/EntityCardModel.cs" />

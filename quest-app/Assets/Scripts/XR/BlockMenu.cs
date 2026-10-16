@@ -403,10 +403,10 @@ namespace TabletopCraft.XR
                 string nt = Model.NameTagKeys.Text.Length == 0 ? "type the name, then use the tag on a mob" : Model.NameTagKeys.Display(40);
                 Label("nametag", "Name tag: " + nt, Lo.NameTagField.X + 0.004f, Lo.NameTagField.CY, 0.0017f, TextAnchor.MiddleLeft, Model.NameTagKeys.Text.Length == 0 ? TextDim : TextMain);
             }
-            if (Model.Tab == Model.InfoTab) Label("info", _info, Lo.Info.X + 0.002f, Lo.Info.Y + 0.002f, 0.00135f, TextAnchor.UpperLeft, TextMain);
+            // [v1.2.1] status text wrapped to its rectangle and shrunk until it fits above the buttons (TextFit)
+            if (Model.Tab == Model.InfoTab) FittedLabel("info", _info, Lo.Info);
             else if (Model.Tab == Model.ToolsTab && Model.Tools != null)   // [power] box, block, filter, brush, history, the running job
-                Label("toolsinfo", string.Join("\n", Model.Tools.Lines(Model.Selected, Model.LabelOf, Time.unscaledTimeAsDouble)),
-                      Lo.ToolsInfo.X + 0.002f, Lo.ToolsInfo.Y + 0.002f, 0.00135f, TextAnchor.UpperLeft, TextMain);
+                FittedLabel("toolsinfo", string.Join("\n", Model.Tools.Lines(Model.Selected, Model.LabelOf, Time.unscaledTimeAsDouble)), Lo.ToolsInfo);
             else if (_registry == null) Label("wait", "waiting for the server's block list...", Lo.Grid.CX, Lo.Grid.CY, 0.0018f, TextAnchor.MiddleCenter, TextDim);
             Label("name", Short(Model.NameLine(), 48), Lo.Name.X + 0.002f, Lo.Name.CY, 0.0019f, TextAnchor.MiddleLeft, TextMain);
             if (Lo.AreaLabel.W > 0) Label("arealabel", "Area", Lo.AreaLabel.X + 0.002f, Lo.AreaLabel.CY, 0.0018f, TextAnchor.MiddleLeft, TextDim);
@@ -418,6 +418,17 @@ namespace TabletopCraft.XR
             }
             _b.Apply(_bg); _i.Apply(_icon); _o.Apply(_over);
             foreach (var kv in _texts) if (!_used.Contains(kv.Key) && kv.Value.gameObject.activeSelf) kv.Value.gameObject.SetActive(false);
+        }
+
+        readonly Dictionary<string, (string src, MenuRect r, TextFit.Result fit)> _fits = new Dictionary<string, (string, MenuRect, TextFit.Result)>();
+
+        /// <summary>[v1.2.1] A multi-line label kept inside <paramref name="r"/>: wrapped, and smaller when it has many lines.</summary>
+        void FittedLabel(string key, string text, MenuRect r)
+        {
+            text ??= "";
+            if (!_fits.TryGetValue(key, out var f) || f.src != text || f.r.W != r.W || f.r.H != r.H)
+                _fits[key] = f = (text, r, TextFit.Fit(text, r.W - 0.004f, r.H - 0.003f, 0.0012f, 0.0007f));
+            Label(key, f.fit.Text, r.X + 0.002f, r.Y + 0.002f, f.fit.Size, TextAnchor.UpperLeft, TextMain);
         }
 
         static string Short(string s, int n) => s == null ? "" : s.Length <= n ? s : s.Substring(0, n - 1) + "…";

@@ -88,7 +88,7 @@ static class SetupTests
         check(w.Supported && w.Paired && w.Device == "a1b2c3d4" && w.ServerId == "3f9c2a7e1b4d5c6a" && !w.Required && PluginSupport.Note(w, false) == null, "pair: welcome_pair fixture");
         var old = PairingWelcome.From(Parse(fx("welcome")));
         string note = PluginSupport.Note(old, false);
-        check(!old.Supported && note != null && note.Contains("update it to 1.1.0") && note.Contains("textures") && note.Contains("github.com/NickStassen/tabletop-craft-ar/releases"),
+        check(!old.Supported && note != null && note.Contains("update it to v1.1.0") && note.Contains("textures") && note.Contains("github.com/NickStassen/tabletop-craft-ar/releases"),
               "pair: a 1.0 plugin gets an update note: " + note);
         check(!PluginSupport.Note(old, true).Contains("textures"), "pair: the note leaves out textures when the headset has a pack");
         check(PluginSupport.Compare("1.0.0", "1.1.0") < 0 && PluginSupport.Compare("1.10.0", "1.9.3") > 0 && PluginSupport.Compare("1.1", "1.1.0") == 0

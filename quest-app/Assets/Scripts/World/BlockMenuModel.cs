@@ -115,7 +115,7 @@ namespace TabletopCraft.World
     public sealed class BlockMenuModel
     {
         // Layout (metres). Readable at arm's length: 30 mm cells, 24 mm tabs and keys.
-        public const int Columns = 9, Rows = 5, SearchRows = 3;
+        public const int Columns = 9, Rows = 5, SearchRows = 3, InfoRows = 8;   // [v1.2.1] the Info tab is taller: its status text no longer fits 5 rows
         public const float Margin = 0.008f, Gap = 0.004f, TabH = 0.024f, Cell = 0.030f, ScrollW = 0.022f, NameH = 0.018f,
                            HotH = 0.034f, AreaH = 0.024f, KeyH = 0.024f, SearchH = 0.022f, AreaLabelW = 0.05f, ButtonH = 0.024f;
         public const int MaxQuery = 32, MaxServer = 96, MaxFound = 4;
@@ -573,7 +573,7 @@ namespace TabletopCraft.World
             else if (Tab == ToolsTab) y = ToolsLayout(L, y, inner);   // [power]
             else
             {
-                int rows = Tab == InfoTab ? Rows : GridRows;
+                int rows = Tab == InfoTab ? InfoRows : GridRows;
                 L.Grid = new MenuRect(Margin, y, Columns * Cell, rows * Cell);
                 if (Tab == InfoTab)
                 {

@@ -212,6 +212,7 @@ static class Program
         MenuTests.Run(Check, Fixture, JarPath(args), args);   // [menu] block registry, menu model, hotbar, HUD toasts, icons (MenuTests.cs)
         ControlTests.Run(Check, Fixture);   // [talk] chat, console, operator panel, status (ControlTests.cs)
         SafetyTests.Run(Check, Fixture);    // [safety] mute, block, report (SafetyTests.cs)
+        TextFitTests.Run(Check);            // [v1.2.1] Info tab text fits its panel (TextFitTests.cs)
         InteractTests.Run(Check, Fixture);  // [hands] using blocks, items and mobs (InteractTests.cs)
         PowerTests.Run(Check, Fixture);     // [power] undo/redo, box edits, brushes (PowerTests.cs)
         OperatorTests.Run(Check, Fixture);  // [operator] follow, marks, containers, signs (OperatorTests.cs)
