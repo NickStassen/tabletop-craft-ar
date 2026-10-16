@@ -13,6 +13,89 @@ static class SmoothTests
     {
         Hitch(check);
         Apply(check);
+        Shifts(check);
+    }
+
+    static NavState Region(int window, int margin)
+    {
+        var n = new NavState { CanPad = true, Caps = new RegionLimits { MaxX = 352, MaxY = 384, MaxZ = 352, MaxBlocks = 25165824, MaxBytes = 64 << 20 } };
+        int d = window + 2 * margin;
+        n.OnRegion("world", new Vector3Int(-d / 2 / 16 * 16, 0, -d / 2 / 16 * 16), new Vector3Int(d, 128, d), new Vector3Int(margin, 0, margin), 0);
+        return n;
+    }
+
+    /// <summary>A steady glide along +x at `speed` blocks/s for `seconds`, answers after `latency` s (72 Hz frames).
+    /// Returns (shifts, blocks travelled, seconds stalled at the margin's edge, smallest runway left at a request).</summary>
+    static (int shifts, float dist, float stalled, float minRunway) Glide(NavState n, float speed, float latency, float seconds, Func<NavState, Vector3> delta = null)
+    {
+        const float dt = 1f / 72f;
+        var pending = new Queue<(float at, RegionMove m)>();
+        float t = 1, x0 = n.View.x, stalled = 0, minRunway = float.MaxValue; int shifts = 0;
+        for (float end = t + seconds; t < end; t += dt)
+        {
+            while (pending.Count > 0 && pending.Peek().at <= t) { var m = pending.Dequeue().m; n.OnRegion("world", m.Origin, m.Dims, m.Margin, t); }
+            var d = delta != null ? delta(n) : new Vector3(speed * dt, 0, 0);
+            float before = n.View.x;
+            var mv = n.Move(d, dt, t);
+            if (d.x > 0 && n.View.x - before < 0.5f * d.x) stalled += dt;
+            if (mv.HasValue)
+            {
+                if (mv.Value.Kind == "shift") { shifts++; minRunway = Math.Min(minRunway, n.Margin.x - n.Offset.x); }
+                pending.Enqueue((t + latency, mv.Value));
+            }
+        }
+        return (shifts, n.View.x - x0, stalled, minRunway);
+    }
+
+    /// <summary>Fewer shifts: margin 32 from the smallest width, lookahead shifts of whole sections in pairs (or threes at 48),
+    /// lookahead from a followed player's velocity, and a follow that keeps gliding while a shift is in flight.</summary>
+    static void Shifts(Action<bool, string> check)
+    {
+        var n = new NavState();
+        check(n.LookaheadSections(32) == 2 && n.LookaheadSections(48) == 3 && n.LookaheadSections(24) == 1 && !n.CanLookahead(16),
+              $"shifts: lookahead moves 2 sections at a 32 margin, 3 at 48, 1 at 24, none at 16 ({n.LookaheadSections(32)}, {n.LookaheadSections(48)}, {n.LookaheadSections(24)})");
+        // 96 wide, as on the headset: 16 margin (0.8.1) against 32 with 2-section shifts, 20 blocks/s, 0.4 s answers.
+        var old = Region(96, 16); old.CanPad = false; var oldRun = Glide(old, 20f, 0.4f, 8f);   // stays at 16 (no margin growth)
+        var neu = Region(96, 32); var newRun = Glide(neu, 20f, 0.4f, 8f);
+        check(newRun.dist / newRun.shifts >= 24f && newRun.stalled < 0.05f && newRun.dist > 150f && newRun.minRunway >= 16f,
+              $"shifts: 96 wide at 20 blocks/s, margin 32 shifts {newRun.shifts} times in {newRun.dist:F0} blocks, stalled {newRun.stalled:F2} s, runway at a request >= {newRun.minRunway:F1} " +
+              $"(margin 16: {oldRun.shifts} shifts, stalled {oldRun.stalled:F2} s)");
+        var one = Region(96, 32); one.LookaheadRunway = 1000f; var oneRun = Glide(one, 20f, 0.4f, 8f);
+        check(newRun.shifts < oneRun.shifts, $"shifts: pairs of sections instead of one at a time ({newRun.shifts} vs {oneRun.shifts})");
+        var fast = Region(96, 32); var fastRun = Glide(fast, 40f, 0.25f, 6f);
+        check(fastRun.stalled < 0.05f, $"shifts: 40 blocks/s with 0.25 s answers doesn't stall at the edge ({fastRun.stalled:F2} s)");
+        // 256 wide (margin 48): threes.
+        var wide = Region(256, 48); var wideRun = Glide(wide, 40f, 0.5f, 8f);
+        check(wideRun.stalled < 0.05f && wideRun.dist / Math.Max(1, wideRun.shifts) >= 40f, $"shifts: 256 wide moves {wideRun.dist / Math.Max(1, wideRun.shifts):F0} blocks per shift, stalled {wideRun.stalled:F2} s");
+
+        // Following: the player's velocity makes the motion steady at once (lookahead), the eased view's needed 8 blocks.
+        var f = Region(96, 32);
+        f.Lead = new Vector3(4.3f, 0, 0);
+        check(f.Steady(0, +1) && !f.Steady(0, -1) && !f.Steady(2, +1), "follow: a player walking +x makes +x steady right away");
+        var fs = new FollowState();
+        fs.Start("Alex", "u1", 0);
+        for (int i = 0; i <= 30; i++) fs.OnSeen("world", new Vector3(10 + 4.3f * i / 30f, 64, 5), i / 30f);
+        check(Math.Abs(fs.Velocity.x - 4.3f) < 0.3f && Math.Abs(fs.Velocity.z) < 0.01f && fs.Velocity.y == 0, $"follow: the player's velocity from its sightings ({fs.Velocity.x:F2})");
+        fs.OnSeen("world", new Vector3(500, 64, 5), 1.05f);
+        check(fs.Velocity.x == 0 && fs.Velocity.z == 0, "follow: a teleport resets the velocity");
+        // A shift in flight doesn't pause the follow's glide any more.
+        var g = Region(96, 32);
+        var fl = new FollowState(); fl.Start("Alex", "u1", 0);
+        fl.OnSeen("world", g.View + new Vector3(10, 0, 0), 0.5f);
+        g.TryIssue(new RegionMove { Origin = g.Origin + new Vector3Int(16, 0, 0), Dims = g.Dims, Margin = g.Margin, Kind = "shift" }, 0.5f);
+        var st = fl.Step(g, 1 / 72f, 0.51f, null);
+        check(g.Pending && st.Delta.x > 0 && !st.Jump.HasValue, "follow: keeps gliding while a shift is in flight");
+        // A walking player: the follow (eased) with the player's velocity as lead shifts in pairs and never stalls.
+        var w = Region(96, 32); var wf = new FollowState(); wf.Start("Alex", "u1", 0);
+        float clock = 1, px = w.View.x;
+        var walk = Glide(w, 0, 0.4f, 20f, nav =>
+        {
+            clock += 1f / 72f; px += 4.3f / 72f;
+            wf.OnSeen("world", new Vector3(px, nav.View.y, nav.View.z), clock);
+            nav.Lead = wf.Velocity;
+            return wf.Step(nav, 1f / 72f, clock, null).Delta;
+        });
+        check(walk.stalled < 0.05f && walk.shifts > 0 && walk.dist / walk.shifts >= 28f, $"follow: a walking player (4.3 blocks/s) is followed in {walk.shifts} shifts over {walk.dist:F0} blocks, stalled {walk.stalled:F2} s");
     }
 
     static ChunkSnapshot Snap(int id, params string[] palette) =>

@@ -339,6 +339,10 @@ static class GlideTests
 
     /// <summary>[smooth] --old-apply: the 0.8.1 snapshot apply (whole-palette passes every snapshot, no buffer reuse).</summary>
     public static bool OldApply;
+    /// <summary>[smooth] --old-shifts: 0.8.1 lookahead (one section at a time).</summary>
+    public static bool OldShifts;
+    /// <summary>[smooth] --speed B: at most B blocks/s.</summary>
+    public static float MaxSpeed;
     /// <summary>[smooth] --height H: the region height to glide with (0: the server's).</summary>
     public static int Height;
 
@@ -347,6 +351,7 @@ static class GlideTests
         var link = new LinkClient(url, "");
         link.Start();
         var world = new WorldModel(); var nav = new NavState(); var asm = new SnapshotAssembler();
+        if (OldShifts) nav.LookaheadRunway = 1000f;
         var sim = new SimMesher { W = world, Slowdown = slowdown, OldBatchRules = oldBatches, Skirt = skirt };
         using var assets = jar != null ? new ZipAssets(jar) : null;
         var pack = assets != null ? new PackFaces(assets) : null;
@@ -370,6 +375,7 @@ static class GlideTests
         // [smooth] main-thread time per frame (inbound, apply, meshing schedule, nav; not the sleep), apply time per
         // snapshot, the decode worker's time, and GC while gliding.
         var mainMs = new List<float>(); var applyMs = new List<float>(); var decodeMs = new List<float>();
+        double decodeMb = 0, planMb = 0; SnapshotAssembler.MeasureAlloc = true;
         var passes = new AppPalettePasses();
         void PalettePasses() { if (OldApply) FullPalettePasses(world, pack); else passes.Update(world, pack); }
         SnapshotBuffers.Enabled = !OldApply; SnapshotBuffers.Clear();
@@ -389,6 +395,7 @@ static class GlideTests
                     sim.OnSnapshot(r.Plan);
                     PalettePasses();   // [smooth] the app's palette-derived tables (block entities, caps, sound)
                     if (!ReferenceEquals(oldGrid, world.Grid)) SnapshotBuffers.Retire(oldGrid, ReferenceEquals(oldLight, world.Light) ? null : oldLight);   // as TabletopApp
+                    if (gliding) { decodeMb += r.DecodeBytes / 1048576.0; planMb += r.PlanBytes / 1048576.0; }
                     if (gliding) { applyMs.Add((float)((Stopwatch.GetTimestamp() - a0) * 1000.0 / Stopwatch.Frequency)); decodeMs.Add((float)r.Ms); }
                     nav.OnRegion(world.World, world.Origin, world.Dims, r.ViewMargin, Now());
                     if (requestAt >= 0) { latencies.Add(Now() - requestAt); requestAt = -1; }
@@ -467,7 +474,7 @@ static class GlideTests
                 latencies.Clear(); listed = 0; requests = 0; sim.Meshed = 0; sim.Dropped = 0; sim.MeshTicks = 0; holeFrames = 0; uncoveredFrames = 0; surfaceFrames = 0; sim.TilesBuilt = 0; sim.SkirtTicks = 0; gliding = true;
                 sim.Rebuilds = 0; sim.RebuildBytes = 0; sim.EmptyRebuilds = 0;
                 float held0 = 0, t0 = Now(), last = t0, x0 = nav.View.x, stalled = 0, capSum = 0, meshCapSum = 0; int frames = 0;
-                mainMs.Clear(); applyMs.Clear(); decodeMs.Clear();
+                mainMs.Clear(); applyMs.Clear(); decodeMs.Clear(); decodeMb = planMb = 0;
                 int gc0 = GC.CollectionCount(0), gc1 = GC.CollectionCount(1), gc2 = GC.CollectionCount(2);
                 long alloc0 = GC.GetTotalAllocatedBytes(false);
                 while (Now() - t0 < seconds)
@@ -479,6 +486,7 @@ static class GlideTests
                     nav.MeshCap = MeshScope.MeshSpeedCap(sim.Meter.Rate, sim.Scope, new Vector3(dir, 0, 0));   // as NavController
                     meshCapSum += Math.Min(1000f, nav.MeshCap);
                     float speed = nav.Speed(bs, 1f, held0, Math.Min(nav.Margin.x, nav.Margin.z));
+                    if (MaxSpeed > 0) speed = Math.Min(speed, MaxSpeed);   // [smooth] --speed: glide like the headset did (16-32 blocks/s at 96 wide)
                     float want = nav.BaseSpeedM / bs * (1f + nav.RampGain * Math.Min(1f, held0 / nav.RampSeconds));
                     capSum += speed; frames++;
                     float before = nav.View.x;
@@ -509,7 +517,7 @@ static class GlideTests
                                   $"blocks_per_shift={(applyMs.Count == 0 ? 0 : dist / applyMs.Count):F1} main_ms p50={Pc(mainMs, 0.5f)} p99={Pc(mainMs, 0.99f)} max={(mainMs.Count == 0 ? 0 : mainMs.Max()):F2} " +
                                   $"over4ms={mainMs.Count(x => x > 4f)}/{mainMs.Count} apply_ms p50={Pc(applyMs, 0.5f)} max={(applyMs.Count == 0 ? 0 : applyMs.Max()):F2} " +
                                   $"decode_worker_ms p50={Pc(decodeMs, 0.5f)} max={(decodeMs.Count == 0 ? 0 : decodeMs.Max()):F1} palette={world.Palette.Count} " +
-                                  $"alloc_mb={allocMb:F0} alloc_mb_per_shift={(applyMs.Count == 0 ? 0 : allocMb / applyMs.Count):F1} gc={gcs0}/{gcs1}/{gcs2} buffers_reused={SnapshotBuffers.Reused} old_apply={OldApply}");
+                                  $"alloc_mb={allocMb:F0} alloc_mb_per_shift={(applyMs.Count == 0 ? 0 : allocMb / applyMs.Count):F1} gc={gcs0}/{gcs1}/{gcs2} buffers_reused={SnapshotBuffers.Reused} old_apply={OldApply} decode_mb_per_shift={(applyMs.Count == 0 ? 0 : decodeMb / applyMs.Count):F1} plan_mb_per_shift={(applyMs.Count == 0 ? 0 : planMb / applyMs.Count):F1}");
                 WaitIdle(30);
             }
         }

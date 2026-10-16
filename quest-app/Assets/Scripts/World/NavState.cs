@@ -53,6 +53,13 @@ namespace TabletopCraft.World
         public float SteadySpeed = 2f;
         /// <summary>s below SteadySpeed before the steady distance resets (a frame without input doesn't break a glide).</summary>
         public float SteadyGrace = 0.2f;
+        /// <summary>[smooth] Blocks of runway (view to the margin's edge) a lookahead shift keeps when it goes out: shifts wait
+        /// until as many whole sections fit as this allows (LookaheadSections), so a steady glide makes fewer, bigger shifts.</summary>
+        public float LookaheadRunway = 20f;
+        /// <summary>[smooth] Velocity of what the view follows (world blocks/s; following a player: the player's), set by the
+        /// caller every frame: moving at least SteadySpeed along an axis counts as steady there right away, so a follow gets
+        /// lookahead from the player's motion rather than from the eased view's.</summary>
+        public Vector3 Lead;
 
         // Region from the latest snapshot.
         public bool Loaded { get; private set; }
@@ -196,7 +203,15 @@ namespace TabletopCraft.World
         public bool CanLookahead(int margin) => Reserve(margin) >= Trigger;
 
         /// <summary>[nav] Moving steadily along an axis in direction dir (SteadyBlocks travelled that way without stopping).</summary>
-        public bool Steady(int axis, int dir) => _run[axis] * dir >= SteadyBlocks;
+        public bool Steady(int axis, int dir) => _run[axis] * dir >= SteadyBlocks || Lead[axis] * dir >= SteadySpeed;
+
+        /// <summary>
+        /// [smooth] Fewest whole sections a lookahead shift moves: as many as fit while LookaheadRunway blocks of runway are
+        /// left when it goes out (2 with a 32 margin, 3 with 48; at least 1). A shift of k sections goes out when the view is
+        /// k * 16 - margin + reserve past the centre, with 2 * margin - reserve - k * 16 blocks of runway left.
+        /// </summary>
+        public int LookaheadSections(int margin) =>
+            Math.Max(1, (int)Math.Floor((2f * margin - Reserve(margin) - LookaheadRunway) / Step));
 
         /// <summary>
         /// Move the view by delta world blocks over dt seconds. Returns a region_request to send (origin, dims,
@@ -276,7 +291,9 @@ namespace TabletopCraft.World
             if (margin > 0 && CanLookahead(margin) && Steady(axis, dir) && !(_lastDir[axis] != 0 && dir != _lastDir[axis] && ahead <= TriggerFor(axis, dir, margin)))
             {
                 int nl = (int)Math.Floor((ahead + margin - Reserve(margin)) / Step);
-                if (nl >= 1) return dir * nl * Step;
+                // [smooth] Wait until LookaheadSections fit (fewer, bigger shifts: each costs the headset a hitch); the runway
+                // left then is still LookaheadRunway blocks, so the plain trigger below isn't needed meanwhile.
+                return nl >= LookaheadSections(margin) ? dir * nl * Step : 0;
             }
             float trig = TriggerFor(axis, dir, margin);
             if (ahead <= trig) return 0;

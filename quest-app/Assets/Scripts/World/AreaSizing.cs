@@ -23,7 +23,9 @@ namespace TabletopCraft.World
         /// region round trip grows with its size; TESTING.md "Faster gliding"). Pairs of (from width, margin), ascending.
         /// The margin is shrunk to fit the server's caps; presets are always sized with the minimum (NavState.MarginPref).
         /// </summary>
-        public static (int width, int margin)[] MarginByWidth = { (0, 16), (128, 32), (256, 48) };
+        /// [smooth] 32 from the smallest width (it was 16 up to 96 wide): the margin is what makes lookahead and the
+        /// fewer, bigger shifts possible (NavState.LookaheadSections); at 96 wide a shift every 16 blocks hitched.
+        public static (int width, int margin)[] MarginByWidth = { (0, 32), (256, 48) };
 
         /// <summary>[nav] The margin this width wants (MarginByWidth), before the server's caps.</summary>
         public static int MarginFor(int width)

@@ -158,7 +158,7 @@ namespace TabletopCraft.World
         void Begin(string name, string uuid, bool once)
         {
             Active = true; _once = once; Name = name; Uuid = uuid; HasTarget = false; _recentering = false; JumpCount = 0;
-            _seenAt = -100; _lastQuery = -100; _jumpAt = -100;
+            _seenAt = -100; _lastQuery = -100; _jumpAt = -100; Velocity = Vector3.zero;
             Note = (once ? "going to " : "following ") + name;
         }
 
@@ -173,8 +173,21 @@ namespace TabletopCraft.World
         public void OnSeen(string world, Vector3 pos, float now)
         {
             if (!Active) return;
+            // [smooth] The player's velocity (x/z, smoothed over about 0.3 s) for NavState.Lead: lookahead from where the
+            // player is going. A teleport, another world or a gap in sightings resets it.
+            float dt = now - _seenAt;
+            if (HasTarget && world == TargetWorld && dt > 1e-3f && dt < 0.5f)
+            {
+                var v = (pos - Target) / dt; v.y = 0;
+                if (v.sqrMagnitude > 60f * 60f) Velocity = Vector3.zero;
+                else Velocity += (v - Velocity) * Math.Min(1f, dt / 0.3f);
+            }
+            else Velocity = Vector3.zero;
             TargetWorld = world; Target = pos; HasTarget = true; _seenAt = now;
         }
+
+        /// <summary>[smooth] The followed player's smoothed x/z velocity on the table (world blocks/s; zero when unknown).</summary>
+        public Vector3 Velocity { get; private set; }
 
         public bool Seen(float now) => now - _seenAt <= SeenFor;
 
@@ -217,13 +230,16 @@ namespace TabletopCraft.World
             var s = new FollowStep();
             if (!Active || nav == null || !nav.Loaded) return s;
             if (now - _lastQuery >= (Seen(now) ? QueryWhileSeen : QueryEvery)) { s.Query = true; _lastQuery = now; }
-            if (Focus.Pending || nav.Pending || !HasTarget) return s;   // a jump (or a glide shift) is on its way
+            // A jump is on its way. [smooth] A glide shift in flight no longer pauses the glide: NavState keeps the view inside
+            // the loaded margin, and pausing stopped the view for every round trip (a stop-go follow that never got steady
+            // enough for lookahead).
+            if (Focus.Pending || !HasTarget) return s;
             bool otherWorld = TargetWorld != null && TargetWorld != nav.World;
             var off = Target - nav.View;
             bool far = Math.Abs(off.x) > nav.Window.x / 2f + nav.Margin.x + JumpBeyond || Math.Abs(off.z) > nav.Window.z / 2f + nav.Margin.z + JumpBeyond;
             if (otherWorld || far || (_once && JumpCount == 0))
             {
-                if (now - _jumpAt < 1f) return s;   // the last jump's region hasn't settled yet
+                if (nav.Pending || now - _jumpAt < 1f) return s;   // a request in flight, or the last jump's region hasn't settled yet
                 int minY = nav.MinY, maxY = nav.MaxY;
                 if (otherWorld)
                 {

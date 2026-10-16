@@ -211,6 +211,8 @@ namespace TabletopCraft.XR
                 else delta = st.Delta;
             }
             TryJump(now);
+            // [smooth] Following: lookahead from the player's own motion (NavState.Lead), not only the eased view's.
+            State.Lead = Follow.Active && _held == 0 && Follow.Seen(now) ? Follow.Velocity : Vector3.zero;
             var before = State.View;
             var move = State.Move(delta, dt, Time.unscaledTime);
             if (delta != Vector3.zero && _held > 0)   // [operator] the stick's glide only (not following)

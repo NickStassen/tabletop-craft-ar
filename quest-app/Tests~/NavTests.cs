@@ -226,16 +226,16 @@ static class NavTests
     static void FastGlideTests()
     {
         // Margins grow with the width; presets are still sized with the smallest margin.
-        Check(AreaSizing.MarginFor(64) == 16 && AreaSizing.MarginFor(96) == 16 && AreaSizing.MarginFor(128) == 32 && AreaSizing.MarginFor(192) == 32 && AreaSizing.MarginFor(256) == 48,
-              "glide: margin 16 up to 96 wide, 32 at 128-192, 48 at 256");
+        Check(AreaSizing.MarginFor(64) == 32 && AreaSizing.MarginFor(96) == 32 && AreaSizing.MarginFor(128) == 32 && AreaSizing.MarginFor(192) == 32 && AreaSizing.MarginFor(256) == 48,
+              "glide: margin 32 up to 192 wide ([smooth] was 16 up to 96), 48 at 256");
         var small = new NavState { CanPad = true };
         small.OnRegion("world", new Vector3Int(0, 16, 0), new Vector3Int(96, 128, 96), new Vector3Int(16, 16, 16), 0);
         bool sized = true;
         foreach (int w in AreaSizing.All)
         {
             var p = AreaSizing.Plan(small, w, NewCaps);
-            int want = w == 64 ? 0 : w + 2 * AreaSizing.MarginFor(w);   // 64 is the current window: nothing to send
-            if (w == 64) sized &= p == null; else sized &= p.HasValue && p.Value.Dims.x == want && p.Value.Margin.x == AreaSizing.MarginFor(w) && p.Value.Margin.y == 16;
+            int want = w + 2 * AreaSizing.MarginFor(w);   // [smooth] 64 is the current window: only its margin grows (16 -> 32)
+            sized &= p.HasValue && p.Value.Dims.x == want && p.Value.Margin.x == AreaSizing.MarginFor(w) && p.Value.Margin.y == 16;
         }
         Check(sized && AreaSizing.Presets(NewCaps, small.MarginPref.x).SequenceEqual(AreaSizing.All), "glide: each preset gets its margin on a 352 server (256 -> 352 wide region)");
         var oldPlan = AreaSizing.Plan(small, 256, OldCaps);
@@ -347,6 +347,7 @@ static class NavTests
         var noMargin = new NavState(); noMargin.OnRegion("world", new Vector3Int(0, 0, 0), new Vector3Int(64, 64, 64), default, 0);
         Check(MeshScope.Active(noMargin, new Vector3Int(4, 4, 4)).Count == 64, "scope: a region without a margin meshes everything");
         var lk = Wide(48, NewCaps);
+        lk.LookaheadRunway = 1000f;   // [smooth] one-section lookahead shifts here (SmoothTests covers the bigger ones)
         var pre = MeshScope.Active(lk, nsec);
         var lr = Glide(lk, new Vector3(1, 0, 0), 60f, 0.3f, 1.2f, ref t);
         var shiftX = lk.Origin.x - (-176);
