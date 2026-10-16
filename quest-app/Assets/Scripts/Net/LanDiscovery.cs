@@ -53,13 +53,16 @@ namespace TabletopCraft.Net
         public string Name = "", Url = "", Host = "", Mc = "", Version = "";
         public int Players;
         public bool TokenNeeded, PortOnly;
+        /// <summary>[setup] The server's id (its pairing key; empty from a 1.0 plugin) and whether it pairs headsets.</summary>
+        public string Id = "";
+        public bool Pair;
         /// <summary>Button text: "Name (host)", with "token" / "port open" notes.</summary>
         public string Label
         {
             get
             {
                 string s = PortOnly ? $"{Host} (port open)" : $"{(Name.Length > 0 ? Name : "Server")} ({Host})";
-                if (TokenNeeded) s += " token";
+                if (TokenNeeded && !Pair) s += " token";
                 return s.Length > 40 ? s.Substring(0, 39) + "…" : s;
             }
         }
@@ -89,6 +92,7 @@ namespace TabletopCraft.Net
             {
                 Name = name, Url = url, Host = senderHost, Mc = m.S("mc") ?? "", Version = m.S("version") ?? "",
                 Players = Math.Max(0, m.I("players")), TokenNeeded = m.B("token"),
+                Id = m.S("id") ?? "", Pair = m.B("pair"),   // [setup] PROTOCOL.md 7, "Pairing"
             };
         }
 

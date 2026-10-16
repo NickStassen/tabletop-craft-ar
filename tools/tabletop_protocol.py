@@ -139,6 +139,7 @@ BELL_DIRS = ("north", "south", "east", "west")
 ERROR_CODES |= {"asset_denied"}
 ASSET_NAMES = ("entity_models.json", "sounds.zip", "pack.zip")
 ASSET_MAX_CHUNK = 1 << 20
+ASSET_STATES = ("building", "ready", "missing", "failed")   # [setup] assets.state (next version, 1.1.0)
 SOUND_GROUP_KEYS = ("break", "step", "place", "hit", "fall")
 _SOUND_ID = re.compile(r"^([a-z0-9_.\-]+:)?[a-z0-9_./\-]+$")
 
@@ -262,6 +263,53 @@ def validate(msg: dict) -> None:
         validate_world_state(msg)   # [living]
     if t in POWER_REQUIRED or t in ("block_edit", "interact") or (t == "welcome" and CAP_POWER in (msg.get("caps") or [])):
         validate_power(msg)   # [power]
+    if t in PAIR_REQUIRED or t in ("hello", "welcome"):
+        validate_pairing(msg)   # [setup]
+
+
+# [setup] Pairing (PROTOCOL.md "Pairing", next version 1.1.0): cap pair_v1; hello.device_token / device_name; welcome.server_id
+# and welcome.pairing; pair_request (C->S), pair_code and paired (S->C); error pair_denied.
+CAP_PAIR = "pair_v1"
+PAIR_REQUIRED = {
+    "pair_request": [],
+    "pair_code": ["code", "expires_s", "required"],
+    "paired": ["token", "device", "server_id"],
+}
+REQUIRED.update(PAIR_REQUIRED)
+ERROR_CODES |= {"pair_denied"}
+_CODE = re.compile(r"^[0-9]{6}$")
+_TOKEN = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
+_HEXID = re.compile(r"^[0-9a-f]{8,32}$")
+
+
+def validate_pairing(msg: dict) -> None:
+    t = msg["type"]
+    if t == "hello":
+        for k in ("device_token", "device_name"):
+            if k in msg and not isinstance(msg[k], str):
+                raise ValueError(f"hello {k} must be a string")
+    elif t == "welcome":
+        if "server_id" in msg and not (isinstance(msg["server_id"], str) and _HEXID.match(msg["server_id"])):
+            raise ValueError("welcome server_id must be 8-32 lower-case hex digits")
+        p = msg.get("pairing")
+        if p is not None:
+            if not (isinstance(p, dict) and isinstance(p.get("paired"), bool) and isinstance(p.get("required"), bool)):
+                raise ValueError("welcome pairing needs paired and required (booleans)")
+            if p["paired"] and not (isinstance(p.get("device"), str) and _HEXID.match(p["device"])):
+                raise ValueError("a paired welcome.pairing names its device id")
+    elif t == "pair_request":
+        if "device_name" in msg and not isinstance(msg["device_name"], str):
+            raise ValueError("pair_request device_name must be a string")
+    elif t == "pair_code":
+        if not (isinstance(msg["code"], str) and _CODE.match(msg["code"])):
+            raise ValueError("pair_code code must be 6 digits (a string)")
+        if not (isinstance(msg["expires_s"], int) and msg["expires_s"] > 0) or not isinstance(msg["required"], bool):
+            raise ValueError("pair_code needs expires_s > 0 and required (boolean)")
+    elif t == "paired":
+        if not (isinstance(msg["token"], str) and _TOKEN.match(msg["token"])):
+            raise ValueError("paired token must be 32-128 base64url characters")
+        if not (isinstance(msg["device"], str) and _HEXID.match(msg["device"])) or not _HEXID.match(str(msg["server_id"])):
+            raise ValueError("paired device and server_id must be lower-case hex ids")
 
 
 def _group_ok(v) -> bool:
@@ -644,6 +692,11 @@ def validate_discovery(msg: dict) -> None:
             raise ValueError(f"tabletop_server path must start with /, got {msg['path']}")
         if not isinstance(msg["token"], bool):
             raise ValueError("tabletop_server token must be true or false")
+        # [setup] next version (1.1.0): the server's id (welcome.server_id) and whether it pairs headsets
+        if "id" in msg and not (isinstance(msg["id"], str) and re.match(r"^[0-9a-f]{8,32}$", msg["id"])):
+            raise ValueError("tabletop_server id must be 8-32 lower-case hex digits")
+        if "pair" in msg and not isinstance(msg["pair"], bool):
+            raise ValueError("tabletop_server pair must be true or false")
 
 
 def validate_block_registry(msg: dict) -> None:
@@ -1123,6 +1176,11 @@ def validate_sound(msg: dict) -> None:
                 raise ValueError(f"assets file must be one of {ASSET_NAMES} with a size: {f}")
             if not (isinstance(f.get("sha256"), str) and re.fullmatch(r"[0-9a-f]{64}", f["sha256"])):
                 raise ValueError("assets sha256 must be 64 lower-case hex digits")
+        # [setup] next version (1.1.0): what the plugin's automatic game files are doing, and a line for the headset
+        if "state" in msg and msg["state"] not in ASSET_STATES:
+            raise ValueError(f"assets state must be one of {ASSET_STATES}")
+        if "note" in msg and not isinstance(msg["note"], str):
+            raise ValueError("assets note must be a string")
     elif t == "asset_get":
         if msg["name"] not in ASSET_NAMES or not isinstance(msg["offset"], int) or msg["offset"] < 0:
             raise ValueError("asset_get needs a known name and an offset >= 0")

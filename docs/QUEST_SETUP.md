@@ -1,134 +1,87 @@
-# Quest setup: server on a Windows PC + Quest 3 app
+# Quest setup: your server on a PC + the Quest 3 app
 
-Versions follow [ironman-quest3-hud's SETUP.md](https://github.com/NickStassen/ironman-quest3-hud/blob/master/docs/SETUP.md): Unity **6000.0.84f1**, Meta XR Core SDK + MRUK **85.0.0**, OpenXR 1.15.1, built-in render pipeline, Android IL2CPP ARM64. The app compiles and builds an APK headless on Linux and runs on a Quest 3 (TESTING.md section 5 and "First headset session"); Troubleshooting lists the compile fixes that were needed.
+There are two ways to set it up:
 
-## Part A: run the server (Windows)
+- **Store install (recommended):** install the app from the Meta Horizon Store (an invite link while it's in a release channel), run the server starter on your PC, and pair the headset with a 6-digit code. Nothing to type into config files, no Developer Mode, no cable: the headset gets the game's textures, models and sounds from your own PC.
+- **Developer sideload** (the appendix at the end, Parts A to E): build the plugin and the APK yourself, install with `adb`, push files by hand. For development and testing.
 
-1. **JDK 25**: install Eclipse Temurin 25 (MSI from adoptium.net, tick "Set JAVA_HOME" and "Add to PATH"). Check in a new terminal: `java -version` shows 25. Paper 26.x and the plugin build both need it.
-2. **Paper 26.3**: make a folder such as `C:\mc\tabletop`. Download the latest 26.3 build from https://papermc.io/downloads/paper (pick version 26.3; the plugin is built against build 181), save it as `paper.jar` there.
-3. **Plugin**: in the repo, `cd server-plugin` and run `gradlew.bat build` (or grab the `tabletop-plugin` artifact from the latest GitHub Actions run). Copy `build\libs\tabletop-craft-ar-plugin-<version>.jar` (the version in the repo's `VERSION` file) into `C:\mc\tabletop\plugins\`.
-4. **First start**: in `C:\mc\tabletop`, run `java -Xmx4G -jar paper.jar --nogui`. It stops and asks you to accept the EULA: read https://aka.ms/MinecraftEULA, set `eula=true` in `eula.txt`, start again. Wait for `Done (...)! ` and `[TabletopCraftAR] Link listening on ws://0.0.0.0:8765/tabletop`. The next lines, `Headset URL: ws://192.168.1.50:8765/tabletop (Ethernet)`, one per LAN address of the PC, are what the headset can connect to, and `LAN discovery on UDP 8765` means the headset's **Find servers** (Part D) can find it.
-   **Whitelist**: a new 26.x server has `white-list=true` in `server.properties`, so every Java player not on the list is rejected, including you on `localhost`. On a LAN test server, stop the server, set `white-list=false` and start it again, or run `whitelist add <name>` in the console for each player.
-5. **Firewall**: allow Java through Windows Defender Firewall on **Private** networks when prompted, or open the ports explicitly in an admin PowerShell:
-   `New-NetFirewallRule -DisplayName "tabletop ws" -Direction Inbound -Protocol TCP -LocalPort 8765 -Action Allow -Profile Private`
-   `New-NetFirewallRule -DisplayName "mc 25565" -Direction Inbound -Protocol TCP -LocalPort 25565 -Action Allow -Profile Private`
-   `New-NetFirewallRule -DisplayName "tabletop discovery" -Direction Inbound -Protocol UDP -LocalPort 8765 -Action Allow -Profile Private` (Find servers; without it the headset falls back to scanning for TCP 8765)
-   Make sure the PC's Wi-Fi/Ethernet network profile is **Private**, and that the router has AP/client isolation **off**.
-6. **PC IP**: the `Headset URL` lines in the server log (step 4), or `ipconfig` and the IPv4 address of the LAN adapter, e.g. `192.168.1.50`.
-7. **Pick the region**: join the server from the Java launcher (**version 26.3**, the "Latest release", multiplayer, `localhost`). In the server console: `op <yourname>`. Stand at the north-west bottom corner of what you want on the table and run `/tabletop setorigin`, then `/tabletop setsize 32 64 32` (or smaller to start, e.g. `32 32 32`). `/tabletop status` confirms.
-8. **Smoke test without the headset** (optional): `pip install -r tools/requirements.txt`, then `python tools/fake_quest.py --url ws://127.0.0.1:8765/tabletop --avatar -v --duration 15`. In game you should see the giant head (25 blocks wide) circling 45 blocks above the middle of the region, with two hands below it.
+Parts F to Q (playing: the play area, moving around, building, the menu, chat and the console, Bedrock players) apply to both.
 
-## Part B: Unity project
+NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.
 
-1. **Unity Hub** -> Installs -> Install Editor -> Archive -> **6000.0.84f1** (or the deep link `unityhub://6000.0.84f1/78ab6fc243d5`). Tick **Android Build Support** with **OpenJDK** and **Android SDK & NDK Tools**.
-2. Hub -> Add -> Add project from disk -> pick `quest-app/`. Open it. The first import resolves the Meta XR packages from `Packages/manifest.json` (Unity registry, no scoped registry needed) and generates ProjectSettings. If it opens in **Safe Mode**, there are compile errors: see Troubleshooting.
-3. **File > Build Profiles > Android > Switch Platform.**
-4. **Edit > Project Settings > XR Plug-in Management > Android tab**: tick **OpenXR**, then enable the **Meta XR** feature group. Don't tick the deprecated "Oculus" plugin.
-5. **TabletopCraft > Create Scene** (menu from this project). It creates `Assets/Scenes/Tabletop.unity` with OVRCameraRig (passthrough underlay), MRUK (load scene from device on startup), and TabletopApp, sets Passthrough + Scene support to Required and adds the scene to the build list.
-6. **Meta > Tools > Project Setup Tool**, Android tab: **Fix All**, then **Apply All**, repeat until nothing is red. Then check `Assets/Plugins/Android/AndroidManifest.xml` still has `com.oculus.permission.USE_SCENE` and `android.permission.INTERNET`, and `android:usesCleartextTraffic="true"` (plain `ws://` needs it). Re-add them if Meta's tools removed them.
-7. **Player Settings**: Company/Product name, package name e.g. `com.tabletopcraft.ar`. Minimum API level as set by Fix All.
-8. The generated `ProjectSettings/*.asset`, `Assets/XR/`, `Assets/Oculus/`, `Assets/Resources/`, `Assets/Materials/` and `Assets/Scenes/` are committed. `Packages/packages-lock.json` is git-ignored: on Linux it records the embedded, patched Meta SDK, and `manifest.json` pins exact versions anyway.
+## Store install (recommended)
 
-### Linux and command line
+### Quick start
 
-Meta officially supports only Windows and macOS. On Linux the project compiles and builds for Android, but there's no Link, XR Simulator or Play mode, so every test is an install on the headset. The same notes apply as in [ironman-quest3-hud's SETUP.md](https://github.com/NickStassen/ironman-quest3-hud/blob/master/docs/SETUP.md) (udev rule for vendor `2833`, use Unity's bundled adb).
+1. **On your PC, start Minecraft: Java Edition 26.3 once in the launcher.** That puts the game files the headset uses (textures, models, sounds) on your PC. The server reads them from there and sends them only to your own paired headsets.
+2. **Download the server starter and run it.** Get `tabletop-server-starter-<version>.zip` from the [releases page](https://github.com/NickStassen/tabletop-craft-ar/releases) and unpack it. Windows: double-click `start.bat`. Linux and macOS: `bash start.sh`. Accept the Minecraft EULA when it asks: it fetches Paper and the plugin, finds your game files and starts the server.
+3. **Install the app.** Open the invite link on your phone or in a browser, accept it, then install **Tabletop Craft AR** from the Library in the headset.
+4. **Start the app at a table and pair it.** The app finds your server on the same Wi-Fi by itself. It shows a 6-digit code: type `tabletop pair <code>` in the server window (or `/tabletop pair <code>` in game as an operator).
+5. **Wait for the one-time download** (about 75 MB over Wi-Fi; a toast shows the progress, then the table reloads with textures). Mark out the play area on the table (Part G). Friends join with Java Edition at your PC's address.
 
-- **Run `tools/patch-meta-sdk-linux.sh` once before opening the project.** Meta XR Core SDK 85.0.0 doesn't compile in the Linux Editor (`Installer.cs: error CS0103 'downloadedInstallerPath'`). The script embeds 85.0.0 into `quest-app/Packages/` (git-ignored) and applies the fix Meta shipped in 207.0.0.
-- Steps 3 to 7 and the build also run headless through `Assets/Scripts/Editor/TabletopBatch.cs`. Close the Editor first, because an open Editor locks the project:
+### The server starter
 
-```bash
-UNITY=~/Unity/Hub/Editor/6000.0.84f1/Editor/Unity
-# OpenXR loader on Android, TabletopCraft > Create Scene, Fix All, save. No -quit: it exits when the fixes are done.
-"$UNITY" -batchmode -nographics -projectPath quest-app -buildTarget Android -executeMethod TabletopCraft.EditorTools.TabletopBatch.Setup -logFile setup.log
-# -> quest-app/Builds/TabletopCraftAR.apk
-"$UNITY" -batchmode -nographics -quit -projectPath quest-app -buildTarget Android -executeMethod TabletopCraft.EditorTools.TabletopBatch.BuildApk -logFile build.log
-adb install -r quest-app/Builds/TabletopCraftAR.apk
-adb shell am start -n com.tabletopcraft.ar/com.unity3d.player.UnityPlayerGameActivity
-```
+`server-starter/start.bat` (Windows, runs `start.ps1`) and `start.sh` (Linux, macOS) set up a server folder (`TabletopCraftServer` in your home folder; `--dir` / `-Dir` changes it) and download, never redistribute:
 
-If il2cpp crashes with a segmentation fault, BuildApk builds again (up to 3 builds; see Troubleshooting). On Linux, Fix All logs an `ArgumentException: Invalid path` from the Meta XR Simulator download. The Simulator doesn't exist for Linux, so ignore it. The server side works on Linux unchanged (JDK 25, `./gradlew build`). On a firewalled box, open TCP 8765 to the LAN (e.g. `sudo ufw allow from 192.168.1.0/24 to any port 8765 proto tcp`).
+- **Java 25** must be installed. On Windows the starter offers to install Eclipse Temurin 25 with `winget`; elsewhere it prints the download link.
+- **The plugin**: the newest `tabletop-craft-ar-plugin-<version>.jar` release from GitHub, checked against the SHA-256 GitHub lists.
+- **Paper** for the game version that plugin declares (26.3), the newest stable build from PaperMC's download service, checked by SHA-256.
+- **Geyser and Floodgate** (only if you say yes): Bedrock players on phones, consoles and Windows can join too (Part Q).
 
-## Part C: headset
+It asks you to accept the [Minecraft EULA](https://aka.ms/MinecraftEULA) (nothing accepts it for you), and on the first run whether any Java player may join or only the ones on the whitelist (then type `whitelist add <name>` in the server window). It writes the plugin's settings with **pairing required**, so headsets must be paired before they see anything. On Windows it offers the firewall rules (TCP and UDP 8765 for the headset, TCP 25565 for Java players, private networks only). Then it prints the PC's address and starts the server in that window: type `stop` to end it. Run it again to update Paper and the plugin; your world and settings stay.
 
-1. Developer Mode on (Meta Horizon phone app), USB debugging allowed, latest OS. `adb devices` lists the headset (Unity bundles adb under `Editor\Data\PlaybackEngines\AndroidPlayer\SDK\platform-tools`).
-2. **Space Setup** (Settings > Physical space > Space setup): scan the room and **mark the table** as a Table (furniture). The app looks for MRUK `TABLE` anchors; without one it places the world 0.5 m in front of you. Where you put the miniature on the table (hold A, drag, turn) is remembered against that table for the next session, and a scene that loads late never moves a miniature you placed yourself.
-3. **Build And Run** (File > Build Profiles > Android > Run Device: Quest 3). Accept the **spatial data** permission on first launch.
+Options: `--port` / `-Port` (Java players, default 25565), `--ws-port` / `-WsPort` (the headset link and LAN discovery, default 8765), `--memory` / `-Memory` (default 4G), `--bedrock yes|no` / `-Bedrock`, `--no-start` / `-NoStart`, `--plugin-jar` / `-PluginJar` (a plugin build to test).
 
-## Part D: point the app at the server
+On Linux, open the link port in the firewall if one is active: `sudo ufw allow 8765` or `sudo firewall-cmd --add-port=8765/tcp --add-port=8765/udp`. The headset and the PC must be on the same network, with AP or client isolation off on the router.
 
-**In the headset (no adb needed).** If the app can't reach a server for about 5 seconds after it starts, a **setup card** appears in front of you: the address it tried, what went wrong (`Connection refused`, `no answer within 5 s`, a wrong token...), where `tabletop.json` lives, and what to do. Press the **menu button ≡** (left), open the **Info** tab and click **Server: ... (change)**:
-- The app searches the network at once (**Find servers** searches again). Every Tabletop server on your LAN answers with its name (the server's MOTD, or `discovery.name` in config.yml) and shows up as a button, marked `token` if it needs one. Click it to connect. If no server answers (UDP 8765 blocked on the PC, Part A step 5), the app looks for PCs with TCP port 8765 open instead and lists them as `(port open)`.
-- Or type the address on the panel keyboard: `?123` switches to digits and symbols, `ABC` back; `del` deletes, `clear` empties, **connect** (or the Connect button) connects. `192.168.1.50` is enough (the app adds `ws://`, `:8765` and `/tabletop`); `192.168.1.50:8800` or a full `ws://host:port/path` work too. **Cancel** keeps the old address.
-- Connecting saves the address in `tabletop.json` (every other key is kept) and reconnects. A short message says `Connecting to ...`, then `Connected to ...`. The setup card goes away as soon as the link is up, and while the menu is open.
-- A wrong token (close 4003) or an app and plugin that don't match (close 4001) stop the retries and show the card with the reason, until you change the address or the token.
+### Pairing
 
-**With adb.** The app reads `tabletop.json` from its files folder (`/sdcard/Android/data/<package>/files/`). Create it on the PC:
+The first time the app connects to a server it shows a card with a 6-digit code (valid 5 minutes). On a starter-made server the world waits for the code; on a server that doesn't require pairing (`auth.require-pairing: false`) the world shows meanwhile and the card sits lower down.
 
-```json
-{"server": "ws://192.168.1.50:8765/tabletop", "token": "", "skin_player": "YourJavaName"}
-```
+- In the server window type `tabletop pair <code>` (or `/tabletop pair <code>` in game with operator rights). `tabletop pair <code> <JavaName>` also sets the Java account whose skin the giant wears and whose name is used in chat.
+- The server never prints the code: typing it proves you can see that headset. Its window only says `Headset "Quest 3" (192.168.1.23) wants to pair`.
+- The headset keeps its own token for that server (`pairings.json` in the app's files) and connects straight away next time, also when the PC's address changes. Pairing again is needed only after `tabletop unpair` or a reinstall of the app.
+- `tabletop devices` lists paired headsets (id, name, player, last seen) and the ones waiting with a code. `tabletop unpair <id or name>` revokes one (`all` revokes every headset); a connected headset is disconnected and shows a new code. The server keeps only hashes of the tokens, in `plugins/TabletopCraftAR/devices.yml`.
+- A paired headset gets the game files and the server commands of the operator panel (Part L); those stay off for headsets that aren't paired.
 
-and push it (after the first launch has created the folder):
+### The game files
 
-```
-adb push tabletop.json /sdcard/Android/data/com.tabletopcraft.ar/files/tabletop.json
-adb shell am force-stop com.tabletopcraft.ar
-```
+The plugin builds `pack.zip` (the textures and models out of your client jar), `entity_models.json` and `sounds.zip` from the Minecraft install on the server's PC into `plugins/TabletopCraftAR/assets/`, the first time and again after a game or plugin update (a few seconds). It looks in the launcher's usual folder (`%APPDATA%\.minecraft`, `~/Library/Application Support/minecraft`, `~/.minecraft`, the Flatpak launcher) for the server's own version. Paired headsets on your LAN download what they don't have yet (Part P); the files never go anywhere else.
 
-Then relaunch the app. Alternatively set **ServerUrl** on the TabletopApp component before building. The token must match `auth.token` in the plugin config (empty = off); the headset can't type it yet, so a server with a token needs it in `tabletop.json`. `"discovery_port"` changes the UDP port Find servers asks (the plugin's `discovery.port`, default 8765).
+- If the server says `ASSETS auto: no Minecraft 26.3 found`, start that version once in the launcher on that PC, then type `tabletop assets rebuild`. The headset's Info tab shows the same hint on its `ASSETS` line.
+- Another launcher (Prism, MultiMC, CurseForge) or a server running as another user: point it at a folder in the official launcher's layout (`versions/26.3/26.3.jar` and `.json`, `assets/`, `libraries/`) with `tabletop assets dir <folder>` (config.yml `assets.minecraft-dir`).
+- A server on another PC: copy the launcher folder (or just `versions/26.3`, `assets/indexes`, `assets/objects` and `libraries`) from a PC with the game to the server PC and use `tabletop assets dir`, or make the three files there (Part E) and use `assets.serve` and `assets.dir` (Part P).
+- `tabletop assets` shows what was built and from where. `assets.auto: false` in config.yml turns it off.
 
-**Block size.** Leave `block_size_m` out: on the first start the app fits the area to the table (block size = min(table width, depth) / area width × 0.95, a 0.8 × 0.6 m table without MRUK), and afterwards it remembers your zoom (below). `"block_size_m": 0.01` makes a 32-block region 32 cm wide.
+### Settings without tabletop.json
 
-**What the app remembers.** `prefs.json`, next to `tabletop.json`, is written by the app a second or two after you change something (and when the headset goes off): the block size and the area width it was chosen for, where the table is and how it's turned (relative to the MRUK table, so the next session on the same table puts it back the same way round), the hotbar, the selected block, the menu tab and Show HUD. If the server's area has another width at the next start, the block size is scaled so the miniature keeps its size on the table. `block_size_m`, `area_width` and `show_hud` can be in both files: a value in `tabletop.json` takes effect at the next start when it's new or you changed it there since the last start; otherwise the headset's own choice from `prefs.json` stands. Delete `prefs.json` to start fresh (`adb shell rm /sdcard/Android/data/com.tabletopcraft.ar/files/prefs.json`).
+A store install needs no `tabletop.json`. Each of its keys is set in the headset, set on the server, or has a default that suits everyone:
 
-**Giant skin.** `skin_player` is the Java account whose skin the giant wears. Leave it out to use the plugin's `avatar.skin-player` (config.yml), or the default skin if that's empty too. The plugin looks the name up on Mojang's servers in the background, so the PC running Paper needs internet access. Then `/tabletop avatar status` shows `"skin_resolved":true`, and the server log has `SKIN resolved <name>`. This works with `online-mode=true` (recommended) and also on an offline-mode test server. If the lookup fails (wrong name, no internet), the headset gets a `skin_failed` error. Java clients may still show the skin, because they resolve the name themselves. You can also change the skin from the console with `/tabletop avatar skin <name>`.
+| tabletop.json key | Store install |
+|---|---|
+| `server` | Found by itself on the LAN (exactly one server: it connects; several: pick one in menu > Info > Server). Typing an address there also works. The app writes `tabletop.json` itself. |
+| `token` | Not needed: pairing gives the headset its own token. |
+| `skin_player`, `operator_name` | Server side: `tabletop pair <code> <JavaName>`, else config.yml `avatar.skin-player` and `chat.default-name`. |
+| `quick_commands` | Server side: config.yml `commands.quick`. |
+| `show_hud`, `volume`, `sound` | In the headset: menu > Info (Show HUD, the sound row). |
+| `area_width`, `block_size_m` | In the headset: left stick click (width presets), right stick (zoom); remembered in `prefs.json`. |
+| `brightness`, `min_light`, `smooth_lighting`, `mipmaps`, `leaves_inner`, `weather_fx`, `particles`, `particle_density` | Defaults: vanilla's Bright setting with caves kept readable over passthrough, smooth lighting, everything on. |
+| `left_trigger`, `sound_range`, `max_voices`, `chat_ping`, `download_assets`, `reload_after_pack`, `discovery_port` | Defaults (Parts M, P, D). |
+| `surface_skirt`, `skirt_speed`, `mesh_*`, `batch_columns`, `hitch_ms`, `upload_budget_ms`, `reuse_snapshot_buffers`, `mesh_data_on_workers`, `solid_pass`, `packed_vertices`, `clip_planes`, `perf`, `foveation` | Developer tuning: the defaults are the measured best on a Quest 3. |
 
-**Java players' skins on the table.** Each player's skin comes from their game profile, which only an `online-mode=true` server has. On an offline-mode server, everyone gets the default skin the game would show for their UUID (Steve, Alex and the others), read from your `pack.zip` (Part E). Without a pack they get plain colours.
+With adb you can still add any of them by hand (Part D).
 
-`"show_hud": true` brings back a small head-locked status for debugging (off by default; also the **Show HUD** toggle in the block menu's Info tab, Part J).
+### When the store install doesn't work
 
-Optional lighting keys (the server sends light and biomes when its config has `stream.light` / `stream.biomes` on, the default): `"smooth_lighting": false` gives one light value per face and no ambient occlusion (about 15-18% fewer faces than smooth lighting on real terrain), and `"brightness"` is Minecraft's Brightness slider, 0 (Moody) to 1 (Bright), default 1 (Bright, so caves stay readable over passthrough). `"min_light"` (default 0.2) is how bright light level 0 is drawn, 0..1; everything brighter is rescaled up to full daylight, so a cave reads as dark but visible and the seabed 10 blocks down at about half of daylight. A negative value gives vanilla's own curve (level 0 = 0.15 at Bright).
-
-Optional operator keys (Part L): `"operator_name"` is your name in game chat, `"quick_commands"` adds Console buttons. The `token` also unlocks server commands from the headset (Part L).
-
-Optional area keys (Part K): `"area_width"` starts the app at a width preset with the block size fitted to the table (once per value you put there, see "What the app remembers"), and `"batch_columns"` sets the mesh batch size. Optional meshing keys (Part H): `"surface_skirt": true` turns on the low-detail surface shown where the view isn't meshed yet (off by default until it is checked on the headset again; see Part H), `"skirt_speed"` (default 2; 1 to 4) is how much faster than meshing keeps up a glide may go while the skirt covers the leading edge (1 = only as fast as full detail arrives), `"mesh_workers"` (default 3) is the number of meshing threads, and `"mesh_sections_per_job"` (default 4) the fewest sections one meshing job takes (it takes more when sections are cheap).
-
-Optional smoothness keys (for comparing on the headset; TESTING.md "Smooth gliding"): `"hitch_ms"` (default 30; 0 = off) logs a `HITCH` line for every frame longer than that, at most 4 a second: `adb logcat -s Unity | grep HITCH` shows what the slow frame did (`apply_ms` snapshot apply incl. `rekey_ms`, `upload_ms`/`uploads`/`upload_kb` batch uploads, `prewarm_ms` new textures, `skirt_ms`, `caps_ms`, `mesh_done` sections meshed, `gc` garbage collections, `heap_mb`; `script_ms` is the main thread's script time, so `ms` much higher than `script_ms` means the stall was elsewhere: render thread, GPU or GC). `"upload_budget_ms"` (default 3) is the main thread's time per frame for applying meshed sections and uploading batches and skirt tiles. `"mesh_data_on_workers": false` copies batch geometry on the main thread again (0.8.1), and `"reuse_snapshot_buffers": false` allocates a new grid for every glide shift again.
-
-**Headset off, Wi-Fi gone.** Taking the headset off (or the app going to the background) despawns the giant at once and closes the link; putting it back on reconnects, and the table you left is shown meanwhile. If the link drops (Wi-Fi gone, server stopped or frozen: 6 s without anything from the server counts as dropped), the app keeps reconnecting with backoff, a red **Offline: reconnecting...** badge sits on the table's edge toward you, and players and mobs are hidden after 1.5 s, because their positions are stale; the terrain stays. Everything updates when the link is back.
-
-Time of day and weather (needs a server and app from 0.4 on with `world-state.enabled`, the default): the miniature gets darker at night like the game (torches, lava and glowstone stay bright), darker still in rain and thunderstorms, flashes when lightning strikes, and takes the Nether's or the End's own light. `"weather_fx": false` turns off the rain, snow and lightning bolts on the table (the light still follows the time and weather). The Info tab's `TIME` line shows the day time, rain and thunder levels, the sky factor and the number of drops.
-
-Ambient particles (needs `pack.zip`: the sprites are its `textures/particle/*.png`): torch, candle and campfire flames and smoke, fire smoke, lava pops, the nether portal's swirl, falling leaves, fireflies at dusk and night, bubble columns and water or lava dripping through a ceiling, keyed by the blocks in the visible window like vanilla's `animateTick`, plus explosion clouds. `"particles": false` turns them off; `"particle_density": 0.5` halves how many spawn (1 = vanilla's rate near the player; wider areas thin them out by themselves, and at most 3,000 are on the table). The Info tab's `TIME` line ends with `particles N/M` (slots / emitters). Chest, ender chest and shulker box lids, bells, TNT and creeper fuses, dying, sitting and sleeping mobs move like vanilla with a server of the same version (PROTOCOL.md "Block animations"); water and lava flow with the pack's flowing textures.
-
-Optional look keys: `"mipmaps": false` turns off the block textures' mipmaps (on by default: distant terrain stops shimmering, about 33% more texture memory), and `"leaves_inner": false` stops drawing the faces between two leaves blocks (vanilla draws them, so canopies look full; on by default, about 0.5-4% more faces in forests).
-
-Optional GPU keys (for comparing on the headset; TESTING.md "GPU at 256 wide"): `"clip_planes": true` cuts the visible window with hardware clip planes instead of a discard in every pixel (off by default: on a Quest 3 it stalled vertex fetch and halved the frame rate), `"solid_pass": false` draws every opaque face with the alpha test again (no early depth rejection), and `"packed_vertices": false` uploads the 32-byte vertices instead of the 20-byte ones.
-
-## Part E: textures (resource pack)
-
-Without a pack the app uses flat colours. To use textures you already own:
-
-1. Copy your client jar, e.g. `%APPDATA%\.minecraft\versions\26.3\26.3.jar` (Linux: `~/.minecraft/versions/26.3/26.3.jar`), or any Java resource pack `.zip`, to a temp folder and rename it `pack.zip` (a jar is a zip). The atlas loader was checked offline against the 26.3 jar; on the headset it's still untested.
-2. `adb push pack.zip /sdcard/Android/data/com.tabletopcraft.ar/files/pack.zip`, then restart the app. The menu's Info tab (Part J) shows `PACK yes`.
-3. Entity models (boats, minecarts, mobs, armour, and the block entities: chests, shulker boxes, heads, banners, bells, decorated pots, conduits, copper golem statues, lectern and enchanting books). The app ships no model data; generate it from the same client jar with JDK 25 from the repo root, then push it next to `pack.zip`:
-   ```
-   java tools/entity_models/DumpEntityModels.java %APPDATA%\.minecraft 26.3 entity_models.json     (Windows)
-   java tools/entity_models/DumpEntityModels.java ~/.minecraft 26.3 entity_models.json            (Linux)
-   adb push entity_models.json /sdcard/Android/data/com.tabletopcraft.ar/files/entity_models.json
-   ```
-   It reads the game's own model definitions out of `versions/26.3/26.3.jar` and the libraries the launcher downloaded (the game doesn't start) and writes about 90 KB of box sizes, pivots and skin offsets plus the dye colours and sign text colours. Regenerate it after a game update, and after updating the app when its release notes say so (a file from before 0.4 has no block entity layers: chests and banners then stay plain boxes; one from before the living-world update has no gear layers or the ender dragon, wither, giant and the other new types, which then stay boxes or go without their saddles and armour). The app loads it in the background at start; logcat shows `[Tabletop] entity_models.json: 211 models (Minecraft 26.3)`. Without it, entities are boxes of their real size in the average colour of their texture, and the Info tab shows `ENTITIES n (boxes)`.
-
-4. Sound. The game keeps its sounds outside the client jar, in the launcher's asset store (`assets/indexes/<id>.json` names every file, `assets/objects/` holds them). Package your own copy for the headset with any JDK 17+ from the repo root, then push it next to `pack.zip`:
-   ```
-   java tools/sounds/PackSounds.java %APPDATA%\.minecraft 26.3 sounds.zip     (Windows)
-   java tools/sounds/PackSounds.java ~/.minecraft 26.3 sounds.zip            (Linux)
-   java tools/sounds/PackSounds.java ~/.minecraft 26.3 --list                (sizes per group, writes nothing)
-   adb push sounds.zip /sdcard/Android/data/com.tabletopcraft.ar/files/sounds.zip
-   ```
-   It reads `versions/26.3/26.3.json` to find the asset index (`34` for 26.3), checks each file's SHA-1 and writes `sounds.json` plus the `.ogg` files it names, laid out like a resource pack. By default it takes blocks, mobs, items, weather, UI and the rest, but not ambient loops, music or records: 1915 events, 4679 files, about 67 MB for 26.3. Add groups as a fourth argument (`blocks,mobs,weather,records` or `all`; music alone is about 260 MB). Launch the version once in the launcher if it says files are missing. Restart the app (or let your server send it, Part P): the Info tab shows `SOUND 80%  1915 events, 4679 sounds (Minecraft 26.3)`. Without it the table is silent and a toast says `No sounds.zip`.
-
-Don't commit or redistribute the jar, the pack, `entity_models.json` or `sounds.zip` (all are git-ignored).
+| What you see | What to do |
+|---|---|
+| Card "Looking for your Minecraft server on this Wi-Fi" for long | The server isn't running, or UDP and TCP 8765 are blocked by the PC's firewall, or the headset is on another network (guest Wi-Fi, AP isolation). Type the address from the server window (`Headset URL: ws://...`) in menu > Info > Server. |
+| "Found 2 servers" | Pick yours in menu > Info > Server. |
+| The code expired | On a server that requires pairing a new one appears by itself. Otherwise pick the server again in menu > Info > Server. |
+| `tabletop pair` says "no headset is waiting with code ..." | A typo, or the code expired: check the card. |
+| Toast "Server plugin 1.0.x can't pair headsets ...: update it" | Run the starter again (it updates the plugin), or put the newer plugin jar in `plugins/`. |
+| No textures: Info tab `ASSETS the server offers nothing: No Minecraft 26.3 on the server's PC ...` | Start Minecraft 26.3 once in the launcher on the server's PC, then `tabletop assets rebuild` (The game files, above). |
+| A sideloaded copy is installed | Uninstall it first: an app signed differently can't be updated by the store. That also removes its files; they download again after pairing. |
 
 ## Part F: test with a second Java player
 
@@ -424,10 +377,10 @@ Server options (config.yml `edit`): `power`, `power-require-token`, `undo-depth`
 
 **Volume.** Block menu (left ≡) > Info: `[-] [Sound 80%] [+]` beside Show HUD and Reset view; the middle button mutes. The headset remembers it (prefs.json). tabletop.json: `"sound": false` starts muted, `"volume": 0.5`, `"sound_range": 8` (how far sounds carry: metres of table per block of hearing range = block size × this), `"max_voices": 24`, `"chat_ping": false`. The Info tab's `SOUND` line shows the volume, the events and sounds loaded, voices in use and clips in memory.
 
-**Getting pack.zip, entity_models.json and sounds.zip from your server instead of adb (optional, off by default).** This is for your own server and your own headset: put the copies you made from your own Minecraft install (Part E) into a folder on the server PC and let the plugin hand them to your headset. The project ships no Mojang assets, and these files stay yours: never serve them to anyone else or on a public server.
-1. Set a token (`auth.token` in config.yml, and the same `"token"` in the headset's tabletop.json, Part D). Without one nothing is served.
-2. In config.yml: `assets.serve: true` and `assets.dir: "C:/Users/you/tabletop-files"` (a folder holding any of `pack.zip`, `entity_models.json`, `sounds.zip`; nothing else in it is ever read). `/tabletop reload`. The log says `ASSETS serving entity_models.json (0.1 MB), sounds.zip (67.0 MB), pack.zip (...)`.
-3. Start the app. Only headsets on the LAN (private, link-local or loopback addresses) that presented the token are offered the files. Files that differ from the headset's copy (size or SHA-256) download one after another (a `Downloading sounds.zip 34% (23/67 MB, 7.9 MB/s)` toast, the Info tab's `ASSETS` line); a dropped link resumes where it stopped, and only a file whose SHA-256 matches replaces the old one. New sounds and entity models load at once; a new `pack.zip` restarts the scene a couple of seconds later to load the textures (`"reload_after_pack": false` in tabletop.json asks you to restart the app instead). `"download_assets": false` turns downloading off on the headset.
+**Getting pack.zip, entity_models.json and sounds.zip from your server instead of adb.** From plugin 1.1 on this is automatic: the plugin builds the three files from the Minecraft install on its own PC ("Store install" > The game files) and offers them to paired headsets. The project ships no Mojang assets, and these files stay yours: they are only ever sent to your own paired headsets on your LAN, never to anyone else or over the internet.
+1. Pair the headset ("Store install" > Pairing), or give it the server's `auth.token` in its tabletop.json (Part D).
+2. Files you made yourself (Part E) still work and win over the automatic ones of the same name: in config.yml set `assets.serve: true` and `assets.dir: "C:/Users/you/tabletop-files"` (a folder holding any of `pack.zip`, `entity_models.json`, `sounds.zip`; nothing else in it is ever read), then `/tabletop reload`. The log says `ASSETS serving entity_models.json (0.1 MB), sounds.zip (67.0 MB), pack.zip (...)`. `assets.auto: false` serves only that folder.
+3. Start the app. Only trusted headsets (paired, or with the token) on the LAN (private, link-local or loopback addresses) are offered the files. Files that differ from the headset's copy (size or SHA-256) download one after another (a `Downloading sounds.zip 34% (23/67 MB, 7.9 MB/s)` toast, the Info tab's `ASSETS` line); a dropped link resumes where it stopped, and only a file whose SHA-256 matches replaces the old one. New sounds and entity models load at once; a new `pack.zip` restarts the scene a couple of seconds later to load the textures (`"reload_after_pack": false` in tabletop.json asks you to restart the app instead). `"download_assets": false` turns downloading off on the headset.
 4. Speed: `assets.max-mb-per-second` (8 by default, per headset) keeps the world stream smooth while a big file downloads. The server logs each file sent (`ASSETS session=… sent sounds.zip 67.0 MB in 8.5 s`) and `/tabletop status` the totals.
 
 ## Part Q: Bedrock players (Geyser and Floodgate)
@@ -475,7 +428,7 @@ The Info tab (Part J) shows `LINK`, `RTT`, `WORLD`, `PACK`, `EDIT` (the selected
 | Compile errors in `TablePlacement.cs` / `TabletopSceneBuilder.cs` | MRUK/OVR API names differ in 85.0.0 (e.g. `SceneSettings`, `PlaneRect`, `RegisterSceneLoadedCallback`). Fix with the smallest change; the logic is in comments. |
 | Build fails: `il2cpp --convert-to-cpp`, `ExitCode 139 (Segmentation fault)`, `Segmentation fault (core dumped)` | On Linux, il2cpp's own bundled .NET 7 runtime crashes now and then while it converts the assemblies; nothing in the project causes it, and the same build passes when run again. `TabletopBatch.BuildApk` builds again by itself (up to 3 builds, and only when every error is a segfault); in the Editor, just build again. A larger stack (`ulimit -s unlimited`) isn't the fix: the crashing thread uses a few KB of stack (TESTING.md section 5). |
 | Setup card with `no answer within 5 s` / `Connection refused`, or `LINK connecting ...` forever | Wrong IP (use a `Headset URL` from the server log, or Info > Server > Find servers), PC firewall, network profile Public, AP isolation, or cleartext blocked. Check with `aapt2 dump xmltree <apk> --file AndroidManifest.xml`: there must be `usesCleartextTraffic=true` and no `networkSecurityConfig` (the scene builder turns off Meta's `enableNSCConfig`). Test from the PC with `tools/fake_quest.py --url ws://<PC IP>:8765/tabletop`. |
-| Setup card "The server refused the token" (`LINK closed 4003`) | Token mismatch: `token` in tabletop.json must equal `auth.token` in config.yml. The app stops retrying; after fixing the file, Info > Server > Connect (or restarting the app) tries again. |
+| Setup card "The server refused this headset" (`LINK closed 4003`) | A server with `auth.token` whose plugin can't pair (older than 1.1, or `auth.pairing: false`): `token` in tabletop.json must equal `auth.token` in config.yml, or update the plugin and pair. The app stops retrying; after fixing it, Info > Server > Connect (or restarting the app) tries again. |
 | Setup card "App and server don't match" (4001) | The plugin and the app are from different versions: install both from the same release. |
 | Find servers finds nothing | UDP 8765 is blocked on the PC (Part A step 5), the headset and PC are on different subnets, the router has AP isolation, or config.yml `discovery.enabled` is false. The fallback scan only covers the headset's own /24 and TCP 8765. Type the address from the server log's `Headset URL` line instead. |
 | Red "Offline: reconnecting..." badge on the table | The link dropped (Wi-Fi, server stopped or frozen). The app keeps reconnecting by itself; players and mobs come back with the first update. |
@@ -491,7 +444,144 @@ The Info tab (Part J) shows `LINK`, `RTT`, `WORLD`, `PACK`, `EDIT` (the selected
 | Menu icons are coloured cubes | No `pack.zip` (Part E), or the pack failed to open (Info tab: `icons flat`). |
 | Old icons after changing `pack.zip` | Shouldn't happen (the cache folder is named after the pack's size and date); delete the app's `files/icons/` folder to force a redraw. |
 | Blocks I break come back after a moment | The server refused the edit (a short message shows why) or never got it (link down: edits aren't queued). |
-| Operator panel buttons greyed, "needs auth.token" | The server has no `auth.token` (commands need one by default), or `tabletop.json` has a different token (then the link would be refused with 4003). Set both (Part L) and reconnect. |
+| Operator panel buttons greyed, "needs a paired headset" | Commands need a trusted headset by default: pair it ("Store install" > Pairing), or set the same token in config.yml `auth.token` and tabletop.json (Part L), and reconnect. |
 | A command says "refused: /... is in commands.deny" | The plugin's `commands.deny` (or a non-empty `commands.allow`) refuses it; edit config.yml and `/tabletop reload` if you really want it from the headset. |
 | No chat on the wrist or in the Chat tab | The plugin is older than the app, or `chat.enabled: false`; the Info tab's `TALK` line says what the server granted. |
 | Players are plain-coloured figures | They have no skin URL (offline-mode server) and there's no `pack.zip` to take the default skins from (Part E). |
+
+## Appendix: Developer sideload
+
+Building and installing everything yourself, for development and testing: the server by hand (Part A), the Unity project and the APK (Part B), installing with `adb` (Part C), pointing the app at the server by hand (Part D) and making the game files yourself (Part E). Developer Mode must be on. A sideloaded app is signed with another key than the store build: uninstall one before installing the other (docs/RELEASING.md).
+
+Versions follow [ironman-quest3-hud's SETUP.md](https://github.com/NickStassen/ironman-quest3-hud/blob/master/docs/SETUP.md): Unity **6000.0.84f1**, Meta XR Core SDK + MRUK **85.0.0**, OpenXR 1.15.1, built-in render pipeline, Android IL2CPP ARM64. The app compiles and builds an APK headless on Linux and runs on a Quest 3 (TESTING.md section 5 and "First headset session"); Troubleshooting lists the compile fixes that were needed.
+
+## Part A: run the server (Windows)
+
+The server starter ("Store install" > The server starter) does steps 1 to 5 for you, with the released plugin or your own build (`--plugin-jar` / `-PluginJar`), and works for sideloaded apps too. By hand:
+
+1. **JDK 25**: install Eclipse Temurin 25 (MSI from adoptium.net, tick "Set JAVA_HOME" and "Add to PATH"). Check in a new terminal: `java -version` shows 25. Paper 26.x and the plugin build both need it.
+2. **Paper 26.3**: make a folder such as `C:\mc\tabletop`. Download the latest 26.3 build from https://papermc.io/downloads/paper (pick version 26.3; the plugin is built against build 181), save it as `paper.jar` there.
+3. **Plugin**: in the repo, `cd server-plugin` and run `gradlew.bat build` (or grab the `tabletop-plugin` artifact from the latest GitHub Actions run). Copy `build\libs\tabletop-craft-ar-plugin-<version>.jar` (the version in the repo's `VERSION` file) into `C:\mc\tabletop\plugins\`.
+4. **First start**: in `C:\mc\tabletop`, run `java -Xmx4G -jar paper.jar --nogui`. It stops and asks you to accept the EULA: read https://aka.ms/MinecraftEULA, set `eula=true` in `eula.txt`, start again. Wait for `Done (...)! ` and `[TabletopCraftAR] Link listening on ws://0.0.0.0:8765/tabletop`. The next lines, `Headset URL: ws://192.168.1.50:8765/tabletop (Ethernet)`, one per LAN address of the PC, are what the headset can connect to, and `LAN discovery on UDP 8765` means the headset's **Find servers** (Part D) can find it.
+   **Whitelist**: a new 26.x server has `white-list=true` in `server.properties`, so every Java player not on the list is rejected, including you on `localhost`. On a LAN test server, stop the server, set `white-list=false` and start it again, or run `whitelist add <name>` in the console for each player.
+5. **Firewall**: allow Java through Windows Defender Firewall on **Private** networks when prompted, or open the ports explicitly in an admin PowerShell:
+   `New-NetFirewallRule -DisplayName "tabletop ws" -Direction Inbound -Protocol TCP -LocalPort 8765 -Action Allow -Profile Private`
+   `New-NetFirewallRule -DisplayName "mc 25565" -Direction Inbound -Protocol TCP -LocalPort 25565 -Action Allow -Profile Private`
+   `New-NetFirewallRule -DisplayName "tabletop discovery" -Direction Inbound -Protocol UDP -LocalPort 8765 -Action Allow -Profile Private` (Find servers; without it the headset falls back to scanning for TCP 8765)
+   Make sure the PC's Wi-Fi/Ethernet network profile is **Private**, and that the router has AP/client isolation **off**.
+6. **PC IP**: the `Headset URL` lines in the server log (step 4), or `ipconfig` and the IPv4 address of the LAN adapter, e.g. `192.168.1.50`.
+7. **Pick the region**: join the server from the Java launcher (**version 26.3**, the "Latest release", multiplayer, `localhost`). In the server console: `op <yourname>`. Stand at the north-west bottom corner of what you want on the table and run `/tabletop setorigin`, then `/tabletop setsize 32 64 32` (or smaller to start, e.g. `32 32 32`). `/tabletop status` confirms.
+8. **Smoke test without the headset** (optional): `pip install -r tools/requirements.txt`, then `python tools/fake_quest.py --url ws://127.0.0.1:8765/tabletop --avatar -v --duration 15`. In game you should see the giant head (25 blocks wide) circling 45 blocks above the middle of the region, with two hands below it.
+
+## Part B: Unity project
+
+1. **Unity Hub** -> Installs -> Install Editor -> Archive -> **6000.0.84f1** (or the deep link `unityhub://6000.0.84f1/78ab6fc243d5`). Tick **Android Build Support** with **OpenJDK** and **Android SDK & NDK Tools**.
+2. Hub -> Add -> Add project from disk -> pick `quest-app/`. Open it. The first import resolves the Meta XR packages from `Packages/manifest.json` (Unity registry, no scoped registry needed) and generates ProjectSettings. If it opens in **Safe Mode**, there are compile errors: see Troubleshooting.
+3. **File > Build Profiles > Android > Switch Platform.**
+4. **Edit > Project Settings > XR Plug-in Management > Android tab**: tick **OpenXR**, then enable the **Meta XR** feature group. Don't tick the deprecated "Oculus" plugin.
+5. **TabletopCraft > Create Scene** (menu from this project). It creates `Assets/Scenes/Tabletop.unity` with OVRCameraRig (passthrough underlay), MRUK (load scene from device on startup), and TabletopApp, sets Passthrough + Scene support to Required and adds the scene to the build list.
+6. **Meta > Tools > Project Setup Tool**, Android tab: **Fix All**, then **Apply All**, repeat until nothing is red. Then check `Assets/Plugins/Android/AndroidManifest.xml` still has `com.oculus.permission.USE_SCENE` and `android.permission.INTERNET`, and `android:usesCleartextTraffic="true"` (plain `ws://` needs it). Re-add them if Meta's tools removed them.
+7. **Player Settings**: Company/Product name, package name e.g. `com.tabletopcraft.ar`. Minimum API level as set by Fix All.
+8. The generated `ProjectSettings/*.asset`, `Assets/XR/`, `Assets/Oculus/`, `Assets/Resources/`, `Assets/Materials/` and `Assets/Scenes/` are committed. `Packages/packages-lock.json` is git-ignored: on Linux it records the embedded, patched Meta SDK, and `manifest.json` pins exact versions anyway.
+
+### Linux and command line
+
+Meta officially supports only Windows and macOS. On Linux the project compiles and builds for Android, but there's no Link, XR Simulator or Play mode, so every test is an install on the headset. The same notes apply as in [ironman-quest3-hud's SETUP.md](https://github.com/NickStassen/ironman-quest3-hud/blob/master/docs/SETUP.md) (udev rule for vendor `2833`, use Unity's bundled adb).
+
+- **Run `tools/patch-meta-sdk-linux.sh` once before opening the project.** Meta XR Core SDK 85.0.0 doesn't compile in the Linux Editor (`Installer.cs: error CS0103 'downloadedInstallerPath'`). The script embeds 85.0.0 into `quest-app/Packages/` (git-ignored) and applies the fix Meta shipped in 207.0.0.
+- Steps 3 to 7 and the build also run headless through `Assets/Scripts/Editor/TabletopBatch.cs`. Close the Editor first, because an open Editor locks the project:
+
+```bash
+UNITY=~/Unity/Hub/Editor/6000.0.84f1/Editor/Unity
+# OpenXR loader on Android, TabletopCraft > Create Scene, Fix All, save. No -quit: it exits when the fixes are done.
+"$UNITY" -batchmode -nographics -projectPath quest-app -buildTarget Android -executeMethod TabletopCraft.EditorTools.TabletopBatch.Setup -logFile setup.log
+# -> quest-app/Builds/TabletopCraftAR.apk
+"$UNITY" -batchmode -nographics -quit -projectPath quest-app -buildTarget Android -executeMethod TabletopCraft.EditorTools.TabletopBatch.BuildApk -logFile build.log
+adb install -r quest-app/Builds/TabletopCraftAR.apk
+adb shell am start -n com.tabletopcraft.ar/com.unity3d.player.UnityPlayerGameActivity
+```
+
+If il2cpp crashes with a segmentation fault, BuildApk builds again (up to 3 builds; see Troubleshooting). On Linux, Fix All logs an `ArgumentException: Invalid path` from the Meta XR Simulator download. The Simulator doesn't exist for Linux, so ignore it. The server side works on Linux unchanged (JDK 25, `./gradlew build`). On a firewalled box, open TCP 8765 to the LAN (e.g. `sudo ufw allow from 192.168.1.0/24 to any port 8765 proto tcp`).
+
+## Part C: headset
+
+1. Developer Mode on (Meta Horizon phone app), USB debugging allowed, latest OS. `adb devices` lists the headset (Unity bundles adb under `Editor\Data\PlaybackEngines\AndroidPlayer\SDK\platform-tools`).
+2. **Space Setup** (Settings > Physical space > Space setup): scan the room and **mark the table** as a Table (furniture). The app looks for MRUK `TABLE` anchors; without one it places the world 0.5 m in front of you. Where you put the miniature on the table (hold A, drag, turn) is remembered against that table for the next session, and a scene that loads late never moves a miniature you placed yourself.
+3. **Build And Run** (File > Build Profiles > Android > Run Device: Quest 3). Accept the **spatial data** permission on first launch.
+
+## Part D: point the app at the server
+
+**In the headset (no adb needed).** If the app can't reach a server for about 5 seconds after it starts, a **setup card** appears in front of you: the address it tried, what went wrong (`Connection refused`, `no answer within 5 s`, a wrong token...), where `tabletop.json` lives, and what to do. Press the **menu button ≡** (left), open the **Info** tab and click **Server: ... (change)**:
+- The app searches the network at once (**Find servers** searches again). Every Tabletop server on your LAN answers with its name (the server's MOTD, or `discovery.name` in config.yml) and shows up as a button, marked `token` if it needs one. Click it to connect. If no server answers (UDP 8765 blocked on the PC, Part A step 5), the app looks for PCs with TCP port 8765 open instead and lists them as `(port open)`.
+- Or type the address on the panel keyboard: `?123` switches to digits and symbols, `ABC` back; `del` deletes, `clear` empties, **connect** (or the Connect button) connects. `192.168.1.50` is enough (the app adds `ws://`, `:8765` and `/tabletop`); `192.168.1.50:8800` or a full `ws://host:port/path` work too. **Cancel** keeps the old address.
+- Connecting saves the address in `tabletop.json` (every other key is kept) and reconnects. A short message says `Connecting to ...`, then `Connected to ...`. The setup card goes away as soon as the link is up, and while the menu is open.
+- A server that pairs headsets (plugin 1.1 or newer) then shows a 6-digit code: see "Store install" > Pairing. A refused headset (close 4003: a server with a token and no pairing) or an app and plugin that don't match (close 4001) stop the retries and show the card with the reason, until you change the address or the token.
+- **First start without any settings** (no `tabletop.json`, as after a store install): the app searches the LAN every 8 s by itself and connects when exactly one server answers; with several it waits for you to pick one here.
+
+**With adb.** The app reads `tabletop.json` from its files folder (`/sdcard/Android/data/<package>/files/`). Create it on the PC:
+
+```json
+{"server": "ws://192.168.1.50:8765/tabletop", "token": "", "skin_player": "YourJavaName"}
+```
+
+and push it (after the first launch has created the folder):
+
+```
+adb push tabletop.json /sdcard/Android/data/com.tabletopcraft.ar/files/tabletop.json
+adb shell am force-stop com.tabletopcraft.ar
+```
+
+Then relaunch the app. Alternatively set **ServerUrl** on the TabletopApp component before building. `"token"` is the plugin's shared `auth.token` (empty = none); with plugin 1.1 and newer, pairing replaces it (the headset keeps its own device token in `pairings.json`; delete that file to forget every pairing). `"discovery_port"` changes the UDP port Find servers asks (the plugin's `discovery.port`, default 8765).
+
+**Block size.** Leave `block_size_m` out: on the first start the app fits the area to the table (block size = min(table width, depth) / area width × 0.95, a 0.8 × 0.6 m table without MRUK), and afterwards it remembers your zoom (below). `"block_size_m": 0.01` makes a 32-block region 32 cm wide.
+
+**What the app remembers.** `prefs.json`, next to `tabletop.json`, is written by the app a second or two after you change something (and when the headset goes off): the block size and the area width it was chosen for, where the table is and how it's turned (relative to the MRUK table, so the next session on the same table puts it back the same way round), the hotbar, the selected block, the menu tab and Show HUD. If the server's area has another width at the next start, the block size is scaled so the miniature keeps its size on the table. `block_size_m`, `area_width` and `show_hud` can be in both files: a value in `tabletop.json` takes effect at the next start when it's new or you changed it there since the last start; otherwise the headset's own choice from `prefs.json` stands. Delete `prefs.json` to start fresh (`adb shell rm /sdcard/Android/data/com.tabletopcraft.ar/files/prefs.json`).
+
+**Giant skin.** `skin_player` is the Java account whose skin the giant wears. Leave it out to use the plugin's `avatar.skin-player` (config.yml), or the default skin if that's empty too. The plugin looks the name up on Mojang's servers in the background, so the PC running Paper needs internet access. Then `/tabletop avatar status` shows `"skin_resolved":true`, and the server log has `SKIN resolved <name>`. This works with `online-mode=true` (recommended) and also on an offline-mode test server. If the lookup fails (wrong name, no internet), the headset gets a `skin_failed` error. Java clients may still show the skin, because they resolve the name themselves. You can also change the skin from the console with `/tabletop avatar skin <name>`.
+
+**Java players' skins on the table.** Each player's skin comes from their game profile, which only an `online-mode=true` server has. On an offline-mode server, everyone gets the default skin the game would show for their UUID (Steve, Alex and the others), read from your `pack.zip` (Part E). Without a pack they get plain colours.
+
+`"show_hud": true` brings back a small head-locked status for debugging (off by default; also the **Show HUD** toggle in the block menu's Info tab, Part J).
+
+Optional lighting keys (the server sends light and biomes when its config has `stream.light` / `stream.biomes` on, the default): `"smooth_lighting": false` gives one light value per face and no ambient occlusion (about 15-18% fewer faces than smooth lighting on real terrain), and `"brightness"` is Minecraft's Brightness slider, 0 (Moody) to 1 (Bright), default 1 (Bright, so caves stay readable over passthrough). `"min_light"` (default 0.2) is how bright light level 0 is drawn, 0..1; everything brighter is rescaled up to full daylight, so a cave reads as dark but visible and the seabed 10 blocks down at about half of daylight. A negative value gives vanilla's own curve (level 0 = 0.15 at Bright).
+
+Optional operator keys (Part L): `"operator_name"` is your name in game chat, `"quick_commands"` adds Console buttons. Server commands from the headset need a paired headset or the `token` (Part L).
+
+Optional area keys (Part K): `"area_width"` starts the app at a width preset with the block size fitted to the table (once per value you put there, see "What the app remembers"), and `"batch_columns"` sets the mesh batch size. Optional meshing keys (Part H): `"surface_skirt": true` turns on the low-detail surface shown where the view isn't meshed yet (off by default until it is checked on the headset again; see Part H), `"skirt_speed"` (default 2; 1 to 4) is how much faster than meshing keeps up a glide may go while the skirt covers the leading edge (1 = only as fast as full detail arrives), `"mesh_workers"` (default 3) is the number of meshing threads, and `"mesh_sections_per_job"` (default 4) the fewest sections one meshing job takes (it takes more when sections are cheap).
+
+Optional smoothness keys (for comparing on the headset; TESTING.md "Smooth gliding"): `"hitch_ms"` (default 30; 0 = off) logs a `HITCH` line for every frame longer than that, at most 4 a second: `adb logcat -s Unity | grep HITCH` shows what the slow frame did (`apply_ms` snapshot apply incl. `rekey_ms`, `upload_ms`/`uploads`/`upload_kb` batch uploads, `prewarm_ms` new textures, `skirt_ms`, `caps_ms`, `mesh_done` sections meshed, `gc` garbage collections, `heap_mb`; `script_ms` is the main thread's script time, so `ms` much higher than `script_ms` means the stall was elsewhere: render thread, GPU or GC). `"upload_budget_ms"` (default 3) is the main thread's time per frame for applying meshed sections and uploading batches and skirt tiles. `"mesh_data_on_workers": false` copies batch geometry on the main thread again (0.8.1), and `"reuse_snapshot_buffers": false` allocates a new grid for every glide shift again.
+
+**Headset off, Wi-Fi gone.** Taking the headset off (or the app going to the background) despawns the giant at once and closes the link; putting it back on reconnects, and the table you left is shown meanwhile. If the link drops (Wi-Fi gone, server stopped or frozen: 6 s without anything from the server counts as dropped), the app keeps reconnecting with backoff, a red **Offline: reconnecting...** badge sits on the table's edge toward you, and players and mobs are hidden after 1.5 s, because their positions are stale; the terrain stays. Everything updates when the link is back.
+
+Time of day and weather (needs a server and app from 0.4 on with `world-state.enabled`, the default): the miniature gets darker at night like the game (torches, lava and glowstone stay bright), darker still in rain and thunderstorms, flashes when lightning strikes, and takes the Nether's or the End's own light. `"weather_fx": false` turns off the rain, snow and lightning bolts on the table (the light still follows the time and weather). The Info tab's `TIME` line shows the day time, rain and thunder levels, the sky factor and the number of drops.
+
+Ambient particles (needs `pack.zip`: the sprites are its `textures/particle/*.png`): torch, candle and campfire flames and smoke, fire smoke, lava pops, the nether portal's swirl, falling leaves, fireflies at dusk and night, bubble columns and water or lava dripping through a ceiling, keyed by the blocks in the visible window like vanilla's `animateTick`, plus explosion clouds. `"particles": false` turns them off; `"particle_density": 0.5` halves how many spawn (1 = vanilla's rate near the player; wider areas thin them out by themselves, and at most 3,000 are on the table). The Info tab's `TIME` line ends with `particles N/M` (slots / emitters). Chest, ender chest and shulker box lids, bells, TNT and creeper fuses, dying, sitting and sleeping mobs move like vanilla with a server of the same version (PROTOCOL.md "Block animations"); water and lava flow with the pack's flowing textures.
+
+Optional look keys: `"mipmaps": false` turns off the block textures' mipmaps (on by default: distant terrain stops shimmering, about 33% more texture memory), and `"leaves_inner": false` stops drawing the faces between two leaves blocks (vanilla draws them, so canopies look full; on by default, about 0.5-4% more faces in forests).
+
+Optional GPU keys (for comparing on the headset; TESTING.md "GPU at 256 wide"): `"clip_planes": true` cuts the visible window with hardware clip planes instead of a discard in every pixel (off by default: on a Quest 3 it stalled vertex fetch and halved the frame rate), `"solid_pass": false` draws every opaque face with the alpha test again (no early depth rejection), and `"packed_vertices": false` uploads the 32-byte vertices instead of the 20-byte ones.
+
+## Part E: textures (resource pack)
+
+Without a pack the app uses flat colours. To use textures you already own:
+
+1. Copy your client jar, e.g. `%APPDATA%\.minecraft\versions\26.3\26.3.jar` (Linux: `~/.minecraft/versions/26.3/26.3.jar`), or any Java resource pack `.zip`, to a temp folder and rename it `pack.zip` (a jar is a zip). The atlas loader was checked offline against the 26.3 jar; on the headset it's still untested.
+2. `adb push pack.zip /sdcard/Android/data/com.tabletopcraft.ar/files/pack.zip`, then restart the app. The menu's Info tab (Part J) shows `PACK yes`.
+3. Entity models (boats, minecarts, mobs, armour, and the block entities: chests, shulker boxes, heads, banners, bells, decorated pots, conduits, copper golem statues, lectern and enchanting books). The app ships no model data; generate it from the same client jar with JDK 25 from the repo root, then push it next to `pack.zip`:
+   ```
+   java tools/entity_models/DumpEntityModels.java %APPDATA%\.minecraft 26.3 entity_models.json     (Windows)
+   java tools/entity_models/DumpEntityModels.java ~/.minecraft 26.3 entity_models.json            (Linux)
+   adb push entity_models.json /sdcard/Android/data/com.tabletopcraft.ar/files/entity_models.json
+   ```
+   It reads the game's own model definitions out of `versions/26.3/26.3.jar` and the libraries the launcher downloaded (the game doesn't start) and writes about 90 KB of box sizes, pivots and skin offsets plus the dye colours and sign text colours. Regenerate it after a game update, and after updating the app when its release notes say so (a file from before 0.4 has no block entity layers: chests and banners then stay plain boxes; one from before the living-world update has no gear layers or the ender dragon, wither, giant and the other new types, which then stay boxes or go without their saddles and armour). The app loads it in the background at start; logcat shows `[Tabletop] entity_models.json: 211 models (Minecraft 26.3)`. Without it, entities are boxes of their real size in the average colour of their texture, and the Info tab shows `ENTITIES n (boxes)`.
+
+4. Sound. The game keeps its sounds outside the client jar, in the launcher's asset store (`assets/indexes/<id>.json` names every file, `assets/objects/` holds them). Package your own copy for the headset with any JDK 17+ from the repo root, then push it next to `pack.zip`:
+   ```
+   java tools/sounds/PackSounds.java %APPDATA%\.minecraft 26.3 sounds.zip     (Windows)
+   java tools/sounds/PackSounds.java ~/.minecraft 26.3 sounds.zip            (Linux)
+   java tools/sounds/PackSounds.java ~/.minecraft 26.3 --list                (sizes per group, writes nothing)
+   adb push sounds.zip /sdcard/Android/data/com.tabletopcraft.ar/files/sounds.zip
+   ```
+   It reads `versions/26.3/26.3.json` to find the asset index (`34` for 26.3), checks each file's SHA-1 and writes `sounds.json` plus the `.ogg` files it names, laid out like a resource pack. By default it takes blocks, mobs, items, weather, UI and the rest, but not ambient loops, music or records: 1915 events, 4679 files, about 67 MB for 26.3. Add groups as a fourth argument (`blocks,mobs,weather,records` or `all`; music alone is about 260 MB). Launch the version once in the launcher if it says files are missing. Restart the app (or let your server send it, Part P): the Info tab shows `SOUND 80%  1915 events, 4679 sounds (Minecraft 26.3)`. Without it the table is silent and a toast says `No sounds.zip`.
+
+Don't commit or redistribute the jar, the pack, `entity_models.json` or `sounds.zip` (all are git-ignored).

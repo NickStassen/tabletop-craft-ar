@@ -15,7 +15,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class Session {
     /** [nav] region_requests this session sent; the server applies only the newest one's read (TabletopPlugin). Main thread. */
     long regionRequests;
-    public enum State { AWAIT_HELLO, READY, CLOSED }
+    /** [setup] PAIRING: hello came without a credential the server needs; a code is shown, only ping, bye and pair_request. */
+    public enum State { AWAIT_HELLO, PAIRING, READY, CLOSED }
 
     public final WebSocket conn;
     public final String id = UUID.randomUUID().toString().substring(0, 8);
@@ -23,6 +24,15 @@ public final class Session {
     public volatile State state = State.AWAIT_HELLO;
     public volatile long lastInboundMs = openedMs;
     public volatile String client = "?";
+    /** [setup] Presented auth.token, or a paired headset's device token (PairingService): may have the features the
+     *  require-token switches keep for trusted headsets, and the game files (AssetService). Written once before READY. */
+    public volatile boolean trusted;
+    /** [setup] Pairing (PairingService): asked for pair_v1 (and the server pairs); the paired device (id, its pairing's player
+     *  or null), the name the headset gave, whether it presented a device token the server doesn't know, and the hello
+     *  kept while it waits for /tabletop pair. */
+    public volatile boolean pairCap, deviceTokenRejected;
+    public volatile String deviceId, devicePlayer, deviceName = "Headset";
+    public volatile JsonObject hello;
     private final AtomicInteger seq = new AtomicInteger();
 
     // Main-thread-only fields below.

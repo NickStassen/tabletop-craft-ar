@@ -1,0 +1,61 @@
+{
+ "v": 1,
+ "type": "welcome",
+ "seq": 0,
+ "t": 1760370000012,
+ "protocol": 1,
+ "server": "tabletop-plugin",
+ "server_version": "1.1.0",
+ "mc_version": "26.3",
+ "session": "6f1c2a3b",
+ "server_id": "3f9c2a7e1b4d5c6a",
+ "world": "world",
+ "region": {
+  "origin": [
+   100,
+   60,
+   -40
+  ],
+  "dims": [
+   32,
+   64,
+   32
+  ],
+  "view_margin": [
+   0,
+   0,
+   0
+  ]
+ },
+ "limits": {
+  "max_dims": [
+   352,
+   384,
+   352
+  ],
+  "max_blocks": 25165824,
+  "max_bytes": 33554432,
+  "max_view_width": 256,
+  "build_height": [
+   -64,
+   320
+  ],
+  "pose_hz_max": 60,
+  "player_hz": 10
+ },
+ "avatar_supported": true,
+ "pairing": {
+  "paired": true,
+  "device": "a1b2c3d4",
+  "name": "Quest 3",
+  "required": false
+ },
+ "caps": [
+  "entities_v1",
+  "view_margin",
+  "pose_snapshot_id",
+  "sound_v1",
+  "assets_v1",
+  "pair_v1"
+ ]
+}

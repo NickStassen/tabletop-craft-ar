@@ -124,7 +124,9 @@ final class InteractService implements Listener {
 
     /** interact_v1 is granted when interact.enabled and, with interact.require-token, the server has an auth.token. */
     boolean allowed() { return enabled && (!requireToken || tokenSet); }
-    String offReason() { return !enabled ? "using blocks and items is off on this server (interact.enabled)" : "using blocks and items needs auth.token (interact.require-token)"; }
+    /** [setup] interact_v1 for this session: with interact.require-token only for trusted sessions (auth.token or paired). */
+    boolean allowed(Session s) { return enabled && (!requireToken || s.trusted); }
+    String offReason() { return !enabled ? "using blocks and items is off on this server (interact.enabled)" : "using blocks and items needs a paired headset or auth.token (interact.require-token)"; }
 
     /** Per-session buckets, set at hello together with the cap. */
     void grant(Session s) {
@@ -181,7 +183,7 @@ final class InteractService implements Listener {
 
     void onInteract(Session s, InteractMessages.Interact in, Long refSeq) {
         if (s.state != Session.State.READY) return;
-        if (!s.canInteract) { deny(s, in, "interact_denied", allowed() ? "ask for interact_v1 in hello.caps" : offReason(), refSeq); return; }
+        if (!s.canInteract) { deny(s, in, "interact_denied", allowed(s) ? "ask for interact_v1 in hello.caps" : offReason(), refSeq); return; }
         RegionSpec r = s.region;
         if (r == null || !r.containsWorld(in.x(), in.y(), in.z())) { deny(s, in, "out_of_region", "position is outside the table's region", refSeq); return; }
         World w = Bukkit.getWorld(r.world());
@@ -414,7 +416,7 @@ final class InteractService implements Listener {
 
     void onEntityOp(Session s, InteractMessages.EntityOp op, Long refSeq) {
         if (s.state != Session.State.READY) return;
-        if (!s.canInteract) { denyOp(s, op, "interact_denied", allowed() ? "ask for interact_v1 in hello.caps" : offReason(), refSeq); return; }
+        if (!s.canInteract) { denyOp(s, op, "interact_denied", allowed(s) ? "ask for interact_v1 in hello.caps" : offReason(), refSeq); return; }
         if (!entities) { denyOp(s, op, "interact_denied", "acting on mobs is off on this server (interact.entities)", refSeq); return; }
         Entity e = Bukkit.getEntity(op.uuid());
         if (e == null || !e.isValid() || e.getScoreboardTags().contains(GiantAvatar.TAG)) {

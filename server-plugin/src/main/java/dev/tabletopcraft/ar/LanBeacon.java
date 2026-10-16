@@ -113,6 +113,14 @@ final class LanBeacon implements Runnable {
         return o;
     }
 
+    /** [setup] The reply with the server's id (welcome.server_id) and whether it pairs headsets (PROTOCOL.md 7, "Pairing"). */
+    static JsonObject reply(String name, int port, String path, boolean tokenNeeded, String version, String mc, int players, String id, boolean pair) {
+        JsonObject o = reply(name, port, path, tokenNeeded, version, mc, players);
+        if (id != null && !id.isEmpty()) o.addProperty("id", id);
+        o.addProperty("pair", pair);
+        return o;
+    }
+
     // ---------- the "Headset URL" lines logged at startup ----------
 
     /** An interface address: the interface name and the IPv4 address. */

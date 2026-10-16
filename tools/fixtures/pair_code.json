@@ -1,0 +1,9 @@
+{
+ "v": 1,
+ "type": "pair_code",
+ "seq": 1,
+ "t": 1760370000014,
+ "code": "482913",
+ "expires_s": 300,
+ "required": true
+}

@@ -4,8 +4,19 @@ bind:
   port: 8765
   path: /tabletop
 auth:
-  # Shared secret the headset sends in hello. Empty = auth disabled (LAN dev only). [talk] Server commands from the
-  # headset (commands below) need it by default; it travels in clear on the LAN (ws://).
+  # [setup] Pairing (PROTOCOL.md "Pairing", QUEST_SETUP.md "Store install"): a headset without a credential shows a
+  # 6-digit code; type /tabletop pair <code> here (console, or in game with tabletop.admin) and it gets its own device
+  # token, kept on the headset. /tabletop devices lists paired headsets, /tabletop unpair <id|name|all> revokes them
+  # (plugins/TabletopCraftAR/devices.yml holds only hashes). A paired headset is "trusted": it gets the game files
+  # (assets below) and everything the require-token switches keep for trusted headsets (commands, by default).
+  pairing: true
+  # true: a headset must be paired (or present the token below) before it sees anything; unpaired headsets wait on
+  # their code. false: unpaired headsets still see and edit the world, but get no game files and no trusted features.
+  # Headset apps older than 1.1 can't pair: they need the token below, or this false.
+  require-pairing: false
+  # Shared secret a headset can send in hello instead of pairing (tabletop.json "token"; for scripts and old apps).
+  # Empty = no shared secret. With a token set, every headset must present it or be paired. It travels in clear on
+  # the LAN (ws://), like the device tokens.
   token: ""
 # LAN discovery (PROTOCOL.md 7): the headset's "Find servers" (block menu > Info > Server) broadcasts a small UDP probe
 # and this server answers with its name, the WebSocket port and path above, and whether a token is needed. Only
@@ -79,18 +90,28 @@ world-state:
 # work out: note blocks, bells, containers, jukebox songs, explosions, fire lit, buckets and bone meal. Needs actions.
 sound:
   enabled: true
-# [sound] Opt-in asset delivery (PROTOCOL.md "Asset delivery", QUEST_SETUP.md Part P): headsets download the operator's
-# OWN pack.zip, entity_models.json and sounds.zip from this server instead of over USB (adb). Off by default.
-#   - Only serve copies made from your own Minecraft install, and only to your own headsets. This project ships no
-#     Mojang assets and the files stay yours: don't put the server on the internet with this on.
-#   - Needs auth.token (above): only headsets that present it can download. Only private, link-local and loopback
-#     addresses (the LAN) are served; the link is plain ws://, so anyone on the LAN who has the token could download too.
-#   - Only these three names are read from dir; nothing else in it is ever served.
+# Game files for the headsets (PROTOCOL.md "Asset delivery", QUEST_SETUP.md "Store install"): the headset draws the
+# world with the textures, models and sounds of YOUR OWN Minecraft: Java Edition install, which this server hands to
+# your paired headsets over the link. This project ships no Mojang files, and these never leave your LAN:
+#   - Only headsets you paired (/tabletop pair <code>, or ones that present auth.token) can download them, only from
+#     private, link-local or loopback addresses, and only these three names: pack.zip, entity_models.json, sounds.zip.
+#   - Don't put the server on the internet with this on, and never share the files: they are Mojang's.
 assets:
+  # [setup] Zero-config: find this PC's Minecraft install for the server's game version (the launcher's folder:
+  # %APPDATA%\.minecraft, ~/Library/Application Support/minecraft or ~/.minecraft), build pack.zip (the client jar's
+  # assets/ folder), entity_models.json and sounds.zip into plugins/TabletopCraftAR/assets/ (again when the game or this
+  # plugin changes; entity models are read in a separate Java process, never in this server), and serve them. Nothing is
+  # downloaded: if the game isn't installed here, launch that version once in the launcher, then /tabletop assets rebuild.
+  # false = only the files in "dir" below (if serve is on).
+  auto: true
+  # The launcher folder (the one with versions/ and assets/ in it) when it isn't in the usual place or the server runs
+  # as another user. /tabletop assets dir <folder> sets it. Empty = the usual places.
+  minecraft-dir: ""
+  # Files you made yourself (QUEST_SETUP.md Part E): with serve on, a pack.zip, entity_models.json or sounds.zip in this
+  # folder is served instead of the automatic one of the same name (absolute, or relative to the server folder).
   serve: false
-  # Folder on this PC holding pack.zip, entity_models.json and/or sounds.zip (absolute, or relative to the server folder).
   dir: ""
-  # Download speed per headset (MB/s), so a 70 MB sounds.zip doesn't crowd out the world stream.
+  # Download speed per headset (MB/s), so a 60 MB sounds.zip doesn't crowd out the world stream.
   max-mb-per-second: 8
 avatar:
   # Real metres per block on the table; the Quest overrides it with avatar_config.
@@ -133,7 +154,7 @@ edit:
   # Break and place blocks from the headset (block_edit, PROTOCOL.md 4.20). Headsets that ask for edit_v1 in hello.caps
   # get it in welcome.caps; edits are only applied inside the table's region. On by default for a LAN dev server.
   enabled: true
-  # true: only allow editing when auth.token is set above (then every connected headset presented the token).
+  # true: only trusted headsets (paired, or presenting auth.token above) may edit.
   require-token: false
   # Edits per second per headset (token bucket); more get error rate_limited.
   max-per-second: 20
@@ -151,7 +172,7 @@ edit:
   # [power] Undo/redo, box tools and brushes for headsets that ask for power_v1 (PROTOCOL.md "Undo and redo", "Box
   # edits", "Brushes"). Needs edit_v1 above. Only inside the table's region and the world border, like block editing.
   power: true
-  # true: only when auth.token above is set (every connected headset presented the token).
+  # true: only trusted headsets (paired, or presenting auth.token above).
   power-require-token: false
   # Blocks of undo history per headset (the oldest edits are forgotten first; the newest edit is always kept whole,
   # so a box bigger than this can be undone until the next edit). 0 = no undo.
@@ -176,7 +197,7 @@ edit:
 # entities.margin), like block editing; protection plugins are not consulted. Fire and lava can spread beyond the region.
 interact:
   enabled: true
-  # true: only when auth.token above is set (every connected headset presented the token).
+  # true: only trusted headsets (paired, or presenting auth.token above).
   require-token: false
   # Uses and mob actions per second per headset (a token bucket); more get error rate_limited. Carrying a mob sends up
   # to 10 moves a second on a bucket of its own.
@@ -213,7 +234,7 @@ interact:
 # coordinates are ordinary region_requests, so they need nothing here.
 marks:
   enabled: true
-  # true: only when auth.token above is set (every connected headset presented the token).
+  # true: only trusted headsets (paired, or presenting auth.token above).
   require-token: false
   # false: headsets see and use the bookmarks but can't add or remove them.
   edit: true
@@ -239,12 +260,13 @@ chat:
   # The headset's line floats above the giant's head for Java players for this many seconds (0 = off).
   bubble-seconds: 5
 # [talk] Server commands from the headset (command_v1, PROTOCOL.md 4.27). A headset command runs with operator
-# rights (like the console), so by default it needs auth.token: without a token there is no command_v1 at all.
-# SECURITY: the link is plain ws:// on the LAN. The token and every command travel unencrypted, and anyone who can
-# sniff the LAN can replay the token. Use it only on a network you trust; ARCHITECTURE.md 6 has wss:// beyond that.
+# rights (like the console), so by default only trusted headsets get it: paired ones (/tabletop pair) or ones that
+# present auth.token.
+# SECURITY: the link is plain ws:// on the LAN. Tokens and every command travel unencrypted, and anyone who can sniff
+# the LAN can replay a token. Use it only on a network you trust; ARCHITECTURE.md 6 has wss:// beyond that.
 commands:
   enabled: true
-  # true: commands only when auth.token above is set (every connected headset presented it).
+  # true: commands only for trusted headsets (paired, or presenting auth.token above).
   require-token: true
   # Commands per second per headset (a token bucket of "burst"). Tab completions and the world/players queries share
   # their own limit (completions-per-second).

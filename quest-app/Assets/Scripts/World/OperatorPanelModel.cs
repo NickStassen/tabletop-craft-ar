@@ -175,7 +175,7 @@ namespace TabletopCraft.World
 
         public bool CommandsOn => Welcome.Commands && Connected;
         public bool ChatOn => Welcome.Chat && Welcome.ChatSend && Connected;
-        public string CommandsOffWhy => !Connected ? "not connected" : "needs auth.token on the server";
+        public string CommandsOffWhy => !Connected ? "not connected" : "needs a paired headset (or the server's token)";
         public int Scroll => _scroll.TryGetValue(Tab, out var v) ? v : 0;
 
         /// <summary>Which text field the keyboard types into.</summary>

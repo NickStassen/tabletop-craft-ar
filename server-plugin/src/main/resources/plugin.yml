@@ -8,7 +8,7 @@ softdepend: [floodgate, Geyser-Spigot]
 commands:
   tabletop:
     description: Tabletop AR controls
-    usage: /tabletop <status|setorigin [x y z]|setsize dx dy dz|avatar <spawn|remove|status|placement|skin|blocksize>|entities|reload|tell <message>|unfreeze-all>
+    usage: /tabletop <status|setorigin [x y z]|setsize dx dy dz|avatar <spawn|remove|status|placement|skin|blocksize>|entities|reload|tell <message>|unfreeze-all|assets [rebuild|dir <folder>]>
 # Every /tabletop subcommand needs tabletop.admin except "tell" (tabletop.tell): the plugin checks per subcommand.
 permissions:
   tabletop.admin:

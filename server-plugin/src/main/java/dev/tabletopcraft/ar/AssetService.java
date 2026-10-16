@@ -29,10 +29,12 @@ import java.util.function.Supplier;
 import java.util.logging.Logger;
 
 /**
- * [sound] Opt-in asset delivery (PROTOCOL.md "Asset delivery", config.yml {@code assets}): the server operator puts their
- * OWN pack.zip, entity_models.json and sounds.zip (made from their own Minecraft install) into {@code assets.dir}, and
- * their own headsets download them over the WebSocket instead of adb. Off by default. Only for sessions that presented
- * {@code auth.token} (it must be set) from a private, link-local or loopback address, asking for {@code assets_v1}.
+ * [sound] Asset delivery (PROTOCOL.md "Asset delivery", config.yml {@code assets}): the server operator's OWN pack.zip,
+ * entity_models.json and sounds.zip go to their own headsets over the WebSocket instead of adb. [setup] Two sources, by
+ * name: {@code assets.dir} (with {@code assets.serve}, files the operator made by hand) first, then the files
+ * {@link GameAssets} builds from this PC's Minecraft install ({@code assets.auto}, on by default). Only for trusted
+ * sessions (paired headsets, or ones that presented {@code auth.token}) from a private, link-local or loopback address,
+ * asking for {@code assets_v1}.
  * <p>
  * Files are hashed (SHA-256) on a worker at start and offered after welcome ({@code assets}); the headset pulls them with
  * {@code asset_get} and each request is answered with one binary frame ({@link #frame}), paced to
@@ -54,8 +56,9 @@ final class AssetService {
     private final Logger log;
     private final BiConsumer<Session, JsonObject> send;
     private final Supplier<Collection<Session>> sessions;
-    private volatile boolean serve, tokenSet;
+    private volatile boolean serve;
     private volatile Path dir;
+    private volatile GameAssets auto;   // [setup] null or off: only assets.dir
     private volatile double bytesPerSecond = 8e6;
     private volatile Map<String, FileInfo> files = Map.of();
     private volatile boolean ready;
@@ -69,20 +72,26 @@ final class AssetService {
         this.sessions = sessions;
     }
 
-    /** Start or reload: read the switches and hash the files on the worker. */
-    void configure(boolean serve, String dir, boolean tokenSet, double mbPerSecond) {
+    /** Start or reload: read the switches and hash the files on the worker. auto: the zero-config builder (may be off). */
+    void configure(boolean serve, String dir, GameAssets auto, double mbPerSecond) {
         stop();
         this.serve = serve;
-        this.tokenSet = tokenSet;
+        this.auto = auto;
         this.dir = dir == null || dir.isBlank() ? null : Path.of(dir.trim()).toAbsolutePath().normalize();
         this.bytesPerSecond = Math.max(0.1, mbPerSecond) * 1e6;
         files = Map.of();
         ready = false;
-        if (!serve) return;
         String why = why();
-        if (why != null) { log.warning("ASSETS assets.serve is on but nothing is served: " + why); return; }
+        if (why != null) { if (serve) log.warning("ASSETS assets.serve is on but nothing is served: " + why); return; }
+        if (serve && (dir == null || !Files.isDirectory(this.dir))) log.warning("ASSETS assets.dir " + this.dir + " is not a folder: only the automatic files are served");
         worker = Executors.newSingleThreadScheduledExecutor(r -> { Thread t = new Thread(r, "tabletop-assets"); t.setDaemon(true); return t; });
         worker.execute(this::scan);
+    }
+
+    /** [setup] GameAssets built or changed something: hash again and offer anew. */
+    void rescan() {
+        ScheduledExecutorService w = worker;
+        if (w != null && !w.isShutdown()) w.execute(this::scan);
     }
 
     void stop() {
@@ -92,23 +101,33 @@ final class AssetService {
 
     /** Null when headsets may be offered files, else why not (config). */
     String why() {
-        if (!serve) return "assets.serve is false";
-        if (!tokenSet) return "auth.token is empty (asset delivery needs it, so only headsets that know it can download)";
+        boolean manual = serve && dir != null && Files.isDirectory(dir);
+        if (manual || (auto != null && auto.enabled())) return null;
+        if (!serve) return "assets.auto and assets.serve are false";
         if (dir == null) return "assets.dir is empty";
-        if (!Files.isDirectory(dir)) return "assets.dir " + dir + " is not a folder";
-        return null;
+        return "assets.dir " + dir + " is not a folder";
+    }
+
+    /** [setup] Where the files come from, in lookup order. */
+    private List<Path> sources() {
+        List<Path> l = new ArrayList<>();
+        if (serve && dir != null) l.add(dir);
+        GameAssets a = auto;
+        if (a != null && a.enabled() && a.dir() != null) l.add(a.dir());
+        return l;
     }
 
     boolean ready() { return ready; }
     Map<String, FileInfo> files() { return files; }
 
-    /** hello asked for assets_v1: granted when serving and the session comes from the LAN (the token was checked at hello). */
+    /** hello asked for assets_v1: granted when serving, the session is trusted (paired, or presented auth.token) and on the LAN. */
     void grant(Session s) {
         String why = why();
         InetAddress a = s.conn.getRemoteSocketAddress() instanceof InetSocketAddress isa ? isa.getAddress() : null;
+        if (why == null && !s.trusted) why = "the headset isn't paired (/tabletop pair <code>) and didn't present auth.token";
         if (why == null && !lan(a)) why = "the headset's address " + a + " is not a private, link-local or loopback address";
         if (why == null) { s.canAssets = true; return; }
-        if (serve) { refused++; log.info("ASSETS not for session " + s.id + ": " + why); }
+        if (serve || (auto != null && auto.enabled())) { refused++; log.info("ASSETS not for session " + s.id + ": " + why); }
     }
 
     /** After welcome: the offer, now or as soon as the files are hashed. */
@@ -130,17 +149,26 @@ final class AssetService {
             a.add(j);
         }
         o.add("files", a);
+        GameAssets g = auto;   // [setup] what the automatic files are doing (optional fields, PROTOCOL.md "Asset delivery")
+        if (g != null && g.enabled()) {
+            o.addProperty("state", switch (g.state()) { case SEARCHING, BUILDING -> "building"; case MISSING -> "missing"; case FAILED -> "failed"; default -> "ready"; });
+            if (!g.note().isEmpty() && g.state() != GameAssets.State.READY) o.addProperty("note", g.note());
+        }
         return o;
     }
 
     private void scan() {
         long t0 = System.nanoTime();
         Map<String, FileInfo> m = new LinkedHashMap<>();
-        Path d = dir;
+        List<Path> src = sources();
+        Map<String, FileInfo> old = files;
         for (String n : NAMES) {
-            Path p = d.resolve(n);
+            Path p = null;
+            for (Path d : src) if (Files.isRegularFile(d.resolve(n))) { p = d.resolve(n); break; }
+            if (p == null) continue;
             try {
-                if (!Files.isRegularFile(p)) continue;
+                FileInfo was = old.get(n);   // unchanged since the last scan: keep its hash
+                if (was != null && was.path().equals(p) && Files.size(p) == was.size() && Files.getLastModifiedTime(p).toMillis() == was.mtime()) { m.put(n, was); continue; }
                 long size = Files.size(p);
                 if (size <= 0 || size > MAX_FILE) { log.warning("ASSETS skipping " + p + ": size " + size); continue; }
                 m.put(n, new FileInfo(n, p, size, Files.getLastModifiedTime(p).toMillis(), sha256(p)));
@@ -150,8 +178,8 @@ final class AssetService {
         ready = true;
         List<String> desc = new ArrayList<>();
         for (FileInfo f : m.values()) desc.add(String.format("%s (%.1f MB)", f.name(), f.size() / 1e6));
-        log.info(String.format("ASSETS serving %s from %s to headsets with the token on the LAN, %.0f MB/s each (hashed in %.1f s)",
-            desc.isEmpty() ? "nothing (no pack.zip, entity_models.json or sounds.zip there)" : String.join(", ", desc), d,
+        log.info(String.format("ASSETS serving %s from %s to paired headsets on the LAN, %.0f MB/s each (hashed in %.1f s)",
+            desc.isEmpty() ? "nothing yet (no pack.zip, entity_models.json or sounds.zip)" : String.join(", ", desc), src,
             bytesPerSecond / 1e6, (System.nanoTime() - t0) / 1e9));
         Collection<Session> all = sessions.get();
         // Sessions past onReady (it set their region after queueing welcome): the offer follows their welcome.
@@ -161,7 +189,12 @@ final class AssetService {
     /** asset_get (websocket thread): checked, then paced onto the worker. */
     void onGet(Session s, JsonObject m, Long refSeq) {
         String name = m.has("name") && m.get("name").isJsonPrimitive() ? m.get("name").getAsString() : "";
-        if (!s.canAssets) { s.send(error("asset_denied", why() == null ? "ask for assets_v1 in hello.caps (from the LAN, with the token)" : why(), name, refSeq)); return; }
+        if (!s.canAssets) {
+            String why = why() != null ? why() : !s.trusted ? "this headset isn't paired: pair it (/tabletop pair <code>) to get the game files"
+                : "ask for assets_v1 in hello.caps (from the LAN)";
+            s.send(error("asset_denied", why, name, refSeq));
+            return;
+        }
         FileInfo f = files.get(name);
         if (f == null) { s.send(error("not_found", "no " + name + " offered", name, refSeq)); return; }
         long offset = m.has("offset") ? m.get("offset").getAsLong() : -1;

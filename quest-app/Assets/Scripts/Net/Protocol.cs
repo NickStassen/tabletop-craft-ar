@@ -9,9 +9,15 @@ namespace TabletopCraft.Net
     {
         public const int Version = 1;
         public const string ClientName = "quest-app";
-        public const string ClientVersion = "0.1.0";
+        /// <summary>The app's version (TabletopApp sets it from Application.version, the repo's VERSION).</summary>
+        public static string ClientVersion = "1.0.0";
 
-        public static Dictionary<string, object> Hello(string token)
+        /// <summary>
+        /// hello. [setup] deviceToken: the token this server gave the headset when it was paired (PROTOCOL.md "Pairing"),
+        /// deviceName: what the server lists it as. pair_v1 is always asked for: a server that pairs then shows a code
+        /// instead of refusing a headset without a credential.
+        /// </summary>
+        public static Dictionary<string, object> Hello(string token, string deviceToken = null, string deviceName = null)
         {
             var d = new Dictionary<string, object>
             {
@@ -25,6 +31,9 @@ namespace TabletopCraft.Net
             var caps = (List<object>)d["caps"];
             if (WantSound) caps.Add(CapSound);                 // [sound] sound_groups and sound actions
             if (WantAssets) caps.Add(AssetProtocol.Cap);       // [sound] the operator's own files, if the server offers them
+            caps.Add(PairingProtocol.Cap);                     // [setup] pairing with a 6-digit code
+            if (!string.IsNullOrEmpty(deviceToken)) d["device_token"] = deviceToken;
+            if (!string.IsNullOrEmpty(deviceName)) d["device_name"] = deviceName;
             return d;
         }
 

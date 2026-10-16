@@ -21,6 +21,9 @@
 //   menu tab and Show HUD; without a saved or configured block size the area is fitted to the table. The link stops
 //   while the headset is off (giant despawned, bye) and restarts when it's back on. A setup card, an offline badge
 //   and the Info tab's Server field (keyboard, LAN discovery) cover first runs and dead links (docs/QUEST_SETUP.md).
+// [setup] Zero files needed: without a "server" the app searches the LAN and connects when one server answers; a server
+//   that pairs shows a 6-digit code (Net/Pairing.cs, pairings.json keeps the device token per server); the server sends
+//   the game files from its PC. Older plugins keep working, with a note on what an update adds (PluginSupport).
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -82,6 +85,15 @@ namespace TabletopCraft
         readonly Dictionary<string, FoundServer> _found = new Dictionary<string, FoundServer>();
         Transform _playersRoot, _entitiesRoot;
         bool Away => _paused || _unmounted;
+        // [setup] pairing (Net/Pairing.cs, PROTOCOL.md "Pairing"), the first start without a server, older plugins
+        PairingStore _pairings = new PairingStore();
+        PairCode _pairCode;
+        PairingWelcome _pairWelcome = new PairingWelcome();
+        string _serverIdHint, _pluginNote, _pluginNoteShown;
+        bool _pairRequested;
+        readonly FirstRun _firstRun = new FirstRun();
+        static string PairingsPath => Path.Combine(Application.persistentDataPath, PairingStore.FileName);
+        static string DeviceName => PairingStore.DeviceName(SystemInfo.deviceModel);
         static string ConfigPath => Path.Combine(Application.persistentDataPath, ConfigFile.FileName);
         static string PrefsPath => Path.Combine(Application.persistentDataPath, AppPrefs.FileName);
         string _lastError = "";
@@ -211,7 +223,9 @@ namespace TabletopCraft
         void Start()
         {
             SnapshotBuffers.Enabled = true;   // [smooth] glide shifts reuse retired grid/light arrays (tabletop.json can turn it off)
+            Protocol.ClientVersion = Application.version;   // [setup] hello.client_version
             LoadConfig();
+            LoadPairings();   // [setup]
             // [smooth] Log lines without a stack trace: collecting one costs about a millisecond under IL2CPP, and the app
             // logs on every glide shift. Warnings and errors keep theirs.
             Application.SetStackTraceLogType(LogType.Log, StackTraceLogType.None);
@@ -407,8 +421,15 @@ namespace TabletopCraft
             // [comfort] setup card (no link yet / refused), north marker and offline badge on the table
             var card = gameObject.AddComponent<SetupCardView>();
             card.Head = Head;
-            card.Visible = () => !Away && !_menu.Open && _health.ShowCard(_link.FatalCode != 0, Time.unscaledTime);
-            card.Text = () => SetupCard.Text(_link.Url, _link.Status, _link.FatalCode, _link.FatalReason, ConfigPath);
+            card.Visible = () => !Away && !_menu.Open && !PairCardShown && (_firstRun.Active && !_link.Connected || _health.ShowCard(_link.FatalCode != 0, Time.unscaledTime));
+            card.Text = () => _firstRun.Active && !_link.Connected ? SetupCard.FirstRunText(_firstRun)
+                            : SetupCard.Text(_link.Url, _link.Status, _link.FatalCode, _link.FatalReason, ConfigPath) + "\n\n" + SetupCard.Disclaimer;
+            // [setup] the pairing code: in front while the world waits for it, lower down while the world already shows
+            var pairCard = gameObject.AddComponent<SetupCardView>();
+            pairCard.Head = Head;
+            pairCard.Visible = () => PairCardShown;
+            pairCard.Text = () => _pairCode == null ? "" : SetupCard.PairText(_pairCode, Time.unscaledTimeAsDouble, ServerAddress.HostOf(_link.Url));
+            pairCard.Offset = () => _pairCode != null && _pairCode.Required ? new Vector3(0f, 0.02f, 0.85f) : new Vector3(0f, -0.24f, 0.8f);
             var markers = gameObject.AddComponent<TableMarkers>();
             markers.Anchor = _anchor; markers.Head = Head;
             markers.HalfSize = () => _nav.State.Loaded ? new Vector2(_nav.State.Window.x, _nav.State.Window.z) * (BlockSizeM / 2f) : Vector2.zero;
@@ -436,9 +457,10 @@ namespace TabletopCraft
             string p = Path.Combine(Application.persistentDataPath, "tabletop.json");
             try
             {
-                if (!File.Exists(p)) { Debug.Log("[Tabletop] no " + p + ", using inspector defaults"); return; }
+                if (!File.Exists(p)) { Debug.Log("[Tabletop] no " + p + ", using defaults"); _firstRun.Active = true; return; }
                 var c = Json.Parse(File.ReadAllText(p)) as Dictionary<string, object>;
                 _config = c;
+                _firstRun.Active = c.S("server") == null;   // [setup] no server chosen yet: search the LAN
                 ServerUrl = c.S("server") ?? ServerUrl;
                 Token = c.S("token") ?? Token;
                 SkinPlayer = c.S("skin_player") ?? SkinPlayer;
@@ -562,9 +584,14 @@ namespace TabletopCraft
         void StartLink()
         {
             _link = new LinkClient(ServerUrl, Token);
+            _link.DeviceToken = _pairings.TokenFor(ServerUrl, _serverIdHint);   // [setup] PROTOCOL.md "Pairing"
+            _link.DeviceName = DeviceName;
+            _pairCode = null; _pairRequested = false; _pairWelcome = new PairingWelcome();
             if (_assets != null) _link.Binary = _assets.OnBinary;   // [sound] asset chunks arrive as binary frames
-            _link.Start();
             if (_poses) _poses.Link = _link;
+            // [setup] first run: no server yet, so the link waits (LAN search in Comfort; ConnectTo starts a new one)
+            if (_firstRun.Active) { _menu.Model.ServerUrl = ""; Debug.Log("[Tabletop] first run: no server yet, searching the LAN"); return; }
+            _link.Start();
             _menu.Model.ServerUrl = ServerUrl;
             Debug.Log($"[Tabletop] link to {ServerUrl}");
         }
@@ -612,14 +639,16 @@ namespace TabletopCraft
             catch (Exception e) { _hud.Toast("Can't write tabletop.json: " + e.Message, ToastKind.Error); }
             StopLink("server changed");
             ServerUrl = url;
+            _firstRun.Done();   // [setup] a server is chosen (tabletop.json now has it)
+            _serverIdHint = _found.TryGetValue(url, out var fs) && fs.Id.Length > 0 ? fs.Id : null;
             _health.NewServer(Time.unscaledTime);
             _linkWatch = new LinkWatch();
             _announce = true;
             if (!Away) StartLink();
             string host = ServerAddress.HostOf(url);
             _hud.Toast("Connecting to " + host + "...", ToastKind.Info);
-            if (_found.TryGetValue(url, out var f) && f.TokenNeeded && string.IsNullOrEmpty(Token))
-                _hud.Toast("This server needs a token: add \"token\" to tabletop.json", ToastKind.Warn, 6);
+            if (_found.TryGetValue(url, out var f) && f.TokenNeeded && !f.Pair && string.IsNullOrEmpty(Token))
+                _hud.Toast("This server needs a token: add \"token\" to tabletop.json, or update its plugin to pair", ToastKind.Warn, 6);
         }
 
         /// <summary>"Find servers": the LAN probe (and the /24 TCP fallback) on a worker; Update shows the result.</summary>
@@ -648,6 +677,11 @@ namespace TabletopCraft
             if (list != null) foreach (var f in list) { _found[f.Url] = f; buttons.Add((f.Label, f.Url)); }
             _menu.Model.SetFound(buttons, note);
             Debug.Log($"[Tabletop] discovery: {list?.Count ?? 0} found {note}");
+            if (_firstRun.Active)   // [setup] exactly one server answered: connect by itself
+            {
+                string pick = _firstRun.Searched(list, Time.unscaledTimeAsDouble);
+                if (pick != null) { Debug.Log("[Tabletop] first run: connecting to the only server found, " + pick); ConnectTo(pick); }
+            }
         }
 
         /// <summary>Reset view (Info tab): north away from you, the area fitted to the table, the view in its middle.</summary>
@@ -735,11 +769,80 @@ namespace TabletopCraft
                 if (t != null) _hud.Toast(t, ToastKind.Info, t == "Area loaded" ? 1.5 : 3, "loading");
             }
             FinishFinding();
+            if (_firstRun.ShouldSearch(now, _finding != null) && !Away) FindServers();   // [setup]
+            PairingUpkeep(now);   // [setup]
             if (now >= _prefsAt)
             {
                 _prefsAt = now + 1f;
                 SavePrefs(_saver.Offer(CapturePrefs(), now));
             }
+        }
+
+        // ---------- [setup] pairing (Net/Pairing.cs, PROTOCOL.md "Pairing") ----------
+
+        bool PairCardShown => _pairCode != null && _pairCode.Live(Time.unscaledTimeAsDouble) && !Away && !_menu.Open;
+
+        void LoadPairings()
+        {
+            try { if (File.Exists(PairingsPath)) _pairings = PairingStore.Parse(File.ReadAllText(PairingsPath)); }
+            catch (Exception e) { Debug.LogWarning("[Tabletop] bad pairings.json (pair again): " + e.Message); _pairings = new PairingStore(); }
+        }
+
+        void SavePairings()
+        {
+            try { File.WriteAllText(PairingsPath, _pairings.ToJson()); }
+            catch (Exception e) { Debug.LogWarning("[Tabletop] can't write pairings.json: " + e.Message); }
+        }
+
+        /// <summary>welcome: where this server is now, whether our token still counts, and a code when we have none.</summary>
+        void OnWelcomePairing(Dictionary<string, object> m)
+        {
+            _pairWelcome = PairingWelcome.From(m);
+            if (_pairWelcome.ServerId.Length > 0)
+            {
+                _serverIdHint = _pairWelcome.ServerId;
+                if (_pairings.Seen(_link.Url, _serverIdHint)) SavePairings();
+            }
+            if (_pairWelcome.Supported && !_pairWelcome.Paired)
+            {
+                if ((_pairWelcome.TokenRejected || !string.IsNullOrEmpty(_link.DeviceToken)) && _pairings.Forget(_link.Url, _serverIdHint)) SavePairings();
+                _link.DeviceToken = null;
+                if (!_pairRequested) { _pairRequested = true; _link.Send(PairingProtocol.Request(DeviceName)); }
+            }
+            if (_pairWelcome.Paired) _pairCode = null;
+            _pluginNote = PluginSupport.Note(_pairWelcome, _atlas.HasPack);
+            if (_pluginNote != null && _pluginNoteShown != _link.Url)
+            {
+                _pluginNoteShown = _link.Url;
+                _hud.Toast(_pluginNote, ToastKind.Warn, 10);
+                Debug.Log("[Tabletop] PLUGIN " + _pluginNote);
+            }
+        }
+
+        /// <summary>Each frame: an unpaired headset's token is forgotten; an expired code is renewed while the world waits for it.</summary>
+        void PairingUpkeep(float now)
+        {
+            if (_link.DeviceTokenRejected)
+            {
+                _link.DeviceTokenRejected = false;
+                if (_pairings.Forget(_link.Url, _serverIdHint)) SavePairings();
+                _hud.Toast("This headset was unpaired on the server: pair it again with the new code", ToastKind.Warn, 8);
+            }
+            if (_pairCode != null && !_pairCode.Live(now))
+            {
+                bool renew = _pairCode.Required && !Away;
+                _pairCode = null;
+                if (renew) _link.SendPairing(PairingProtocol.Request(DeviceName));
+            }
+        }
+
+        string PairStatus()
+        {
+            if (!_link.Connected && !_link.Pairing) return "-";
+            if (_pairCode != null && _pairCode.Live(Time.unscaledTimeAsDouble)) return $"code {_pairCode.Code}: type /tabletop pair {_pairCode.Code} in the server window";
+            if (!_pairWelcome.Supported) return _pluginNote ?? "not supported by this server";
+            if (_pairWelcome.Paired) return $"paired as {_pairWelcome.Name} ({_pairWelcome.Device})";
+            return "not paired: pick the server again (Info > Server) for a new code";
         }
 
         /// <summary>[menu] The full status (the block menu's Info tab, and the small HUD when "Show HUD" is on).</summary>
@@ -757,7 +860,9 @@ namespace TabletopCraft
             $"\nPOWER {_tools.Status}" +   // [power]
             $"\nTIME {LivingStatus()}" +   // [living]
             $"\nSOUND {_sound.Status}" +   // [sound]
-            $"\nASSETS {(_assets == null ? "off (download_assets false)" : _assets.Status)}";
+            $"\nASSETS {(_assets == null ? "off (download_assets false)" : _assets.Status)}" +
+            $"\nPAIR {PairStatus()}" +   // [setup]
+            "\n" + SetupCard.Disclaimer;
 
         /// <summary>[hands] Using blocks, items and mobs as the server granted it, and what the left trigger does first.</summary>
         string HandsStatus() =>
@@ -779,7 +884,7 @@ namespace TabletopCraft
         string TalkStatus()
         {
             var w = _ops.Model.Welcome;
-            return $"chat {(w.Chat ? (w.ChatSend ? "as " + w.ChatName : "read-only") : "off")}  commands {(w.Commands ? "on" : "off (needs auth.token)")}  status {(w.Status ? "on" : "off")}  X = panel";
+            return $"chat {(w.Chat ? (w.ChatSend ? "as " + w.ChatName : "read-only") : "off")}  commands {(w.Commands ? "on" : "off (needs pairing or the token)")}  status {(w.Status ? "on" : "off")}  X = panel";
         }
 
         /// <summary>[menu] Events that used to be read off the status text: link lost/restored, area results, local edit refusals.</summary>
@@ -851,7 +956,29 @@ namespace TabletopCraft
                     _light.Reset();   // [living] noon until this server's world_state
                     _sound.Director.Clear();   // [sound] a new session lists its entities and players afresh
                     if (_announce) { _announce = false; _hud.Toast("Connected to " + ServerAddress.HostOf(_link.Url), ToastKind.Info); }
+                    OnWelcomePairing(m);   // [setup]
                     break;
+                case "pair_code":   // [setup] show the code until /tabletop pair (or it expires)
+                    _pairCode = PairCode.From(m, Time.unscaledTimeAsDouble);
+                    if (_pairCode != null && _pairCode.TokenRejected && _pairings.Forget(_link.Url, _serverIdHint)) SavePairings();
+                    Debug.Log($"[Tabletop] PAIR code shown ({(_pairCode != null && _pairCode.Required ? "the server waits for it" : "the world loads meanwhile")})");
+                    break;
+                case "paired":   // [setup] keep the token; an open server grants the trusted features at the next hello
+                {
+                    string token = m.S("token"), sid = m.S("server_id") ?? _serverIdHint;
+                    if (string.IsNullOrEmpty(token)) break;
+                    _pairings.Save(sid, _link.Url, token, m.S("device"), m.S("name"), DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                    SavePairings();
+                    _serverIdHint = sid;
+                    _link.DeviceToken = token;
+                    // A server that waited for the code goes on with welcome on this connection; an open one needs a new hello.
+                    bool sameConnection = _pairCode != null && _pairCode.Required;
+                    _pairCode = null;
+                    _hud.Toast("Paired with " + ServerAddress.HostOf(_link.Url) + " as " + (m.S("name") ?? DeviceName), ToastKind.Info, 5);
+                    Debug.Log("[Tabletop] PAIR paired as " + m.S("device"));
+                    if (!sameConnection) _link.Reconnect();
+                    break;
+                }
                 case "region_info":
                 {
                     // [operator] the region world's spawn and the worlds; following's own region_query answers stop here

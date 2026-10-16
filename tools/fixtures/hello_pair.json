@@ -1,0 +1,22 @@
+{
+ "v": 1,
+ "type": "hello",
+ "seq": 0,
+ "t": 1760370000000,
+ "client": "quest-app",
+ "client_version": "1.1.0",
+ "protocols": [
+  1
+ ],
+ "token": "",
+ "caps": [
+  "rle_palette_v1",
+  "avatar",
+  "entities_v1",
+  "sound_v1",
+  "assets_v1",
+  "pair_v1"
+ ],
+ "device_name": "Quest 3",
+ "device_token": "q1mTq3z9yZQ0nI5c1o0m8m3rT9JdY0cB7v1hJ3zK2xA"
+}

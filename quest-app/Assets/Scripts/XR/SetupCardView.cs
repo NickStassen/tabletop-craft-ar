@@ -2,7 +2,8 @@
 // since it started (or since the server address changed), or at once when the server refused it for good (close 4001
 // version mismatch, 4003 wrong token). It says which URL was tried, what happened, where tabletop.json lives and how to
 // fix it (menu > Info > Server). It disappears when the link comes up and while the block menu is open. The text is
-// engine-free (World/SessionState.cs SetupCard.Text); TabletopApp decides when.
+// engine-free (World/SessionState.cs SetupCard.Text); TabletopApp decides when. [setup] The same view shows the first-run
+// card (searching the LAN) and, as a second instance, the pairing code (SetupCard.PairText, TextMesh rich text).
 using System;
 using UnityEngine;
 
@@ -13,6 +14,8 @@ namespace TabletopCraft.XR
         public Transform Head;
         public Func<bool> Visible;
         public Func<string> Text;
+        /// <summary>[setup] Where the card sits in front of the head (metres, head-local); null = centred at 0.85 m.</summary>
+        public Func<Vector3> Offset;
 
         Transform _card, _bg;
         TextMesh _text;
@@ -45,7 +48,9 @@ namespace TabletopCraft.XR
         {
             bool show = Visible != null && Visible();
             if (_card.gameObject.activeSelf != show) _card.gameObject.SetActive(show);
-            if (!show || Time.unscaledTime < _textAt) return;
+            if (!show) return;
+            if (Offset != null) _card.localPosition = Offset();
+            if (Time.unscaledTime < _textAt) return;
             _textAt = Time.unscaledTime + 0.25f;
             string t = Text?.Invoke() ?? "";
             if (_text.text != t) _text.text = t;

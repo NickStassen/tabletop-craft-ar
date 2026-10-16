@@ -92,6 +92,19 @@ namespace TabletopCraft.Net
         readonly object _seqLock = new object();   // [talk] SendTracked reserves seqs on the caller's thread
         const string ReservedSeq = "\u0001seq";      // [talk] a seq SendTracked took; becomes "seq" when the message goes out
         volatile bool _welcomed, _stopping;
+        // [setup] pairing (PROTOCOL.md "Pairing"): the device token sent in hello (DeviceToken may change meanwhile), and
+        // whether the server is waiting for /tabletop pair on this connection (no welcome yet: only pings and pair_request)
+        volatile string _sentDeviceToken;
+        volatile bool _pairing;
+        /// <summary>[setup] The token this server gave the headset (null = none); read at each connect.</summary>
+        public volatile string DeviceToken;
+        /// <summary>[setup] What the server lists this headset as ("Quest 3").</summary>
+        public volatile string DeviceName;
+        /// <summary>[setup] The server closed with 4003 although we presented a device token (unpaired): the app forgets it;
+        /// the link reconnects without it and shows a new code.</summary>
+        public volatile bool DeviceTokenRejected;
+        /// <summary>[setup] The server shows a code and waits for /tabletop pair before welcome.</summary>
+        public bool Pairing => _pairing;
         long _rtt = -1, _lastInbound;
         int _welcomes, _deadAborts, _pingId;
         // [send] One sender thread (not the thread pool, which meshing keeps busy): messages go out in order, but only the
@@ -150,8 +163,9 @@ namespace TabletopCraft.Net
                         catch (WebSocketException) when (cto.IsCancellationRequested && !ct.IsCancellationRequested) { throw new TimeoutException($"no answer within {ConnectTimeoutSeconds:F0} s"); }
                     }
                     lock (_seqLock) _seq = 0;
-                    _welcomed = false; Touch();
-                    await SendAsync(ws, Protocol.Hello(_token), force: true);
+                    _welcomed = false; _pairing = false; Touch();
+                    _sentDeviceToken = DeviceToken;
+                    await SendAsync(ws, Protocol.Hello(_token, _sentDeviceToken, DeviceName), force: true);
                     Status = "connected";
                     backoffMs = 500;
                     using var life = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -187,7 +201,7 @@ namespace TabletopCraft.Net
                     try { ws.Abort(); } catch { }
                     return;
                 }
-                if (_welcomed && Now >= nextPing)
+                if ((_welcomed || _pairing) && Now >= nextPing)   // [setup] pairing waits minutes: keep the link alive
                 {
                     nextPing = Now + PingSeconds;
                     Post(ws, Protocol.Ping(_pingId++));
@@ -217,7 +231,14 @@ namespace TabletopCraft.Net
                     int code = (int?)r.CloseStatus ?? 0;
                     Status = $"closed {code} {r.CloseStatusDescription}";
                     if (code == 4001) { _fatalReason = "the server speaks another protocol version: update the app or the plugin"; _fatalCode = code; }
-                    else if (code == 4003) { _fatalReason = "wrong token: tabletop.json \"token\" must match the plugin's auth.token"; _fatalCode = code; }
+                    else if (code == 4003 && !string.IsNullOrEmpty(_sentDeviceToken))
+                    {
+                        // [setup] unpaired on the server: forget the token and connect again without it (a new code shows)
+                        DeviceTokenRejected = true;
+                        if (DeviceToken == _sentDeviceToken) DeviceToken = null;
+                        Status = "this headset was unpaired: pairing again";
+                    }
+                    else if (code == 4003) { _fatalReason = "the server refused this headset: it needs the server's token (tabletop.json \"token\"), or a plugin 1.1+ that pairs headsets"; _fatalCode = code; }
                     return;
                 }
                 if (r.MessageType == WebSocketMessageType.Binary)
@@ -253,7 +274,11 @@ namespace TabletopCraft.Net
                     case "ping":
                         Post(ws, new Dictionary<string, object> { ["type"] = "pong", ["id"] = msg.I("id"), ["echo_t"] = (long)msg.D("t") });
                         continue;
+                    case "pair_code":   // [setup] before welcome: the server waits for /tabletop pair
+                        if (!_welcomed) _pairing = true;
+                        break;
                     case "welcome":
+                        _pairing = false;
                         _welcomed = true;
                         Interlocked.Increment(ref _welcomes);
                         break;
@@ -264,6 +289,24 @@ namespace TabletopCraft.Net
 
         /// <summary>Fire-and-forget send; adds the envelope (v, seq, t). Dropped while not connected.</summary>
         public void Send(Dictionary<string, object> body) { var ws = _ws; if (Connected && ws != null) Post(ws, body); }
+
+        /// <summary>[setup] pair_request: also while the server waits for pairing (no welcome yet).</summary>
+        public void SendPairing(Dictionary<string, object> body)
+        {
+            var ws = _ws;
+            if (ws != null && ws.State == WebSocketState.Open && (_welcomed || _pairing)) Post(ws, body);
+        }
+
+        /// <summary>[setup] What may go out while the server waits for pairing (it refuses anything else).</summary>
+        static bool IsPairingTraffic(Dictionary<string, object> body) =>
+            body.TryGetValue("type", out var t) && (t as string == "ping" || t as string == "pong" || t as string == "pair_request" || t as string == "bye");
+
+        /// <summary>[setup] Drops the connection; the loop connects again (with the current DeviceToken) after its backoff.</summary>
+        public void Reconnect()
+        {
+            var ws = _ws;
+            try { ws?.Abort(); } catch { }
+        }
 
         /// <summary>[send] Hands a message to the sender thread; a pose replaces the one still waiting.</summary>
         void Post(ClientWebSocket ws, Dictionary<string, object> body)
@@ -317,7 +360,7 @@ namespace TabletopCraft.Net
         async Task SendAsync(ClientWebSocket ws, Dictionary<string, object> body, bool force)
         {
             if (ws == null || ws.State != WebSocketState.Open) return;
-            if (!force && !_welcomed) return;
+            if (!force && !_welcomed && !(_pairing && IsPairingTraffic(body))) return;
             await _sendLock.WaitAsync();
             try
             {
