@@ -12,7 +12,7 @@ auth:
   pairing: true
   # true: a headset must be paired (or present the token below) before it sees anything; unpaired headsets wait on
   # their code. false: unpaired headsets still see and edit the world, but get no game files and no trusted features.
-  # Headset apps older than 1.1 can't pair: they need the token below, or this false.
+  # Headset apps older than v1.1.0 can't pair: they need the token below, or this false.
   require-pairing: false
   # Shared secret a headset can send in hello instead of pairing (tabletop.json "token"; for scripts and old apps).
   # Empty = no shared secret. With a token set, every headset must present it or be paired. It travels in clear on

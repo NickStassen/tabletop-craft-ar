@@ -64,11 +64,11 @@ Steps 0-10 were all done in the 2026-10-13 to 2026-10-15 sessions; they stay her
   - Patch (v1.0.x) for fixes, minor (v1.x.0) for new features that old plugins/apps can ignore (new optional fields, new messages behind caps), major (v2.0.0) for anything that breaks a plugin/app of the same major version. Every protocol change gets a changelog entry.
   - Before v1.0.0 there was no backwards compatibility (v0.x.y versions just had to match).
 - **Releases:** one `VERSION` file at the repo root is the single source: Gradle reads it for the plugin, and `TabletopBatch.BuildApk` sets the app's `bundleVersion` and versionCode from it. To release a feature set:
-  1. bump `VERSION` (0.X.0; patch for fixes);
+  1. bump `VERSION` (minor vX.Y.0 for features, patch vX.Y.Z for fixes);
   2. update the PROTOCOL.md header and its changelog;
-  3. commit `release: v0.X.0`;
-  4. tag `v0.X.0`;
-  5. `gh release create v0.X.0` with notes (what's new, what was verified on the headset, known gaps), attaching the plugin jar, the APK and the server starter zip.
+  3. commit `release: vX.Y.Z`;
+  4. tag `vX.Y.Z`;
+  5. `gh release create vX.Y.Z` with notes (what's new, what was verified on the headset, known gaps), attaching the plugin jar, the release-signed APK (step 6's build: the same file goes to the store) and the server starter zip.
   6. Build the store APK with `TabletopBatch.BuildReleaseApk` (release key from the `TABLETOP_KEYSTORE*` variables, never in the repo) and upload it to the BETA channel with `tools/release/upload_quest.sh` (docs/RELEASING.md).
   Never attach the client jar, pack.zip, entity_models.json, sounds.zip or a keystore.
 - `docs/PROTOCOL.md` is the contract for the plugin, Quest app and tools. Golden examples are in `tools/fixtures/`; Java (`FixtureTest`) and Python tests read them.

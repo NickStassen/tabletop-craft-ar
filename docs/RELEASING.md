@@ -108,7 +108,7 @@ utility"; a Linux build exists and is marked experimental). Install it somewhere
 
    ```
    tools/release/upload_quest.sh --dry-run
-   tools/release/upload_quest.sh --channel BETA --notes "1.1.0: pairing, automatic game files from your PC"
+   tools/release/upload_quest.sh --channel BETA --notes "v1.1.0: pairing, automatic game files from your PC"
    ```
 
    The defaults are `--channel BETA` and `--age-group TEENS_AND_ADULTS` (without an age group a build stays a draft).
