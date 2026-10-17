@@ -3,7 +3,7 @@
 A live block world from a **Minecraft: Java Edition** server, shown as a miniature on a real table in **Meta Quest 3** passthrough AR. Java players walk around inside it in real time, and they see the headset user as a giant whose head and hands follow the headset and controllers.
 
 > **NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.**
-> This project ships no Mojang assets: textures and sounds come from a resource pack or client jar you supply.
+> This project ships no Mojang assets: textures, models and sounds come from your own copy of the game.
 
 This page has the details the [README](../README.md) leaves out: how the parts fit together, every feature with a link to its setup section, what has been verified on a headset, versions, and the server quick start. Known gaps are in [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
 
@@ -92,6 +92,11 @@ Copy the jar into a Paper **26.3** server's `plugins/`, start the server once, t
 /tabletop avatar placement floating|ground|exact   # head + hands at the headset/controllers (default), or a Mannequin
 /tabletop avatar skin <java name>         # giant's skin (also tabletop.json skin_player / config avatar.skin-player)
 /tabletop tell <message>          # any player: whisper to the headset (chat panel)
+/tabletop pair <code> [java name] # pair the headset showing that 6-digit code (optionally: whose skin it wears)
+/tabletop devices                 # paired headsets, and the ones waiting with a code
+/tabletop unpair <id|name|all>    # revoke a paired headset
+/tabletop assets [rebuild|dir <folder>]   # the game files built for the headsets, from where
+/tabletop entities                # entity and action stream stats
 /tabletop unfreeze-all            # wake every mob the headset froze
 /tabletop reload
 ```
@@ -139,6 +144,6 @@ The other direction: the headset user appears to Java players as a giant head th
 
 **NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.**
 
-Follow the [Minecraft EULA](https://www.minecraft.net/eula) and [usage guidelines](https://www.minecraft.net/usage-guidelines). Running a server means accepting the EULA yourself (`eula.txt`); this repo never commits `eula.txt`, the server jar, or game assets. The Quest app loads textures only from a resource pack or client jar the user already owns.
+Follow the [Minecraft EULA](https://www.minecraft.net/eula) and [usage guidelines](https://www.minecraft.net/usage-guidelines). Running a server means accepting the EULA yourself (`eula.txt`); this repo never commits `eula.txt`, the server jar, or game assets. The Quest app loads textures, models and sounds only from the user's own game files (built by the plugin from the server PC's Minecraft install, or a resource pack the user supplies).
 
 MIT licensed, see [LICENSE](../LICENSE).
