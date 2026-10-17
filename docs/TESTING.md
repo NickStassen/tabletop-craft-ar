@@ -211,11 +211,13 @@ Still needs a Java client by eye: that the head's face points where the headset 
 
 ## Not verified (and why)
 
-- **On the Quest** (see "First headset session"): MRUK table detection, area setup and live block edits haven't been checked yet.
-- **Block models on the Quest**: they are checked offline only, with tests on the 26.3 jar and the offline renderer ("Block models from the resource pack").
-- **The giant in a Java client**: seen once, with exact placement and the user's skin. Ground placement, hand orientation and smoothness haven't been looked at by eye.
-- **Player skins on the table**: `player_positions` skins only exist on an online-mode server. The figures that use them haven't been on a headset yet.
-- **Windows**: the server steps in QUEST_SETUP.md are written for Windows but were run on Linux.
+As written after the first headset session (2026-10-13); the later sessions checked most of it (the Status table in OVERVIEW.md):
+
+- **On the Quest**: MRUK table detection, area setup and live block edits. Since verified on a Quest 3 (2026-10-14 and 2026-10-15).
+- **Block models on the Quest**: checked offline then, with tests on the 26.3 jar and the offline renderer ("Block models from the resource pack"). Since verified on the headset.
+- **The giant in a Java client**: seen once then, with exact placement and the user's skin. The floating head and hands (the default) have since been verified with a Java client (2026-10-14 and 2026-10-15); `ground` placement still hasn't been looked at by eye.
+- **Player skins on the table**: `player_positions` skins only exist on an online-mode server. Skinned player figures have since been seen on a Quest 3.
+- **Windows** (still open): the server steps in QUEST_SETUP.md are written for Windows but were run on Linux, and the Windows starter (`start.bat`, `start.ps1` under PowerShell 5.1, the firewall rules) hasn't run on Windows (`start.ps1` ran under PowerShell 7.4 on Linux, "Easy setup" below).
 
 ## Spec deviations (PROTOCOL.md v1, known and intentional for v0.1.0)
 
@@ -1434,7 +1436,9 @@ Paper 26.3 test server (offline mode, seed 12345, ports 25629 / 8829), the PC's 
 
 ### Not verified (needs the headset)
 - The first-run card, the LAN search connecting by itself, the pairing card (size of the code, the lower position on an open server), the reconnect after pairing on an open server, the update note with a v1.0.0 plugin, the disclaimer on the Info tab.
-- A store install: a release-channel build installed from the Library on an account without Developer Mode (RELEASING.md section 6, plan step U9).
+- A store install: a release-channel build installed from the Library on an account without Developer Mode (RELEASING.md section 6, step 7).
+
+Since verified on a Quest 3 (OVERVIEW.md Status): with v1.1.0 on a fresh install (2026-10-16), the app found the server by itself, paired with the code, downloaded the game files (textures in 0.7 s, sounds 67 MB in 8.4 s) and reloaded, and unpair and pair again worked; v1.2.1 shows the disclaimer on the pairing card and was installed fresh from the BETA channel's invite link, then paired and downloaded the game files.
 
 ### Known gaps
 - Launchers other than the official one (Prism, MultiMC, CurseForge) aren't found by themselves: `tabletop assets dir` must point at a folder in the official layout.
@@ -1458,6 +1462,8 @@ For the store listing (VRC.Content.3 and the dashboard's "User Reporting"; `docs
 - Pointing at chat lines (highlight, the picked line, the button row), the Players tab's Chat row and Mute list, the report picker and its keyboard, the toasts; mute and block hiding new lines, bubbles and whispers live; prefs.json keeping the lists across a restart.
 - A report with a real Java player: the chat context lines and the gold line to an online op (`tabletop.reports`).
 
+Since verified on a Quest 3 with a Java player (2026-10-16, OVERVIEW.md Status): mute, block (whispers too), the mute list across an app restart, and a report saved to `reports.log` with the player's chat.
+
 ### Known gaps
 - Other headsets' lines (`[Giant] ...`, kind `operator`) have no player uuid: they can't be muted, blocked or reported.
 - Blocking hides chat, bubbles and whispers; the player's figure, name, builds and sign text stay on the table.
@@ -1475,3 +1481,5 @@ On the headset (v1.2.0, width 64, region 128x186x128): after a jump to a Mark in
 ### To check on the headset
 - Jump to a Mark in another world and back (operator panel > Marks): terrain shows within about a second, `STAGED complete after N ms` (N well under 1000), never `timed out`; PERF `pending=0` right after; "Loading area" ends with "Area loaded".
 - `avatar enabled=... scale=...` appears once per change, not every 0.5 s.
+
+Verified on a Quest 3 with v1.2.1: a jump to a Mark shows its terrain in about 0.3 s (was 20-45 s).

@@ -1,6 +1,6 @@
 # Known issues
 
-Things that don't work yet, or work differently from the game, in tabletop-craft-ar v1.2.0. Gaps against the protocol spec are listed separately in [TESTING.md](TESTING.md) under "Spec deviations"; what has been verified is in the Status table in [OVERVIEW.md](OVERVIEW.md#status).
+Things that don't work yet, or work differently from the game, in tabletop-craft-ar v1.2.1. Gaps against the protocol spec are listed separately in [TESTING.md](TESTING.md) under "Spec deviations"; what has been verified is in the Status table in [OVERVIEW.md](OVERVIEW.md#status).
 
 - **Bedrock players see the giant as a whole player.** Bedrock clients can't show the item displays the floating head and hands are made of, so Bedrock players see a large Mannequin wearing the headset user's skin, turning with the headset, with no moving hands. Java players see the floating head and hands.
 - **Pistons jump instead of sliding.** Pushed blocks appear in their new spot after the 2-tick move.
@@ -16,7 +16,6 @@ Things that don't work yet, or work differently from the game, in tabletop-craft
   - There's no music and no biome or underwater ambience.
 - **Chat:** `/msg` and `/tellraw` don't reach the headset's chat. Bukkit fires no event for them.
 - **Mute, block and report (v1.2.0):**
-  - Not checked on a headset yet.
   - Other headsets' lines (`[Giant] Name: ...`) can't be muted, blocked or reported: they aren't players. The server's owner decides which headsets connect (pairing).
   - Blocking hides a player's chat, bubbles and whispers on your headset. Their figure, name, builds and sign text stay on the table.
   - Reports need the v1.2.0 plugin; with an older one, Report is greyed (Mute and Block still work).

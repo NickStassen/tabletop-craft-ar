@@ -39,9 +39,9 @@ Phases 0-3 were built and checked on Paper 1.21.11 / Java 21. The server pin has
 
 ## Phase 8 — Public server
 - `wss://` behind a reverse proxy, per-user tokens via `/tabletop link`, rate limits, region permissions, and a usage-guidelines review (no Mojang assets shipped, the name doesn't start with or imply the game's brand, non-commercial).
-- **Exit:** a security checklist passes, and the repo flips to public after a personal-details scrub.
+- **Exit:** a security checklist passes. (The repo itself is public already, after a personal-details scrub.)
 
-## Status after the first headset sessions (2026-10-13)
+## Status after the headset sessions (2026-10-13 to 2026-10-16)
 - **Done:**
   - Phases 0–4 run on a Quest 3 against Paper 26.3.
   - From Phase 5: block models from the pack, biome colours, smooth lighting with AO, animated textures, waterlogging and fluids, gliding across the world with sectioned/delta streaming, and areas up to 128×96×128 recommended.
@@ -51,9 +51,10 @@ Phases 0-3 were built and checked on Paper 1.21.11 / Java 21. The server pin has
   - Skinned and animated player figures (now seen working on a Quest 3 headset).
   - The eye-in-fluid effects: underwater fog and tint, the surface seen from below, lava and powder snow.
   - Entities (vehicles, mobs, dropped items, held items) and player actions (arm swing, digging cracks, break particles, hurt flash), seen on a Quest 3.
-- **Built, waiting for headset measurements (2026-10-14):** area width presets 64–256 without reconnecting (resize deltas, re-keyed meshes, footprint kept) and mesh batching (roadmap item 7).
 - **Verified on a Quest 3 (2026-10-14):** releases v0.2.0 to v0.3.1 (block menu, width presets, fixes and polish).
 - **Verified on a Quest 3 (2026-10-15):** releases v0.4.0 to v0.8.1 (fixes from that session are v0.8.1); Bedrock verified with a phone client too. Earlier list: v0.4.0 to v0.7.0 (fast gliding, chat and commands, block entities, using blocks/items/mobs, the living world, operator and power tools, faster meshing, sound, motion). Each part's headset checklist is in TESTING.md.
+- **Verified on a Quest 3 (2026-10-16):** v1.0.0 (smooth gliding), v1.1.0 (server starter, pairing, automatic game files), v1.2.0 and v1.2.1 (mute, block and report; fast Mark jumps).
+- **Store install, verified on a Quest 3:** the v1.2.1 build from the BETA release channel (invite link, installed from the headset's Library), then pairing and the automatic game files.
 
 ## Roadmap: "playing Minecraft as a god"
 Ordered by how much each adds to the feeling of a living world on the table that you can act on.
@@ -72,7 +73,7 @@ Ordered by how much each adds to the feeling of a living world on the table that
 **3. Presence in AR.**
 - Hand tracking: pinch to break or place, fist to grab.
 - Depth-API occlusion, so real hands hide the terrain.
-- Working MRUK table detection; the log shows OpenXR binding warnings.
+- (Done, verified on a Quest 3) MRUK table detection, with the desk marked as a Table in Space Setup. The log still shows OpenXR binding warnings.
 - A persistent spatial anchor. (v0.3.1 remembers the placement relative to the MRUK table in `prefs.json`; without a table it still starts in front of you.)
 - A diorama plinth and a soft shadow on the real table.
 - (Done, verified on a Quest 3) Status text off the view: the full status is the block menu's Info tab, events are short toasts, area setup has a small panel on the left hand, and a small HUD is optional (`show_hud`).

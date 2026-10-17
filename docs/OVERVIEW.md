@@ -19,7 +19,8 @@ Java players (LAN) ──game protocol──▶ Paper 26.3 + tabletop plugin ◀
 ```
 
 - **server-plugin/**: Paper plugin (Java 25, Gradle Kotlin DSL, Java-WebSocket 1.6.0 shaded). Streams a configurable box (default 32x64x32) and drives the giant.
-- **quest-app/**: Unity 6000.0.84f1 project skeleton + C# scripts (link client, protocol, greedy mesher, resource-pack atlas, MRUK table placement, pose sender, player markers). Runs on a Quest 3 (first session 2026-10-13) and builds headless on Linux. See [QUEST_SETUP.md](QUEST_SETUP.md).
+- **quest-app/**: the Unity 6000.0.84f1 project (the scene is built in code) and its C# scripts (link client, protocol, greedy mesher, resource-pack atlas, MRUK table placement, pose sender, player figures, menus and panels). Runs on a Quest 3 (first session 2026-10-13) and builds headless on Linux. See [QUEST_SETUP.md](QUEST_SETUP.md).
+- **server-starter/**: `start.bat` / `start.ps1` (Windows) and `start.sh` (Linux, macOS), released as `tabletop-server-starter-<version>.zip`: they download Paper and the plugin, ask you to accept the EULA and start the server ([QUEST_SETUP The server starter](QUEST_SETUP.md#the-server-starter)).
 - **tools/**: Python fake-Quest client, protocol fixtures, the mineflayer second-player bot, and `e2e.sh`, which runs the whole server-side stack headless.
 - **docs/**: [ARCHITECTURE](ARCHITECTURE.md), [PROTOCOL](PROTOCOL.md) (normative wire format, v1), [PLAN](PLAN.md), [RESEARCH](RESEARCH.md), [TESTING](TESTING.md), [QUEST_SETUP](QUEST_SETUP.md), [KNOWN_ISSUES](KNOWN_ISSUES.md).
 
@@ -64,6 +65,7 @@ What has been tested and verified, and where. Each entry is backed by the sessio
 | v0.6.0 / v0.7.0: sound, motion | Verified on a Quest 3 (2026-10-15): sound, opt-in asset delivery (41.5 MB pack.zip in 6 s, 67 MB sounds.zip in 8 s, scene reload clean), flowing fluids, particles, lids, bells, explosions |
 | v1.1.0: server starter, pairing, automatic game files | Verified on a Quest 3 (2026-10-16, fresh install): the app found the server by itself, pairing with the code, the one-time download (textures 0.7 s, sounds 67 MB in 8.4 s) and reload, unpair and pair again. Also `tools/pair_check.py` on a test server. `start.ps1` not yet run on Windows |
 | v1.2.0 / v1.2.1: mute, block and report players; Info tab layout; fast Mark jumps | Verified on a Quest 3 (2026-10-16) with a Java player: mute, block (whispers too), the mute list across an app restart, a report saved to `reports.log` with the player's chat. v1.2.1: the Info tab fits its panel, the pairing card shows the disclaimer, and a jump to a Mark shows its terrain in about 0.3 s (was 20-45 s) |
+| Store install (v1.2.1, BETA release channel) | Verified on a Quest 3: a fresh install from the invite link through the headset's Library, then pairing and the automatic game files |
 | Bedrock players (Geyser + Floodgate) | Verified with Minecraft on a phone (2026-10-15): joins through Geyser, appears on the table with its skin, chats both ways with the headset, and sees the giant as a large Mannequin wearing the headset user's skin (Bedrock cannot show the floating head and hands) |
 
 ## Versions
