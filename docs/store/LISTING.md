@@ -20,11 +20,12 @@ Rules this text follows (Minecraft Usage Guidelines, Meta app policies):
 
 > Tabletop Craft AR
 
-**Short description** (about 340 characters):
+**Short description** (about 400 characters):
 
 > Your Java Edition server as a living miniature on your real table. See players, mobs and redstone move, build and
 > break blocks with your hands, chat, and loom over the world as a giant your friends can see. Needs your own Minecraft:
-> Java Edition and a PC running the free server starter on the same Wi-Fi. NOT AN OFFICIAL MINECRAFT PRODUCT.
+> Java Edition and a PC running the free server starter on the same Wi-Fi. NOT AN OFFICIAL MINECRAFT PRODUCT. NOT
+> APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.
 
 **Long description** (about 1,300 characters):
 
