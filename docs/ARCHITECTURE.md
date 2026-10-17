@@ -2,7 +2,7 @@
 
 A live Java-edition block world shown as a miniature on a real table in Quest 3 passthrough AR. Java players see the headset user as a giant inside the world.
 
-Related: idea file [VR-7](https://github.com/NickStassen/ideas/blob/master/vr/07-minecraft-ar-tabletop.md) and sister project [ironman-quest3-hud](https://github.com/NickStassen/ironman-quest3-hud), which has the Unity/Meta XR setup this project reuses. The wire format is in [PROTOCOL.md](PROTOCOL.md), the phases in [PLAN.md](PLAN.md), and the sources in [RESEARCH.md](RESEARCH.md).
+Related: sister project [ironman-quest3-hud](https://github.com/NickStassen/ironman-quest3-hud), which has the Unity/Meta XR setup this project reuses. The wire format is in [PROTOCOL.md](PROTOCOL.md), the phases in [PLAN.md](PLAN.md), and the sources in [RESEARCH.md](RESEARCH.md).
 
 ## 1. Components
 

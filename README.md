@@ -57,7 +57,7 @@ Yes, for the players: add [GeyserMC](https://geysermc.org) and Floodgate to the 
 - [Known issues](docs/KNOWN_ISSUES.md)
 - [Headset and server setup](docs/QUEST_SETUP.md)
 - [Architecture](docs/ARCHITECTURE.md) · [Protocol](docs/PROTOCOL.md) · [Testing](docs/TESTING.md) · [Plan and roadmap](docs/PLAN.md) · [Research](docs/RESEARCH.md)
-- Related: the idea write-up [VR-7](https://github.com/NickStassen/ideas/blob/master/vr/07-minecraft-ar-tabletop.md) and the sister project [ironman-quest3-hud](https://github.com/NickStassen/ironman-quest3-hud) (Unity and Meta XR setup)
+- Related: the sister project [ironman-quest3-hud](https://github.com/NickStassen/ironman-quest3-hud) (Unity and Meta XR setup)
 
 ## Support
 

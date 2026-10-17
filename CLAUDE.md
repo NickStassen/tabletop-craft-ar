@@ -83,5 +83,5 @@ Steps 0-10 were all done in the 2026-10-13 to 2026-10-15 sessions; they stay her
 - **This repo is public.** No personal details: no employers or jobs, family or relationships, events, health, money, home location, hostnames or schedule. Keep docs strictly technical, and keep IPs and usernames in examples generic.
 - Default branch **master**. Small conventional commits (`feat(plugin):`, `fix(quest):`, `docs:`). Never force-push or rewrite history.
 - Never commit `eula.txt`, server jars, worlds, resource packs, client jars, APKs or Unity's generated folders (`Library/`, `Temp/`, `Builds/`, `UserSettings/`).
-- Cross-link with real links: [ironman-quest3-hud](https://github.com/NickStassen/ironman-quest3-hud) (Unity/Meta XR setup, Quest networking notes) and the idea file [VR-7](https://github.com/NickStassen/ideas/blob/master/vr/07-minecraft-ar-tabletop.md).
+- Cross-link with real links: [ironman-quest3-hud](https://github.com/NickStassen/ironman-quest3-hud) (Unity/Meta XR setup, Quest networking notes). Don't link the private `NickStassen/ideas` repo: it is a 404 for the public.
 - When something is verified on a headset, update the Status table in `docs/OVERVIEW.md` (and the README gallery or bullets if a headline feature changes). Keep the README short: big features, GIFs, links; details go in OVERVIEW.md, gaps in KNOWN_ISSUES.md.

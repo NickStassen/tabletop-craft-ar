@@ -7,7 +7,7 @@ A live block world from a **Minecraft: Java Edition** server, shown as a miniatu
 
 This page has the details the [README](../README.md) leaves out: how the parts fit together, every feature with a link to its setup section, what has been verified on a headset, versions, and the server quick start. Known gaps are in [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
 
-Related: the idea write-up [VR-7 in NickStassen/ideas](https://github.com/NickStassen/ideas/blob/master/vr/07-minecraft-ar-tabletop.md) and the sister project [ironman-quest3-hud](https://github.com/NickStassen/ironman-quest3-hud), which has the Unity 6000.0.84f1 + Meta XR setup this project reuses.
+Related: the sister project [ironman-quest3-hud](https://github.com/NickStassen/ironman-quest3-hud), which has the Unity 6000.0.84f1 + Meta XR setup this project reuses.
 
 ## How it works
 
