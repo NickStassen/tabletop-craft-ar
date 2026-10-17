@@ -65,7 +65,7 @@ Rules this text follows (Minecraft Usage Guidelines, Meta app policies):
 | Support / contact email | nicholas@stassen.com (public: privacy page and store) |
 | Publisher name | Nick Stassen (developer shown as "Nick Stassen Hobbies") |
 | Data Use Checkup | not needed: the app uses no Platform SDK features (Meta's User Reporting Service is set up in the dashboard, with no SDK in the app) |
-| Player modes | Multiplayer (online with invited players: the server's whitelist and pairing), once User Reporting is active (below) |
+| Player modes | Multiplayer (online with invited players: the server's whitelist and pairing); User Reporting is active, so the dashboard accepts it (below) |
 
 **Store media checklist** (Meta's asset guidelines): icon 512x512 (opaque, square corners), hero 3000x900, landscape
 2560x1440, square 1440x1440, portrait 1008x1440, five screenshots at 2560x1440 from the real app with no text on them,
@@ -74,7 +74,7 @@ The invite page needs the name, the short description and the header image (hero
 
 ## User reporting, blocking and the content rating (v1.2.0)
 
-What the public listing needs, and what to set in the Developer Dashboard once v1.2.0 is uploaded. The invite-only beta
+What the public listing needs, and what is set in the Developer Dashboard. The invite-only beta
 doesn't need it.
 
 **Meta's requirement.** [VRC.Content.3](https://developers.meta.com/horizon/resources/vrc-content-3/): apps with
@@ -95,7 +95,7 @@ whitelist, so the in-app **Report** goes to them (`report_v1`, `reports.log`, PR
 **Mute** / **Block** hide a player's chat on the headset. Reports through the Quest button reach the developer, who
 answers them and points to the server's owner.
 
-**Developer Dashboard steps.**
+**Developer Dashboard steps.** Steps 1-4 are done (2026-10-17): the User Reporting Service is active with email delivery to the support address, the reporter's email requested, and Meta's default reasons plus Hacking, Sexually explicit behavior and Spam. Still to do: step 5 (player mode, the Report Abuse check on a headset) and the IARC answers below.
 1. My Apps > Tabletop Craft AR > Platform Services > **User Reporting** > Add Service > Get Started.
 2. Primary reporting tool: **User Reporting Service** (not the plugin: that needs the Platform SDK).
 3. Delivery: **email** to the support address above (or the secure inbox: generate and keep the decryption key; a
@@ -118,4 +118,4 @@ answers them and points to the server's owner.
 | Interaction limited to invited friends | yes | yes (unchanged: the server's whitelist and pairing) |
 
 The privacy policy (`docs/privacy.html`) already describes both report routes and what each stores; it says the Quest
-menu has Report Abuse, so activate the service before the public listing goes live.
+menu has Report Abuse; the service is active since 2026-10-17.
