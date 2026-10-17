@@ -168,7 +168,7 @@ Each edit gives a short buzz. Breaking and placing blocks that already appear in
 
 Not like the game (yet): clicking a slab with the same slab doesn't make a double slab (it goes on top), snow, candles, sea pickles and petals don't stack, two chests don't join into a double chest, and there's no rotate button.
 
-Server options (config.yml `edit`): `enabled`, `require-token` (only allow edits when `auth.token` is set), `max-per-second` (20), `physics` (sand falls, water flows) and `deny` (blocks that can't be placed: command blocks, structure blocks, jigsaws). Each edit is logged as `EDIT session=... break|place world x,y,z ... old -> new`. Edits don't go through protection plugins.
+Server options (config.yml `edit`): `enabled`, `require-token` (edits only from trusted headsets: paired, or presenting `auth.token`), `max-per-second` (20), `physics` (sand falls, water flows) and `deny` (blocks that can't be placed: command blocks, structure blocks, jigsaws). Each edit is logged as `EDIT session=... break|place world x,y,z ... old -> new`. Edits don't go through protection plugins.
 
 ## Part J: the block menu and the hotbar
 
@@ -231,9 +231,9 @@ For measurements, `tabletop.json` can start the app at a preset: `"area_width": 
 
 ## Part L: the operator panel: chat, console, players, world, server, marks
 
-You are the server's operator without a game account. The operator panel lets you chat with Java players, run server commands and watch the server. Chat and the status work on any server; commands need a token (security, below).
+You are the server's operator without a game account. The operator panel lets you chat with Java players, run server commands and watch the server. Chat and the status work on any server; commands need a trusted headset: a paired one ("Store install" > Pairing) or one that presents the server's token (security, below).
 
-**Server side (once):** set a token in the plugin's `config.yml` and the same one in `tabletop.json`, then restart or `/tabletop reload` and reconnect:
+**A token instead of pairing** (for scripts, or an app older than v1.1.0): set a token in the plugin's `config.yml` and the same one in `tabletop.json`, then restart or `/tabletop reload` and reconnect:
 
 ```yaml
 auth:
@@ -266,7 +266,7 @@ The tabs:
 - **Server:** TPS (1, 5, 15 min), MSPT, memory, players, the tick state and, per world, loaded chunks, entities, players, the time and the weather, every 2 s.
 - **Marks:** jump to another world, the spawn, typed coordinates or a shared bookmark; who you follow (Part N). The Players tab's **View** row follows the selected player or jumps to them once (Part N); the container view and the sign editor also open in this panel (Part N).
 
-Without the token the command buttons are greyed and the note line says **needs auth.token**; chat, Players, World and Server still show their information. The line at the bottom of the panel says what happened last (the last command's answer, or why a button did nothing). The **Info** tab of the block menu has a `TALK` line: chat (as which name, or read-only), commands on or off, status.
+On a headset that is neither paired nor has the token, the command buttons are greyed and the note line says **needs a paired headset (or the server's token)**; chat, Players, World and Server still show their information. The line at the bottom of the panel says what happened last (the last command's answer, or why a button did nothing). The **Info** tab of the block menu has a `TALK` line: chat (as which name, or read-only), commands on or off, status.
 
 **Outside the panel:** the last 5 chat lines float just above your left wrist and fade 10 s after they arrive (hidden while a panel is open). A player's chat also appears as a bubble above their figure on the table for about 6 s (up to 3 lines). Joins and deaths also show as short messages low in your view. Java players see your chat line above the giant's head for 5 s (`chat.bubble-seconds`).
 
@@ -280,8 +280,8 @@ Without the token the command buttons are greyed and the note line says **needs 
 - **Reporting through the Quest button:** on a store install, the Quest button's menu also has **Report Abuse** (Meta's own form). That report goes to the app's developer, who can't act on players of your server: for someone on your server, use Report in the panel or tell the server's owner.
 
 **Security.** A headset command runs with operator rights, like the server console. Keep these in mind:
-- Commands are off without `auth.token` (`commands.require-token: true` is the default). With a token, every headset that presents it may run commands.
-- The link is plain `ws://`. The token and every command travel **unencrypted** on the LAN; anyone who can capture the traffic can replay the token. Use it on a network you trust. Beyond the LAN, put a TLS reverse proxy (`wss://`) in front (ARCHITECTURE.md §6).
+- Commands are only for trusted headsets (`commands.require-token: true`, the default): paired ones, and ones that present `auth.token`. Every such headset may run commands; `tabletop unpair` takes a paired headset's rights away.
+- The link is plain `ws://`. The tokens (the shared one and each headset's own) and every command travel **unencrypted** on the LAN; anyone who can capture the traffic can replay a token. Use it on a network you trust. Beyond the LAN, put a TLS reverse proxy (`wss://`) in front (ARCHITECTURE.md §6).
 - `commands.deny` refuses the dangerous roots by default (`stop`, `restart`, `reload`, `op`, `deop`, `ban`, `ban-ip`, `pardon`, `pardon-ip`, `whitelist`, `save-off`, `debug`, `jfr`, `perf`, `transfer`), also behind aliases, `minecraft:` prefixes and `execute ... run`. A non-empty `commands.allow` lets only its commands run. Plugin commands that run other commands (and datapack functions) can't be looked into.
 - Every command is logged (`CMD session=... /line ok (ms)`), and ops see `[Tabletop: /line]` in game (`commands.notify-ops`).
 - Limits: 2 commands and 2 chat lines per second per headset (bursts of 5), 256 characters.
@@ -448,7 +448,7 @@ The Info tab (Part J) shows `LINK`, `RTT`, `WORLD`, `PACK`, `EDIT` (the selected
 | Giant head is high up or far away | Expected in `floating` (the default): it is exactly where your headset is, scaled by the block size. Lean in over the table to bring it down, or use a larger block size. `/tabletop avatar placement ground` puts a body on the terrain instead (ARCHITECTURE 3.5). |
 | Giant not visible from far away | Display entities are only sent within `entity-tracking-range.display` (spigot.yml, default 128 blocks horizontally) of a player. |
 | Giant has the default skin | No `skin_player` in tabletop.json and no `avatar.skin-player`, a misspelt name (a `Skin lookup failed` message), or no internet on the server PC. Check `/tabletop avatar status` (`skin_resolved`). |
-| `EDIT off (server)` (Info tab) | The plugin is older than the headset app, `edit.enabled: false`, or `edit.require-token: true` without an `auth.token`. Update the plugin or change config.yml `edit`, then `/tabletop reload` and reconnect. |
+| `EDIT off (server)` (Info tab) | The plugin is older than the headset app, `edit.enabled: false`, or `edit.require-token: true` and the headset is neither paired nor has the token. Update the plugin or change config.yml `edit`, then `/tabletop reload` and reconnect. |
 | Block menu says "waiting for the server's block list" | The plugin is older than the app (no `block_registry`). Update the plugin. |
 | Menu icons are coloured cubes | No `pack.zip` (Part E), or the pack failed to open (Info tab: `icons flat`). |
 | Old icons after changing `pack.zip` | Shouldn't happen (the cache folder is named after the pack's size and date); delete the app's `files/icons/` folder to force a redraw. |
