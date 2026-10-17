@@ -81,7 +81,7 @@ With adb you can still add any of them by hand (Part D).
 | `tabletop pair` says "no headset is waiting with code ..." | A typo, or the code expired: check the card. |
 | Toast "Server plugin v1.0.x can't pair headsets ...: update it" | Run the starter again (it updates the plugin), or put the newer plugin jar in `plugins/`. |
 | No textures: Info tab `ASSETS the server offers nothing: No Minecraft 26.3 on the server's PC ...` | Start Minecraft 26.3 once in the launcher on the server's PC, then `tabletop assets rebuild` (The game files, above). |
-| A sideloaded copy is installed | Uninstall it first: an app signed differently can't be updated by the store. That also removes its files; they download again after pairing. |
+| A copy you built yourself is installed | Uninstall it first: it is signed with another key (Unity's debug key), and an app signed differently can't be updated by the store. That also removes its files; they download again after pairing. The release APK from GitHub has the store build's key and needs no uninstall. |
 
 ## Part F: test with a second Java player
 
@@ -460,7 +460,7 @@ The Info tab (Part J) shows `LINK`, `RTT`, `WORLD`, `PACK`, `EDIT` (the selected
 
 ## Appendix: Developer sideload
 
-Building and installing everything yourself, for development and testing: the server by hand (Part A), the Unity project and the APK (Part B), installing with `adb` (Part C), pointing the app at the server by hand (Part D) and making the game files yourself (Part E). Developer Mode must be on. A sideloaded app is signed with another key than the store build: uninstall one before installing the other (docs/RELEASING.md).
+Building and installing everything yourself, for development and testing: the server by hand (Part A), the Unity project and the APK (Part B), installing with `adb` (Part C), pointing the app at the server by hand (Part D) and making the game files yourself (Part E). Developer Mode must be on. An APK you build yourself is signed with Unity's debug key unless you set your own (docs/RELEASING.md), so it can't replace the store build or the release APK (both carry the release key): uninstall one before installing the other.
 
 Versions follow [ironman-quest3-hud's SETUP.md](https://github.com/NickStassen/ironman-quest3-hud/blob/master/docs/SETUP.md): Unity **6000.0.84f1**, Meta XR Core SDK + MRUK **85.0.0**, OpenXR 1.15.1, built-in render pipeline, Android IL2CPP ARM64. The app compiles and builds an APK headless on Linux and runs on a Quest 3 (TESTING.md section 5 and "First headset session"); Troubleshooting lists the compile fixes that were needed.
 
