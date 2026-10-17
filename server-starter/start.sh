@@ -13,8 +13,10 @@
 #   --dir        the server folder (default ~/TabletopCraftServer)
 #   --port       the Minecraft port for Java players (first run; default 25565)
 #   --ws-port    the headset link and LAN discovery port, TCP and UDP (first run; default 8765)
+#   --memory     the server's maximum Java heap (default 4G)
 #   --bedrock    install Geyser + Floodgate without asking (yes) or skip them (no)
 #   --plugin-jar use this plugin jar instead of the newest release (for testing a build)
+#   --java       the java command to run (default: $JAVA, else java on the PATH)
 #   --no-start   install or update, but don't start the server
 set -euo pipefail
 

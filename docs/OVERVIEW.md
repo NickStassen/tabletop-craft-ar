@@ -3,7 +3,7 @@
 A live block world from a **Minecraft: Java Edition** server, shown as a miniature on a real table in **Meta Quest 3** passthrough AR. Java players walk around inside it in real time, and they see the headset user as a giant whose head and hands follow the headset and controllers.
 
 > **NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.**
-> This project ships no Mojang assets: textures and sounds come from a resource pack or client jar you supply.
+> This project ships no Mojang assets: textures, models and sounds come from your own copy of the game.
 
 This page has the details the [README](../README.md) leaves out: how the parts fit together, every feature with a link to its setup section, what has been verified on a headset, versions, and the server quick start. Known gaps are in [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
 
@@ -19,7 +19,8 @@ Java players (LAN) ──game protocol──▶ Paper 26.3 + tabletop plugin ◀
 ```
 
 - **server-plugin/**: Paper plugin (Java 25, Gradle Kotlin DSL, Java-WebSocket 1.6.0 shaded). Streams a configurable box (default 32x64x32) and drives the giant.
-- **quest-app/**: Unity 6000.0.84f1 project skeleton + C# scripts (link client, protocol, greedy mesher, resource-pack atlas, MRUK table placement, pose sender, player markers). Runs on a Quest 3 (first session 2026-10-13) and builds headless on Linux. See [QUEST_SETUP.md](QUEST_SETUP.md).
+- **quest-app/**: the Unity 6000.0.84f1 project (the scene is built in code) and its C# scripts (link client, protocol, greedy mesher, resource-pack atlas, MRUK table placement, pose sender, player figures, menus and panels). Runs on a Quest 3 (first session 2026-10-13) and builds headless on Linux. See [QUEST_SETUP.md](QUEST_SETUP.md).
+- **server-starter/**: `start.bat` / `start.ps1` (Windows) and `start.sh` (Linux, macOS), released as `tabletop-server-starter-<version>.zip`: they download Paper and the plugin, ask you to accept the EULA and start the server ([QUEST_SETUP The server starter](QUEST_SETUP.md#the-server-starter)).
 - **tools/**: Python fake-Quest client, protocol fixtures, the mineflayer second-player bot, and `e2e.sh`, which runs the whole server-side stack headless.
 - **docs/**: [ARCHITECTURE](ARCHITECTURE.md), [PROTOCOL](PROTOCOL.md) (normative wire format, v1), [PLAN](PLAN.md), [RESEARCH](RESEARCH.md), [TESTING](TESTING.md), [QUEST_SETUP](QUEST_SETUP.md), [KNOWN_ISSUES](KNOWN_ISSUES.md).
 
@@ -43,7 +44,7 @@ Java players (LAN) ──game protocol──▶ Paper 26.3 + tabletop plugin ◀
 
 **Files from your own install.** Since v1.1.0 the plugin builds `pack.zip`, `entity_models.json` and `sounds.zip` from the server PC's own Minecraft install (start Minecraft: Java Edition once there) and sends them to your paired headsets on the LAN, once (about 75 MB). They can still go on the headset by adb. Setup: [Store install](QUEST_SETUP.md#the-game-files), [Part E](QUEST_SETUP.md#part-e-textures-resource-pack).
 
-**Easy setup (v1.1.0).** The server starter (`start.bat`, `start.sh`) downloads Paper, the plugin and optionally Geyser, asks you to accept the EULA and starts the server; the app finds it on the Wi-Fi and pairs with a 6-digit code (`tabletop pair <code>`, `tabletop devices`, `tabletop unpair`). Setup: [QUEST_SETUP Store install](QUEST_SETUP.md#store-install-recommended).
+**Easy setup (v1.1.0).** The server starter (`start.bat`, `start.sh`) downloads Paper, the plugin and optionally Geyser, asks you to accept the EULA and starts the server; the app finds it on the Wi-Fi and pairs with a 6-digit code (`tabletop pair <code>`, `tabletop devices`, `tabletop unpair`). The app installs from the Meta Horizon Store's private beta ([invite link](https://www.meta.com/s/7Hd4RBdRk), 18+, no developer mode) or as the release's APK (sideloaded; the same release key as the store build). Setup: [QUEST_SETUP Store install](QUEST_SETUP.md#store-install-recommended).
 
 ## Status
 
@@ -64,6 +65,7 @@ What has been tested and verified, and where. Each entry is backed by the sessio
 | v0.6.0 / v0.7.0: sound, motion | Verified on a Quest 3 (2026-10-15): sound, opt-in asset delivery (41.5 MB pack.zip in 6 s, 67 MB sounds.zip in 8 s, scene reload clean), flowing fluids, particles, lids, bells, explosions |
 | v1.1.0: server starter, pairing, automatic game files | Verified on a Quest 3 (2026-10-16, fresh install): the app found the server by itself, pairing with the code, the one-time download (textures 0.7 s, sounds 67 MB in 8.4 s) and reload, unpair and pair again. Also `tools/pair_check.py` on a test server. `start.ps1` not yet run on Windows |
 | v1.2.0 / v1.2.1: mute, block and report players; Info tab layout; fast Mark jumps | Verified on a Quest 3 (2026-10-16) with a Java player: mute, block (whispers too), the mute list across an app restart, a report saved to `reports.log` with the player's chat. v1.2.1: the Info tab fits its panel, the pairing card shows the disclaimer, and a jump to a Mark shows its terrain in about 0.3 s (was 20-45 s) |
+| Store install (v1.2.1, BETA release channel) | Verified on a Quest 3: a fresh install from the invite link through the headset's Library, then pairing and the automatic game files |
 | Bedrock players (Geyser + Floodgate) | Verified with Minecraft on a phone (2026-10-15): joins through Geyser, appears on the table with its skin, chats both ways with the headset, and sees the giant as a large Mannequin wearing the headset user's skin (Bedrock cannot show the floating head and hands) |
 
 ## Versions
@@ -90,13 +92,18 @@ Copy the jar into a Paper **26.3** server's `plugins/`, start the server once, t
 /tabletop avatar placement floating|ground|exact   # head + hands at the headset/controllers (default), or a Mannequin
 /tabletop avatar skin <java name>         # giant's skin (also tabletop.json skin_player / config avatar.skin-player)
 /tabletop tell <message>          # any player: whisper to the headset (chat panel)
+/tabletop pair <code> [java name] # pair the headset showing that 6-digit code (optionally: whose skin it wears)
+/tabletop devices                 # paired headsets, and the ones waiting with a code
+/tabletop unpair <id|name|all>    # revoke a paired headset
+/tabletop assets [rebuild|dir <folder>]   # the game files built for the headsets, from where
+/tabletop entities                # entity and action stream stats
 /tabletop unfreeze-all            # wake every mob the headset froze
 /tabletop reload
 ```
 
 Fake headset: `pip install -r tools/requirements.txt && python tools/fake_quest.py --url ws://SERVER:8765/tabletop --avatar -v`.
 
-The headset side (building the APK, installing it, textures, controls) is in [QUEST_SETUP.md](QUEST_SETUP.md).
+The headset side (the store beta or the release APK, pairing, controls; building and sideloading the APK yourself in its appendix) is in [QUEST_SETUP.md](QUEST_SETUP.md).
 
 ## Does it work with Bedrock?
 
@@ -137,6 +144,6 @@ The other direction: the headset user appears to Java players as a giant head th
 
 **NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.**
 
-Follow the [Minecraft EULA](https://www.minecraft.net/eula) and [usage guidelines](https://www.minecraft.net/usage-guidelines). Running a server means accepting the EULA yourself (`eula.txt`); this repo never commits `eula.txt`, the server jar, or game assets. The Quest app loads textures only from a resource pack or client jar the user already owns.
+Follow the [Minecraft EULA](https://www.minecraft.net/eula) and [usage guidelines](https://www.minecraft.net/usage-guidelines). Running a server means accepting the EULA yourself (`eula.txt`); this repo never commits `eula.txt`, the server jar, or game assets. The Quest app loads textures, models and sounds only from the user's own game files (built by the plugin from the server PC's Minecraft install, or a resource pack the user supplies).
 
 MIT licensed, see [LICENSE](../LICENSE).

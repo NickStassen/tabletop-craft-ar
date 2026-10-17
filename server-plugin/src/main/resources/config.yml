@@ -12,7 +12,7 @@ auth:
   pairing: true
   # true: a headset must be paired (or present the token below) before it sees anything; unpaired headsets wait on
   # their code. false: unpaired headsets still see and edit the world, but get no game files and no trusted features.
-  # Headset apps older than 1.1 can't pair: they need the token below, or this false.
+  # Headset apps older than v1.1.0 can't pair: they need the token below, or this false.
   require-pairing: false
   # Shared secret a headset can send in hello instead of pairing (tabletop.json "token"; for scripts and old apps).
   # Empty = no shared secret. With a token set, every headset must present it or be paired. It travels in clear on
@@ -46,7 +46,7 @@ stream:
   # Target size of one sectioned chunk_snapshot message (bytes of JSON).
   max-message-bytes: 1048576
   # Per-block light and 4x4x4 biomes for clients that ask for them in hello.caps (light_v1 / biomes_v1,
-  # PROTOCOL.md 4.4.1). Clients without those caps never pay the bytes. Set false to never send them.
+  # PROTOCOL.md 4.5.1). Clients without those caps never pay the bytes. Set false to never send them.
   light: true
   biomes: true
   # [area] Main-thread time per tick for copying chunks (ChunkSnapshots) when a region is read or diffed. A 288x288

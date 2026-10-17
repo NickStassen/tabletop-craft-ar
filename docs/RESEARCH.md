@@ -62,13 +62,13 @@ Confidence in the recommendation: **M-H**.
 - Debug: `adb logcat -s Unity`, plus an on-headset status line.
 
 ## 5. Open risks
-1. **The Mannequin scale attribute is unverified.** If it doesn't apply, fall back to a giant ItemDisplay head plus hands (Phase 3 tests this). *M impact.*
+1. **The Mannequin scale attribute is unverified** (resolved: it applies, read back as 16 in TESTING.md section 2; the default giant became a floating ItemDisplay head plus hands anyway, ARCHITECTURE.md 3.5). If it doesn't apply, fall back to a giant ItemDisplay head plus hands (Phase 3 tests this). *M impact.*
 2. **The scale cap of 16 means about a 29-block giant** vs about 175 blocks for "true" scale at 1 cm/block. The avatar is visibly smaller than the real head-height mapping implies; consider a larger `block_size_m` or a display rig. *Design.*
 3. **Version skew** (resolved): the server was pinned to 1.21.11 while the current game is 26.3. It now runs 26.3, so Java clients use the launcher's latest release. mineflayer, used by the e2e bot, supports game versions only up to 26.1. *Low.*
 4. **MRUK needs Space Setup**, and a table may not be labeled. Manual placement is the fallback. *Low.*
 5. **Pinned MRUK 85 vs current 205:** newer docs may describe APIs missing in 85. *Low-M.*
 6. **ClientWebSocket on IL2CPP** stripping/TLS quirks. Plaintext `ws://` on LAN avoids the TLS issue; keep NativeWebSocket ready. *M.*
 7. **Block-change coverage:** events miss some changes (WorldEdit, some physics). The 1 s diff safety net covers them. *Low.*
-8. **Quest perf** for meshing and atlas building at bigger regions is unmeasured. Do the meshing off the main thread (`Task` + `Mesh.MeshData`). *M.*
+8. **Quest perf** for meshing and atlas building at bigger regions is unmeasured (since measured on a Quest 3: TESTING.md "GPU at 256 wide" and "Smooth gliding"). Do the meshing off the main thread (`Task` + `Mesh.MeshData`). *M.*
 9. **Skin lookup** by name needs internet from the server (Mojang API) and is rate-limited. Cache it, and allow `skin_url`. *Low.*
-10. **Privacy:** the repo goes public, so keep usernames, IPs and hostnames in config examples generic.
+10. **Privacy:** the repo is public, so keep usernames, IPs and hostnames in config examples generic.

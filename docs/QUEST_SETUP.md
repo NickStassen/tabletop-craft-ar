@@ -81,7 +81,7 @@ With adb you can still add any of them by hand (Part D).
 | `tabletop pair` says "no headset is waiting with code ..." | A typo, or the code expired: check the card. |
 | Toast "Server plugin v1.0.x can't pair headsets ...: update it" | Run the starter again (it updates the plugin), or put the newer plugin jar in `plugins/`. |
 | No textures: Info tab `ASSETS the server offers nothing: No Minecraft 26.3 on the server's PC ...` | Start Minecraft 26.3 once in the launcher on the server's PC, then `tabletop assets rebuild` (The game files, above). |
-| A sideloaded copy is installed | Uninstall it first: an app signed differently can't be updated by the store. That also removes its files; they download again after pairing. |
+| A copy you built yourself is installed | Uninstall it first: it is signed with another key (Unity's debug key), and an app signed differently can't be updated by the store. That also removes its files; they download again after pairing. The release APK from GitHub has the store build's key and needs no uninstall. |
 
 ## Part F: test with a second Java player
 
@@ -108,15 +108,15 @@ The server picks the starting region (config.yml `region`). You can change it fr
    - **Right stick up/down**: height, in 16-block steps.
    - Or point at one of the yellow handle spheres (+X face, +Z face, top) and hold the **right trigger** to drag that face. The box grows symmetrically around its centre.
 
-   Sizes are clamped to the server's limits (by default 288×384×288 including the margin, and at most 16,777,216 blocks; a server with an older config.yml keeps its own `max_region`, e.g. 128×384×128).
+   Sizes are clamped to the server's limits (by default 352×384×352 including the margin, and at most 25,165,824 blocks; a config.yml with other values keeps its own `max_region`, e.g. 128×384×128).
 4. Block size: **auto-fit** is on by default. It sets block size = min(table width/X, table depth/Z) × 0.95, so the area fills the table detected by MRUK; without a detected table it assumes a 0.8 × 0.6 m table. Click the **right stick** to switch to keeping your manual scale; outside setup, the right stick still scales the model.
 5. Press **A** to confirm (if a glide shift or a width change is still on its way, the request goes out right after it). The server answers with `region_changed` and a new snapshot, and a short "Area set" message appears low in your view, then `Loading area 40 %` until the new area is on the table. The old terrain stays on the table while the new area is meshed in the background ("N sections pending" in the menu's Info tab), then the new one replaces it in one go. Tap **B** to cancel.
 6. If the estimate is over the headset budget, the box turns red and A won't confirm. There are two budgets: about 250k faces, and about 300 mesh batches (sections are merged into batches of 2×2 section columns over the full height, each one renderer and about two draw calls; Part K). **Hold B for 1 s** to override the warning. If the server rejects the request (`region_too_large`), the panel shows the server's limits.
 
 Recommended sizes (estimates from seed 12345 terrain; see TESTING.md "Navigation and bigger areas" and "Area size presets and batching"), all with the 16-block margin on top:
 - 64×96×64 is a comfortable area to start with.
-- 128×96×128 is the recommended maximum until the wider presets are measured on the headset: about 190k faces with the pack and smooth lighting, and 36 mesh batches for the 160×128×160 region it loads.
-- 192×96×192 (about 430k faces, 64 batches) and 256×96×256 (about 700k faces, 100 batches) go over the face budget. Batching removed the draw-call limit; whether the headset holds 72 FPS with that many faces is what Part K's measurement hooks are for. The width presets (Part K) skip this budget.
+- 128×96×128 holds 72 FPS on a Quest 3 (KNOWN_ISSUES.md): about 190k faces with the pack and smooth lighting, and 36 mesh batches for the 160×128×160 region it loads.
+- 192×96×192 (about 430k faces, 64 batches) and 256×96×256 (about 700k faces, 100 batches) go over the face budget. Batching removed the draw-call limit; on a Quest 3, 256 wide runs at about 60 FPS standing still and 45-50 while gliding (KNOWN_ISSUES.md). The width presets (Part K) skip this budget.
 - Taller areas work, but snapshots and load times grow.
 
 ## Part H: moving around
@@ -168,7 +168,7 @@ Each edit gives a short buzz. Breaking and placing blocks that already appear in
 
 Not like the game (yet): clicking a slab with the same slab doesn't make a double slab (it goes on top), snow, candles, sea pickles and petals don't stack, two chests don't join into a double chest, and there's no rotate button.
 
-Server options (config.yml `edit`): `enabled`, `require-token` (only allow edits when `auth.token` is set), `max-per-second` (20), `physics` (sand falls, water flows) and `deny` (blocks that can't be placed: command blocks, structure blocks, jigsaws). Each edit is logged as `EDIT session=... break|place world x,y,z ... old -> new`. Edits don't go through protection plugins.
+Server options (config.yml `edit`): `enabled`, `require-token` (edits only from trusted headsets: paired, or presenting `auth.token`), `max-per-second` (20), `physics` (sand falls, water flows) and `deny` (blocks that can't be placed: command blocks, structure blocks, jigsaws). Each edit is logged as `EDIT session=... break|place world x,y,z ... old -> new`. Edits don't go through protection plugins.
 
 ## Part J: the block menu and the hotbar
 
@@ -189,7 +189,7 @@ While the ray is on the menu, the right trigger doesn't break blocks, the right 
 The menu, top to bottom:
 - **Tabs:** Build, Color, Nature, Func. (functional), Redst. (redstone), Other: the server's categories, close to the game's creative tabs. Then **Use** and **Eggs** (items and spawn eggs, when the server allows using them, Part M), **Tools** (the box wand, brushes, undo and redo, when the server allows them, Part O), **Search** and **Info**.
 - **Grid:** 9 blocks per row, 5 rows; arrows and a scroll bar on the right. Blocks of a family sit together (oak log, wood, planks, stairs, slab, fence...; colored blocks by kind, in the game's dye order). The selected block is framed.
-- **Search:** a keyboard on the panel and 3 rows of results. Letters (lower case; **shift** for one capital, twice for caps lock), `?123` for digits and symbols (`/ : . , - _ @ # ~ ^ [ ] { } = + * ! ? " '`), `ABC` back, **space**, **del**, **clear**, and **pick**, which selects the first result. Every word you type must appear in the name or id (`oak st` finds oak stairs); names that start with what you typed come first. An empty search lists every block. The menu uses its own keyboard rather than the Quest system keyboard: the system keyboard needs an extra Android manifest flag, takes focus from the app (passthrough and tracking pause behind it) and can't be tested in a headless build, while the panel keyboard is the same code path as every other button (and the same keyboard will serve chat and commands later).
+- **Search:** a keyboard on the panel and 3 rows of results. Letters (lower case; **shift** for one capital, twice for caps lock), `?123` for digits and symbols (`/ : . , - _ @ # ~ ^ [ ] { } = + * ! ? " '`), `ABC` back, **space**, **del**, **clear**, and **pick**, which selects the first result. Every word you type must appear in the name or id (`oak st` finds oak stairs); names that start with what you typed come first. An empty search lists every block. The menu uses its own keyboard rather than the Quest system keyboard: the system keyboard needs an extra Android manifest flag, takes focus from the app (passthrough and tracking pause behind it) and can't be tested in a headless build, while the panel keyboard is the same code path as every other button (the operator panel's Chat and Console use the same keyboard, Part L).
 - **Info:** the full status (link, RTT, world, pack, light, table, poses, mesh, entities, view, area, edit, block list, icons), refreshed 4 times a second, then the **Show HUD** toggle (below), **Reset view** (Part H "Finding your way") and **Server: ... (change)**, which opens the Server field with the keyboard and the servers found on the LAN (Part D).
 - **Name line:** the hovered block's name, otherwise the selected block.
 - **Hotbar:** your 9 most recent blocks, newest first, one slot per block (picking oak stairs again moves them to the front). The same hotbar floats small just above the right controller while the menu is closed; the selected slot is framed.
@@ -231,9 +231,9 @@ For measurements, `tabletop.json` can start the app at a preset: `"area_width": 
 
 ## Part L: the operator panel: chat, console, players, world, server, marks
 
-You are the server's operator without a game account. The operator panel lets you chat with Java players, run server commands and watch the server. Chat and the status work on any server; commands need a token (security, below).
+You are the server's operator without a game account. The operator panel lets you chat with Java players, run server commands and watch the server. Chat and the status work on any server; commands need a trusted headset: a paired one ("Store install" > Pairing) or one that presents the server's token (security, below).
 
-**Server side (once):** set a token in the plugin's `config.yml` and the same one in `tabletop.json`, then restart or `/tabletop reload` and reconnect:
+**A token instead of pairing** (for scripts, or an app older than v1.1.0): set a token in the plugin's `config.yml` and the same one in `tabletop.json`, then restart or `/tabletop reload` and reconnect:
 
 ```yaml
 auth:
@@ -266,7 +266,7 @@ The tabs:
 - **Server:** TPS (1, 5, 15 min), MSPT, memory, players, the tick state and, per world, loaded chunks, entities, players, the time and the weather, every 2 s.
 - **Marks:** jump to another world, the spawn, typed coordinates or a shared bookmark; who you follow (Part N). The Players tab's **View** row follows the selected player or jumps to them once (Part N); the container view and the sign editor also open in this panel (Part N).
 
-Without the token the command buttons are greyed and the note line says **needs auth.token**; chat, Players, World and Server still show their information. The line at the bottom of the panel says what happened last (the last command's answer, or why a button did nothing). The **Info** tab of the block menu has a `TALK` line: chat (as which name, or read-only), commands on or off, status.
+On a headset that is neither paired nor has the token, the command buttons are greyed and the note line says **needs a paired headset (or the server's token)**; chat, Players, World and Server still show their information. The line at the bottom of the panel says what happened last (the last command's answer, or why a button did nothing). The **Info** tab of the block menu has a `TALK` line: chat (as which name, or read-only), commands on or off, status.
 
 **Outside the panel:** the last 5 chat lines float just above your left wrist and fade 10 s after they arrive (hidden while a panel is open). A player's chat also appears as a bubble above their figure on the table for about 6 s (up to 3 lines). Joins and deaths also show as short messages low in your view. Java players see your chat line above the giant's head for 5 s (`chat.bubble-seconds`).
 
@@ -280,8 +280,8 @@ Without the token the command buttons are greyed and the note line says **needs 
 - **Reporting through the Quest button:** on a store install, the Quest button's menu also has **Report Abuse** (Meta's own form). That report goes to the app's developer, who can't act on players of your server: for someone on your server, use Report in the panel or tell the server's owner.
 
 **Security.** A headset command runs with operator rights, like the server console. Keep these in mind:
-- Commands are off without `auth.token` (`commands.require-token: true` is the default). With a token, every headset that presents it may run commands.
-- The link is plain `ws://`. The token and every command travel **unencrypted** on the LAN; anyone who can capture the traffic can replay the token. Use it on a network you trust. Beyond the LAN, put a TLS reverse proxy (`wss://`) in front (ARCHITECTURE.md §6).
+- Commands are only for trusted headsets (`commands.require-token: true`, the default): paired ones, and ones that present `auth.token`. Every such headset may run commands; `tabletop unpair` takes a paired headset's rights away.
+- The link is plain `ws://`. The tokens (the shared one and each headset's own) and every command travel **unencrypted** on the LAN; anyone who can capture the traffic can replay a token. Use it on a network you trust. Beyond the LAN, put a TLS reverse proxy (`wss://`) in front (ARCHITECTURE.md §6).
 - `commands.deny` refuses the dangerous roots by default (`stop`, `restart`, `reload`, `op`, `deop`, `ban`, `ban-ip`, `pardon`, `pardon-ip`, `whitelist`, `save-off`, `debug`, `jfr`, `perf`, `transfer`), also behind aliases, `minecraft:` prefixes and `execute ... run`. A non-empty `commands.allow` lets only its commands run. Plugin commands that run other commands (and datapack functions) can't be looked into.
 - Every command is logged (`CMD session=... /line ok (ms)`), and ops see `[Tabletop: /line]` in game (`commands.notify-ops`).
 - Limits: 2 commands and 2 chat lines per second per headset (bursts of 5), 256 characters.
@@ -428,7 +428,7 @@ Bedrock Edition players (phones, tablets, consoles, Minecraft for Windows) can j
 adb logcat -s Unity | findstr Tabletop
 ```
 
-The Info tab (Part J) shows `LINK`, `RTT`, `WORLD`, `PACK`, `EDIT` (the selected block, or `off` when the server doesn't allow editing), `LIGHT` (`smooth`/`flat`, or `off` when the server sends no light; then `BIOMES n`, with `(no colormap)` if the pack lacks `colormap/grass.png`), `TABLE`, `POSES`, `AREA` (width, presets and the server max; Part K), the last server error, `BLOCKS n placeable` and the icon counts. Biome colours (grass, leaves, water per biome) need both biomes from the server and a pack with the colour maps; without them the old fixed tints are used. Logcat has `[Tabletop] block registry: N blocks in 6 categories`. [living] `TIME` shows the world's day time, rain and thunder as the table shows them; logcat has `[Tabletop] WORLD_STATE world overworld day_time 18000 rain 1 thunder 1` whenever the weather, the world or the clock mode changes.
+The Info tab (Part J) shows `LINK`, `RTT`, `WORLD`, `PACK`, `EDIT` (the selected block, or `off` when the server doesn't allow editing), `LIGHT` (`smooth`/`flat`, or `off` when the server sends no light; then `BIOMES n`, with `(no colormap)` if the pack lacks `colormap/grass.png`), `TABLE`, `POSES`, `AREA` (width, presets and the server max; Part K), the last server error, `BLOCKS n placeable` and the icon counts. Biome colours (grass, leaves, water per biome) need both biomes from the server and a pack with the colour maps; without them the old fixed tints are used. Logcat has `[Tabletop] block registry: N blocks in 6 categories`. `TIME` shows the world's day time, rain and thunder as the table shows them; logcat has `[Tabletop] WORLD_STATE world overworld day_time 18000 rain 1 thunder 1` whenever the weather, the world or the clock mode changes.
 
 ## Troubleshooting
 
@@ -448,7 +448,7 @@ The Info tab (Part J) shows `LINK`, `RTT`, `WORLD`, `PACK`, `EDIT` (the selected
 | Giant head is high up or far away | Expected in `floating` (the default): it is exactly where your headset is, scaled by the block size. Lean in over the table to bring it down, or use a larger block size. `/tabletop avatar placement ground` puts a body on the terrain instead (ARCHITECTURE 3.5). |
 | Giant not visible from far away | Display entities are only sent within `entity-tracking-range.display` (spigot.yml, default 128 blocks horizontally) of a player. |
 | Giant has the default skin | No `skin_player` in tabletop.json and no `avatar.skin-player`, a misspelt name (a `Skin lookup failed` message), or no internet on the server PC. Check `/tabletop avatar status` (`skin_resolved`). |
-| `EDIT off (server)` (Info tab) | The plugin is older than the headset app, `edit.enabled: false`, or `edit.require-token: true` without an `auth.token`. Update the plugin or change config.yml `edit`, then `/tabletop reload` and reconnect. |
+| `EDIT off (server)` (Info tab) | The plugin is older than the headset app, `edit.enabled: false`, or `edit.require-token: true` and the headset is neither paired nor has the token. Update the plugin or change config.yml `edit`, then `/tabletop reload` and reconnect. |
 | Block menu says "waiting for the server's block list" | The plugin is older than the app (no `block_registry`). Update the plugin. |
 | Menu icons are coloured cubes | No `pack.zip` (Part E), or the pack failed to open (Info tab: `icons flat`). |
 | Old icons after changing `pack.zip` | Shouldn't happen (the cache folder is named after the pack's size and date); delete the app's `files/icons/` folder to force a redraw. |
@@ -460,7 +460,7 @@ The Info tab (Part J) shows `LINK`, `RTT`, `WORLD`, `PACK`, `EDIT` (the selected
 
 ## Appendix: Developer sideload
 
-Building and installing everything yourself, for development and testing: the server by hand (Part A), the Unity project and the APK (Part B), installing with `adb` (Part C), pointing the app at the server by hand (Part D) and making the game files yourself (Part E). Developer Mode must be on. A sideloaded app is signed with another key than the store build: uninstall one before installing the other (docs/RELEASING.md).
+Building and installing everything yourself, for development and testing: the server by hand (Part A), the Unity project and the APK (Part B), installing with `adb` (Part C), pointing the app at the server by hand (Part D) and making the game files yourself (Part E). Developer Mode must be on. An APK you build yourself is signed with Unity's debug key unless you set your own (docs/RELEASING.md), so it can't replace the store build or the release APK (both carry the release key): uninstall one before installing the other.
 
 Versions follow [ironman-quest3-hud's SETUP.md](https://github.com/NickStassen/ironman-quest3-hud/blob/master/docs/SETUP.md): Unity **6000.0.84f1**, Meta XR Core SDK + MRUK **85.0.0**, OpenXR 1.15.1, built-in render pipeline, Android IL2CPP ARM64. The app compiles and builds an APK headless on Linux and runs on a Quest 3 (TESTING.md section 5 and "First headset session"); Troubleshooting lists the compile fixes that were needed.
 
@@ -562,7 +562,7 @@ Optional smoothness keys (for comparing on the headset; TESTING.md "Smooth glidi
 
 **Headset off, Wi-Fi gone.** Taking the headset off (or the app going to the background) despawns the giant at once and closes the link; putting it back on reconnects, and the table you left is shown meanwhile. If the link drops (Wi-Fi gone, server stopped or frozen: 6 s without anything from the server counts as dropped), the app keeps reconnecting with backoff, a red **Offline: reconnecting...** badge sits on the table's edge toward you, and players and mobs are hidden after 1.5 s, because their positions are stale; the terrain stays. Everything updates when the link is back.
 
-Time of day and weather (needs a server and app from 0.4 on with `world-state.enabled`, the default): the miniature gets darker at night like the game (torches, lava and glowstone stay bright), darker still in rain and thunderstorms, flashes when lightning strikes, and takes the Nether's or the End's own light. `"weather_fx": false` turns off the rain, snow and lightning bolts on the table (the light still follows the time and weather). The Info tab's `TIME` line shows the day time, rain and thunder levels, the sky factor and the number of drops.
+Time of day and weather (needs a server and app from v0.5.0 on with `world-state.enabled`, the default): the miniature gets darker at night like the game (torches, lava and glowstone stay bright), darker still in rain and thunderstorms, flashes when lightning strikes, and takes the Nether's or the End's own light. `"weather_fx": false` turns off the rain, snow and lightning bolts on the table (the light still follows the time and weather). The Info tab's `TIME` line shows the day time, rain and thunder levels, the sky factor and the number of drops.
 
 Ambient particles (needs `pack.zip`: the sprites are its `textures/particle/*.png`): torch, candle and campfire flames and smoke, fire smoke, lava pops, the nether portal's swirl, falling leaves, fireflies at dusk and night, bubble columns and water or lava dripping through a ceiling, keyed by the blocks in the visible window like vanilla's `animateTick`, plus explosion clouds. `"particles": false` turns them off; `"particle_density": 0.5` halves how many spawn (1 = vanilla's rate near the player; wider areas thin them out by themselves, and at most 3,000 are on the table). The Info tab's `TIME` line ends with `particles N/M` (slots / emitters). Chest, ender chest and shulker box lids, bells, TNT and creeper fuses, dying, sitting and sleeping mobs move like vanilla with a server of the same version (PROTOCOL.md "Block animations"); water and lava flow with the pack's flowing textures.
 
@@ -582,7 +582,7 @@ Without a pack the app uses flat colours. To use textures you already own:
    java tools/entity_models/DumpEntityModels.java ~/.minecraft 26.3 entity_models.json            (Linux)
    adb push entity_models.json /sdcard/Android/data/com.tabletopcraft.ar/files/entity_models.json
    ```
-   It reads the game's own model definitions out of `versions/26.3/26.3.jar` and the libraries the launcher downloaded (the game doesn't start) and writes about 90 KB of box sizes, pivots and skin offsets plus the dye colours and sign text colours. Regenerate it after a game update, and after updating the app when its release notes say so (a file from before 0.4 has no block entity layers: chests and banners then stay plain boxes; one from before the living-world update has no gear layers or the ender dragon, wither, giant and the other new types, which then stay boxes or go without their saddles and armour). The app loads it in the background at start; logcat shows `[Tabletop] entity_models.json: 211 models (Minecraft 26.3)`. Without it, entities are boxes of their real size in the average colour of their texture, and the Info tab shows `ENTITIES n (boxes)`.
+   It reads the game's own model definitions out of `versions/26.3/26.3.jar` and the libraries the launcher downloaded (the game doesn't start) and writes about 110 KB of box sizes, pivots and skin offsets plus the dye colours and sign text colours. Regenerate it after a game update, and after updating the app when its release notes say so (a file from before v0.4.0 has no block entity layers: chests and banners then stay plain boxes; one from before the living-world update (v0.5.0) has no gear layers or the ender dragon, wither, giant and the other new types, which then stay boxes or go without their saddles and armour). The app loads it in the background at start; logcat shows `[Tabletop] entity_models.json: 245 models (Minecraft 26.3)`. Without it, entities are boxes of their real size in the average colour of their texture, and the Info tab shows `ENTITIES n (boxes)`.
 
 4. Sound. The game keeps its sounds outside the client jar, in the launcher's asset store (`assets/indexes/<id>.json` names every file, `assets/objects/` holds them). Package your own copy for the headset with any JDK 17+ from the repo root, then push it next to `pack.zip`:
    ```

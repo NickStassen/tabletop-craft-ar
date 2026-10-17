@@ -74,7 +74,8 @@ grep "\[Tabletop\] Build" build.log
 environment.
 
 **Which APK goes where.** The store build must be release-signed. The APK attached to the GitHub release (for
-sideloading) can be the same release-signed file: then a sideloaded copy and a store copy carry the same certificate.
+sideloading) is the same release-signed file, so a sideloaded copy and a store copy carry the same certificate and
+either can update the other.
 A build signed with a different key (the debug key) can't be updated in place by the other one: Android refuses, so the
 user has to uninstall first, which also deletes the app's files folder (the app downloads its files from the server
 again after pairing).
@@ -107,7 +108,7 @@ utility"; a Linux build exists and is marked experimental). Install it somewhere
 
    ```
    tools/release/upload_quest.sh --dry-run
-   tools/release/upload_quest.sh --channel BETA --notes "1.1.0: pairing, automatic game files from your PC"
+   tools/release/upload_quest.sh --channel BETA --notes "v1.1.0: pairing, automatic game files from your PC"
    ```
 
    The defaults are `--channel BETA` and `--age-group TEENS_AND_ADULTS` (without an age group a build stays a draft).
@@ -128,7 +129,8 @@ stops working 90 days after the channel's last upload**; invitees to a private c
 4. Commit `release: vX.Y.Z`, tag `vX.Y.Z`.
 5. `gh release create vX.Y.Z` with notes (what's new, what was verified on a headset, known gaps), attaching the plugin
    jar as `tabletop-craft-ar-plugin-X.Y.Z.jar` (the server starter downloads exactly this name from the latest
-   release; GitHub lists its SHA-256, which the starter checks), the APK as `tabletop-craft-ar-X.Y.Z.apk`, and the
+   release; GitHub lists its SHA-256, which the starter checks), the release-signed APK from step 3 as
+   `tabletop-craft-ar-X.Y.Z.apk`, and the
    three starter scripts (`server-starter/start.bat`, `start.ps1`, `start.sh`) as `tabletop-server-starter-X.Y.Z.zip`
    (`cd server-starter && zip ../tabletop-server-starter-X.Y.Z.zip start.*`). **Never** attach a client jar, `pack.zip`, `entity_models.json`, `sounds.zip` or the keystore.
 6. `tools/release/upload_quest.sh --channel BETA` (at least every 90 days, so the invite link stays alive).
