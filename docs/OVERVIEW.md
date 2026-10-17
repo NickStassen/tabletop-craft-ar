@@ -44,7 +44,7 @@ Java players (LAN) ──game protocol──▶ Paper 26.3 + tabletop plugin ◀
 
 **Files from your own install.** Since v1.1.0 the plugin builds `pack.zip`, `entity_models.json` and `sounds.zip` from the server PC's own Minecraft install (start Minecraft: Java Edition once there) and sends them to your paired headsets on the LAN, once (about 75 MB). They can still go on the headset by adb. Setup: [Store install](QUEST_SETUP.md#the-game-files), [Part E](QUEST_SETUP.md#part-e-textures-resource-pack).
 
-**Easy setup (v1.1.0).** The server starter (`start.bat`, `start.sh`) downloads Paper, the plugin and optionally Geyser, asks you to accept the EULA and starts the server; the app finds it on the Wi-Fi and pairs with a 6-digit code (`tabletop pair <code>`, `tabletop devices`, `tabletop unpair`). Setup: [QUEST_SETUP Store install](QUEST_SETUP.md#store-install-recommended).
+**Easy setup (v1.1.0).** The server starter (`start.bat`, `start.sh`) downloads Paper, the plugin and optionally Geyser, asks you to accept the EULA and starts the server; the app finds it on the Wi-Fi and pairs with a 6-digit code (`tabletop pair <code>`, `tabletop devices`, `tabletop unpair`). The app installs from the Meta Horizon Store's private beta ([invite link](https://www.meta.com/s/7Hd4RBdRk), 18+, no developer mode) or as the release's APK (sideloaded; the same release key as the store build). Setup: [QUEST_SETUP Store install](QUEST_SETUP.md#store-install-recommended).
 
 ## Status
 
@@ -103,7 +103,7 @@ Copy the jar into a Paper **26.3** server's `plugins/`, start the server once, t
 
 Fake headset: `pip install -r tools/requirements.txt && python tools/fake_quest.py --url ws://SERVER:8765/tabletop --avatar -v`.
 
-The headset side (building the APK, installing it, textures, controls) is in [QUEST_SETUP.md](QUEST_SETUP.md).
+The headset side (the store beta or the release APK, pairing, controls; building and sideloading the APK yourself in its appendix) is in [QUEST_SETUP.md](QUEST_SETUP.md).
 
 ## Does it work with Bedrock?
 
