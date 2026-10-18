@@ -1483,3 +1483,21 @@ On the headset (v1.2.0, width 64, region 128x186x128): after a jump to a Mark in
 - `avatar enabled=... scale=...` appears once per change, not every 0.5 s.
 
 Verified on a Quest 3 with v1.2.1: a jump to a Mark shows its terrain in about 0.3 s (was 20-45 s).
+
+## Release automation: release.yml and promote.yml (cd; 2026-10-18, no headset)
+
+RELEASING.md section 6. Nothing was published: no tag, no GitHub release, no upload to Meta.
+
+### Tests
+- **release.yml on a branch** (a push trigger on a temporary branch, removed again; `workflow_dispatch` needs the file on master first): `verify` (VERSION 1.2.1 = PROTOCOL.md, notes from the changelog), `plugin` (`./gradlew build`, `plugin.yml` says `version: '1.2.1'`) and `starter` (CRLF in `start.bat`, `start.sh` executable) passed, `apk` was skipped with the warning that only master and `v*` tags may use the release environment, `publish` and `store` were skipped. About 1.5 min, `plugin` the longest (1 min 15 s).
+- **GameCI image on a hosted runner** (no secrets): the runner had 86 GB free before any cleanup (145 GB disk), `unityci/editor:ubuntu-6000.0.84f1-android-3.2.2` is 14.3 GB unpacked and pulled in 1 min 54 s. The image has the editor at `/opt/unity/Editor/Unity` (`UNITY_PATH=/opt/unity`), Android build-tools 36.0.0 and OpenJDK 17 under `AndroidPlayer/`. `unity-build.sh check` on the published v1.2.1 APK passed inside the container (v2 signature, the release certificate, versionCode 1020100, not debuggable, minSdk 32/targetSdk 34, arm64-v8a only). `patch-meta-sdk-linux.sh` worked on the runner, and `unity-build.sh build` without any license stopped at once with "no Unity license: set UNITY_LICENSE, UNITY_EMAIL and UNITY_PASSWORD".
+- **Cold release build on the PC** (a checkout with no `Library`, then `patch-meta-sdk-linux.sh`, then the container's exact Unity command line with a throwaway keystore): `BuildReleaseApk` succeeded in 142 s (8 cores; Unity's global caches were warm), release-signed with the test key, `upload_quest.sh --check-only` passed. The password is not in Unity's log, but it is in 5 files under `Library/Bee` (`launcher/build.gradle` twice, `build.gradle.xml`, Bee's input data, an intermediate-files list). `unity-build.sh scrub` removed Bee and found no other file holding it in the remaining 10,068; the Library left to cache is 373 MB.
+- **License serial**: the serial GameCI reads from a Personal `Unity_lic.ulf` (`<DeveloperData>`, minus 4 bytes) has the expected 27-character `XX-XXXX-XXXX-XXXX-XXXX-XXXX` shape on this machine's license file; the log masks it and its `...XXXX` form.
+- **`promote_quest.sh`** against a stand-in utility that prints `get-release-channel-data`'s table as ovr-platform-util 208.0.0 does (read from the tool's code): `--dry-run` shows both channels and changes nothing; a version ALPHA doesn't serve fails ("ALPHA serves 1.2.2 (versionCode 1020200), not 1.2.3"); a promotion runs `set-release-channel-build --source-channel ALPHA --destination-channel BETA --age-group TEENS_AND_ADULTS` and re-reads BETA; a second run says BETA already serves it; an unknown channel and a malformed version fail.
+- **`fetch_ovr_platform_util.sh`**: Meta's Linux link gives ovr-platform-util 208.0.0 (126 MB ELF); `--help` confirms `get-release-channel-data` and `set-release-channel-build` take the token only as `--token`.
+- **`check_version.sh`, `release_notes.sh`**: VERSION 1.2.1 and PROTOCOL.md agree; tag `v1.2.2` against VERSION 1.2.1 fails with the reason; a version without notes or a changelog line fails; a notes file gives the title from its `# ` heading and the body without it; without one, the title is `vX.Y.Z` and the body every changelog line of the version (four for v0.5.0).
+- actionlint (with shellcheck) on both workflows: clean.
+
+### Not verified yet
+- The `apk` job on GitHub: it needs the release environment (master or a tag) and `UNITY_EMAIL`/`UNITY_PASSWORD` next to `UNITY_LICENSE` (a Personal license file alone is bound to the machine that activated it). First check: `gh workflow run release.yml --ref master -f dry_run=true` after the merge, then the build time on a 4-core runner with an empty cache and with master's cache.
+- `publish` and `store` (the first tag), and `promote.yml` against Meta (`-f dry_run=true` first: it only reads the channels).
