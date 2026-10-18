@@ -75,7 +75,7 @@ With adb you can still add any of them by hand (Part D).
 
 | What you see | What to do |
 |---|---|
-| Card "Looking for your Minecraft server on this Wi-Fi" for long | The server isn't running, or UDP and TCP 8765 are blocked by the PC's firewall, or the headset is on another network (guest Wi-Fi, AP isolation). Type the address from the server window (`Headset URL: ws://...`) in menu > Info > Server. |
+| Card "Looking for your Minecraft server on this Wi-Fi" for long | The server isn't running, or Windows calls your home network Public (the starter's firewall rules cover Private networks: Settings > Network & internet > your connection > Network profile type: Private), or UDP and TCP 8765 are blocked by the PC's firewall, or the headset is on another network (guest Wi-Fi, AP isolation). Type the address from the server window (`Headset URL: ws://...`) in menu > Info > Server. |
 | "Found 2 servers" | Pick yours in menu > Info > Server. |
 | The code expired | On a server that requires pairing a new one appears by itself. Otherwise pick the server again in menu > Info > Server. |
 | `tabletop pair` says "no headset is waiting with code ..." | A typo, or the code expired: check the card. |

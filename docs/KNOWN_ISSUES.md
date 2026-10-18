@@ -24,7 +24,8 @@ Things that don't work yet, or work differently from the game, in tabletop-craft
 - **The surface skirt is off by default.** It's the low-detail ground shown ahead of the detail while you glide fast (`"surface_skirt": true` in tabletop.json); it's still being checked on the headset.
 - **Very wide areas are heavy.** 256 wide runs at about 60 fps standing still and about 45-50 fps while gliding; 128 wide and below hold 72 fps (Quest 3). Growing the area's margin on the first glide can cause one long frame.
 - **Setup (v1.1.0):**
-  - The Windows starter (`start.bat`/`start.ps1`) hasn't been run on Windows yet.
+  - The Windows starter (`start.bat`/`start.ps1`) is tested on a clean Windows machine in CI (downloads, answers, firewall rules, a server start, the Minecraft folder under `%APPDATA%`), but not yet by hand with a double-click and a Quest on the same network.
+  - On Windows the firewall rules cover Private networks only; a home network that Windows calls Public blocks the headset (the starter says so and how to switch it).
   - Only the official launcher's folder is found automatically. For Prism, MultiMC or CurseForge, point the plugin at the folder with `/tabletop assets dir <folder>`.
   - The store version is a private beta (invite link, 18+); a public store listing comes later.
 - **One region per server.** It's shared by all headsets, and the last change wins. There's one giant, owned by the last headset to connect.

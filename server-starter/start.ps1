@@ -212,6 +212,16 @@ if ($OnWindows -and (Get-Command Get-NetFirewallRule -ErrorAction SilentlyContin
     }
 }
 
+# ---- Windows network profile: the rules above apply to Private networks, and Windows often calls a home network Public ----
+if ($OnWindows -and (Get-Command Get-NetConnectionProfile -ErrorAction SilentlyContinue)) {
+    $public = @(Get-NetConnectionProfile -ErrorAction SilentlyContinue | Where-Object { "$($_.NetworkCategory)" -eq 'Public' })
+    if ($public.Count -gt 0) {
+        Say ''
+        foreach ($n in $public) { Say "Note: Windows treats the network on '$($n.InterfaceAlias)' as Public, so its firewall blocks the headset there." }
+        Say '  If that is your home network: Settings > Network & internet > (your Wi-Fi or Ethernet) > Network profile type: Private.'
+    }
+}
+
 # ---- what to do next ----
 $ip = ''
 if (Get-Command Get-NetIPAddress -ErrorAction SilentlyContinue) {
