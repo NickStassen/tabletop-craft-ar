@@ -1,4 +1,4 @@
-# PROTOCOL.md — Tabletop link protocol, v1.2.1
+# PROTOCOL.md — Tabletop link protocol, v1.2.2
 
 The project version (repo `VERSION` file) versions the plugin, the Quest app and this protocol together. From v1.0.0 the version follows semantic versioning: a plugin and an app with the same major version work together, new optional fields and messages come in minor versions, and a breaking change needs a new major version. (Before v1.0.0 there was no backwards compatibility: plugin, app and tools of the same v0.x.y version went together.) The wire field `v` stays `1`.
 
@@ -417,6 +417,7 @@ So the headset can find a server without typing its address (QUEST_SETUP.md Part
 - **v1.1.0: automatic game files ("Asset delivery").** Additive: asset delivery is on by default for trusted sessions (paired headsets or the `auth.token`) on the LAN, with files the plugin builds from the server PC's own Minecraft install (config.yml `assets.auto`, `assets.minecraft-dir`); the `assets` offer gains optional `state` and `note`. Fixture `assets_building.json` (Java `GameAssetsTest`, Python `test_assets_offer_state_and_note`, C# `SetupTests`).
 - **v1.2.0: chat safety ("Chat safety: mute, block, report").** Additive: cap `report_v1` (config.yml `reports`); messages `report` (C→S) and `report_ack` (S→C); error `report_denied`; errors about a report carry `op: "report"`. Mute and block are client-side (no messages). Old peers: a v1.1.x plugin doesn't grant `report_v1` (the app greys Report, mute and block still work); a v1.1.x app never asks for it. Fixtures `hello_report.json`, `welcome_report.json`, `report.json`, `report_ack.json`, `error_report_denied.json`.
 - **v1.2.1: no message changes.** The app's Info tab wraps and fits its status text above its buttons, the pairing card shows the Minecraft disclaimer (the first-run card is often gone within a frame), a jump to a Mark shows its terrain at once instead of after a 20 s staging timeout, and app and plugin messages name versions as vX.Y.Z (the plugin's refusal to an app without `pair_v1` now says "update the app to v1.1.0 or newer").
+- **v1.2.2: automatic release.** 1 fix and 30 maintenance commits since v1.2.1, listed in [the release notes](release-notes/v1.2.2.md): no protocol changes unless an earlier entry says so.
 
 ## 4.13–4.16 Runtime region control (v1, additive)
 
