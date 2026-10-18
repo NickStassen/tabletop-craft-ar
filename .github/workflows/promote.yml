@@ -1,0 +1,64 @@
+# "Approved on the headset" (docs/RELEASING.md "Promoting a release"): after the ALPHA build of vX.Y.Z passed on a Quest,
+# move it to the BETA channel (the public invite link) and make the GitHub release the latest one, which the server
+# starter downloads the plugin from. dry_run only shows what the channels serve.
+name: Promote
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version on ALPHA to promote to BETA, like 1.2.2
+        required: true
+        type: string
+      dry_run:
+        description: Dry run (check ALPHA and the GitHub release, change nothing)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tabletop-release
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - name: The GitHub release exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          version="${INPUT_VERSION#v}"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::version must look like 1.2.2"; exit 1; }
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          gh release view "v$version" --json tagName,isDraft,isPrerelease,assets \
+            --jq '"\(.tagName): draft \(.isDraft), prerelease \(.isPrerelease), files: \([.assets[].name] | join(", "))"' ||
+            { echo "::error::no GitHub release v$version (release.yml publishes it from the tag)"; exit 1; }
+      - name: Meta's ovr-platform-util (Linux)
+        run: echo "OVR_PLATFORM_UTIL=$(tools/release/fetch_ovr_platform_util.sh "$RUNNER_TEMP/ovr")" >> "$GITHUB_ENV"
+      - name: ALPHA to BETA
+        env:
+          TABLETOP_APP_ID: ${{ vars.TABLETOP_APP_ID }}
+          TABLETOP_UPLOAD_TOKEN: ${{ secrets.TABLETOP_UPLOAD_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          args=("$VERSION" --from ALPHA --to BETA --age-group TEENS_AND_ADULTS)
+          if [ "$DRY_RUN" = true ]; then args+=(--dry-run); fi
+          tools/release/promote_quest.sh "${args[@]}"
+      - name: Make v${{ inputs.version }} the latest GitHub release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit "v$VERSION" --prerelease=false --latest
+          echo "### v$VERSION: BETA serves it, and it is the latest GitHub release" >> "$GITHUB_STEP_SUMMARY"
