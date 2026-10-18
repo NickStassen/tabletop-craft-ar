@@ -39,6 +39,7 @@ license_lines() {
 }
 
 RETURN_LICENSE=0
+WROTE_ULF=""
 inside_cleanup() {
   local rc=$?
   if [ "$RETURN_LICENSE" = 1 ]; then
@@ -50,7 +51,7 @@ inside_cleanup() {
       license_lines /tmp/unity-return.log
     fi
   fi
-  rm -f /root/.local/share/unity3d/Unity/Unity_lic.ulf
+  if [ -n "$WROTE_ULF" ]; then rm -f "$WROTE_ULF"; fi
   # Files written by root in the container go back to the runner's user (actions/cache, the artifact upload).
   chown -R "${HOST_UID:-0}:${HOST_GID:-0}" /project/quest-app 2>/dev/null || true
   exit "$rc"
@@ -76,9 +77,10 @@ activate() {
     # Without the email and password only the .ulf itself can be tried. A Personal license file is bound to the machine
     # that activated it, so expect Unity to refuse it here; GameCI's way is the serial plus UNITY_EMAIL/UNITY_PASSWORD.
     echo "::warning::UNITY_EMAIL/UNITY_PASSWORD are not set: trying UNITY_LICENSE as a license file on its own."
-    mkdir -p /root/.local/share/unity3d/Unity
-    printf '%s' "$UNITY_LICENSE" | tr -d '\r' > /root/.local/share/unity3d/Unity/Unity_lic.ulf
-    if ! "$UNITY" -batchmode -nographics -quit -manualLicenseFile /root/.local/share/unity3d/Unity/Unity_lic.ulf \
+    WROTE_ULF="$HOME/.local/share/unity3d/Unity/Unity_lic.ulf"
+    mkdir -p "$(dirname "$WROTE_ULF")"
+    printf '%s' "$UNITY_LICENSE" | tr -d '\r' > "$WROTE_ULF"
+    if ! "$UNITY" -batchmode -nographics -quit -manualLicenseFile "$WROTE_ULF" \
          -logFile /tmp/unity-activate.log > /dev/null 2>&1; then
       echo "Unity did not take the license file (-manualLicenseFile):"
       license_lines /tmp/unity-activate.log

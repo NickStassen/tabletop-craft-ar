@@ -33,7 +33,7 @@ jobs:
       publish: ${{ steps.v.outputs.publish }}
       apk: ${{ steps.v.outputs.apk }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { fetch-depth: 0, persist-credentials: false }
       - id: v
         name: Tag, VERSION and PROTOCOL.md agree
@@ -75,9 +75,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { persist-credentials: false }
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with: { distribution: temurin, java-version: '25' }
       - name: Build and test the plugin
         working-directory: server-plugin
@@ -90,7 +90,7 @@ jobs:
           cp "server-plugin/build/libs/tabletop-craft-ar-plugin-$VERSION.jar" dist/
           unzip -p "dist/tabletop-craft-ar-plugin-$VERSION.jar" plugin.yml | grep -x "version: '$VERSION'"
           sha256sum dist/*
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: plugin
           path: dist/tabletop-craft-ar-plugin-${{ needs.verify.outputs.version }}.jar
@@ -101,7 +101,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { persist-credentials: false }
       - name: tabletop-server-starter-${{ needs.verify.outputs.version }}.zip
         env:
@@ -117,7 +117,7 @@ jobs:
           head -1 "$RUNNER_TEMP/start.bat" | grep -q $'\r$' || { echo "::error::start.bat lost its CRLF line endings"; exit 1; }
           zipinfo "$zip_path" start.sh | grep -q '^-rwx' || { echo "::error::start.sh lost its executable bit"; exit 1; }
           sha256sum "$zip_path"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: starter
           path: dist/tabletop-server-starter-${{ needs.verify.outputs.version }}.zip
@@ -134,26 +134,28 @@ jobs:
     env:
       UNITY_IMAGE: unityci/editor:ubuntu-6000.0.84f1-android-3.2.2
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { persist-credentials: false }
       - name: Library cache key
         id: key
         # Taken before the build: BuildReleaseApk rewrites ProjectSettings.asset (bundleVersion).
         run: echo "key=unity-library-android-6000.0.84f1-${{ hashFiles('quest-app/Packages/manifest.json', 'quest-app/ProjectSettings/**') }}" >> "$GITHUB_OUTPUT"
-      - name: Free disk space for the Unity image
+      - name: Disk space for the Unity image (14 GB unpacked) and the Library
         run: |
           df -h /
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL \
-            /usr/local/share/boost /usr/share/swift /usr/local/share/powershell /usr/local/share/chromium
-          sudo docker image prune --all --force > /dev/null
-          df -h /
+          if [ "$(df --output=avail -BG / | tail -1 | tr -dc 0-9)" -lt 45 ]; then
+            sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL \
+              /usr/local/share/boost /usr/share/swift /usr/local/share/powershell /usr/local/share/chromium
+            sudo docker image prune --all --force > /dev/null
+            df -h /
+          fi
       - name: Pull ${{ env.UNITY_IMAGE }}
         run: docker pull --quiet "$UNITY_IMAGE"
       - name: Meta XR Core SDK 85.0.0, patched for the Linux Editor
         run: tools/patch-meta-sdk-linux.sh
       - name: Restore the Unity Library
         id: library
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: quest-app/Library
           key: ${{ steps.key.outputs.key }}
@@ -193,7 +195,7 @@ jobs:
         run: tools/ci/unity-build.sh scrub
       - name: Save the Unity Library (master only)
         if: always() && steps.scrub.outcome == 'success'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: quest-app/Library
           key: ${{ steps.key.outputs.key }}
@@ -207,7 +209,7 @@ jobs:
           cp quest-app/Builds/TabletopCraftAR.apk "dist/tabletop-craft-ar-$VERSION.apk"
           sha256sum dist/*
           { echo "### APK v$VERSION"; echo '```'; cat "$RUNNER_TEMP/check.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: apk
           path: dist/tabletop-craft-ar-${{ needs.verify.outputs.version }}.apk
@@ -222,9 +224,9 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { persist-credentials: false }
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { path: dist, merge-multiple: true }
       - name: Create the GitHub pre-release
         env:
@@ -254,9 +256,9 @@ jobs:
     timeout-minutes: 30
     environment: release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { persist-credentials: false }
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { name: apk, path: dist }
       - name: Meta's ovr-platform-util (Linux)
         run: echo "OVR_PLATFORM_UTIL=$(tools/release/fetch_ovr_platform_util.sh "$RUNNER_TEMP/ovr")" >> "$GITHUB_ENV"
