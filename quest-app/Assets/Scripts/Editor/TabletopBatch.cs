@@ -82,6 +82,7 @@ namespace TabletopCraft.EditorTools
                     Debug.Log($"[Tabletop] Build {report.summary.result}: {Path.GetFullPath(ApkPath)}, " +
                         $"{report.summary.totalSize / (1024 * 1024)} MB, {report.summary.totalErrors} errors, {report.summary.totalTime}, " +
                         (key != null ? "release-signed" : "debug-signed") + (attempt > 1 ? $" (attempt {attempt} of {MaxBuildAttempts})" : ""));
+                    if (report.summary.result != BuildResult.Succeeded) LogSigning("after the failed build");
                     if (report.summary.result == BuildResult.Succeeded || !OnlyToolCrashes(report)) break;
                     if (attempt < MaxBuildAttempts)
                         Debug.LogWarning("[Tabletop] A build tool crashed (Segmentation fault; on Linux usually il2cpp's own .NET runtime, " +
@@ -141,7 +142,19 @@ namespace TabletopCraft.EditorTools
             // from disk mid-build, dropping a keystore name that was only set in memory ("keystore file not found"). In CI
             // the keystore path and alias are saved to the throwaway checkout's ProjectSettings.asset (never the passwords:
             // Unity doesn't serialize them); locally they stay in memory so the repo's file never records a local path.
-            if (key != null && System.Environment.GetEnvironmentVariable("TABLETOP_CI") == "1") AssetDatabase.SaveAssets();
+            if (key != null && Ci) { AssetDatabase.SaveAssets(); LogSigning("key set"); }
+        }
+
+        static bool Ci => System.Environment.GetEnvironmentVariable("TABLETOP_CI") == "1";
+
+        /// <summary>[ci] What Unity will sign with: the keystore path and whether it exists, never the passwords.</summary>
+        internal static void LogSigning(string when)
+        {
+            if (!Ci) return;
+            string name = PlayerSettings.Android.keystoreName ?? "";
+            Debug.Log($"[Tabletop] signing ({when}): custom keystore {PlayerSettings.Android.useCustomKeystore}, keystore '{name}' " +
+                $"(exists {File.Exists(name)}), alias set {!string.IsNullOrEmpty(PlayerSettings.Android.keyaliasName)}, " +
+                $"passwords set {!string.IsNullOrEmpty(PlayerSettings.Android.keystorePass)}/{!string.IsNullOrEmpty(PlayerSettings.Android.keyaliasPass)}");
         }
 
         /// <summary>An unset keystore name: empty, or Unity's "{inproject}: " with nothing after it.</summary>
@@ -210,7 +223,9 @@ namespace TabletopCraft.EditorTools
         public int callbackOrder => int.MaxValue;
         public void OnPreprocessBuild(BuildReport report)
         {
-            if (TabletopBatch.Active != null) TabletopBatch.UseKey(TabletopBatch.Active);
+            if (TabletopBatch.Active == null) return;
+            TabletopBatch.LogSigning("last build step, before");
+            TabletopBatch.UseKey(TabletopBatch.Active);
         }
     }
 }

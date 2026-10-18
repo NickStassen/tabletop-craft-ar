@@ -178,6 +178,23 @@ host_build() {
     gh_mask "$UNITY_SERIAL"
     gh_mask "${UNITY_SERIAL:0:${#UNITY_SERIAL}-4}XXXX"   # Unity logs the serial with its last 4 characters hidden
   fi
+  if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+    # A cold project reimports ProjectSettings.asset mid-build (the Meta SDK's build steps), and a keystore set only in
+    # memory is lost. On the runner's throwaway checkout the keystore path, alias and "custom keystore" go into the file
+    # before Unity starts (never the passwords, which Unity keeps in memory only).
+    python3 -I - "$ROOT/quest-app/ProjectSettings/ProjectSettings.asset" "/keystore/$(basename "$ks")" <<'PY'
+import os, re, sys
+path, store = sys.argv[1], sys.argv[2]
+alias = os.environ["TABLETOP_KEY_ALIAS"]
+text = open(path, encoding="utf-8").read()
+for key, value in (("AndroidKeystoreName", store), ("AndroidKeyaliasName", alias), ("androidUseCustomKeystore", "1")):
+    text, n = re.subn(r"(?m)^(  %s:).*$" % key, lambda m: m.group(1) + " " + value, text)
+    if n != 1:
+        sys.exit("ProjectSettings.asset: expected one %s line, found %d" % (key, n))
+open(path, "w", encoding="utf-8").write(text)
+print("ProjectSettings.asset: release keystore path, alias and custom keystore set for this build")
+PY
+  fi
   local args=(-v "$(cd "$(dirname "$ks")" && pwd):/keystore:ro" -e "TABLETOP_KEYSTORE=/keystore/$(basename "$ks")" -e TABLETOP_CI=1)  # TABLETOP_CI: TabletopBatch saves the key path for this throwaway checkout
   for n in UNITY_LICENSE UNITY_SERIAL UNITY_EMAIL UNITY_PASSWORD TABLETOP_KEYSTORE_PASS TABLETOP_KEY_ALIAS TABLETOP_KEY_PASS TABLETOP_BUILD; do
     if [ -n "${!n:-}" ]; then export "${n?}"; args+=(-e "$n"); fi
