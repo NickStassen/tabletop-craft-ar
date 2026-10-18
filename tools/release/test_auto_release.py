@@ -594,12 +594,15 @@ def test_notes_leave_out_merges_and_bot_commits(repo):
     repo.commit("fix(quest): the pairing card", {ASSET: "card\n"})
     repo.git("checkout", "-q", "master")
     repo.commit("chore: bump a dependency", {"tools/requirements.txt": "x\n"}, author="dependabot[bot] <bot@example.com>")
+    repo.commit("fix: line endings of the Gradle wrapper", {"server-plugin/gradlew.bat": "x\n"})   # ships nothing
     repo.git("merge", "-q", "--no-ff", "-m", "Merge branch 'feature': pairing", "feature")
     commits = ar.Git(repo.path).commits("v1.2.1..HEAD")
+    assert [c.files for c in commits if c.subject.startswith("fix: line")] == [["server-plugin/gradlew.bat"]]
     notes = ar.release_notes("1.3.0", "v1.2.1", commits, ["- **v1.3.0: pairing.** Additive."], "owner/repo")
     assert notes.startswith("# v1.3.0: Pairing (and 1 more change)\n")
-    assert "1 new feature and 1 fix since v1.2.1" in notes
-    assert "Merge branch" not in notes and "dependency" not in notes and "### Maintenance" not in notes
+    assert "1 new feature, 1 fix and 1 maintenance commit since v1.2.1" in notes
+    assert "### Fixes\n\n- **quest:** the pairing card\n\n### Maintenance\n\n1 commit" in notes
+    assert "Merge branch" not in notes and "dependency" not in notes and "line endings" not in notes
     assert "## Protocol" in notes and "- **v1.3.0: pairing.** Additive." in notes and "The protocol changes are listed above." in notes
     major = ar.release_notes("2.0.0", "v1.3.0", [], [], "owner/repo")
     assert major.startswith("# v2.0.0: Maintenance release\n")

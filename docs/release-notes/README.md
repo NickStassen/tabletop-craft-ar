@@ -9,9 +9,10 @@ release in its first job.
 
 `auto-release.yml` (docs/RELEASING.md section 6.2) writes the file for every automatic release from the commit
 subjects since the last tag: a title from the first feature or fix, then **New**, **Fixes** and **Other changes** from
-the conventional prefixes (`feat`, `fix`, the rest), a count of the docs, CI, test and tooling commits, "Not yet" under
-**Verified on a Quest 3**, **Compatibility** and **Files**. Merge commits and release commits are left out. Good commit
-subjects make good notes: they are the text players and server owners read.
+the conventional prefixes (`feat`, `fix`, the rest), a count of the docs, CI, test and tooling commits (and of any
+commit that changes no shipped file, whatever its prefix), "Not yet" under **Verified on a Quest 3**, **Compatibility**
+and **Files**. Merge commits and release commits are left out. Good commit subjects make good notes: they are the text
+players and server owners read.
 
 To write a release's notes yourself, add `docs/release-notes/vNEXT.md` in the change that goes out with it (the version
 isn't known until the release, so write `vNEXT` wherever it belongs, as in the heading `# vNEXT: a short title`). The

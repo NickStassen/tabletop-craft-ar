@@ -126,6 +126,7 @@ class Commit:
     author: str
     parents: int
     message: str
+    files: list[str] | None = None   # the files it changes (not filled for merge commits)
 
     @property
     def subject(self) -> str:
@@ -158,12 +159,15 @@ def classify(subject: str) -> tuple[str, str, str]:
 
 
 def group_commits(commits: list[Commit]) -> dict[str, list[tuple[str, str]]]:
-    """Release-note groups, oldest first, without merge commits and release commits."""
+    """Release-note groups, oldest first, without merge commits and release commits. A commit that changes no shipped
+    file is maintenance whatever its prefix says."""
     groups: dict[str, list[tuple[str, str]]] = {"new": [], "fix": [], "other": [], "maintenance": []}
     for c in reversed(commits):   # git log lists the newest first
         if c.is_merge or c.is_bot:
             continue
         kind, scope, text = classify(c.subject)
+        if c.files is not None and not any(is_shipped(f) for f in c.files):
+            kind = "maintenance"
         groups[kind].append((scope, text))
     return groups
 
@@ -239,7 +243,11 @@ class Git:
             if not record:
                 continue
             sha, author, parents, message = record.split("\x00", 3)
-            commits.append(Commit(sha, author, len(parents.split()), message.strip()))
+            commit = Commit(sha, author, len(parents.split()), message.strip())
+            if not commit.is_merge:
+                out = self.run("diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "--no-renames", "-z", sha).stdout
+                commit.files = [p for p in out.split("\0") if p]
+            commits.append(commit)
         return commits
 
     def changed_files(self, since: str, head: str) -> list[str]:

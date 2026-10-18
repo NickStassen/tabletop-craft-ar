@@ -187,7 +187,8 @@ run's `bump` input (`patch`, `minor`, `major`) overrides them; `auto` reads them
    `- **vX.Y.Z: automatic release.** <counts> since vA.B.C, listed in the release notes: no protocol changes unless an
    earlier entry says so.` after the last entry of a version up to this one, so the list stays in version order;
 3. writes `docs/release-notes/vX.Y.Z.md` from the commit subjects since the last tag (New, Fixes and Other changes from
-   the conventional prefixes; docs, CI, test and tooling commits only counted; merge and release commits left out), or
+   the conventional prefixes; docs, CI, test and tooling commits, and any commit that changes no shipped file, only
+   counted; merge and release commits left out), or
    renames a hand-written `docs/release-notes/vNEXT.md` (docs/release-notes/README.md);
 4. runs `check_version.sh vX.Y.Z`, the check release.yml starts with;
 5. commits `release: vX.Y.Z [skip release]` as `NickStassen <120063190+NickStassen@users.noreply.github.com>` (with
