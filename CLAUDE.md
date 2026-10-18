@@ -55,7 +55,7 @@ Steps 0-10 were all done in the 2026-10-13 to 2026-10-15 sessions; they stay her
 7. Place and break blocks from a Java client and confirm live diffs on the table.
 8. Check the giant avatar (Mannequin + hands) tracks head and hand poses.
 9. Profile with OVR Metrics. Tune the 250k-face soft cap if needed.
-10. CI runs on GitHub Actions (`.github/workflows/ci.yml`: Gradle tests, ruff + pytest, the engine-free C# tests without the client jar, the Windows starter). Releases: `release.yml` and `promote.yml` (docs/RELEASING.md section 6).
+10. CI runs on GitHub Actions (`.github/workflows/ci.yml`: Gradle tests, ruff + pytest, the engine-free C# tests without the client jar, the Windows starter). Releases: `auto-release.yml` (calls `release.yml`) and `promote.yml` (docs/RELEASING.md section 6).
 
 ## Protocol rules
 - **Versioning (from v1.0.0, semantic):**
@@ -63,11 +63,11 @@ Steps 0-10 were all done in the 2026-10-13 to 2026-10-15 sessions; they stay her
   - One version for plugin `version` (build.gradle.kts), the app's `bundleVersion` and the PROTOCOL.md version line, all from `VERSION`.
   - Patch (v1.0.x) for fixes, minor (v1.x.0) for new features that old plugins/apps can ignore (new optional fields, new messages behind caps), major (v2.0.0) for anything that breaks a plugin/app of the same major version. Every protocol change gets a changelog entry.
   - Before v1.0.0 there was no backwards compatibility (v0.x.y versions just had to match).
-- **Releases:** one `VERSION` file at the repo root is the single source: Gradle reads it for the plugin, and `TabletopBatch.BuildApk` sets the app's `bundleVersion` and versionCode from it. GitHub Actions does the building and publishing (docs/RELEASING.md section 6). To release a feature set:
-  1. bump `VERSION` (minor vX.Y.0 for features, patch vX.Y.Z for fixes);
-  2. update the PROTOCOL.md header and its changelog, and write `docs/release-notes/vX.Y.Z.md` (title line + GitHub release text: what's new, what was verified on the headset, known gaps; docs/release-notes/README.md);
-  3. `tools/release/check_version.sh`, commit `release: vX.Y.Z` on master, push, and dry-run: `gh workflow run release.yml --ref master -f dry_run=true` (builds and checks the signed APK, publishes nothing);
-  4. tag `vX.Y.Z` and push the tag: `release.yml` checks the versions, builds the plugin jar, the server starter zip and the release-signed APK (GameCI's Unity image; secrets in the `release` environment), creates the GitHub **pre-release** with exactly those three files, and uploads the APK to the Meta **ALPHA** channel;
+- **Releases:** one `VERSION` file at the repo root is the single source: Gradle reads it for the plugin, and `TabletopBatch.BuildApk` sets the app's `bundleVersion` and versionCode from it. Versions are bumped by `auto-release.yml`, never by hand (docs/RELEASING.md section 6):
+  1. every push to master that changes shipped code (`quest-app/Assets`, `Packages/manifest.json`, `ProjectSettings`; `server-plugin/src/main`, `build.gradle.kts`; `server-starter`) becomes the next version: `tools/release/auto_release.py` writes `VERSION`, the PROTOCOL.md header and an automatic changelog line, the ProjectSettings version lines and `docs/release-notes/vX.Y.Z.md`, commits `release: vX.Y.Z` (with the skip keyword), tags it and pushes both, then `release.yml` builds the plugin jar, the server starter zip and the release-signed APK, creates the GitHub **pre-release** and uploads the APK to the Meta **ALPHA** channel;
+  2. use `[minor]` / `[major]` in a commit message for a feature or a breaking release (patch otherwise) and `[skip release]` to hold a push back; these keywords count anywhere in a message, so never quote them by accident;
+  3. a protocol change still needs a changelog line written in the same commit: `- **vNEXT: ...**` (the release gives it the version); hand-written release notes go in `docs/release-notes/vNEXT.md` (docs/release-notes/README.md);
+  4. to release master by hand: `gh workflow run auto-release.yml --ref master -f bump=auto` (or `patch`/`minor`/`major`); preview locally with `python3 tools/release/auto_release.py plan --event workflow_dispatch`;
   5. check the ALPHA build on a headset, then promote: `gh workflow run promote.yml --ref master -f version=X.Y.Z` (ALPHA to BETA, and the GitHub release becomes the latest one, which the server starter downloads from).
   By hand (fallback): `TabletopBatch.BuildReleaseApk`, `tools/release/upload_quest.sh`, `promote_quest.sh` (RELEASING.md sections 3-5). Never attach the client jar, pack.zip, entity_models.json, sounds.zip or a keystore.
 - `docs/PROTOCOL.md` is the contract for the plugin, Quest app and tools. Golden examples are in `tools/fixtures/`; Java (`FixtureTest`) and Python tests read them.

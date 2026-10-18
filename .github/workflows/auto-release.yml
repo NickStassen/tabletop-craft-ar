@@ -1,0 +1,77 @@
+# Automatic releases (docs/RELEASING.md section 6). A push to master that changes shipped code (the app, the plugin or
+# the server starter) becomes the next version: tools/release/auto_release.py bumps VERSION, the PROTOCOL.md header and
+# changelog and ProjectSettings.asset, writes docs/release-notes/vX.Y.Z.md, commits "release: vX.Y.Z [skip release]",
+# tags vX.Y.Z and pushes both; then release.yml (called here) builds, publishes the GitHub pre-release and uploads the
+# APK to the Meta ALPHA channel. The level: [major] or [minor] in a commit message since the last tag, else patch;
+# [skip release] in a commit of the push holds that push back. "Run workflow" releases master as it is (always).
+name: Auto release
+on:
+  push:
+    branches: [master]
+    # Only pushes that touch shipped code start a run (auto_release.py checks it exactly, since the last tag).
+    paths:
+      - 'quest-app/Assets/**'
+      - 'quest-app/Packages/manifest.json'
+      - 'quest-app/ProjectSettings/**'
+      - 'server-plugin/src/main/**'
+      - 'server-plugin/build.gradle.kts'
+      - 'server-starter/**'
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version level (auto reads [major]/[minor] in the commit messages since the last tag; else patch)
+        type: choice
+        options: [auto, patch, minor, major]
+        default: auto
+
+permissions:
+  contents: read
+
+# One release or promotion at a time, shared with release.yml (tag pushes) and promote.yml; never cancelled. This run
+# holds the group through the build and the uploads, so release.yml takes a group of its own when called from here.
+concurrency:
+  group: tabletop-release
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    # The only job that writes to the repository. GITHUB_TOKEN pushes start no workflow run (no CI, no tag-push
+    # release.yml, no new auto release), and the release commit says [skip release] as well.
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    outputs:
+      release: ${{ steps.run.outputs.pushed }}
+      tag: ${{ steps.run.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # every tag and the history since the last one; the token stays for the push
+      - name: Decide, bump, commit, tag and push
+        id: run
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          BUMP: ${{ inputs.bump }}
+          # The repository's commit identity (GitHub noreply), never a bot or a machine's own address.
+          GIT_AUTHOR_NAME: NickStassen
+          GIT_AUTHOR_EMAIL: 120063190+NickStassen@users.noreply.github.com
+          GIT_COMMITTER_NAME: NickStassen
+          GIT_COMMITTER_EMAIL: 120063190+NickStassen@users.noreply.github.com
+        run: >-
+          python3 -I tools/release/auto_release.py run --event "$EVENT" --before "$BEFORE" --bump "${BUMP:-auto}"
+
+  release:
+    # release.yml on the new tag: plugin jar, starter zip, release-signed APK, GitHub pre-release, Meta ALPHA. Called
+    # here because the tag pushed with GITHUB_TOKEN starts no run of its own. The run's ref stays refs/heads/master,
+    # which the release environment allows; its secrets reach the apk and store jobs through that environment.
+    needs: bump
+    if: needs.bump.outputs.release == 'true'
+    permissions:
+      contents: write   # publish creates the GitHub release
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.bump.outputs.tag }}
+    secrets: inherit
