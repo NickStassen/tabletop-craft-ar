@@ -11,7 +11,8 @@
 #   Unity license, the GameCI way: UNITY_EMAIL + UNITY_PASSWORD + UNITY_SERIAL, where a Personal license's serial is
 #   read from UNITY_LICENSE (the contents of Unity_lic.ulf). With UNITY_LICENSE alone the .ulf is tried as it is.
 #   Release key: TABLETOP_KEYSTORE (path to the .jks on this machine), TABLETOP_KEYSTORE_PASS, TABLETOP_KEY_ALIAS,
-#   TABLETOP_KEY_PASS; optional TABLETOP_BUILD (0-99). UNITY_IMAGE overrides the image.
+#   TABLETOP_KEY_PASS; optional TABLETOP_BUILD (0-99). UNITY_IMAGE overrides the image, UNITY_BUILD_TIMEOUT (110m) bounds
+#   the editor run so a hung build still returns the license before the job times out.
 # Secrets reach the container as `docker run -e NAME` (docker copies the value from this environment, so it is never on
 # a command line here) and are never printed. Unity's log goes to stdout and to quest-app/Logs/ci-unity-build.log.
 set -euo pipefail
@@ -20,6 +21,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 IMAGE="${UNITY_IMAGE:-unityci/editor:ubuntu-6000.0.84f1-android-3.2.2}"
 APK_REL="quest-app/Builds/TabletopCraftAR.apk"
 LOG_REL="quest-app/Logs/ci-unity-build.log"
+P="${UNITY_BUILD_PROJECT:-/project}"   # the repo inside the container (overridable for a local test of this script)
 
 fail() { echo "::error::$*" >&2; exit 1; }
 gh_mask() { if [ -n "${GITHUB_ACTIONS:-}" ] && [ -n "$1" ]; then echo "::add-mask::$1"; fi; }
@@ -35,7 +37,7 @@ unity_bin() {
 # after -serial, -username and -password are dropped (GitHub masks them too).
 license_lines() {
   awk 'skip { skip = 0; next } /^-(serial|username|password)$/ { skip = 1; next } { print }' "$1" 2>/dev/null |
-    grep -i -E 'licens|activat|entitlement|serial|seat|error' | tail -40 || true
+    grep -v -E '^[-/]' | grep -i -E 'licens|activat|entitlement|serial|seat|error' | tail -40 || true
 }
 
 RETURN_LICENSE=0
@@ -43,7 +45,7 @@ WROTE_ULF=""
 inside_cleanup() {
   local rc=$?
   if [ "$RETURN_LICENSE" = 1 ]; then
-    if "$UNITY" -batchmode -nographics -quit -returnlicense -username "$UNITY_EMAIL" -password "$UNITY_PASSWORD" \
+    if timeout 10m "$UNITY" -batchmode -nographics -quit -returnlicense -username "$UNITY_EMAIL" -password "$UNITY_PASSWORD" \
          -projectPath /tmp/BlankProject -logFile /tmp/unity-return.log > /dev/null 2>&1; then
       echo "Unity license returned."
     else
@@ -53,17 +55,18 @@ inside_cleanup() {
   fi
   if [ -n "$WROTE_ULF" ]; then rm -f "$WROTE_ULF"; fi
   # Files written by root in the container go back to the runner's user (actions/cache, the artifact upload).
-  chown -R "${HOST_UID:-0}:${HOST_GID:-0}" /project/quest-app 2>/dev/null || true
+  chown -R "${HOST_UID:-0}:${HOST_GID:-0}" "$P/quest-app" 2>/dev/null || true
   exit "$rc"
 }
 
 activate() {
   mkdir -p /tmp/BlankProject/Assets
   if [ -n "${UNITY_SERIAL:-}" ] && [ -n "${UNITY_EMAIL:-}" ] && [ -n "${UNITY_PASSWORD:-}" ]; then
-    local attempt delay=15
+    local attempt delay="${UNITY_ACTIVATION_RETRY_DELAY:-15}"
     for attempt in 1 2 3 4; do
-      if "$UNITY" -batchmode -nographics -quit -serial "$UNITY_SERIAL" -username "$UNITY_EMAIL" -password "$UNITY_PASSWORD" \
-           -projectPath /tmp/BlankProject -logFile /tmp/unity-activate.log > /dev/null 2>&1; then
+      rm -f /tmp/unity-activate.log
+      if timeout 10m "$UNITY" -batchmode -nographics -quit -serial "$UNITY_SERIAL" -username "$UNITY_EMAIL" \
+           -password "$UNITY_PASSWORD" -projectPath /tmp/BlankProject -logFile /tmp/unity-activate.log > /dev/null 2>&1; then
         RETURN_LICENSE=1
         echo "Unity activated (serial, attempt $attempt)."
         return 0
@@ -80,7 +83,8 @@ activate() {
     WROTE_ULF="$HOME/.local/share/unity3d/Unity/Unity_lic.ulf"
     mkdir -p "$(dirname "$WROTE_ULF")"
     printf '%s' "$UNITY_LICENSE" | tr -d '\r' > "$WROTE_ULF"
-    if ! "$UNITY" -batchmode -nographics -quit -manualLicenseFile "$WROTE_ULF" \
+    rm -f /tmp/unity-activate.log
+    if ! timeout 10m "$UNITY" -batchmode -nographics -quit -manualLicenseFile "$WROTE_ULF" \
          -logFile /tmp/unity-activate.log > /dev/null 2>&1; then
       echo "Unity did not take the license file (-manualLicenseFile):"
       license_lines /tmp/unity-activate.log
@@ -95,22 +99,27 @@ inside_build() {
   trap inside_cleanup EXIT
   echo "Unity: $UNITY"
   activate
-  mkdir -p "$(dirname "/project/$LOG_REL")"
-  rm -f "/project/$APK_REL"
+  mkdir -p "$(dirname "$P/$LOG_REL")"
+  rm -f "$P/$APK_REL"
   echo "::group::Unity build log (TabletopBatch.BuildReleaseApk)"
   set +e
-  "$UNITY" -batchmode -nographics -quit -projectPath /project/quest-app -buildTarget Android \
-    -executeMethod TabletopCraft.EditorTools.TabletopBatch.BuildReleaseApk -logFile - 2>&1 | tee "/project/$LOG_REL"
+  # Bounded well inside the job's timeout, so a hung editor still ends here and the license is returned.
+  timeout --kill-after=2m "${UNITY_BUILD_TIMEOUT:-110m}" \
+    "$UNITY" -batchmode -nographics -quit -projectPath "$P/quest-app" -buildTarget Android \
+    -executeMethod TabletopCraft.EditorTools.TabletopBatch.BuildReleaseApk -logFile - 2>&1 | tee "$P/$LOG_REL"
   local rc=${PIPESTATUS[0]}
   set -e
   echo "::endgroup::"
-  grep -E '^\[Tabletop\]|error CS|Shader error|BuildFailedException|Build completed with a result' "/project/$LOG_REL" | tail -30 || true
-  if grep -q -i -E 'No valid Unity Editor license|license is not (active|valid)|com.unity.editor.headless.*not.*(found|valid)' "/project/$LOG_REL"; then
-    fail "Unity has no valid license in the container: set UNITY_EMAIL and UNITY_PASSWORD next to UNITY_LICENSE (release environment)"
+  grep -E '^\[Tabletop\]|error CS|Shader error|BuildFailedException|Build completed with a result' "$P/$LOG_REL" | tail -30 || true
+  if [ "$rc" != 0 ]; then
+    if grep -q -i -E 'No valid Unity Editor license|license is not (active|valid)|com.unity.editor.headless.*not.*(found|valid)' "$P/$LOG_REL"; then
+      fail "Unity has no valid license in the container: set UNITY_EMAIL and UNITY_PASSWORD next to UNITY_LICENSE (release environment)"
+    fi
+    [ "$rc" != 124 ] || fail "the Unity build ran out of time (${UNITY_BUILD_TIMEOUT:-110m}); the log is above"
+    fail "the Unity build failed (exit $rc); the log is above (group 'Unity build log')"
   fi
-  [ "$rc" = 0 ] || fail "the Unity build failed (exit $rc); the log is above (group 'Unity build log')"
-  [ -f "/project/$APK_REL" ] || fail "Unity exited 0 but there is no $APK_REL"
-  echo "Built $APK_REL ($(( $(wc -c < "/project/$APK_REL") / 1048576 )) MB)."
+  [ -f "$P/$APK_REL" ] || fail "Unity exited 0 but there is no $APK_REL"
+  echo "Built $APK_REL ($(( $(wc -c < "$P/$APK_REL") / 1048576 )) MB)."
 }
 
 inside_check() {
@@ -121,7 +130,7 @@ inside_check() {
   [ -d "$sdk/build-tools" ] || fail "no Android build-tools in the image ($sdk)"
   export ANDROID_HOME="$sdk" JAVA_HOME="$jdk" PATH="$jdk/bin:$PATH"
   echo "build-tools: $(ls "$sdk/build-tools" | sort -V | tail -1), java: $("$jdk/bin/java" -version 2>&1 | head -1)"
-  bash /project/tools/release/upload_quest.sh --check-only --apk "/project/$apk"
+  bash "$P/tools/release/upload_quest.sh" --check-only --apk "$P/$apk"
 }
 
 if [ "${1:-}" = "--inside" ]; then
@@ -218,6 +227,6 @@ case "${1:-}" in
   build) host_build ;;
   check) host_check "${2:-}" ;;
   scrub) host_scrub ;;
-  -h|--help|"") sed -n '2,18p' "$0" ;;
+  -h|--help|"") sed -n '2,17p' "$0" ;;
   *) fail "unknown command $1 (build, check, scrub)" ;;
 esac
