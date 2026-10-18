@@ -1436,7 +1436,7 @@ Paper 26.3 test server (offline mode, seed 12345, ports 25629 / 8829), the PC's 
 
 ### Not verified (needs the headset)
 - The first-run card, the LAN search connecting by itself, the pairing card (size of the code, the lower position on an open server), the reconnect after pairing on an open server, the update note with a v1.0.0 plugin, the disclaimer on the Info tab.
-- A store install on an account without Developer Mode (RELEASING.md "Release checklist", step 7). On 2026-10-16 the developer's own account (Developer Mode on) installed v1.2.1 from the BETA invite link: accepted on the web, the install sat as "queued" until a headset restart, then the Library showed the app with its icon and spatialized tile, the installer was the Meta store (`com.oculus.ocms`), and pairing and the game-file download worked as on a sideloaded build. A second account without Developer Mode is still open.
+- A store install on an account without Developer Mode (RELEASING.md "Release checklist", step 6). On 2026-10-16 the developer's own account (Developer Mode on) installed v1.2.1 from the BETA invite link: accepted on the web, the install sat as "queued" until a headset restart, then the Library showed the app with its icon and spatialized tile, the installer was the Meta store (`com.oculus.ocms`), and pairing and the game-file download worked as on a sideloaded build. A second account without Developer Mode is still open.
 
 Since verified on a Quest 3 (OVERVIEW.md Status): with v1.1.0 on a fresh install (2026-10-16), the app found the server by itself, paired with the code, downloaded the game files (textures in 0.7 s, sounds 67 MB in 8.4 s) and reloaded, and unpair and pair again worked; v1.2.1 shows the disclaimer on the pairing card and was installed fresh from the BETA channel's invite link, then paired and downloaded the game files.
 
@@ -1502,3 +1502,38 @@ RELEASING.md section 6. Nothing was published: no tag, no GitHub release, no upl
 ### Not verified yet
 - The `apk` job on GitHub: it needs the release environment (master or a tag) and `UNITY_EMAIL`/`UNITY_PASSWORD` next to `UNITY_LICENSE` (a Personal license file alone is bound to the machine that activated it). First check: `gh workflow run release.yml --ref master -f dry_run=true` after the merge, then the build time on a 4-core runner with an empty cache and with master's cache.
 - `publish` and `store` (the first tag), and `promote.yml` against Meta (`-f dry_run=true` first: it only reads the channels).
+
+## Automatic releases: auto-release.yml (cd; 2026-10-18, no headset)
+
+RELEASING.md section 6.2. Nothing was pushed to master, no tag, no workflow run.
+
+### Tests
+- **`tools/release/test_auto_release.py`** (pytest, 81 cases; CI's `tools` job runs it): throwaway repositories with a
+  bare origin and the real `check_version.sh` and `release_notes.sh`. Version arithmetic and the versionCode (with its
+  99 limits); every shipped and unshipped path of the rules (`quest-app/Tests~`, `server-plugin/src/test`, docs, tools,
+  CI, media, `VERSION`); a `ProjectSettings.asset` change of only the version lines; the minor and major keywords (any
+  case, from earlier pushes since the tag, major beats minor); the skip keyword holding only its own push (the next
+  push releases both, an unknown `before` falls back to the range since the tag); manual runs (always release, the input
+  beats the keywords); a hand-bumped `VERSION` released as it is; versions that don't climb or whose tag exists; the
+  changelog line after the last entry up to the version (higher versions stay after it, continuation lines, `vNEXT`
+  lines renamed, no duplicate on a second run); the PROTOCOL.md header; exactly two changed lines in
+  `ProjectSettings.asset` (also with CRLF); the notes (groups, merges and bot commits left out, major-version text,
+  `vNEXT.md` renamed); a full `run` (commit identity, message, trailers, the four files, the atomic push of commit and
+  tag, `check_version.sh` and `release_notes.sh --title/--short` on the result, and both loop guards); master moving
+  before the push (the release commit is made again on top, the new commit's minor keyword counts); master rewritten
+  and a push refused by a hook (nothing pushed, the reason printed); a staged or edited release file; an unrelated file
+  that only looks changed. The real `docs/PROTOCOL.md` and `ProjectSettings.asset` take the next version as expected.
+- **Preview on a clone of master** (`auto_release.py --root <clone> plan` and `apply`): v1.2.2 (patch), from four
+  shipped files since v1.2.1 (`TabletopBatch.cs`, `config.yml`, `start.ps1`, `start.sh`); the changelog line after the
+  v1.2.1 entry, the two ProjectSettings lines (1020200), notes titled "v1.2.2: Say when Windows calls the network Public
+  (the firewall rules cover Private only); Windows CI results in the..." with one fix and the maintenance count;
+  `check_version.sh v1.2.2` passes.
+- Found on the way: `server-plugin/gradlew.bat` was stored with CRLF under `*.bat text eol=crlf`, so every fresh
+  checkout (the runner's too) showed it as modified; it is renormalized now, and `auto_release.py run` only requires the
+  release's own files to be clean.
+- actionlint (with shellcheck) on the three workflows: clean; ruff on `tools/`: clean.
+
+### Not verified yet
+- Anything on GitHub: the `paths` trigger, the call into release.yml (the `release` environment with master as the ref,
+  the called run's own concurrency group, `secrets: inherit`), the push with `GITHUB_TOKEN`. The first manual run
+  (`gh workflow run auto-release.yml --ref master -f bump=auto`) exercises all of it.
