@@ -1,0 +1,273 @@
+# Release automation (docs/RELEASING.md "Automated releases").
+# A pushed tag vX.Y.Z builds the plugin jar, the server starter zip and the release-signed Quest APK, publishes them as a
+# GitHub pre-release and uploads the APK to the Meta Horizon ALPHA channel. "Run workflow" with dry_run (the default)
+# builds and checks the same three files and publishes nothing. After the ALPHA build passes on a headset, promote.yml
+# moves it to BETA and marks the GitHub release as the latest.
+name: Release
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Dry run (build and check everything, publish nothing)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# One release or promotion at a time (promote.yml uses the same group); a running one is never cancelled.
+concurrency:
+  group: tabletop-release
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    # The tag (or VERSION on a dry run), VERSION and the PROTOCOL.md version line agree and the version has notes;
+    # a published release must come from a commit on master.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      publish: ${{ steps.v.outputs.publish }}
+      apk: ${{ steps.v.outputs.apk }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, persist-credentials: false }
+      - id: v
+        name: Tag, VERSION and PROTOCOL.md agree
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          tag=""
+          if [ "$GITHUB_REF_TYPE" = tag ]; then tag="$GITHUB_REF_NAME"; fi
+          version="$(tools/release/check_version.sh ${tag:+"$tag"})"
+          publish=false
+          if [ -n "$tag" ] && [ "$DRY_RUN" != true ]; then
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/master; then
+              echo "::error::$tag is on a commit that isn't on master: tag the release commit on master"
+              exit 1
+            fi
+            publish=true
+          fi
+          apk=true
+          if [ "$GITHUB_REF" != refs/heads/master ] && [ -z "$tag" ]; then
+            apk=false
+            echo "::warning::The APK job needs the release environment, which only master and v* tags may use: skipped on $GITHUB_REF_NAME"
+          fi
+          {
+            echo "version=$version"
+            echo "publish=$publish"
+            echo "apk=$apk"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### v$version"
+            echo "- ref: \`$GITHUB_REF_NAME\` ($GITHUB_SHA)"
+            echo "- publish (GitHub pre-release + Meta ALPHA): **$publish**"
+            echo "- release title: $(tools/release/release_notes.sh "$version" --title)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "v$version, publish=$publish, apk=$apk"
+
+  plugin:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '25' }
+      - name: Build and test the plugin
+        working-directory: server-plugin
+        run: ./gradlew build --no-daemon
+      - name: tabletop-craft-ar-plugin-${{ needs.verify.outputs.version }}.jar
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          mkdir -p dist
+          cp "server-plugin/build/libs/tabletop-craft-ar-plugin-$VERSION.jar" dist/
+          unzip -p "dist/tabletop-craft-ar-plugin-$VERSION.jar" plugin.yml | grep -x "version: '$VERSION'"
+          sha256sum dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin
+          path: dist/tabletop-craft-ar-plugin-${{ needs.verify.outputs.version }}.jar
+          if-no-files-found: error
+
+  starter:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - name: tabletop-server-starter-${{ needs.verify.outputs.version }}.zip
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          zip_path="$PWD/dist/tabletop-server-starter-$VERSION.zip"
+          (cd server-starter && zip -X "$zip_path" start.bat start.ps1 start.sh)
+          unzip -l "$zip_path"
+          # start.bat must keep CRLF line endings (.gitattributes) and start.sh its executable bit
+          unzip -p "$zip_path" start.bat > "$RUNNER_TEMP/start.bat"
+          head -1 "$RUNNER_TEMP/start.bat" | grep -q $'\r$' || { echo "::error::start.bat lost its CRLF line endings"; exit 1; }
+          zipinfo "$zip_path" start.sh | grep -q '^-rwx' || { echo "::error::start.sh lost its executable bit"; exit 1; }
+          sha256sum "$zip_path"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: starter
+          path: dist/tabletop-server-starter-${{ needs.verify.outputs.version }}.zip
+          if-no-files-found: error
+
+  apk:
+    # Release-signed APK, built headless on Linux in GameCI's Unity image (tools/ci/unity-build.sh), checked against
+    # Meta's packaging rules. Secrets only here and in "store", both in the release environment.
+    needs: verify
+    if: needs.verify.outputs.apk == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    environment: release
+    env:
+      UNITY_IMAGE: unityci/editor:ubuntu-6000.0.84f1-android-3.2.2
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - name: Library cache key
+        id: key
+        # Taken before the build: BuildReleaseApk rewrites ProjectSettings.asset (bundleVersion).
+        run: echo "key=unity-library-android-6000.0.84f1-${{ hashFiles('quest-app/Packages/manifest.json', 'quest-app/ProjectSettings/**') }}" >> "$GITHUB_OUTPUT"
+      - name: Free disk space for the Unity image
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/boost /usr/share/swift /usr/local/share/powershell /usr/local/share/chromium
+          sudo docker image prune --all --force > /dev/null
+          df -h /
+      - name: Pull ${{ env.UNITY_IMAGE }}
+        run: docker pull --quiet "$UNITY_IMAGE"
+      - name: Meta XR Core SDK 85.0.0, patched for the Linux Editor
+        run: tools/patch-meta-sdk-linux.sh
+      - name: Restore the Unity Library
+        id: library
+        uses: actions/cache/restore@v4
+        with:
+          path: quest-app/Library
+          key: ${{ steps.key.outputs.key }}
+          restore-keys: unity-library-android-6000.0.84f1-
+      - name: Release keystore (runner temp folder)
+        env:
+          TABLETOP_KEYSTORE_BASE64: ${{ secrets.TABLETOP_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          [ -n "$TABLETOP_KEYSTORE_BASE64" ] || { echo "::error::TABLETOP_KEYSTORE_BASE64 is not set in the release environment"; exit 1; }
+          umask 077
+          mkdir -p "$RUNNER_TEMP/tabletop-key"
+          printf '%s' "$TABLETOP_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/tabletop-key/tabletop-release.jks"
+          echo "keystore: $(wc -c < "$RUNNER_TEMP/tabletop-key/tabletop-release.jks") bytes"
+      - name: Build (TabletopBatch.BuildReleaseApk)
+        id: build
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          TABLETOP_KEYSTORE: ${{ runner.temp }}/tabletop-key/tabletop-release.jks
+          TABLETOP_KEYSTORE_PASS: ${{ secrets.TABLETOP_KEYSTORE_PASS }}
+          TABLETOP_KEY_ALIAS: ${{ secrets.TABLETOP_KEY_ALIAS }}
+          TABLETOP_KEY_PASS: ${{ secrets.TABLETOP_KEY_PASS }}
+        run: tools/ci/unity-build.sh build
+      - name: Delete the keystore
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/tabletop-key"
+      - name: Scrub the Library (no Bee, no file holding a secret)
+        id: scrub
+        if: always() && github.ref == 'refs/heads/master' && steps.build.outcome == 'success' && steps.library.outputs.cache-hit != 'true'
+        env:
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          TABLETOP_KEYSTORE_PASS: ${{ secrets.TABLETOP_KEYSTORE_PASS }}
+          TABLETOP_KEY_PASS: ${{ secrets.TABLETOP_KEY_PASS }}
+        run: tools/ci/unity-build.sh scrub
+      - name: Save the Unity Library (master only)
+        if: always() && steps.scrub.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: quest-app/Library
+          key: ${{ steps.key.outputs.key }}
+      - name: Meta packaging checks (upload_quest.sh --check-only)
+        run: tools/ci/unity-build.sh check | tee "$RUNNER_TEMP/check.txt"
+      - name: tabletop-craft-ar-${{ needs.verify.outputs.version }}.apk
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          mkdir -p dist
+          cp quest-app/Builds/TabletopCraftAR.apk "dist/tabletop-craft-ar-$VERSION.apk"
+          sha256sum dist/*
+          { echo "### APK v$VERSION"; echo '```'; cat "$RUNNER_TEMP/check.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: dist/tabletop-craft-ar-${{ needs.verify.outputs.version }}.apk
+          if-no-files-found: error
+
+  publish:
+    # GitHub pre-release vX.Y.Z with exactly these three files. promote.yml makes it the latest release later.
+    needs: [verify, plugin, starter, apk]
+    if: needs.verify.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+      - name: Create the GitHub pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          files=("dist/tabletop-craft-ar-plugin-$VERSION.jar" "dist/tabletop-craft-ar-$VERSION.apk" "dist/tabletop-server-starter-$VERSION.zip")
+          for f in "${files[@]}"; do [ -s "$f" ] || { echo "::error::missing $f"; exit 1; }; done
+          tools/release/release_notes.sh "$VERSION" --body > "$RUNNER_TEMP/notes.md"
+          title="$(tools/release/release_notes.sh "$VERSION" --title)"
+          if gh release view "$tag" > /dev/null 2>&1; then
+            echo "::warning::$tag already has a GitHub release: replacing its three files, keeping its notes and state"
+            gh release upload "$tag" "${files[@]}" --clobber
+          else
+            gh release create "$tag" --verify-tag --prerelease --title "$title" --notes-file "$RUNNER_TEMP/notes.md" "${files[@]}"
+          fi
+          echo "### [GitHub pre-release $tag]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$tag)" >> "$GITHUB_STEP_SUMMARY"
+
+  store:
+    # The same APK to the Meta Horizon ALPHA channel. Testers on ALPHA check it on a headset; promote.yml then moves it
+    # to BETA.
+    needs: [verify, apk, publish]
+    if: needs.verify.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: actions/download-artifact@v4
+        with: { name: apk, path: dist }
+      - name: Meta's ovr-platform-util (Linux)
+        run: echo "OVR_PLATFORM_UTIL=$(tools/release/fetch_ovr_platform_util.sh "$RUNNER_TEMP/ovr")" >> "$GITHUB_ENV"
+      - name: Upload to the ALPHA channel
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+          TABLETOP_APP_ID: ${{ vars.TABLETOP_APP_ID }}
+          TABLETOP_UPLOAD_TOKEN: ${{ secrets.TABLETOP_UPLOAD_TOKEN }}
+        run: |
+          set -euo pipefail
+          notes="$(tools/release/release_notes.sh "$VERSION" --short)"
+          tools/release/upload_quest.sh --apk "dist/tabletop-craft-ar-$VERSION.apk" --channel ALPHA \
+            --age-group TEENS_AND_ADULTS --notes "$notes"
+          echo "### Meta Horizon: v$VERSION uploaded to ALPHA (promote with promote.yml after the headset check)" >> "$GITHUB_STEP_SUMMARY"
