@@ -122,6 +122,7 @@ if [ -n "$SYMBOLS" ]; then
   [ -d "$SYMBOLS" ] || fail "--symbols-dir $SYMBOLS is not a folder"
   CMD+=(--debug-symbols-dir "$SYMBOLS" --debug-symbols-pattern '*.so')
 fi
+if [ -n "${CI:-}" ]; then CMD+=(--disable-progress-bar); fi   # CI logs (release.yml): no progress bar redraws
 
 shown=()
 for a in "${CMD[@]}"; do
