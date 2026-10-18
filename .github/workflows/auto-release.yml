@@ -62,8 +62,6 @@ jobs:
           GIT_COMMITTER_EMAIL: 120063190+NickStassen@users.noreply.github.com
         run: >-
           python3 -I tools/release/auto_release.py run --event "$EVENT" --before "$BEFORE" --bump "${BUMP:-auto}"
-          --trailer "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
-          --trailer "Claude-Session: https://claude.ai/code/session_01X4ViZxsVu2qLavP9KBDSg6"
 
   release:
     # release.yml on the new tag: plugin jar, starter zip, release-signed APK, GitHub pre-release, Meta ALPHA. Called

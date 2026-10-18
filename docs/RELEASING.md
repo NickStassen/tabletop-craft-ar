@@ -192,7 +192,7 @@ run's `bump` input (`patch`, `minor`, `major`) overrides them; `auto` reads them
    renames a hand-written `docs/release-notes/vNEXT.md` (docs/release-notes/README.md);
 4. runs `check_version.sh vX.Y.Z`, the check release.yml starts with;
 5. commits `release: vX.Y.Z [skip release]` as `NickStassen <120063190+NickStassen@users.noreply.github.com>` (with
-   the Co-Authored-By and Claude-Session trailers), tags `vX.Y.Z` (lightweight, like the earlier tags) and pushes the
+   no trailers: the workflow wrote it, not a person or a session), tags `vX.Y.Z` (lightweight, like the earlier tags) and pushes the
    commit and the tag together (`git push --atomic`) with the job's `GITHUB_TOKEN`;
 6. if master moved in the meantime, makes the release commit again on top of the new master, so the version, the
    changelog line and the notes cover the new commits too (at most 3 tries). If master no longer contains the commit
