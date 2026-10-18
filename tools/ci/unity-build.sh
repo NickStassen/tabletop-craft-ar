@@ -178,7 +178,7 @@ host_build() {
     gh_mask "$UNITY_SERIAL"
     gh_mask "${UNITY_SERIAL:0:${#UNITY_SERIAL}-4}XXXX"   # Unity logs the serial with its last 4 characters hidden
   fi
-  local args=(-v "$(cd "$(dirname "$ks")" && pwd):/keystore:ro" -e "TABLETOP_KEYSTORE=/keystore/$(basename "$ks")")
+  local args=(-v "$(cd "$(dirname "$ks")" && pwd):/keystore:ro" -e "TABLETOP_KEYSTORE=/keystore/$(basename "$ks")" -e TABLETOP_CI=1)  # TABLETOP_CI: TabletopBatch saves the key path for this throwaway checkout
   for n in UNITY_LICENSE UNITY_SERIAL UNITY_EMAIL UNITY_PASSWORD TABLETOP_KEYSTORE_PASS TABLETOP_KEY_ALIAS TABLETOP_KEY_PASS TABLETOP_BUILD; do
     if [ -n "${!n:-}" ]; then export "${n?}"; args+=(-e "$n"); fi
   done

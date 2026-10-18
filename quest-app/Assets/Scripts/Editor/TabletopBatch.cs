@@ -8,6 +8,7 @@
 using System.IO;
 using System.Linq;
 using UnityEditor;
+using UnityEditor.Build;
 using UnityEditor.Build.Reporting;
 using UnityEditor.XR.Management;
 using UnityEditor.XR.Management.Metadata;
@@ -74,6 +75,7 @@ namespace TabletopCraft.EditorTools
             try
             {
                 UseKey(key);
+                Active = key;   // ReapplyReleaseKey sets it again after the other build steps
                 for (int attempt = 1; attempt <= MaxBuildAttempts; attempt++)
                 {
                     report = BuildPipeline.BuildPlayer(options);
@@ -86,7 +88,7 @@ namespace TabletopCraft.EditorTools
                             $"not our code). Building again, attempt {attempt + 1} of {MaxBuildAttempts}. See QUEST_SETUP.md Troubleshooting.");
                 }
             }
-            finally { UseKey(null); }   // ProjectSettings.asset never records the keystore path or alias
+            finally { Active = null; UseKey(null); }   // ProjectSettings.asset never records the keystore path or alias (locally)
             if (report == null || report.summary.result != BuildResult.Succeeded) EditorApplication.Exit(1);
         }
 
@@ -96,7 +98,7 @@ namespace TabletopCraft.EditorTools
         /// a keystore that isn't a file: a problem, so a typo never turns into a debug-signed store build. The values are
         /// never logged or written to a file.
         /// </summary>
-        sealed class ReleaseKey
+        internal sealed class ReleaseKey
         {
             public static readonly string[] Variables = { "TABLETOP_KEYSTORE", "TABLETOP_KEYSTORE_PASS", "TABLETOP_KEY_ALIAS", "TABLETOP_KEY_PASS" };
             public string Keystore, KeystorePass, Alias, KeyPass;
@@ -119,8 +121,11 @@ namespace TabletopCraft.EditorTools
             }
         }
 
+        /// <summary>The release key of the build in progress (null: none, or a debug build).</summary>
+        internal static ReleaseKey Active;
+
         /// <summary>Sets Unity's Android signing to the key (null = the debug key and every field cleared).</summary>
-        static void UseKey(ReleaseKey key)
+        internal static void UseKey(ReleaseKey key)
         {
             // Only what changes is set: assigning an empty keystore name records "{inproject}: " in ProjectSettings.asset.
             bool use = key != null;
@@ -132,6 +137,11 @@ namespace TabletopCraft.EditorTools
             PlayerSettings.Android.keystorePass = key?.KeystorePass ?? "";   // passwords are never written to ProjectSettings.asset
             PlayerSettings.Android.keyaliasPass = key?.KeyPass ?? "";
             if (key != null) Debug.Log($"[Tabletop] release signing with {Path.GetFileName(key.Keystore)}, alias {key.Alias}");
+            // [ci] On a cold project (CI), the build's own steps (the Meta SDK's) make Unity reimport ProjectSettings.asset
+            // from disk mid-build, dropping a keystore name that was only set in memory ("keystore file not found"). In CI
+            // the keystore path and alias are saved to the throwaway checkout's ProjectSettings.asset (never the passwords:
+            // Unity doesn't serialize them); locally they stay in memory so the repo's file never records a local path.
+            if (key != null && System.Environment.GetEnvironmentVariable("TABLETOP_CI") == "1") AssetDatabase.SaveAssets();
         }
 
         /// <summary>An unset keystore name: empty, or Unity's "{inproject}: " with nothing after it.</summary>
@@ -191,6 +201,16 @@ namespace TabletopCraft.EditorTools
             EditorUtility.SetDirty(settings);
             EditorUtility.SetDirty(perTarget);
             AssetDatabase.SaveAssets();
+        }
+    }
+
+    /// <summary>[ci] Runs after every other build step and sets the release key again (see TabletopBatch.UseKey).</summary>
+    sealed class ReapplyReleaseKey : IPreprocessBuildWithReport
+    {
+        public int callbackOrder => int.MaxValue;
+        public void OnPreprocessBuild(BuildReport report)
+        {
+            if (TabletopBatch.Active != null) TabletopBatch.UseKey(TabletopBatch.Active);
         }
     }
 }
