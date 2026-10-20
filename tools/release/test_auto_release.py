@@ -213,6 +213,7 @@ def test_keyword_level():
     (".github/workflows/release.yml", False),
     ("README.md", False),
     ("CLAUDE.md", False),
+    ("AGENTS.md", False),
     ("VERSION", False),
     ("media/area-setup.png", False),
 ])

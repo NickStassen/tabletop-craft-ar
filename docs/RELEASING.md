@@ -4,7 +4,7 @@ How a release of tabletop-craft-ar is built, signed and published: the plugin ja
 APK on GitHub, and the store build on Meta Horizon release channels. Normally a merge to master does all of it on
 GitHub Actions (section 6): a change to the app, the plugin or the server starter becomes the next version by itself,
 and a second workflow promotes the store build once it has passed on a headset. Sections 3 to 5 are the same steps by
-hand, and the fallback when the automation can't run. `CLAUDE.md` "Releases" has the short checklist.
+hand, and the fallback when the automation can't run. `AGENTS.md` "Releases" has the short checklist.
 
 ## 1. Versions
 
@@ -204,7 +204,7 @@ workflow run, so the tag doesn't start release.yml a second time, CI doesn't run
 commit can't start another auto release (its `[skip release]`, and nothing shipped since the new tag, would stop one
 anyway).
 
-**A protocol change** still needs its changelog line in the same commit (CLAUDE.md "Protocol rules"). Since the version
+**A protocol change** still needs its changelog line in the same commit (AGENTS.md "Protocol rules"). Since the version
 isn't known yet, write it as `- **vNEXT: what changed ("Section").** ...` at the end of the changelog list (or with the
 exact version, if you're sure of it), and mark the commit `[minor]` or `[major]` as the change needs.
 
