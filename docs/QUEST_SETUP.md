@@ -5,6 +5,8 @@ There are two ways to set it up:
 - **Store install (recommended):** install the app from the Meta Horizon Store through the [beta invite link](https://www.meta.com/s/7Hd4RBdRk), run the server starter on your PC, and pair the headset with a 6-digit code. Nothing to type into config files, no Developer Mode, no cable: the headset gets the game's textures, models and sounds from your own PC.
 - **Developer sideload** (the appendix at the end, Parts A to E): build the plugin and the APK yourself, install with `adb`, push files by hand. For development and testing.
 
+**Versions.** The current version is v1.2.2. Every change to the app, plugin or server starter merged to master is released automatically as a GitHub pre-release and on the Meta ALPHA channel; the beta invite link (BETA) and the [latest release](https://github.com/NickStassen/tabletop-craft-ar/releases/latest) get a version once it has passed on a headset ([RELEASING.md](RELEASING.md) section 6), so they can be one version behind.
+
 Parts F to Q (playing: the play area, moving around, building, the menu, chat and the console, Bedrock players) apply to both.
 
 NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.

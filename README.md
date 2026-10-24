@@ -45,6 +45,8 @@ Recordings are real headset and desktop captures; player names and the room may 
 4. Start the app at a table. It finds your server on the same Wi-Fi and shows a 6-digit code: type `tabletop pair <code>` in the server window.
 5. Wait for the one-time download (about 75 MB), set up the play area on the table, and have friends join with Java Edition at your PC's address.
 
+**Current version: v1.2.2** ([VERSION](VERSION)). Every change to the app, plugin or server starter merged to master is released automatically: a GitHub pre-release plus the Meta ALPHA channel. A build is promoted to the beta invite link and marked as the latest release once it has passed on a headset ([docs/RELEASING.md](docs/RELEASING.md)).
+
 The full guide is [docs/QUEST_SETUP.md](docs/QUEST_SETUP.md); server commands and options are in [docs/OVERVIEW.md](docs/OVERVIEW.md#quick-start-server).
 
 ## Does it work with Bedrock?
