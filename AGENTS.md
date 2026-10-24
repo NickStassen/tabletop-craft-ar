@@ -45,19 +45,18 @@ A Paper plugin streams a box of blocks, player positions and block changes over 
 - Tests: `tools/e2e.sh` (refuses to start if 25565/8765 are busy), `tools/region_e2e.py` (needs the e2e world), `tools/measure_regions.py OUT "c:cx,cy,cz,dx,dy,dz,y0"` and `quest-app/Tests~ dotnet run -- --measure OUT` for sizes and face counts.
 
 ## First hardware session checklist
-Prereqs (human): Unity 6000.0.84f1 with Android module, Quest in Developer Mode connected over USB with debugging allowed, and the vanilla game installed for that version on this PC.
-Steps 0-10 were all done in the 2026-10-13 to 2026-10-15 sessions; they stay here for a fresh machine. Work through these in order and record what you verify in `docs/OVERVIEW.md` Status and `docs/TESTING.md`:
-0. Push textures: find the client jar (Windows: `%APPDATA%\.minecraft\versions\26.3\26.3.jar`, Linux: `~/.minecraft/versions/26.3/26.3.jar`; if missing, ask the human to launch 26.3 once in the launcher). Copy it to a temp `pack.zip`, then `adb shell mkdir -p /sdcard/Android/data/com.tabletopcraft.ar/files/` and `adb push pack.zip` there (re-push after a fresh install if the folder was wiped). Also generate and push `entity_models.json` the same way (QUEST_SETUP.md Part E step 3) so entities show as models instead of boxes. Never commit the jar, pack.zip or entity_models.json.
-1. Open `quest-app/`, resolve Meta XR/MRUK 85.0.0 packages, fix compile errors with minimal changes (no version bumps). Run **TabletopCraft > Create Scene**, then build the APK. (Done on Linux 2026-10-13, headless: see TESTING.md section 5.)
-2. Start the plugin on Paper 26.3 / Java 25 on the PC. A new 26.x server has `white-list=true`: set it to false or `whitelist add` the Java players. Confirm the Quest can reach port 8765 over Wi-Fi (LAN IP, firewall rule).
-3. `adb install` the APK. Watch `adb logcat -s Unity | grep Tabletop` for LINK up and the first snapshot.
-4. Confirm MRUK detects the table and the area wireframe snaps to it.
-5. Exercise area setup: resize, auto-fit, small (16x16) and max (128x96x128). Note FPS.
-6. Confirm the atlas loads from `pack.zip` (PACK in the block menu's Info tab). The parser was checked offline against the 26.3 client jar (sprite-object textures and fluids fixed), then verified on the headset (2026-10-13/14), including biome tints.
-7. Place and break blocks from a Java client and confirm live diffs on the table.
-8. Check the giant avatar (Mannequin + hands) tracks head and hand poses.
-9. Profile with OVR Metrics. Tune the 250k-face soft cap if needed.
-10. CI runs on GitHub Actions (`.github/workflows/ci.yml`: Gradle tests, ruff + pytest, the engine-free C# tests without the client jar, the Windows starter). Releases: `auto-release.yml` (calls `release.yml`) and `promote.yml` (docs/RELEASING.md section 6).
+Current flow (v1.1.0 and later; docs/QUEST_SETUP.md "Store install", docs/RELEASING.md section 6). Record what you verify in `docs/OVERVIEW.md` Status and `docs/TESTING.md`.
+Prereqs (human): Minecraft: Java Edition 26.3 started once in the launcher on the server PC (the plugin builds the headset's game files from it), the Quest 3 on the same Wi-Fi as the PC.
+1. **Server:** download `tabletop-server-starter-<version>.zip` from the latest GitHub release, run `start.bat` (Windows) or `bash start.sh`, accept the EULA. To test a local plugin build, pass `--plugin-jar` / `-PluginJar`. Windows: the network must be Private for the firewall rules (the starter says so when it is Public).
+2. **App:** install from the store beta (invite link in QUEST_SETUP.md; BETA serves the promoted build) or sideload the release APK: `adb install -r tabletop-craft-ar-<version>.apk` (Developer Mode). A new auto-release lands on the Meta ALPHA channel first. A self-built, debug-signed APK must be uninstalled before a release-signed one can be installed, and vice versa.
+3. **Pair:** start the app at a table; it finds the server on the LAN and shows a 6-digit code. Run `tabletop pair <code>` in the server console. `adb logcat -s Unity | grep Tabletop` shows LINK up and the first snapshot.
+4. **Game files:** the plugin builds `pack.zip`, `entity_models.json` and `sounds.zip` from the PC's install and paired headsets download them once (about 75 MB; Info tab `ASSETS` line). If the server logs `ASSETS auto: no Minecraft 26.3 found`, ask the human to start 26.3 once, then `tabletop assets rebuild`.
+5. **Table and area:** confirm MRUK detects the table and the area wireframe snaps to it; resize, auto-fit, try small and large areas and note FPS.
+6. **Gameplay checks:** textures and tints (Info tab `PACK yes`), live block diffs from a Java client, the giant avatar following head and hands, sound.
+7. **Profile** with OVR Metrics; tune the 250k-face soft cap if needed.
+8. **Promote** once the ALPHA build passed on the headset: `gh workflow run promote.yml --ref master -f version=X.Y.Z` (see "Releases" below).
+Developer fallback (QUEST_SETUP.md appendix Parts A-E): build the plugin and APK yourself (`TabletopBatch.BuildApk`), `adb install`, and push hand-made `pack.zip`, `entity_models.json` and `sounds.zip` to `/sdcard/Android/data/com.tabletopcraft.ar/files/`, or serve them from `assets.dir` (Part P). Never commit the jar or those files.
+CI: `.github/workflows/ci.yml` (Gradle tests, ruff + pytest, the engine-free C# tests, the Windows starter). Releases: `auto-release.yml` (calls `release.yml`) and `promote.yml`.
 
 ## Protocol rules
 - **Versioning (from v1.0.0, semantic):**
